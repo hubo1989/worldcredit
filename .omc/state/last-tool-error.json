@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"gh repo create worldcredit --private --source=. --push 2>&1\",\"description\":\"Create private GitHub repo and push code\"}",
+  "error": "Exit code 1\ncurrent directory is not a git repository. Run `git init` to initialize it",
+  "timestamp": "2026-04-09T06:19:57.615Z",
+  "retry_count": 1
+}

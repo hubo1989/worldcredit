@@ -1,0 +1,152 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1775715434085,
+  "projectRoot": "/Users/hubo/worktrees/worldcredit/init",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "react",
+        "version": "19.2.4",
+        "category": "frontend"
+      },
+      {
+        "name": "react-dom",
+        "version": "19.2.4",
+        "category": "frontend"
+      },
+      {
+        "name": "vite",
+        "version": "8.0.1",
+        "category": "build"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {
+      "test": "echo \"Error: no test specified\" && exit 1"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase",
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "app",
+      "components",
+      "docs",
+      "lib",
+      "public"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "app": {
+      "path": "app",
+      "purpose": "Application code",
+      "fileCount": 1,
+      "lastAccessed": 1775715434038,
+      "keyFiles": [
+        "layout.tsx"
+      ]
+    },
+    "components": {
+      "path": "components",
+      "purpose": "UI components",
+      "fileCount": 1,
+      "lastAccessed": 1775715434038,
+      "keyFiles": [
+        "ThemeRegistry.tsx"
+      ]
+    },
+    "db": {
+      "path": "db",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1775715434058,
+      "keyFiles": [
+        "functions.sql",
+        "schema.sql"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1775715434059,
+      "keyFiles": []
+    },
+    "lib": {
+      "path": "lib",
+      "purpose": "Library code",
+      "fileCount": 4,
+      "lastAccessed": 1775715434059,
+      "keyFiles": [
+        "auth.tsx",
+        "insforge.ts",
+        "types.ts",
+        "utils.ts"
+      ]
+    },
+    "public": {
+      "path": "public",
+      "purpose": "Public files",
+      "fileCount": 1,
+      "lastAccessed": 1775715434059,
+      "keyFiles": [
+        "manifest.json"
+      ]
+    },
+    "worker": {
+      "path": "worker",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775715434060,
+      "keyFiles": [
+        "index.ts"
+      ]
+    },
+    "lib/api": {
+      "path": "lib/api",
+      "purpose": "API routes",
+      "fileCount": 4,
+      "lastAccessed": 1775715434061,
+      "keyFiles": [
+        "bills.ts",
+        "cards.ts",
+        "holders.ts"
+      ]
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}

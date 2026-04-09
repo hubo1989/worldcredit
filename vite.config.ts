@@ -4,6 +4,10 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  server: {
+    port: 3050,
+    host: "credit.localhost",
+  },
   plugins: [
     vinext(),
     cloudflare({
