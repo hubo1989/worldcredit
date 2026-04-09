@@ -10,4 +10,6 @@ export const insforge = createClient({
   anonKey: insforgeKey,
 })
 
+export const db = insforge.database
+
 export default insforge
