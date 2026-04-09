@@ -2,6 +2,16 @@
 import { db } from '../insforge'
 import type { Bill } from '../types'
 
+export async function getBill(id: string): Promise<Bill> {
+  const { data, error } = await db
+    .from('bills')
+    .select('*, credit_cards(bank_name, card_name, card_number_last4, currency)')
+    .eq('id', id)
+    .single()
+  if (error) throw error
+  return data
+}
+
 export async function getBills(cardId?: string): Promise<Bill[]> {
   let query = db
     .from('bills')

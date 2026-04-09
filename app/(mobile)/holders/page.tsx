@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { Box, Typography, Fab, Skeleton } from '@mui/material'
 import { Add as AddIcon } from '@mui/icons-material'
 import { getHolders, createHolder } from '@/lib/api/holders'
+import { getCardsByHolder } from '@/lib/api/cards'
 import { HolderCard } from '@/components/mobile/HolderCard'
 import { HolderForm } from '@/components/mobile/HolderForm'
 import { useAuth } from '@/lib/auth'
@@ -13,6 +14,7 @@ import type { CardHolder } from '@/lib/types'
 
 export default function HoldersPage() {
   const [holders, setHolders] = useState<CardHolder[]>([])
+  const [cardCounts, setCardCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
   const { user } = useAuth()
@@ -22,6 +24,15 @@ export default function HoldersPage() {
     try {
       const data = await getHolders()
       setHolders(data)
+      // 并行查询每个持卡人的卡数量
+      const counts: Record<string, number> = {}
+      await Promise.all(
+        data.map(async (h) => {
+          const cards = await getCardsByHolder(h.id)
+          counts[h.id] = cards.length
+        })
+      )
+      setCardCounts(counts)
     } finally {
       setLoading(false)
     }
@@ -52,7 +63,7 @@ export default function HoldersPage() {
           <HolderCard
             key={h.id}
             holder={h}
-            cardCount={0}  // TODO: 从 credit_cards 查询
+            cardCount={cardCounts[h.id] ?? 0}
             onClick={() => router.push(`/holders/${h.id}`)}
           />
         ))

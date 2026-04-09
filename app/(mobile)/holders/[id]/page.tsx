@@ -3,12 +3,16 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Box, Typography, IconButton, Skeleton, Fab } from '@mui/material'
-import { ArrowBack, Add as AddIcon } from '@mui/icons-material'
-import { getHolder } from '@/lib/api/holders'
+import {
+  Box, Typography, IconButton, Skeleton, Fab,
+  Dialog, DialogTitle, DialogContent, DialogActions, Button,
+} from '@mui/material'
+import { ArrowBack, Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon } from '@mui/icons-material'
+import { getHolder, updateHolder, deleteHolder } from '@/lib/api/holders'
 import { getCardsByHolder, createCard } from '@/lib/api/cards'
 import { CreditCardVisual } from '@/components/mobile/CreditCardVisual'
 import { CardForm } from '@/components/mobile/CardForm'
+import { HolderForm } from '@/components/mobile/HolderForm'
 import type { CardHolder, CreditCard } from '@/lib/types'
 
 export default function HolderDetailPage() {
@@ -16,7 +20,9 @@ export default function HolderDetailPage() {
   const [holder, setHolder] = useState<CardHolder | null>(null)
   const [cards, setCards] = useState<CreditCard[]>([])
   const [loading, setLoading] = useState(true)
-  const [formOpen, setFormOpen] = useState(false)
+  const [cardFormOpen, setCardFormOpen] = useState(false)
+  const [editFormOpen, setEditFormOpen] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const router = useRouter()
 
   const loadData = useCallback(async () => {
@@ -37,6 +43,16 @@ export default function HolderDetailPage() {
     loadData()
   }
 
+  const handleEditHolder = async (data: { name: string; phone?: string; avatar_color: string }) => {
+    await updateHolder(id, data)
+    loadData()
+  }
+
+  const handleDeleteHolder = async () => {
+    await deleteHolder(id)
+    router.push('/holders')
+  }
+
   if (!holder && loading) return <Skeleton variant="rounded" height={200} sx={{ m: 2 }} />
   if (!holder) return <Typography sx={{ p: 2 }}>持卡人不存在</Typography>
 
@@ -46,7 +62,13 @@ export default function HolderDetailPage() {
         <IconButton onClick={() => router.back()}>
           <ArrowBack />
         </IconButton>
-        <Typography variant="h6" fontWeight={700}>{holder.name}</Typography>
+        <Typography variant="h6" fontWeight={700} sx={{ flex: 1 }}>{holder.name}</Typography>
+        <IconButton onClick={() => setEditFormOpen(true)}>
+          <EditIcon />
+        </IconButton>
+        <IconButton onClick={() => setDeleteDialogOpen(true)} color="error">
+          <DeleteIcon />
+        </IconButton>
       </Box>
 
       {cards.length === 0 ? (
@@ -66,17 +88,36 @@ export default function HolderDetailPage() {
       <Fab
         color="primary"
         sx={{ position: 'fixed', bottom: 72, right: 16 }}
-        onClick={() => setFormOpen(true)}
+        onClick={() => setCardFormOpen(true)}
       >
         <AddIcon />
       </Fab>
 
       <CardForm
-        open={formOpen}
-        onClose={() => setFormOpen(false)}
+        open={cardFormOpen}
+        onClose={() => setCardFormOpen(false)}
         onSubmit={handleCreateCard}
         holderId={id}
       />
+
+      <HolderForm
+        open={editFormOpen}
+        onClose={() => setEditFormOpen(false)}
+        onSubmit={handleEditHolder}
+        initial={holder}
+      />
+
+      {/* 删除确认 */}
+      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+        <DialogTitle>确认删除</DialogTitle>
+        <DialogContent>
+          <Typography>确定要删除持卡人「{holder.name}」吗？关联的信用卡和账单也将被删除，此操作不可逆。</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>取消</Button>
+          <Button color="error" variant="contained" onClick={handleDeleteHolder}>删除</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
