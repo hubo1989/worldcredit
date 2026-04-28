@@ -17,6 +17,7 @@ import { getCardProducts, getCardsByHolder } from '@/lib/api/cards' // Actually 
 import { insforge } from '@/lib/insforge'
 import { BillStatusCard } from '@/components/mobile/BillStatusCard'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
+import { BillForm } from '@/components/mobile/BillForm'
 import type { Bill, CreditCard, CardProduct } from '@/lib/types'
 import { format, addMonths, startOfMonth, endOfMonth, setDate, addDays } from 'date-fns'
 
@@ -30,6 +31,8 @@ export default function BillsPage() {
   
   const [paymentOpen, setPaymentOpen] = useState(false)
   const [selectedBill, setSelectedBill] = useState<BillWithCard | null>(null)
+
+  const [billFormOpen, setBillFormOpen] = useState(false)
 
   const loadBills = useCallback(async () => {
     try {
@@ -223,6 +226,22 @@ export default function BillsPage() {
           billMonth={format(new Date(selectedBill.statement_end || selectedBill.due_date), 'MM月')}
         />
       )}
+
+      {/* 录入账单 FAB */}
+      <Fab
+        color="primary"
+        aria-label="录入账单"
+        onClick={() => setBillFormOpen(true)}
+        sx={{ position: 'fixed', bottom: 80, right: 20, zIndex: 10 }}
+      >
+        <AddIcon />
+      </Fab>
+
+      <BillForm
+        open={billFormOpen}
+        onClose={() => setBillFormOpen(false)}
+        onSuccess={loadBills}
+      />
     </Container>
   )
 }
