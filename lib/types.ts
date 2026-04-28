@@ -180,3 +180,18 @@ export interface ReminderLog {
   remind_type: '3days' | '1day' | 'due_day' | 'loan_3days' | 'loan_1day' | 'loan_due_day'
   sent_at: string
 }
+
+/**
+ * 邮件解析日志（账单自动录入审计）
+ */
+export interface EmailParseLog {
+  id: string
+  user_id: string
+  from_email?: string
+  subject?: string
+  bill_id?: string
+  status: 'success' | 'failed' | 'skipped'
+  error_msg?: string
+  raw_ai_response?: string
+  created_at: string
+}

@@ -219,3 +219,22 @@ CREATE TABLE IF NOT EXISTS reminder_logs (
 
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_reminder_logs_bill ON reminder_logs(bill_id);
+
+-- ============================================
+-- Email 解析日志（账单自动录入）
+-- ============================================
+
+-- email_parse_logs: 每封触发解析的邮件记录一条日志
+CREATE TABLE IF NOT EXISTS email_parse_logs (
+  id          UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id     UUID        NOT NULL,
+  from_email  TEXT,
+  subject     TEXT,
+  bill_id     UUID        REFERENCES bills(id) ON DELETE SET NULL,
+  status      TEXT        NOT NULL CHECK (status IN ('success', 'failed', 'skipped')),
+  error_msg   TEXT,
+  raw_ai_response TEXT,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_parse_logs_user ON email_parse_logs (user_id, created_at DESC);
