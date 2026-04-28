@@ -17,9 +17,10 @@
  */
 
 import { insforge } from './insforge'
-import type { ReminderLog } from './types'
+import type { ReminderLog, CreditCard } from './types'
+import { getLoanNextDueDate } from './utils'
 
-type RemindType = '3days' | '1day' | 'due_day'
+type RemindType = '3days' | '1day' | 'due_day' | 'loan_3days' | 'loan_1day' | 'loan_due_day'
 
 // InsForge SDK returns relations as arrays; use `any` to avoid SDK shape mismatch
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -75,6 +76,9 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
   if (!('Notification' in window) || Notification.permission !== 'granted') return
 
   try {
+    // --- 贷款类卡还款提醒 ---
+    await checkLoanReminders()
+
     // 1. Fetch unpaid bills due within next 3 days
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -154,5 +158,69 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
     }
   } catch (err) {
     console.warn('[reminders] checkAndSendReminders error:', err)
+  }
+}
+
+/**
+ * 贷款类卡还款提醒
+ * 查 card_type = 'loan' 的卡 → 用 getLoanNextDueDate 计算下一还款日
+ * 3天内到期 → 发推送，写 reminder_logs
+ */
+async function checkLoanReminders(): Promise<void> {
+  // 查询当前用户的所有贷款类卡
+  const { data: loanCards, error: cardsError } = await insforge.database
+    .from('credit_cards')
+    .select('id, loan_due_day, card_product:card_products(bank_name, card_name)')
+    .eq('card_type', 'loan')
+    .eq('status', 'active')
+
+  if (cardsError || !loanCards || loanCards.length === 0) return
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  for (const rawCard of loanCards as BillRow[]) {
+    const card = rawCard as CreditCard & { card_product: { bank_name: string; card_name: string } | { bank_name: string; card_name: string }[] }
+    if (!card.loan_due_day) continue
+
+    const nextDue = getLoanNextDueDate(card.loan_due_day, today)
+    const daysUntil = Math.round((nextDue.getTime() - today.getTime()) / 86_400_000)
+
+    let remindType: 'loan_3days' | 'loan_1day' | 'loan_due_day' | null = null
+    if (daysUntil === 3) remindType = 'loan_3days'
+    else if (daysUntil === 1) remindType = 'loan_1day'
+    else if (daysUntil === 0) remindType = 'loan_due_day'
+
+    if (!remindType) continue
+
+    const remindDateStr = nextDue.toISOString().slice(0, 10)
+
+    // 检查是否已发送
+    const { data: existingLog } = await insforge.database
+      .from('reminder_logs')
+      .select('id')
+      .eq('card_id', card.id)
+      .eq('remind_type', remindType)
+      .eq('remind_date', remindDateStr)
+      .maybeSingle()
+
+    if (existingLog) continue
+
+    const cpRaw = (card as BillRow).card_product
+    const cp = Array.isArray(cpRaw) ? cpRaw[0] : cpRaw
+    const cardName = cp ? `${cp.bank_name} ${cp.card_name}` : '贷款'
+    const dateLabel = `${nextDue.getMonth() + 1}月${nextDue.getDate()}日`
+
+    await showNotification(
+      '贷款还款提醒',
+      `${cardName} 还款日 ${dateLabel}，请及时还款`
+    )
+
+    await insforge.database
+      .from('reminder_logs')
+      .insert({ card_id: card.id, remind_type: remindType, remind_date: remindDateStr })
+      .then(({ error }) => {
+        if (error) console.warn('[reminders] loan log insert error:', error)
+      })
   }
 }

@@ -27,7 +27,7 @@ export interface CardProduct {
   apply_url?: string
   rewards_summary?: string
   currency: string
-  payment_due_type: 'fixed' | 'after_billing'
+  payment_due_type: 'fixed' | 'after_billing' | 'fixed_before_billing'
   payment_due_value: number
   annual_fee?: number
   annual_fee_waiver?: string
@@ -90,6 +90,16 @@ export interface CreditCard {
   credit_limit: number
   billing_day: number
   status: 'active' | 'frozen' | 'cancelled'
+  /** 卡类型：信用卡 / 贷款类 */
+  card_type: 'credit' | 'loan'
+  /** 贷款类专用：每月固定还款日（1-31） */
+  loan_due_day?: number
+  /** 覆盖卡产品默认账单日（NULL = 使用卡产品默认值） */
+  override_billing_day?: number
+  /** 覆盖还款规则类型 */
+  override_due_type?: 'fixed' | 'after_billing' | 'fixed_before_billing' | null
+  /** 覆盖还款规则值 */
+  override_due_value?: number | null
   created_at: string
 }
 
@@ -164,7 +174,9 @@ export interface PushSubscription {
  */
 export interface ReminderLog {
   id: string
-  bill_id: string
-  remind_type: '3days' | '1day' | 'due_day'
+  bill_id?: string
+  card_id?: string
+  remind_date?: string
+  remind_type: '3days' | '1day' | 'due_day' | 'loan_3days' | 'loan_1day' | 'loan_due_day'
   sent_at: string
 }

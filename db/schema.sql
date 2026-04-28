@@ -93,8 +93,25 @@ CREATE TABLE IF NOT EXISTS credit_cards (
   billing_day INT NOT NULL CHECK (billing_day BETWEEN 1 AND 31),
   status TEXT NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'frozen', 'cancelled')),
+  -- 卡类型：信用卡 / 贷款类
+  card_type TEXT NOT NULL DEFAULT 'credit'
+    CHECK (card_type IN ('credit', 'loan')),
+  -- 贷款类专用：每月固定还款日（1-31）
+  loan_due_day INT CHECK (loan_due_day BETWEEN 1 AND 31),
+  -- 覆盖卡产品默认账单规则（NULL = 使用卡产品默认值）
+  override_billing_day INT CHECK (override_billing_day BETWEEN 1 AND 31),
+  override_due_type TEXT
+    CHECK (override_due_type IN ('fixed', 'after_billing', 'fixed_before_billing')),
+  override_due_value INT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ALTER TABLE migrations（新字段，若在已有库上执行）
+-- ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS card_type TEXT NOT NULL DEFAULT 'credit' CHECK (card_type IN ('credit', 'loan'));
+-- ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS loan_due_day INT CHECK (loan_due_day BETWEEN 1 AND 31);
+-- ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS override_billing_day INT CHECK (override_billing_day BETWEEN 1 AND 31);
+-- ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS override_due_type TEXT CHECK (override_due_type IN ('fixed', 'after_billing', 'fixed_before_billing'));
+-- ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS override_due_value INT;
 
 -- 账单
 CREATE TABLE IF NOT EXISTS bills (
@@ -187,12 +204,17 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 );
 
 -- reminder_logs: 记录已发送提醒，防重复
+-- remind_type: '3days' | '1day' | 'due_day' | 'loan_3days' | 'loan_1day' | 'loan_due_day'
 CREATE TABLE IF NOT EXISTS reminder_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   bill_id UUID REFERENCES bills(id) ON DELETE CASCADE,
-  remind_type TEXT NOT NULL,  -- '3days' | '1day' | 'due_day'
+  -- 贷款类提醒无 bill_id，用 card_id + remind_type + remind_date 唯一
+  card_id UUID REFERENCES credit_cards(id) ON DELETE CASCADE,
+  remind_date DATE,
+  remind_type TEXT NOT NULL,
   sent_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE(bill_id, remind_type)
+  UNIQUE(bill_id, remind_type),
+  UNIQUE(card_id, remind_type, remind_date)
 );
 
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
