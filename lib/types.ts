@@ -15,6 +15,7 @@ export interface CardHolder {
   auth_user_id?: string
   name: string
   phone?: string
+  email?: string
   avatar_color: string
   created_at: string
 }
@@ -49,6 +50,24 @@ export interface Bill {
   min_payment: number
   due_date: string
   status: 'unpaid' | 'partial' | 'paid' | 'overdue'
+  created_at: string
+}
+
+export interface BillItem {
+  id: string
+  bill_id: string
+  transaction_date?: string
+  post_date?: string
+  description: string
+  merchant_name?: string
+  category?: string
+  amount: number
+  currency?: string
+  item_type: 'purchase' | 'refund' | 'fee' | 'interest' | 'payment' | 'adjustment' | 'other'
+  source: 'manual' | 'llm' | 'import'
+  confidence?: number
+  raw_text?: string
+  metadata: Record<string, unknown>
   created_at: string
 }
 
