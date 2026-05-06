@@ -1,156 +1,204 @@
 // app/(mobile)/page.tsx
 'use client'
 
-import { useEffect, useState } from 'react'
-import { 
-  Box, Typography, Card, CardContent, Grid, 
-  CircularProgress, IconButton, Avatar, Button,
-  LinearProgress, Stack
+import { useEffect, useState, useCallback } from 'react'
+import {
+  Box, Typography, Grid, Card, CardContent,
+  IconButton, Button, Stack, Avatar
 } from '@mui/material'
-import { 
-  CreditCard as CreditCardIcon, 
-  AccountBalance as BankIcon,
+import {
   Notifications as BellIcon,
   Add as AddIcon,
-  ChevronRight as ChevronRightIcon
+  ChevronRight as ChevronRightIcon,
+  CreditCard as CreditCardIcon,
+  People as PeopleIcon,
 } from '@mui/icons-material'
 import { useAuth } from '@/lib/auth'
 import { insforge } from '@/lib/insforge'
+import { getUnpaidBills } from '@/lib/api/bills'
+import { getPaymentsByBill } from '@/lib/api/payments'
+import { getHolders } from '@/lib/api/holders'
+import { getAllCards } from '@/lib/api/cards'
+import { DashboardSummary } from '@/components/mobile/DashboardSummary'
+import { UpcomingBills } from '@/components/mobile/UpcomingBills'
+import type { CardHolder, CreditCard } from '@/lib/types'
 
 export default function HomePage() {
   const { user } = useAuth()
   const [stats, setStats] = useState({ cards: 0, holders: 0, totalLimit: 0 })
+  const [bills, setBills] = useState<any[]>([])
+  const [holders, setHolders] = useState<CardHolder[]>([])
+  const [cards, setCards] = useState<CreditCard[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const [cardsRes, holdersRes] = await Promise.all([
-          insforge.database.from('credit_cards').select('*', { count: 'exact', head: true }),
-          insforge.database.from('card_holders').select('*', { count: 'exact', head: true })
-        ])
-        
-        // 由于没有数据，这里设定一些默认值演示 UI
-        setStats({
-          cards: cardsRes.count || 0,
-          holders: holdersRes.count || 0,
-          totalLimit: 0
+  const loadData = useCallback(async () => {
+    try {
+      const [holdersData, cardsData] = await Promise.all([
+        getHolders().catch(() => [] as CardHolder[]),
+        getAllCards().catch(() => [] as CreditCard[]),
+      ])
+      setHolders(holdersData)
+      setCards(cardsData)
+
+      const totalLimit = cardsData.reduce((sum, c) => sum + c.credit_limit, 0)
+      setStats({
+        cards: cardsData.length,
+        holders: holdersData.length,
+        totalLimit,
+      })
+
+      // Load unpaid bills
+      const unpaidBills = await getUnpaidBills().catch(() => [])
+      // Enrich with payment info
+      const enrichedBills = await Promise.all(
+        unpaidBills.map(async (b: any) => {
+          try {
+            const p = await getPaymentsByBill(b.id)
+            const card = cardsData.find(c => c.id === b.card_id)
+            return {
+              ...b,
+              paid_amount: p.reduce((s: number, pm: any) => s + pm.amount, 0),
+              card: card ? { bank_name: card.bank_name, card_name: card.card_name, currency: card.currency } : undefined
+            }
+          } catch {
+            return { ...b, paid_amount: 0 }
+          }
         })
-      } catch (err) {
-        console.error('Fetch stats failed:', err)
-      } finally {
-        setLoading(false)
-      }
+      )
+      setBills(enrichedBills)
+    } catch (err) {
+      console.error('Dashboard load failed:', err)
+    } finally {
+      setLoading(false)
     }
-    fetchStats()
   }, [])
 
-  if (loading) {
-    return <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>
-  }
+  useEffect(() => { loadData() }, [loadData])
 
   return (
     <Box sx={{ p: 2, pb: 4 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box>
-          <Typography variant="h6" fontWeight={800}>👋 Hi, {user?.name || '管理员'}</Typography>
-          <Typography variant="body2" color="text.secondary">今天有 0 笔待还款项</Typography>
+          <Typography variant="h6" fontWeight={800}>
+            👋 Hi, {user?.name || '管理员'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {bills.filter(b => b.status !== 'paid').length} 笔待还款项
+          </Typography>
         </Box>
         <IconButton sx={{ bgcolor: 'white', border: '1px solid #eee' }}>
           <BellIcon fontSize="small" />
         </IconButton>
       </Box>
 
-      {/* Overview Card */}
-      <Card sx={{ 
-        background: 'linear-gradient(135deg, #1976d2 0%, #1565c0 100%)', 
-        color: 'white', 
-        borderRadius: 4,
-        mb: 3,
-        boxShadow: '0 8px 16px rgba(25, 118, 210, 0.2)'
-      }}>
-        <CardContent sx={{ p: 3 }}>
-          <Typography variant="body2" sx={{ opacity: 0.8, mb: 0.5 }}>已用总额度</Typography>
-          <Typography variant="h4" fontWeight={800}>¥ 0.00</Typography>
-          <Box sx={{ mt: 3 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-              <Typography variant="caption" sx={{ opacity: 0.8 }}>额度使用率 0%</Typography>
-              <Typography variant="caption" sx={{ opacity: 0.8 }}>¥ 0 / ¥ 0</Typography>
-            </Box>
-            <LinearProgress 
-              variant="determinate" 
-              value={0} 
-              sx={{ 
-                height: 8, 
-                borderRadius: 4, 
-                bgcolor: 'rgba(255,255,255,0.2)',
-                '& .MuiLinearProgress-bar': { bgcolor: 'white' }
-              }} 
-            />
-          </Box>
-        </CardContent>
-      </Card>
+      {/* Dashboard Summary */}
+      <DashboardSummary bills={bills} />
+
+      {/* Upcoming Bills */}
+      <UpcomingBills bills={bills} />
 
       {/* Quick Stats Grid */}
-      <Grid container spacing={2} sx={{ mb: 4 }}>
-        <Grid item xs={6}>
-          <Card sx={{ borderRadius: 4 }}>
-            <CardContent sx={{ p: 2 }}>
-              <Typography color="text.secondary" variant="body2">持卡对象</Typography>
-              <Typography variant="h5" fontWeight={700}>{stats.holders}</Typography>
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid item xs={4}>
+          <Card sx={{ borderRadius: 3, textAlign: 'center' }}>
+            <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+              <PeopleIcon color="primary" fontSize="small" />
+              <Typography variant="h6" fontWeight={700}>{stats.holders}</Typography>
+              <Typography variant="caption" color="text.secondary">持卡人</Typography>
             </CardContent>
           </Card>
         </Grid>
-        <Grid item xs={6}>
-          <Card sx={{ borderRadius: 4 }}>
-            <CardContent sx={{ p: 2 }}>
-              <Typography color="text.secondary" variant="body2">信用卡</Typography>
-              <Typography variant="h5" fontWeight={700}>{stats.cards}</Typography>
+        <Grid item xs={4}>
+          <Card sx={{ borderRadius: 3, textAlign: 'center' }}>
+            <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+              <CreditCardIcon color="primary" fontSize="small" />
+              <Typography variant="h6" fontWeight={700}>{stats.cards}</Typography>
+              <Typography variant="caption" color="text.secondary">信用卡</Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={4}>
+          <Card sx={{ borderRadius: 3, textAlign: 'center' }}>
+            <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+              <Typography variant="caption" color="text.secondary">总额度</Typography>
+              <Typography variant="body2" fontWeight={700}>
+                {stats.totalLimit > 10000
+                  ? `${(stats.totalLimit / 10000).toFixed(1)}万`
+                  : stats.totalLimit.toLocaleString()}
+              </Typography>
             </CardContent>
           </Card>
         </Grid>
       </Grid>
 
-      {/* Empty State */}
-      <Box sx={{ 
-        textAlign: 'center', 
-        p: 4, 
-        bgcolor: '#fff', 
-        borderRadius: 4, 
-        border: '2px dashed #eee' 
-      }}>
-        <CreditCardIcon sx={{ fontSize: 48, color: '#ccc', mb: 2 }} />
-        <Typography variant="subtitle1" fontWeight={600}>暂无信用卡数据</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          添加持卡人后，即可录入其名下的信用卡
-        </Typography>
-        <Button 
-          variant="contained" 
-          startIcon={<AddIcon />}
-          sx={{ borderRadius: 3, px: 4 }}
-          href="/holders"
-        >
-          立即开始
-        </Button>
-      </Box>
-
       {/* Holder Previews */}
-      <Box sx={{ mt: 4 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Typography variant="subtitle1" fontWeight={700}>持卡人</Typography>
-          <Button size="small" endIcon={<ChevronRightIcon />}>全部</Button>
+      {holders.length > 0 && (
+        <Box sx={{ mb: 3 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+            <Typography variant="subtitle1" fontWeight={700}>持卡人</Typography>
+            <Button size="small" endIcon={<ChevronRightIcon />} href="/holders">全部</Button>
+          </Box>
+          <Stack direction="row" spacing={1.5} sx={{ overflowX: 'auto', pb: 1 }}>
+            {holders.map(h => {
+              const holderCards = cards.filter(c => c.holder_id === h.id)
+              return (
+                <Card
+                  key={h.id}
+                  sx={{
+                    minWidth: 140, borderRadius: 3, flexShrink: 0,
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => window.location.href = `/holders/${h.id}`}
+                >
+                  <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 }, textAlign: 'center' }}>
+                    <Avatar sx={{ bgcolor: h.avatar_color, width: 40, height: 40, mx: 'auto', mb: 1 }}>
+                      {h.name.charAt(0)}
+                    </Avatar>
+                    <Typography variant="body2" fontWeight={600} noWrap>{h.name}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {holderCards.length} 张卡
+                    </Typography>
+                  </CardContent>
+                </Card>
+              )
+            })}
+            <Card
+              sx={{
+                minWidth: 80, borderRadius: 3, flexShrink: 0,
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
+              }}
+              onClick={() => window.location.href = '/holders'}
+            >
+              <CardContent sx={{ textAlign: 'center', p: 1.5, '&:last-child': { pb: 1.5 } }}>
+                <AddIcon sx={{ color: '#999' }} />
+              </CardContent>
+            </Card>
+          </Stack>
         </Box>
-        <Stack direction="row" spacing={2} sx={{ overflowX: 'auto', pb: 2 }}>
-           <IconButton sx={{ 
-             width: 56, height: 56, 
-             border: '1px dashed #999',
-             flexShrink: 0
-           }}>
-             <AddIcon />
-           </IconButton>
-        </Stack>
-      </Box>
+      )}
+
+      {/* Empty State (when no data at all) */}
+      {holders.length === 0 && cards.length === 0 && (
+        <Box sx={{
+          textAlign: 'center', p: 4, bgcolor: '#fff', borderRadius: 4,
+          border: '2px dashed #eee'
+        }}>
+          <CreditCardIcon sx={{ fontSize: 48, color: '#ccc', mb: 2 }} />
+          <Typography variant="subtitle1" fontWeight={600}>暂无信用卡数据</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            添加持卡人后，即可录入其名下的信用卡
+          </Typography>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            sx={{ borderRadius: 3, px: 4 }}
+            href="/holders"
+          >
+            立即开始
+          </Button>
+        </Box>
+      )}
     </Box>
   )
 }
