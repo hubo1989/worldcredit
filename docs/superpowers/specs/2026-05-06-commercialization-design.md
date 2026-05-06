@@ -1,263 +1,262 @@
-# WorldCredit Commercialization Design
+# WorldCredit 商用化设计
 
-Date: 2026-05-06
-Status: Draft for user review
+日期：2026-05-06
+状态：已确认，进入实施计划阶段
 
-## Summary
+## 摘要
 
-WorldCredit should commercialize first as a Chinese-first, region-light subscription product for families who manage multiple credit cards together. The first paid version should not try to become a full personal finance platform. Its commercial promise is narrower: keep household credit card data in one place, reduce bill entry work, make repayment responsibility visible, prevent missed repayments, and provide monthly review/export.
+WorldCredit 第一阶段应商用化为一个中文优先、地区约束较轻的家庭信用卡订阅产品，服务那些需要共同管理多张信用卡的家庭。第一版付费产品不应尝试成为完整个人理财平台，而应聚焦更窄的承诺：把家庭信用卡数据集中管理，降低账单录入成本，明确还款责任，减少忘还款风险，并支持月度复盘和导出。
 
-The target validation path is small-scale paid use before broad market expansion. Product decisions should favor fast subscription validation, strong data trust, and a clear family workflow over bank integrations, investment features, native app store subscriptions, or heavy enterprise controls.
+目标验证路径是先做小范围真实付费，再考虑更广泛市场扩张。产品决策应优先服务订阅验证、数据可信度和清晰的家庭协作流程，而不是银行直连、投资能力、原生应用商店订阅或重型企业控制台。
 
-## Product Positioning
+## 产品定位
 
-The product category is a family credit card bill manager. It sits between a spreadsheet and a full personal finance app. Compared with spreadsheets, it should be safer, easier to update, and better at reminders. Compared with large finance apps, it should stay focused on credit cards, household responsibility, and semi-automatic bill organization.
+产品类别是家庭信用卡账单管家，介于表格和完整个人理财 App 之间。相比表格，它应该更安全、更易更新、更擅长提醒；相比大型理财 App，它应该保持信用卡聚焦，强调家庭责任分配和半自动账单整理。
 
-The first commercial audience is Chinese-speaking early adopters who are willing to pay for a useful household tool. The design should avoid assumptions that block future overseas use, but the first release does not need full English localization, bank syncing, App Store subscription flow, or country-specific financial compliance beyond normal consumer app privacy and data handling obligations.
+第一批商业用户是愿意为实用家庭工具付费的中文早期用户。设计应避免把未来海外扩展堵死，但第一版不需要完整英文国际化、银行同步、App Store 订阅流程，也不需要超出普通消费 App 隐私与数据处理要求的地区化金融合规能力。
 
-## Commercial Goals
+## 商业目标
 
-The first commercial release is successful when a real user can complete this end-to-end path:
+第一版商用成功的标准，是真实用户能够完成这条端到端路径：
 
-1. Register an account.
-2. Create a household workspace.
-3. Add household members and credit cards.
-4. Import a bill draft from pasted text.
-5. Review validation warnings and confirm the bill.
-6. Assign or record repayment.
-7. Receive reliable repayment reminders.
-8. Review the monthly household credit card picture.
-9. Export data.
-10. Upgrade to Pro when Free limits are reached.
+1. 注册账号。
+2. 创建家庭空间。
+3. 添加家庭成员和信用卡。
+4. 从粘贴文本导入一张账单草稿。
+5. 查看校验警告并确认账单。
+6. 分配或记录还款。
+7. 收到可靠的还款提醒。
+8. 查看家庭信用卡月度概览。
+9. 导出数据。
+10. 在触达 Free 限制时升级 Pro。
 
-This flow is the minimum commercial spine. Features outside it should be deferred unless they directly increase trust, conversion, or retention.
+这条路径是最小商业主线。主线之外的功能，只有在直接提升信任、转化或留存时才应进入第一版。
 
-## Subscription Model
+## 订阅模型
 
-The first pricing model should be Free plus Pro.
+第一版定价模型应采用 Free + Pro。
 
-Free should allow a user to understand the product without turning it into a complete free substitute. Recommended Free limits are a small number of card holders, cards, monthly bill imports, and export attempts. Pro should unlock household collaboration, higher card and import limits, advanced reminders, report export, and deeper history.
+Free 要让用户理解产品价值，但不能成为完整免费替代品。建议限制持卡人数量、信用卡数量、每月账单导入次数和导出次数。Pro 解锁家庭协作、更高卡片和导入额度、高级提醒、报表导出和更长历史数据。
 
-The subscription system needs these capabilities:
+订阅系统需要以下能力：
 
-- Plan definition for Free and Pro.
-- Trial state with start and end dates.
-- User or household-level entitlement check.
-- Feature limits for card count, holder count, import count, export count, and advanced reminder settings.
-- Graceful locked states when a user exceeds a limit.
-- Manual Pro override for early customers, testing, and support.
-- Upgrade prompts at natural friction points, such as adding more cards or confirming more imports.
+- Free 和 Pro 的套餐定义。
+- 试用状态，包括开始和结束日期。
+- 用户或家庭级别的权益校验。
+- 对卡片数、持卡人数、导入次数、导出次数和高级提醒设置做功能额度限制。
+- 用户超限时显示可恢复的锁定状态。
+- 为早期客户、测试和客服支持提供手动 Pro 覆盖。
+- 在添加更多卡片、确认更多导入等自然摩擦点展示升级提示。
 
-The entitlement check must be enforced outside the UI. Frontend gating is useful for messaging, but the API layer must prevent over-limit writes.
+权益校验必须在 UI 之外执行。前端限制只用于体验提示，API 层必须阻止超限写入。
 
-## Household Collaboration
+## 家庭协作
 
-Household collaboration is the main paid value. The application should introduce a household workspace as the top-level commercial boundary. A household contains users, card holders, credit cards, bills, reminders, imports, and reports.
+家庭协作是主要付费价值。应用应引入家庭空间作为顶层商业边界。一个家庭包含用户、持卡人、信用卡、账单、提醒、导入和报表。
 
-Roles should remain simple:
+角色保持简单：
 
-- Owner: manages subscription, household settings, members, cards, bills, and exports.
-- Admin: manages household data but cannot change subscription ownership unless explicitly granted later.
-- Member: sees only assigned card holder data and can record self-service actions.
+- Owner：管理订阅、家庭设置、成员、卡片、账单和导出。
+- Admin：管理家庭数据，但默认不能转移订阅所有权。
+- Member：只查看被分配的持卡人数据，并能记录自助操作。
 
-The existing `users.role`, `card_holders.auth_user_id`, and RLS direction are a useful starting point, but the commercial product needs clearer household-level boundaries. The current admin/member model should evolve into household membership rather than relying only on one admin's managed card holders.
+现有的 `users.role`、`card_holders.auth_user_id` 和 RLS 方向可以继续作为起点，但商用产品需要更清晰的家庭级边界。当前 admin/member 模型应演进为家庭成员关系，而不是只依赖某个管理员管理的持卡人集合。
 
-Required collaboration features:
+协作功能要求：
 
-- Create household during onboarding.
-- Invite member by email.
-- Bind invited user to a card holder profile.
-- Show invitation status: pending, accepted, expired, revoked.
-- Let members record repayment, benefit usage, and promo usage for their own data.
-- Prevent members from changing base credit card and bill definitions.
-- Let owners/admins see a household-wide view.
-- Explain permission boundaries in the UI when actions are unavailable.
+- 在 onboarding 中创建家庭空间。
+- 通过邮箱邀请成员。
+- 将受邀用户绑定到某个持卡人档案。
+- 展示邀请状态：待接受、已接受、已过期、已撤销。
+- 允许成员记录自己的还款、权益使用和优惠使用。
+- 禁止成员修改信用卡和账单基础定义。
+- 允许 Owner/Admin 查看家庭全局视图。
+- 当操作不可用时，在 UI 中解释权限边界。
 
-## Bill Import And Validation
+## 账单导入与校验
 
-Bill import is the second main paid value. The first release should focus on pasted bill text, email text, or SMS text. Image, PDF, and OCR import should remain future work until the text import flow is trusted.
+账单导入是第二个主要付费价值。第一版应聚焦粘贴账单文本、邮件文本或短信文本。图片、PDF 和 OCR 导入应等文本导入流程足够可信后再做。
 
-The import flow should use drafts:
+导入流程使用草稿机制：
 
-1. User pastes bill text.
-2. Parser extracts bill month, amount, due date, minimum payment, statement period, transactions, bank/card hints, and confidence.
-3. System suggests a matching card when possible.
-4. Draft view shows extracted fields, transaction list, confidence, and warnings.
-5. User fixes fields.
-6. System checks duplicate bills, amount consistency, missing due date, invalid dates, negative totals, and unsupported currency.
-7. User confirms the draft.
-8. Confirmed data creates or updates the official bill and bill items.
+1. 用户粘贴账单文本。
+2. 解析器提取账单月份、金额、还款日、最低还款额、账单周期、交易明细、银行/卡片线索和置信度。
+3. 系统尽可能建议匹配信用卡。
+4. 草稿页展示提取字段、交易列表、置信度和警告。
+5. 用户修正字段。
+6. 系统检查重复账单、金额一致性、缺失还款日、无效日期、异常负数总额和不支持币种。
+7. 用户确认草稿。
+8. 确认后的数据创建或更新正式账单和账单明细。
 
-Imported data must never skip confirmation. Recognition output should keep source text and confidence metadata so mistakes can be traced.
+导入数据不得跳过确认直接入库。识别结果要保留原始文本和置信度元数据，便于追溯错误。
 
-## Repayment And Reminders
+## 还款与提醒
 
-The commercial version must make repayment responsibility explicit. A bill should have enough state to answer: who owns it, who has paid it, what amount remains, and when action is needed.
+商用版必须让还款责任明确。一张账单应能回答：归谁负责、谁已经还款、还剩多少、什么时候需要处理。
 
-Required reminder capabilities:
+提醒能力要求：
 
-- Due soon reminder.
-- Due today reminder.
-- Overdue reminder.
-- Minimum payment risk hint.
-- Household owner view across all members.
-- Member view for personal bills only.
-- User-level notification preferences.
-- Read, dismissed, and history states.
-- Deduplication by bill and reminder day.
+- 临近还款提醒。
+- 当天到期提醒。
+- 逾期提醒。
+- 最低还款风险提示。
+- Owner 的全家庭提醒视图。
+- Member 的个人账单提醒视图。
+- 用户级通知偏好。
+- 已读、忽略和历史状态。
+- 按账单和提醒日期去重。
 
-The first paid version can start with in-app reminders and browser/PWA notifications. It does not need native push infrastructure if PWA notification reliability is acceptable for the test group. Reminder logic should be deterministic and auditable.
+第一版付费产品可以先支持应用内提醒和浏览器/PWA 通知。如果 PWA 通知对测试用户足够可靠，就不需要原生推送基础设施。提醒逻辑应保持确定性和可审计。
 
-## Reports And Export
+## 报表与导出
 
-Reports should focus on household credit card review, not broad financial planning.
+报表应聚焦家庭信用卡复盘，而不是泛化财务规划。
 
-Required report views:
+报表视图要求：
 
-- Household monthly bill total.
-- Pending repayment total.
-- Paid amount.
-- Overdue count.
-- Card-level and member-level split.
-- Credit limit utilization.
-- Category trend when bill items have categories.
-- Import and repayment completeness indicators.
+- 家庭月度账单总额。
+- 待还总额。
+- 已还金额。
+- 逾期次数。
+- 按卡片和成员拆分。
+- 额度使用率。
+- 当账单明细有分类时展示分类趋势。
+- 导入和还款完整度提示。
 
-Export should support CSV first. Excel can follow if users ask for it. Export filters should include month range, member, card, bank, bills, payments, bill items, benefit usages, and promo usages.
+导出第一版支持 CSV 即可。Excel 可以根据用户反馈后置。导出筛选应包括月份范围、成员、卡片、银行、账单、还款、账单明细、权益使用和优惠使用。
 
-## Benefits And Promo Opportunities
+## 权益与优惠机会
 
-Benefits and promos should support retention but should not dominate the first paid proposition.
+权益和优惠用于提升留存，但不应成为第一版付费主张的中心。
 
-The commercial release should include:
+商用版应包括：
 
-- Available benefits and promos by card.
-- Remaining quota and usage history.
-- Expiring soon indicators.
-- Simple opportunity priority based on expiry, quota, and usage.
-- Card detail aggregation.
+- 按卡片展示可用权益和优惠。
+- 剩余额度和使用历史。
+- 即将过期提示。
+- 基于过期时间、额度和使用情况的简单优先级。
+- 卡片详情页聚合展示。
 
-The recommendation engine should remain rule-based in the first release. It can answer "which card should I use for this purchase" with transparent reasons, but it should not make financial advice claims or rely on opaque AI decisions.
+推荐引擎第一版保持规则驱动。它可以用透明理由回答“这笔消费该用哪张卡”，但不应做金融建议承诺，也不应依赖黑盒 AI 决策。
 
-## Commercial Operations
+## 商业运营
 
-Small-scale paid use still needs a minimal operations surface. Without it, support and trust degrade quickly.
+即使是小范围付费，也需要最小运营界面。没有它，客服和信任会很快变差。
 
-The first operations console should include:
+第一版运营控制台应包括：
 
-- User list.
-- Household list.
-- Subscription and trial status.
-- Manual Pro override.
-- Card, holder, bill, and import counts.
-- Recent import failures.
-- Recent notification failures.
-- Feedback messages.
-- Basic support notes.
+- 用户列表。
+- 家庭列表。
+- 订阅和试用状态。
+- 手动 Pro 覆盖。
+- 卡片、持卡人、账单和导入数量。
+- 最近导入失败。
+- 最近通知失败。
+- 用户反馈消息。
+- 基础客服备注。
 
-This console can be restricted to internal admin users and does not need complex role management in the first version.
+这个控制台可以只开放给内部管理员，第一版不需要复杂后台角色体系。
 
-## Trust, Privacy, And Account Controls
+## 信任、隐私与账号控制
 
-Because WorldCredit stores household financial data, commercial readiness requires visible trust controls.
+WorldCredit 保存家庭财务数据，因此商用就绪必须包含可见的信任控制。
 
-Required trust features:
+信任能力要求：
 
-- Privacy policy.
-- Terms of service.
-- Clear statement that the app does not move money or initiate repayments.
-- Account deletion request or self-service deletion.
-- Household export before deletion.
-- Sensitive error handling that does not leak other household data.
-- Audit trail for important changes: member invite, card creation, bill confirmation, repayment record, export, subscription change, and account deletion.
-- Backup and restore process for production data.
+- 隐私政策。
+- 服务条款。
+- 明确声明应用不转移资金、不发起还款。
+- 账号删除申请或自助删除。
+- 删除前的家庭数据导出。
+- 敏感错误处理不得泄露其他家庭数据。
+- 重要变更审计轨迹：成员邀请、卡片创建、账单确认、还款记录、导出、订阅变更和账号删除。
+- 生产数据备份与恢复流程。
 
-The product should avoid storing full card numbers. Existing last-four storage should remain the default.
+产品应避免保存完整卡号。现有的卡号末四位存储方式应继续作为默认方案。
 
-## Architecture
+## 架构
 
-The current application can continue using the existing mobile-first React pages, `lib/api/*` access layer, database migrations, and RLS-backed data protection. Commercialization should add bounded modules rather than spreading payment and household logic through existing feature files.
+当前应用可以继续沿用移动端优先的 React 页面、`lib/api/*` 访问层、数据库迁移和 RLS 数据保护。商用化应新增边界清晰的模块，而不是把支付和家庭逻辑散落到现有功能文件里。
 
-Recommended modules:
+建议模块：
 
-- `subscription`: plan definitions, entitlement checks, usage counters, trial state, manual overrides.
-- `household`: workspace, membership, invitations, role checks, member binding.
-- `imports`: bill draft creation, validation, confirmation, import history.
-- `notifications`: reminder generation, delivery preferences, delivery history, deduplication.
-- `reports`: household summary, export filters, CSV generation.
-- `ops`: internal operations console APIs and pages.
-- `audit`: append-only event recording for sensitive actions.
+- `subscription`：套餐定义、权益校验、使用量计数、试用状态、手动覆盖。
+- `household`：家庭空间、成员关系、邀请、角色校验、成员绑定。
+- `imports`：账单草稿创建、校验、确认、导入历史。
+- `notifications`：提醒生成、投递偏好、投递历史、去重。
+- `reports`：家庭概览、导出筛选、CSV 生成。
+- `ops`：内部运营控制台 API 和页面。
+- `audit`：敏感操作的追加式事件记录。
 
-The most important boundary is entitlement enforcement. Any API that creates holders, cards, bill imports, exports, or advanced reminders must call the entitlement layer before writing data.
+最重要的边界是权益校验。任何创建持卡人、信用卡、账单导入、导出或高级提醒的 API，都必须在写入数据前调用权益层。
 
-## Data Model Changes
+## 数据模型变更
 
-Expected new or expanded data areas:
+预计新增或扩展的数据区域：
 
-- `households`: owner, name, created_at.
-- `household_members`: household_id, user_id, role, status, invited_email, accepted_at.
-- `subscriptions`: household_id, plan, trial_start, trial_end, status, provider, provider_customer_id, current_period_end.
-- `entitlement_overrides`: household_id, reason, expires_at, created_by.
-- `usage_counters`: household_id, metric, period, value.
-- `member_invites`: household_id, email, token hash, status, expires_at.
-- `audit_events`: household_id, actor_user_id, event_type, entity_type, entity_id, metadata, created_at.
-- `feedback_messages`: user_id, household_id, message, status, created_at.
+- `households`：owner、name、created_at。
+- `household_members`：household_id、user_id、role、status、invited_email、accepted_at。
+- `subscriptions`：household_id、plan、trial_start、trial_end、status、provider、provider_customer_id、current_period_end。
+- `entitlement_overrides`：household_id、reason、expires_at、created_by。
+- `usage_counters`：household_id、metric、period、value。
+- `member_invites`：household_id、email、token_hash、status、expires_at。
+- `audit_events`：household_id、actor_user_id、event_type、entity_type、entity_id、metadata、created_at。
+- `feedback_messages`：user_id、household_id、message、status、created_at。
 
-Existing data tables should be associated with a household either directly or through card holders. The migration should avoid breaking current single-admin data; existing data can be migrated into a default household per admin user.
+现有数据表应直接或通过持卡人与家庭关联。迁移不能破坏当前单管理员数据；已有数据可以迁移到每个管理员用户的默认家庭空间。
 
-## Error Handling
+## 错误处理
 
-Commercial flows should prefer recoverable errors:
+商用流程应优先提供可恢复错误：
 
-- Over-limit writes return a structured limit error with current usage and upgrade target.
-- Import parser failures preserve the raw text and ask the user to manually fill fields.
-- Duplicate bill detection should block accidental duplicates but allow explicit replacement or merge in a later version.
-- Notification delivery failures should be recorded and visible in operations.
-- Member permission failures should explain the required role without exposing hidden data.
+- 超限写入返回结构化额度错误，包含当前使用量和升级目标。
+- 导入解析失败时保留原始文本，并让用户手动填写字段。
+- 重复账单检测应阻止误创建重复数据；显式替换或合并可以后置。
+- 通知投递失败应被记录，并在运营后台可见。
+- 成员权限失败应说明需要的角色，但不能暴露隐藏数据。
 
-## Testing
+## 测试
 
-Testing should focus on commercial risk:
+测试应聚焦商业风险：
 
-- Entitlement limits for Free and Pro.
-- Household member visibility and RLS behavior.
-- Member self-service writes versus forbidden base-data edits.
-- Bill import validation and confirmation.
-- Duplicate bill detection.
-- Reminder deduplication.
-- CSV export correctness.
-- Account deletion and data export.
-- Migration from current single-admin data to household data.
+- Free 和 Pro 的权益限制。
+- 家庭成员可见性和 RLS 行为。
+- 成员自助写入与禁止修改基础数据。
+- 账单导入校验和确认。
+- 重复账单检测。
+- 提醒去重。
+- CSV 导出正确性。
+- 账号删除和数据导出。
+- 从当前单管理员数据迁移到家庭数据。
 
-End-to-end tests should cover the full commercial spine from signup through Pro-gated actions.
+端到端测试应覆盖从注册到 Pro 限制动作的完整商业主线。
 
-## Deferred Work
+## 暂缓范围
 
-These features are intentionally out of scope for the first commercial release:
+第一版商用明确暂缓以下功能：
 
-- Bank account syncing.
-- Automatic repayment or money movement.
-- Credit score, loan, investment, or insurance features.
-- Native mobile app subscriptions.
-- Full English localization.
-- Enterprise multi-tenant white-label controls.
-- High-accuracy image/PDF OCR.
-- AI financial advisor.
-- Complex budgeting, net worth, and savings goals.
+- 银行账户同步。
+- 自动还款或任何资金转移。
+- 征信、贷款、投资或保险功能。
+- 原生移动端应用订阅。
+- 完整英文国际化。
+- 企业多租户白标控制。
+- 高精度图片/PDF OCR。
+- AI 财务顾问。
+- 复杂预算、净资产和储蓄目标。
 
-## Release Sequence
+## 发布顺序
 
-Recommended implementation sequence:
+推荐实施顺序：
 
-1. Household data boundary and migration.
-2. Membership, invitations, and role enforcement.
-3. Subscription, trial, entitlement checks, and Free/Pro limits.
-4. Text-based bill import drafts and validation.
-5. Repayment responsibility and reminder reliability.
-6. Household reports and CSV export.
-7. Benefits/promos opportunity polish.
-8. Minimal operations console.
-9. Trust pages, deletion/export flow, audit events, and production readiness checks.
+1. 家庭数据边界和迁移。
+2. 成员关系、邀请和角色强制校验。
+3. 订阅、试用、权益校验和 Free/Pro 限制。
+4. 文本账单导入草稿和校验。
+5. 还款责任与提醒可靠性。
+6. 家庭报表和 CSV 导出。
+7. 权益/优惠机会打磨。
+8. 最小运营控制台。
+9. 信任页面、删除/导出流程、审计事件和生产就绪检查。
 
-This sequence puts data boundaries before paid limits, because subscription gating is unsafe if household ownership and permissions are ambiguous.
-
+这个顺序把数据边界放在付费限制之前，因为如果家庭所有权和权限模糊，订阅门禁就不安全。
