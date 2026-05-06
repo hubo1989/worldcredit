@@ -4,7 +4,7 @@
 import { useState } from 'react'
 import {
   Box, Card, CardContent, TextField, Button,
-  Typography, Alert, CircularProgress
+  Typography, Alert, CircularProgress, Link
 } from '@mui/material'
 import { CreditCard as CreditCardIcon } from '@mui/icons-material'
 import { useAuth } from '@/lib/auth'
@@ -57,12 +57,12 @@ export default function LoginPage() {
             <TextField
               fullWidth label="邮箱" type="email" margin="normal"
               value={email} onChange={e => setEmail(e.target.value)}
-              required autoFocus
+              required autoFocus autoComplete="email"
             />
             <TextField
               fullWidth label="密码" type="password" margin="normal"
               value={password} onChange={e => setPassword(e.target.value)}
-              required
+              required autoComplete="current-password"
             />
             <Button
               fullWidth variant="contained" type="submit" size="large"
@@ -71,6 +71,15 @@ export default function LoginPage() {
               {loading ? <CircularProgress size={24} /> : '登录'}
             </Button>
           </form>
+
+          <Box sx={{ mt: 2, textAlign: 'center' }}>
+            <Typography variant="body2" color="text.secondary">
+              还没有账号？{' '}
+              <Link href="/register" underline="hover">
+                立即注册
+              </Link>
+            </Typography>
+          </Box>
         </CardContent>
       </Card>
     </Box>
