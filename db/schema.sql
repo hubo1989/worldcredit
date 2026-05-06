@@ -60,6 +60,27 @@ CREATE TABLE IF NOT EXISTS bills (
   UNIQUE(card_id, bill_month)
 );
 
+-- 账单明细（LLM 识别或手动录入）
+CREATE TABLE IF NOT EXISTS bill_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bill_id UUID NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
+  transaction_date DATE,
+  post_date DATE,
+  description TEXT NOT NULL,
+  merchant_name TEXT,
+  category TEXT,
+  amount NUMERIC NOT NULL,
+  currency TEXT,
+  item_type TEXT NOT NULL DEFAULT 'purchase'
+    CHECK (item_type IN ('purchase', 'refund', 'fee', 'interest', 'payment', 'adjustment', 'other')),
+  source TEXT NOT NULL DEFAULT 'manual'
+    CHECK (source IN ('manual', 'llm', 'import')),
+  confidence NUMERIC CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+  raw_text TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- 还款记录
 CREATE TABLE IF NOT EXISTS payments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -125,6 +146,9 @@ CREATE INDEX idx_card_holders_managed_by ON card_holders(managed_by);
 CREATE INDEX idx_credit_cards_holder ON credit_cards(holder_id);
 CREATE INDEX idx_bills_card ON bills(card_id);
 CREATE INDEX idx_bills_due_date ON bills(due_date);
+CREATE INDEX idx_bill_items_bill ON bill_items(bill_id);
+CREATE INDEX idx_bill_items_transaction_date ON bill_items(transaction_date);
+CREATE INDEX idx_bill_items_category ON bill_items(category);
 CREATE INDEX idx_payments_bill ON payments(bill_id);
 CREATE INDEX idx_benefit_usages_benefit ON benefit_usages(benefit_id);
 CREATE INDEX idx_promo_usages_promo ON promo_usages(promo_id);
@@ -137,6 +161,7 @@ CREATE INDEX idx_promo_usages_promo ON promo_usages(promo_id);
 ALTER TABLE card_holders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE credit_cards ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bills ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bill_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE benefits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE benefit_usages ENABLE ROW LEVEL SECURITY;
@@ -174,6 +199,22 @@ CREATE POLICY "admin_manage_bills" ON bills
   ))
   WITH CHECK (card_id IN (
     SELECT cc.id FROM credit_cards cc
+    JOIN card_holders ch ON cc.holder_id = ch.id
+    WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
+  ));
+
+-- bill_items: 通过 bill_id → bills → credit_cards → card_holders 链式保护
+CREATE POLICY "admin_manage_bill_items" ON bill_items
+  FOR ALL
+  USING (bill_id IN (
+    SELECT b.id FROM bills b
+    JOIN credit_cards cc ON b.card_id = cc.id
+    JOIN card_holders ch ON cc.holder_id = ch.id
+    WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
+  ))
+  WITH CHECK (bill_id IN (
+    SELECT b.id FROM bills b
+    JOIN credit_cards cc ON b.card_id = cc.id
     JOIN card_holders ch ON cc.holder_id = ch.id
     WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
   ));
