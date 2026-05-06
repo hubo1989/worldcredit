@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">WorldCredit</title>
+  <desc id="desc">Blue credit card icon for WorldCredit.</desc>
+  <rect width="512" height="512" rx="112" fill="#1976d2"/>
+  <rect x="104" y="148" width="304" height="216" rx="32" fill="#ffffff"/>
+  <rect x="104" y="196" width="304" height="44" fill="#1976d2"/>
+  <rect x="136" y="284" width="92" height="20" rx="10" fill="#1976d2" opacity=".9"/>
+  <rect x="136" y="320" width="164" height="20" rx="10" fill="#1976d2" opacity=".55"/>
+</svg>

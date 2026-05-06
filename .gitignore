@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 .vinext/
+.next/
 dist/
 
 # Environment
@@ -25,3 +26,9 @@ tsconfig.tsbuildinfo
 
 # Cloudflare
 .wrangler/
+
+# OMC runtime state
+.omc/prd.json
+.omc/progress.txt
+.omc/sessions/
+.omc/state/
