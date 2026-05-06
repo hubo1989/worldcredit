@@ -41,12 +41,16 @@ export async function deleteBenefit(id: string): Promise<void> {
   if (error) throw error
 }
 
-export async function recordBenefitUsage(benefitId: string, note?: string): Promise<BenefitUsage> {
+export async function recordBenefitUsage(
+  benefitId: string,
+  input?: { used_at?: string; note?: string }
+): Promise<BenefitUsage> {
   const { data, error } = await db
     .from('benefit_usages')
     .insert({
       benefit_id: benefitId,
-      note: note ?? null,
+      used_at: input?.used_at || new Date().toISOString(),
+      note: input?.note ?? null,
     })
     .select()
     .single()
