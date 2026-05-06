@@ -5,12 +5,11 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   Box, Typography, IconButton, Card, CardContent,
-  Divider, List, ListItem, ListItemText, Button, Fab, Chip
+  Divider, Button, Fab, Chip
 } from '@mui/material'
 import {
   ArrowBack as ArrowBackIcon,
   Add as AddIcon,
-  Edit as EditIcon,
 } from '@mui/icons-material'
 import { getCard } from '@/lib/api/cards'
 import { getBillsByCard } from '@/lib/api/bills'

@@ -2,6 +2,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Box, Typography, Grid, Card, CardContent,
   IconButton, Button, Stack, Avatar
@@ -25,6 +26,7 @@ import type { CardHolder, CreditCard } from '@/lib/types'
 
 export default function HomePage() {
   const { user } = useAuth()
+  const router = useRouter()
   const [stats, setStats] = useState({ cards: 0, holders: 0, totalLimit: 0 })
   const [bills, setBills] = useState<any[]>([])
   const [holders, setHolders] = useState<CardHolder[]>([])
@@ -149,7 +151,7 @@ export default function HomePage() {
                     minWidth: 140, borderRadius: 3, flexShrink: 0,
                     cursor: 'pointer'
                   }}
-                  onClick={() => window.location.href = `/holders/${h.id}`}
+                  onClick={() => router.push(`/holders/${h.id}`)}
                 >
                   <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 }, textAlign: 'center' }}>
                     <Avatar sx={{ bgcolor: h.avatar_color, width: 40, height: 40, mx: 'auto', mb: 1 }}>
@@ -168,7 +170,7 @@ export default function HomePage() {
                 minWidth: 80, borderRadius: 3, flexShrink: 0,
                 cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
               }}
-              onClick={() => window.location.href = '/holders'}
+              onClick={() => router.push('/holders')}
             >
               <CardContent sx={{ textAlign: 'center', p: 1.5, '&:last-child': { pb: 1.5 } }}>
                 <AddIcon sx={{ color: '#999' }} />

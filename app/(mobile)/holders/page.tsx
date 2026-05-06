@@ -48,7 +48,8 @@ export default function HoldersPage() {
   useEffect(() => { loadHolders() }, [loadHolders])
 
   const handleCreate = async (data: { name: string; phone?: string; avatar_color: string }) => {
-    await createHolder({ ...data, managed_by: user!.id } as any)
+    if (!user) return
+    await createHolder({ ...data, managed_by: user.id } as any)
     loadHolders()
   }
 

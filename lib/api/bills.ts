@@ -25,14 +25,14 @@ export async function getBillsByCard(cardId: string): Promise<Bill[]> {
   return (data || []) as Bill[]
 }
 
-export async function getUnpaidBills(): Promise<any[]> {
+export async function getUnpaidBills(): Promise<Bill[]> {
   const { data, error } = await insforge.database
     .from('bills')
     .select('*')
     .in('status', ['unpaid', 'partial', 'overdue'])
     .order('due_date', { ascending: true })
   if (error) throw error
-  return data || []
+  return (data || []) as Bill[]
 }
 
 export async function createBill(bill: Omit<Bill, 'id' | 'created_at'>): Promise<Bill> {

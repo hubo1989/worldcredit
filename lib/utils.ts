@@ -55,6 +55,18 @@ export function daysUntilDue(dueDate: string): number {
 }
 
 /**
+ * Check if a bill should be marked as overdue and update it
+ * Returns the effective status (may differ from DB if just became overdue)
+ */
+export function getEffectiveBillStatus(bill: { status: string; due_date: string }): string {
+  if (bill.status === 'paid') return 'paid'
+  if (bill.status === 'overdue') return 'overdue'
+  const days = daysUntilDue(bill.due_date)
+  if (days < 0) return 'overdue'
+  return bill.status
+}
+
+/**
  * 获取账单状态颜色
  */
 export function getBillStatusColor(status: string): string {

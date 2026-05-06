@@ -29,6 +29,7 @@ export function PaymentForm({ open, onClose, onSubmit, billAmount, paidAmount, c
   const handleSubmit = () => {
     const val = parseFloat(amount)
     if (!val || val <= 0) return
+    if (val > remaining) return // Prevent overpayment
     onSubmit({ amount: val, paid_at: paidAt, channel, note: note.trim() || undefined })
     // Reset
     setAmount(String(remaining))
