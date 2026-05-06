@@ -1,7 +1,13 @@
 // lib/api/payments.ts
 import { db } from '../insforge'
 import { generateIdempotencyKey } from '../utils'
-import type { Payment } from '../types'
+import type { Payment, Bill, CreditCard } from '../types'
+
+export interface PaymentWithBill extends Payment {
+  bill: Bill & {
+    credit_cards: Pick<CreditCard, 'bank_name' | 'card_name' | 'card_number_last4' | 'currency'>
+  }
+}
 
 export async function getPaymentsByBill(billId: string): Promise<Payment[]> {
   const { data, error } = await db
@@ -9,6 +15,38 @@ export async function getPaymentsByBill(billId: string): Promise<Payment[]> {
     .select('*')
     .eq('bill_id', billId)
     .order('paid_at', { ascending: false })
+  if (error) throw error
+  return data || []
+}
+
+export async function getPaymentsByHolder(holderId: string): Promise<PaymentWithBill[]> {
+  // Get all card IDs for this holder
+  const { data: cards, error: cardError } = await db
+    .from('credit_cards')
+    .select('id')
+    .eq('holder_id', holderId)
+  if (cardError) throw cardError
+  if (!cards || cards.length === 0) return []
+
+  const cardIds = cards.map(c => c.id)
+
+  // Get all bills for these cards
+  const { data: bills, error: billError } = await db
+    .from('bills')
+    .select('id')
+    .in('card_id', cardIds)
+  if (billError) throw billError
+  if (!bills || bills.length === 0) return []
+
+  const billIds = bills.map(b => b.id)
+
+  // Get all payments for these bills
+  const { data, error } = await db
+    .from('payments')
+    .select('*, bill:bills(*, credit_cards(bank_name, card_name, card_number_last4, currency))')
+    .in('bill_id', billIds)
+    .order('paid_at', { ascending: false })
+
   if (error) throw error
   return data || []
 }
@@ -32,4 +70,3 @@ export async function createPayment(
   if (error) throw error
   return data as string
 }
-
