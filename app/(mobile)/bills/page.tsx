@@ -3,15 +3,20 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Box, Typography, Fab, Skeleton } from '@mui/material'
-import { Add as AddIcon } from '@mui/icons-material'
+import { Box, Typography, Fab, Skeleton, Alert, Button, SpeedDial, SpeedDialAction, SpeedDialIcon } from '@mui/material'
+import { Add as AddIcon, Refresh as RefreshIcon, AutoAwesome, FileDownload } from '@mui/icons-material'
 import { getUnpaidBills, getBills, createBill } from '@/lib/api/bills'
-import { getCardsByHolder } from '@/lib/api/cards'
 import { getHolders } from '@/lib/api/holders'
+import { getCardsByHolder } from '@/lib/api/cards'
 import { BillCard } from '@/components/mobile/BillCard'
 import { BillForm } from '@/components/mobile/BillForm'
+import { BillImportDialog } from '@/components/mobile/BillImportDialog'
+import { ExportDialog } from '@/components/mobile/ExportDialog'
 import { useAuth } from '@/lib/auth'
-import type { Bill, CreditCard, CardHolder } from '@/lib/types'
+import { asRole, getErrorMessage } from '@/lib/permissions'
+import { usePermission } from '@/lib/hooks/usePermission'
+import type { Bill, CreditCard } from '@/lib/types'
+import type { BillItemInput } from '@/lib/api/bills'
 
 type BillWithCard = Bill & { credit_cards: Pick<CreditCard, 'bank_name' | 'card_name' | 'card_number_last4' | 'currency'> }
 
@@ -19,25 +24,34 @@ export default function BillsPage() {
   const [tab, setTab] = useState(0)
   const [bills, setBills] = useState<BillWithCard[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [formOpen, setFormOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const [holders, setHolders] = useState<Awaited<ReturnType<typeof getHolders>>>([])
   const [cardOptions, setCardOptions] = useState<{ id: string; label: string; card: CreditCard }[]>([])
-  const { user } = useAuth()
+  const [exportOpen, setExportOpen] = useState(false)
+  const { user, profile } = useAuth()
   const router = useRouter()
+  const { canManage } = usePermission()
 
   const loadData = useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
       const data = tab === 0 ? await getUnpaidBills() : await getBills()
       setBills(data as BillWithCard[])
+    } catch (err: unknown) {
+      setError(getErrorMessage(err))
     } finally {
       setLoading(false)
     }
   }, [tab])
 
   const loadCardOptions = useCallback(async () => {
-    if (!user) return
+    if (!profile) return
     try {
-      const holders = await getHolders()
+      const holders = await getHolders(profile.id, asRole(profile))
+      setHolders(holders)
       const allCards: { id: string; label: string; card: CreditCard }[] = []
       await Promise.all(
         holders.map(async (h) => {
@@ -55,19 +69,21 @@ export default function BillsPage() {
     } catch {
       // ignore — user may not have data yet
     }
-  }, [user])
+  }, [profile])
 
   useEffect(() => { loadData() }, [loadData])
   useEffect(() => { loadCardOptions() }, [loadCardOptions])
 
-  const handleCreateBill = async (data: Omit<Bill, 'id' | 'created_at' | 'status'>) => {
+  const handleCreateBill = async (data: Omit<Bill, 'id' | 'created_at' | 'status'> & { items?: BillItemInput[] }) => {
     await createBill({ ...data, status: 'unpaid' })
     loadData()
   }
 
   return (
     <Box sx={{ p: 2 }}>
-      <Typography variant="h6" fontWeight={700} sx={{ mb: 2 }}>账单管理</Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+        <Typography variant="h6" fontWeight={700}>账单管理</Typography>
+      </Box>
 
       {/* Tab 切换 */}
       <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
@@ -89,6 +105,20 @@ export default function BillsPage() {
         ))}
       </Box>
 
+      {error && (
+        <Alert
+          severity="error"
+          action={
+            <Button size="small" startIcon={<RefreshIcon />} onClick={loadData}>
+              重试
+            </Button>
+          }
+          sx={{ mb: 2 }}
+        >
+          {error}
+        </Alert>
+      )}
+
       {loading ? (
         Array.from({ length: 3 }).map((_, i) => (
           <Skeleton key={i} variant="rounded" height={100} sx={{ mb: 1.5 }} />
@@ -107,18 +137,53 @@ export default function BillsPage() {
         ))
       )}
 
-      <Fab
-        color="primary"
-        sx={{ position: 'fixed', bottom: 72, right: 16 }}
-        onClick={() => setFormOpen(true)}
-      >
-        <AddIcon />
-      </Fab>
+      {canManage && (
+        <SpeedDial
+          ariaLabel="账单操作"
+          sx={{ position: 'fixed', bottom: 80, right: 16 }}
+          icon={<SpeedDialIcon icon={<AddIcon />} openIcon={<RefreshIcon />} />}
+        >
+          <SpeedDialAction
+            icon={<AddIcon />}
+            tooltipTitle="手动添加"
+            onClick={() => setFormOpen(true)}
+          />
+          <SpeedDialAction
+            icon={<AutoAwesome />}
+            tooltipTitle="智能导入"
+            onClick={() => setImportOpen(true)}
+          />
+          <SpeedDialAction
+            icon={<FileDownload />}
+            tooltipTitle="导出数据"
+            onClick={() => setExportOpen(true)}
+          />
+        </SpeedDial>
+      )}
 
       <BillForm
         open={formOpen}
         onClose={() => setFormOpen(false)}
         onSubmit={handleCreateBill}
+        cards={cardOptions}
+      />
+
+      <BillImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImportSuccess={() => {
+          setImportOpen(false)
+          loadData()
+        }}
+        cards={cardOptions}
+        userId={profile?.id || ''}
+      />
+
+      <ExportDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        holderId={profile?.id || ''}
+        holders={holders}
         cards={cardOptions}
       />
     </Box>
