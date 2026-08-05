@@ -13,6 +13,7 @@ import {
   Alert,
   Divider,
   Stack,
+  Button,
 } from '@mui/material'
 import {
   ContentCopy as ContentCopyIcon,
@@ -123,8 +124,17 @@ export default function SettingsPage() {
             color="text.secondary"
             sx={{ display: 'block', mt: 1.5, lineHeight: 1.6 }}
           >
-            支持国内外主流银行账单邮件。系统会自动解析账单金额、还款日等信息，并匹配到对应信用卡。
+            支持国内外主流银行账单邮件。系统会自动解析银行、账单金额、还款日等信息，并支持一键建立账户并同步账单。
           </Typography>
+
+          <Button
+            variant="outlined"
+            fullWidth
+            sx={{ mt: 2, borderRadius: 2 }}
+            href="/bills"
+          >
+            前往查看邮件账单列表与同步状态
+          </Button>
         </CardContent>
       </Card>
     </Container>

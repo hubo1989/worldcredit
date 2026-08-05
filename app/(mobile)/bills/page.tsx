@@ -18,6 +18,7 @@ import { insforge } from '@/lib/insforge'
 import { BillStatusCard } from '@/components/mobile/BillStatusCard'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
+import { EmailBillsList } from '@/components/mobile/EmailBillsList'
 import type { Bill, CreditCard, CardProduct } from '@/lib/types'
 import { format, addMonths, startOfMonth, endOfMonth, setDate, addDays } from 'date-fns'
 
@@ -182,9 +183,12 @@ export default function BillsPage() {
         <Tab label="全部" />
         <Tab label="待还款" />
         <Tab label="已结清" />
+        <Tab label="邮件账单" />
       </Tabs>
 
-      {loading ? (
+      {tabValue === 3 ? (
+        <EmailBillsList onBillSynced={loadBills} />
+      ) : loading ? (
         <Stack spacing={2}>
           {[1, 2, 3].map(i => <Skeleton key={i} variant="rounded" height={100} sx={{ borderRadius: 4 }} />)}
         </Stack>
