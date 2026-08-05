@@ -1,77 +1,96 @@
-// components/mobile/PaymentForm.tsx
 'use client'
 
 import { useState } from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, Button, Stack
+  TextField, Button, InputAdornment, Stack, Typography, CircularProgress
 } from '@mui/material'
-import { formatAmount } from '@/lib/utils'
 
 interface Props {
   open: boolean
   onClose: () => void
-  onSubmit: (data: { amount: number; paid_at: string; channel: string; note?: string }) => void
-  billAmount: number
-  paidAmount: number
-  currency: string
+  onSubmit: (data: { amount: number; paid_at: string; note?: string }) => Promise<void>
+  totalAmount: number
+  billMonth?: string
 }
 
-const CHANNELS = ['手动还款', '自动扣款', '银行转账', '支付宝', '微信', '其他']
-
-export function PaymentForm({ open, onClose, onSubmit, billAmount, paidAmount, currency }: Props) {
-  const remaining = billAmount - paidAmount
-  const [amount, setAmount] = useState(String(remaining))
-  const [paidAt, setPaidAt] = useState(new Date().toISOString().split('T')[0])
-  const [channel, setChannel] = useState('手动还款')
+export function PaymentForm({ open, onClose, onSubmit, totalAmount, billMonth }: Props) {
+  const [amount, setAmount] = useState(totalAmount.toString())
+  const [paidAt, setPaidAt] = useState(new Date().toISOString().slice(0, 10))
   const [note, setNote] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
-  const handleSubmit = () => {
-    const val = parseFloat(amount)
-    if (!val || val <= 0) return
-    if (val > remaining) return // Prevent overpayment
-    onSubmit({ amount: val, paid_at: paidAt, channel, note: note.trim() || undefined })
-    // Reset
-    setAmount(String(remaining))
-    setNote('')
+  const handleSubmit = async () => {
+    const num = parseFloat(amount)
+    if (!num || num <= 0) return
+
+    setSubmitting(true)
+    try {
+      await onSubmit({
+        amount: num,
+        paid_at: paidAt,
+        note: note.trim() || undefined
+      })
+      onClose()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle>记录还款</DialogTitle>
+      <DialogTitle fontWeight={700}>
+        登记账单还款 {billMonth ? `(${billMonth})` : ''}
+      </DialogTitle>
       <DialogContent>
-        <Stack spacing={2} sx={{ mt: 1 }}>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          账单总额: ¥{totalAmount.toFixed(2)}
+        </Typography>
+
+        <Stack spacing={2}>
           <TextField
-            label="待还金额" value={formatAmount(remaining, currency)}
-            InputProps={{ readOnly: true }} size="small"
-          />
-          <TextField
-            label="还款金额" required value={amount}
+            fullWidth
+            label="还款金额"
+            type="number"
+            value={amount}
             onChange={e => setAmount(e.target.value)}
-            type="number" autoFocus
-            inputProps={{ min: 0.01, max: remaining, step: 0.01 }}
+            InputProps={{
+              startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+            }}
+            required
           />
+
           <TextField
-            label="还款日期" type="date" required value={paidAt}
+            fullWidth
+            label="还款日期"
+            type="date"
+            value={paidAt}
             onChange={e => setPaidAt(e.target.value)}
             InputLabelProps={{ shrink: true }}
+            required
           />
+
           <TextField
-            select label="还款渠道" value={channel}
-            onChange={e => setChannel(e.target.value)}
-          >
-            {CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
-          </TextField>
-          <TextField
-            label="备注" value={note}
+            fullWidth
+            label="还款备注"
+            placeholder="如: 支付宝还款 / 网银转账"
+            value={note}
             onChange={e => setNote(e.target.value)}
-            placeholder="可选"
           />
         </Stack>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>取消</Button>
-        <Button variant="contained" onClick={handleSubmit}>确认还款</Button>
+      <DialogActions sx={{ p: 2, pt: 0 }}>
+        <Button onClick={onClose} color="inherit">取消</Button>
+        <Button
+          variant="contained"
+          onClick={handleSubmit}
+          disabled={submitting || !amount || parseFloat(amount) <= 0}
+          startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : null}
+        >
+          {submitting ? '登记中...' : '确认已还款'}
+        </Button>
       </DialogActions>
     </Dialog>
   )

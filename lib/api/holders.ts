@@ -1,51 +1,23 @@
-// lib/api/holders.ts
 import { insforge } from '../insforge'
 import type { CardHolder } from '../types'
 
-export async function getHolders(): Promise<CardHolder[]> {
+export async function getCardHolders(): Promise<CardHolder[]> {
   const { data, error } = await insforge.database
     .from('card_holders')
     .select('*')
-    .order('created_at', { ascending: false })
+    .order('created_at', { ascending: true })
+
   if (error) throw error
-  return (data || []) as CardHolder[]
+  return data || []
 }
 
-export async function getHolder(id: string): Promise<CardHolder> {
+export async function createCardHolder(holder: Omit<CardHolder, 'id' | 'created_at'>): Promise<CardHolder> {
   const { data, error } = await insforge.database
     .from('card_holders')
-    .select('*')
-    .eq('id', id)
-    .single()
-  if (error) throw error
-  return data as CardHolder
-}
-
-export async function createHolder(holder: Omit<CardHolder, 'id' | 'created_at'>): Promise<CardHolder> {
-  const { data, error } = await insforge.database
-    .from('card_holders')
-    .insert(holder)
+    .insert([holder])
     .select()
     .single()
-  if (error) throw error
-  return data as CardHolder
-}
 
-export async function updateHolder(id: string, updates: Partial<CardHolder>): Promise<CardHolder> {
-  const { data, error } = await insforge.database
-    .from('card_holders')
-    .update(updates)
-    .eq('id', id)
-    .select()
-    .single()
   if (error) throw error
-  return data as CardHolder
-}
-
-export async function deleteHolder(id: string): Promise<void> {
-  const { error } = await insforge.database
-    .from('card_holders')
-    .delete()
-    .eq('id', id)
-  if (error) throw error
+  return data
 }

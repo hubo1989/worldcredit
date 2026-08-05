@@ -1,15 +1,14 @@
-// app/(mobile)/holders/page.tsx
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Box, Typography, Fab, Skeleton, IconButton } from '@mui/material'
-import { Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon } from '@mui/icons-material'
-import { getHolders, createHolder, updateHolder, deleteHolder } from '@/lib/api/holders'
-import { getCardsByHolder } from '@/lib/api/cards'
+import { Box, Typography, Fab, Skeleton, Stack, Container } from '@mui/material'
+import { Add as AddIcon } from '@mui/icons-material'
+import { getHolders, createHolder } from '@/lib/api/holders'
 import { HolderCard } from '@/components/mobile/HolderCard'
 import { HolderForm } from '@/components/mobile/HolderForm'
 import { useAuth } from '@/lib/auth'
+import { db } from '@/lib/insforge'
 import type { CardHolder } from '@/lib/types'
 
 export default function HoldersPage() {
@@ -17,7 +16,6 @@ export default function HoldersPage() {
   const [cardCounts, setCardCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
-  const [editingHolder, setEditingHolder] = useState<CardHolder | undefined>(undefined)
   const { user } = useAuth()
   const router = useRouter()
 
@@ -25,19 +23,20 @@ export default function HoldersPage() {
     try {
       const data = await getHolders()
       setHolders(data)
-      // Load card counts for each holder
-      const counts: Record<string, number> = {}
-      await Promise.all(
-        data.map(async (h) => {
-          try {
-            const cards = await getCardsByHolder(h.id)
-            counts[h.id] = cards.length
-          } catch {
-            counts[h.id] = 0
-          }
+
+      // 联查每个持卡人的信用卡数量
+      if (data.length > 0) {
+        const holderIds = data.map(h => h.id)
+        const { data: cards } = await db
+          .from('credit_cards')
+          .select('holder_id')
+          .in('holder_id', holderIds)
+        const counts: Record<string, number> = {}
+        cards?.forEach((c: { holder_id: string }) => {
+          counts[c.holder_id] = (counts[c.holder_id] || 0) + 1
         })
-      )
-      setCardCounts(counts)
+        setCardCounts(counts)
+      }
     } catch (err) {
       console.error('Failed to load holders:', err)
     } finally {
@@ -45,90 +44,59 @@ export default function HoldersPage() {
     }
   }, [])
 
-  useEffect(() => { loadHolders() }, [loadHolders])
+  useEffect(() => {
+    loadHolders()
+  }, [loadHolders])
 
   const handleCreate = async (data: { name: string; phone?: string; avatar_color: string }) => {
     if (!user) return
-    await createHolder({ ...data, managed_by: user.id } as any)
+    await createHolder({ ...data, created_by: user.id })
     loadHolders()
-  }
-
-  const handleEdit = async (data: { name: string; phone?: string; avatar_color: string }) => {
-    if (!editingHolder) return
-    await updateHolder(editingHolder.id, data)
-    setEditingHolder(undefined)
-    loadHolders()
-  }
-
-  const handleDelete = async (holder: CardHolder) => {
-    if (!confirm(`确定删除持卡人「${holder.name}」吗？其下所有信用卡和账单也将被删除。`)) return
-    try {
-      await deleteHolder(holder.id)
-      loadHolders()
-    } catch (err) {
-      alert('删除失败：' + (err as any).message)
-    }
   }
 
   return (
-    <Box sx={{ p: 2, pb: 2 }}>
-      <Typography variant="h6" fontWeight={700} sx={{ mb: 2 }}>持卡人</Typography>
+    <Container sx={{ py: 3, pb: 10 }}>
+      <Typography variant="h5" fontWeight={700} sx={{ mb: 3 }}>
+        持卡人
+      </Typography>
 
       {loading ? (
-        Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} variant="rounded" height={80} sx={{ mb: 1.5, borderRadius: 3 }} />
-        ))
+        <Stack spacing={1.5}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} variant="rounded" height={88} sx={{ borderRadius: 3 }} />
+          ))}
+        </Stack>
       ) : holders.length === 0 ? (
-        <Box sx={{
-          textAlign: 'center', p: 4, bgcolor: '#fff', borderRadius: 4,
-          border: '2px dashed #eee', mt: 4
-        }}>
-          <Typography color="text.secondary" sx={{ mb: 2 }}>
-            还没有持卡人，点击右下角添加
-          </Typography>
+        <Box sx={{ mt: 8, textAlign: 'center', color: 'text.secondary' }}>
+          <Typography variant="body1" gutterBottom>还没有持卡人记录</Typography>
+          <Typography variant="body2">点击右下角按钮添加您的第一个持卡人</Typography>
         </Box>
       ) : (
-        holders.map(h => (
-          <Box key={h.id} sx={{ position: 'relative' }}>
+        <Stack spacing={1.5}>
+          {holders.map(h => (
             <HolderCard
+              key={h.id}
               holder={h}
               cardCount={cardCounts[h.id] || 0}
               onClick={() => router.push(`/holders/${h.id}`)}
             />
-            <Box sx={{ position: 'absolute', right: 8, top: 8, display: 'flex', gap: 0.5 }}>
-              <IconButton
-                size="small"
-                onClick={(e) => { e.stopPropagation(); setEditingHolder(h); setFormOpen(true) }}
-                sx={{ bgcolor: 'rgba(255,255,255,0.9)' }}
-              >
-                <EditIcon fontSize="small" />
-              </IconButton>
-              <IconButton
-                size="small"
-                onClick={(e) => { e.stopPropagation(); handleDelete(h) }}
-                sx={{ bgcolor: 'rgba(255,255,255,0.9)' }}
-              >
-                <DeleteIcon fontSize="small" color="error" />
-              </IconButton>
-            </Box>
-          </Box>
-        ))
+          ))}
+        </Stack>
       )}
 
       <Fab
         color="primary"
-        sx={{ position: 'fixed', bottom: 72, right: 16 }}
-        onClick={() => { setEditingHolder(undefined); setFormOpen(true) }}
+        sx={{ position: 'fixed', bottom: 80, right: 24 }}
+        onClick={() => setFormOpen(true)}
       >
         <AddIcon />
       </Fab>
 
       <HolderForm
         open={formOpen}
-        onClose={() => { setFormOpen(false); setEditingHolder(undefined) }}
-        onSubmit={editingHolder ? handleEdit : handleCreate}
-        initial={editingHolder}
+        onClose={() => setFormOpen(false)}
+        onSubmit={handleCreate}
       />
-    </Box>
+    </Container>
   )
 }

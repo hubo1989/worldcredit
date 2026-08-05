@@ -1,47 +1,80 @@
-// components/mobile/MobileShell.tsx
 'use client'
 
 import { useEffect, ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import { Box, CircularProgress } from '@mui/material'
+import { Box, CircularProgress, Typography } from '@mui/material'
 import { useAuth } from '@/lib/auth'
 import { BottomNav } from './BottomNav'
+import { PushPermission } from './PushPermission'
+import { checkAndSendReminders } from '@/lib/reminders'
 
+/**
+ * MobileShell 负责路由保护和移动端布局包装
+ * 如果用户未登录，自动重定向到 /login
+ */
 export function MobileShell({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
-    // 强制跳转登录页（如果未登录且是非公开路径）
     if (!loading && !user) {
       router.replace('/login')
     }
   }, [user, loading, router])
 
+  // Register service worker + trigger reminder check once user is authenticated
+  useEffect(() => {
+    if (!user || loading) return
+
+    // Register SW
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker
+        .register('/sw.js', { scope: '/' })
+        .catch(err => console.warn('[SW] registration failed:', err))
+    }
+
+    // Check & send due reminders
+    checkAndSendReminders(user.id).catch(err =>
+      console.warn('[reminders] check failed:', err)
+    )
+  }, [user, loading])
+
+  // 加载状态显示全屏加载动画
   if (loading) {
     return (
       <Box sx={{
         display: 'flex',
+        flexDirection: 'column',
         justifyContent: 'center',
         alignItems: 'center',
         minHeight: '100vh',
-        bgcolor: 'background.default'
+        gap: 2
       }}>
-        <CircularProgress />
+        <CircularProgress size={40} />
+        <Typography variant="body2" color="text.secondary">
+          正在加载 WorldCredit...
+        </Typography>
       </Box>
     )
   }
 
-  if (!user) return null
+  // 未登录时不渲染内容，等待重定向
+  if (!user) {
+    return null
+  }
 
   return (
     <Box sx={{
-      pb: 7, // 给底部导航留出空间
+      pb: 9, // 为底部导航栏留出空间
       minHeight: '100vh',
-      bgcolor: 'background.default'
+      bgcolor: 'background.default',
+      position: 'relative'
     }}>
-      {children}
+      <Box sx={{ maxWidth: 600, mx: 'auto' }}>
+        {children}
+      </Box>
       <BottomNav />
+      <PushPermission />
     </Box>
   )
 }
