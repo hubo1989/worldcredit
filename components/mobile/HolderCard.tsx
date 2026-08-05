@@ -1,3 +1,4 @@
+// components/mobile/HolderCard.tsx
 'use client'
 
 import { Avatar, Card, CardActionArea, CardContent, Typography, Box, Chip } from '@mui/material'
@@ -11,15 +12,9 @@ interface Props {
 
 export function HolderCard({ holder, cardCount, onClick }: Props) {
   return (
-    <Card sx={{ 
-      mb: 1.5, 
-      borderRadius: '5px',
-      border: '1px solid #DDDDDD',
-      boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.08)',
-      bgcolor: '#FFFFFF'
-    }}>
+    <Card sx={{ mb: 1.5, borderRadius: 3 }}>
       <CardActionArea onClick={onClick}>
-        <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2, p: 2 }}>
+        <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Avatar sx={{ bgcolor: holder.avatar_color, width: 48, height: 48, fontSize: 20 }}>
             {holder.name.charAt(0)}
           </Avatar>
@@ -33,11 +28,10 @@ export function HolderCard({ holder, cardCount, onClick }: Props) {
               </Typography>
             )}
           </Box>
-          <Chip 
-            label={`${cardCount} 张卡`} 
-            size="small" 
-            color={cardCount > 0 ? 'primary' : 'default'}
-            variant={cardCount > 0 ? 'filled' : 'outlined'}
+          <Chip
+            label={`${cardCount} 张卡`}
+            size="small"
+            sx={{ bgcolor: 'primary.light', color: 'primary.dark', fontWeight: 600 }}
           />
         </CardContent>
       </CardActionArea>
