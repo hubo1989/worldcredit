@@ -90,7 +90,7 @@ export default {
       const cardId = await findCardId(db, userId, aiResult.card_last4 ?? null)
       if (!cardId) {
         log.status = 'failed'
-        log.error_msg = `No matching credit card found for userId=${userId} card_last4=${aiResult.card_last4}`
+        log.error_msg = `暂未匹配到账户中对应的卡片（卡尾号：${aiResult.card_last4 || '未知'}），可点击【同步到本账户】自动建卡并导入账单`
         await writeLog(db, log)
         return
       }

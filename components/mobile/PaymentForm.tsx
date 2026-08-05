@@ -3,36 +3,33 @@
 import { useState } from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, Button, InputAdornment, Stack,
-  Alert, Divider
+  TextField, Button, InputAdornment, Stack, Typography, CircularProgress
 } from '@mui/material'
-import { format } from 'date-fns'
-import { BillAttachments } from './BillAttachments'
 
 interface Props {
   open: boolean
   onClose: () => void
   onSubmit: (data: { amount: number; paid_at: string; note?: string }) => Promise<void>
   totalAmount: number
-  billMonth: string
-  billId?: string
-  onAttachmentChanged?: () => void
+  billMonth?: string
 }
 
-export function PaymentForm({ open, onClose, onSubmit, totalAmount, billMonth, billId, onAttachmentChanged }: Props) {
+export function PaymentForm({ open, onClose, onSubmit, totalAmount, billMonth }: Props) {
   const [amount, setAmount] = useState(totalAmount.toString())
-  const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'))
-  const [remarks, setRemarks] = useState('')
+  const [paidAt, setPaidAt] = useState(new Date().toISOString().slice(0, 10))
+  const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   const handleSubmit = async () => {
-    if (!amount || !date) return
+    const num = parseFloat(amount)
+    if (!num || num <= 0) return
+
     setSubmitting(true)
     try {
       await onSubmit({
-        amount: parseFloat(amount),
-        paid_at: date,
-        note: remarks || undefined
+        amount: num,
+        paid_at: paidAt,
+        note: note.trim() || undefined
       })
       onClose()
     } catch (err) {
@@ -45,62 +42,54 @@ export function PaymentForm({ open, onClose, onSubmit, totalAmount, billMonth, b
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
       <DialogTitle fontWeight={700}>
-        还款登记 ({billMonth} 账单)
+        登记账单还款 {billMonth ? `(${billMonth})` : ''}
       </DialogTitle>
       <DialogContent>
-        <Stack spacing={2} sx={{ mt: 1 }}>
-          <Alert severity="info" sx={{ mb: 1 }}>
-            应还总额：¥{totalAmount.toLocaleString()}
-          </Alert>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          账单总额: ¥{totalAmount.toFixed(2)}
+        </Typography>
 
+        <Stack spacing={2}>
           <TextField
             fullWidth
             label="还款金额"
             type="number"
             value={amount}
             onChange={e => setAmount(e.target.value)}
-            required
             InputProps={{
               startAdornment: <InputAdornment position="start">¥</InputAdornment>,
             }}
+            required
           />
 
           <TextField
             fullWidth
             label="还款日期"
             type="date"
-            value={date}
-            onChange={e => setDate(e.target.value)}
-            required
+            value={paidAt}
+            onChange={e => setPaidAt(e.target.value)}
             InputLabelProps={{ shrink: true }}
+            required
           />
 
           <TextField
             fullWidth
-            label="备注"
-            multiline
-            rows={2}
-            value={remarks}
-            onChange={e => setRemarks(e.target.value)}
-            placeholder="例如：微信支付、工行卡转账"
+            label="还款备注"
+            placeholder="如: 支付宝还款 / 网银转账"
+            value={note}
+            onChange={e => setNote(e.target.value)}
           />
-
-          {billId && (
-            <>
-              <Divider />
-              <BillAttachments billId={billId} onChanged={onAttachmentChanged} />
-            </>
-          )}
         </Stack>
       </DialogContent>
       <DialogActions sx={{ p: 2, pt: 0 }}>
         <Button onClick={onClose} color="inherit">取消</Button>
-        <Button 
-          variant="contained" 
-          onClick={handleSubmit} 
-          disabled={submitting || !amount || !date}
+        <Button
+          variant="contained"
+          onClick={handleSubmit}
+          disabled={submitting || !amount || parseFloat(amount) <= 0}
+          startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : null}
         >
-          {submitting ? '登记中...' : '确认还款'}
+          {submitting ? '登记中...' : '确认已还款'}
         </Button>
       </DialogActions>
     </Dialog>

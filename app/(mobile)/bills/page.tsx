@@ -3,26 +3,28 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   Container, Typography, Box, Stack, Tabs, Tab,
-  Paper, IconButton, Button, Skeleton,
-  Fab, Snackbar, Alert
+  Paper, IconButton, Button, Skeleton, Alert,
+  Fab
 } from '@mui/material'
-import SyncIcon from '@mui/icons-material/Sync'
-import AddIcon from '@mui/icons-material/Add'
-import ReceiptIcon from '@mui/icons-material/ReceiptLong'
-import CheckIcon from '@mui/icons-material/CheckCircleOutline'
-import { getBillDashboardItems, createBill, createPayment, updateBillStatus, type BillDashboardItem } from '@/lib/api/bills'
+import {
+  Sync as SyncIcon,
+  FilterList as FilterIcon,
+  Add as AddIcon,
+  ReceiptLong as ReceiptIcon
+} from '@mui/icons-material'
+import { getRecentBills, createBill, createPayment, updateBillStatus } from '@/lib/api/bills'
+import { getCardProducts, getCardsByHolder } from '@/lib/api/cards' // Actually need all cards
 import { insforge } from '@/lib/insforge'
 import { BillStatusCard } from '@/components/mobile/BillStatusCard'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
-import { format, addMonths, startOfMonth, setDate, addDays } from 'date-fns'
+import { EmailBillsList } from '@/components/mobile/EmailBillsList'
+import type { Bill, CreditCard, CardProduct } from '@/lib/types'
+import { format, addMonths, startOfMonth, endOfMonth, setDate, addDays } from 'date-fns'
 
-import { useAuth } from '@/lib/auth'
-
-type BillWithCard = BillDashboardItem
+type BillWithCard = Bill & { card: CreditCard & { card_product: CardProduct } }
 
 export default function BillsPage() {
-  const { user } = useAuth()
   const [bills, setBills] = useState<BillWithCard[]>([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -30,70 +32,33 @@ export default function BillsPage() {
   
   const [paymentOpen, setPaymentOpen] = useState(false)
   const [selectedBill, setSelectedBill] = useState<BillWithCard | null>(null)
+
   const [billFormOpen, setBillFormOpen] = useState(false)
 
-  const [celebrationNotice, setCelebrationNotice] = useState<{ open: boolean; message: string }>({
-    open: false,
-    message: ''
-  })
-
   const loadBills = useCallback(async () => {
-    if (!user) return
     try {
       setLoading(true)
-      const data = await getBillDashboardItems(100, user.id)
+      const data = await getRecentBills(50)
       setBills(data)
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
-  }, [user])
+  }, [])
 
   useEffect(() => { loadBills() }, [loadBills])
 
   // 自动同步/生成账单逻辑
   const handleSync = async () => {
-    if (!user) return
     setSyncing(true)
     try {
-      // 1. 获取当前用户持卡人与信用卡
-      const { data: holders } = await insforge.database
-        .from('card_holders')
-        .select('id')
-        .eq('created_by', user.id)
-
-      const holderIds = (holders || []).map(h => h.id)
-      if (holderIds.length === 0) {
-        setCelebrationNotice({ open: true, message: '👍 当前没有关联的持卡人与信用卡可同步。' })
-        return
-      }
-
-      const { data: cardsRaw, error: cardsError } = await insforge.database
+      // 1. 获取所有卡
+      const { data: cards, error: cardsError } = await insforge.database
         .from('credit_cards')
-        .select('*')
-        .in('holder_id', holderIds)
+        .select('*, card_product:card_products(*)')
       
       if (cardsError) throw cardsError
-      if (!cardsRaw || cardsRaw.length === 0) {
-        setCelebrationNotice({ open: true, message: '👍 当前没有关联的信用卡可同步。' })
-        return
-      }
-
-      const pIds = Array.from(new Set(cardsRaw.map(c => c.card_product_id).filter(Boolean)))
-      let pMap: Record<string, any> = {}
-      if (pIds.length > 0) {
-        const { data: pData } = await insforge.database
-          .from('card_products')
-          .select('*')
-          .in('id', pIds)
-        if (pData) pMap = pData.reduce((acc, p) => ({ ...acc, [p.id]: p }), {})
-      }
-
-      const cards = cardsRaw.map(c => ({
-        ...c,
-        card_product: pMap[c.card_product_id] || { payment_due_value: 20 }
-      }))
 
       const now = new Date()
       const currentMonthStr = format(now, 'yyyy-MM')
@@ -108,7 +73,7 @@ export default function BillsPage() {
           .from('bills')
           .select('id')
           .eq('card_id', card.id)
-          .eq('bill_month', currentMonthStr)
+          .eq('billing_period_end', billingEnd)
           .maybeSingle()
 
         if (!existing) {
@@ -131,9 +96,9 @@ export default function BillsPage() {
       
       if (createdCount > 0) {
         await loadBills()
-        setCelebrationNotice({ open: true, message: `✨ 成功同步！为持卡账户新增了 ${createdCount} 笔待入账单。` })
+        alert(`成功同步！为您的持卡账户新增了 ${createdCount} 笔本月待入账单。`)
       } else {
-        setCelebrationNotice({ open: true, message: '👍 账单已是最新状态。' })
+        alert('账单已是最新状态。')
       }
     } catch (err: any) {
       alert('同步失败: ' + err.message)
@@ -164,27 +129,21 @@ export default function BillsPage() {
       )
       const billAmount = Number(selectedBill.bill_amount)
 
-      let isFullPaid = false
       if (totalPaid >= billAmount) {
         await updateBillStatus(selectedBill.id, 'paid')
-        isFullPaid = true
       } else if (totalPaid > 0) {
         await updateBillStatus(selectedBill.id, 'partial')
       }
       
-      await loadBills()
-      setCelebrationNotice({
-        open: true,
-        message: isFullPaid ? '🎉 恭喜！本期账单已全额结清！账户资产负债率降低！' : '✅ 登记还款成功！已更新账单结余。'
-      })
+      loadBills()
     } catch (err: any) {
       alert('登记还款失败: ' + err.message)
     }
   }
 
   const filteredBills = bills.filter(b => {
-    if (tabValue === 1) return b.computed_status === 'unpaid' || b.computed_status === 'partial' || b.computed_status === 'overdue'
-    if (tabValue === 2) return b.computed_status === 'paid'
+    if (tabValue === 1) return b.status === 'unpaid'
+    if (tabValue === 2) return b.status === 'paid'
     return true
   })
 
@@ -200,7 +159,7 @@ export default function BillsPage() {
   return (
     <Container sx={{ py: 3, pb: 10 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h5" fontWeight={800}>
+        <Typography variant="h5" fontWeight={700}>
           账单管理
         </Typography>
         <IconButton 
@@ -208,7 +167,7 @@ export default function BillsPage() {
           color="primary" 
           onClick={handleSync} 
           disabled={syncing}
-          sx={{ bgcolor: 'primary.light', opacity: 0.9 }}
+          sx={{ bgcolor: 'primary.50' }}
         >
           <SyncIcon sx={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} />
           <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
@@ -224,14 +183,17 @@ export default function BillsPage() {
         <Tab label="全部" />
         <Tab label="待还款" />
         <Tab label="已结清" />
+        <Tab label="邮件账单" />
       </Tabs>
 
-      {loading ? (
+      {tabValue === 3 ? (
+        <EmailBillsList onBillSynced={loadBills} />
+      ) : loading ? (
         <Stack spacing={2}>
           {[1, 2, 3].map(i => <Skeleton key={i} variant="rounded" height={100} sx={{ borderRadius: 4 }} />)}
         </Stack>
       ) : filteredBills.length === 0 ? (
-        <Paper sx={{ p: 8, textAlign: 'center', borderRadius: 4, bgcolor: 'background.paper', border: '1px dashed', borderColor: 'divider' }}>
+        <Paper sx={{ p: 8, textAlign: 'center', borderRadius: 4, bgcolor: 'grey.50' }}>
           <ReceiptIcon sx={{ fontSize: 64, color: 'text.disabled', mb: 2, opacity: 0.3 }} />
           <Typography color="text.secondary">暂无相关账单</Typography>
           <Button sx={{ mt: 2 }} onClick={handleSync}>立即同步</Button>
@@ -239,7 +201,7 @@ export default function BillsPage() {
       ) : (
         Object.entries(groupedBills).map(([month, monthBills]) => (
           <Box key={month} sx={{ mb: 4 }}>
-            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1.5, px: 1, display: 'flex', alignItems: 'center', gap: 1, fontWeight: 700 }}>
+            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1.5, px: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
               <Box sx={{ width: 4, height: 16, bgcolor: 'primary.main', borderRadius: 1 }} />
               {month}
             </Typography>
@@ -266,8 +228,6 @@ export default function BillsPage() {
           onSubmit={handlePayment}
           totalAmount={Number(selectedBill.bill_amount)}
           billMonth={format(new Date(selectedBill.statement_end || selectedBill.due_date), 'MM月')}
-          billId={selectedBill.id}
-          onAttachmentChanged={loadBills}
         />
       )}
 
@@ -286,16 +246,6 @@ export default function BillsPage() {
         onClose={() => setBillFormOpen(false)}
         onSuccess={loadBills}
       />
-
-      <Snackbar
-        open={celebrationNotice.open}
-        autoHideDuration={4000}
-        onClose={() => setCelebrationNotice(prev => ({ ...prev, open: false }))}
-      >
-        <Alert severity="success" icon={<CheckIcon fontSize="small" />} onClose={() => setCelebrationNotice(prev => ({ ...prev, open: false }))}>
-          {celebrationNotice.message}
-        </Alert>
-      </Snackbar>
     </Container>
   )
 }

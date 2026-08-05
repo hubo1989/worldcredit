@@ -65,3 +65,4 @@ tsconfig.tsbuildinfo
 .AppleDouble
 .LSOverride
 Icon
+*.tsbuildinfo
