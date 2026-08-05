@@ -49,6 +49,9 @@ yarn-error.log*
 # Build and IDE
 dist
 .vinext
+.next
+.workbuddy
+tsconfig.tsbuildinfo
 .vscode
 .idea
 *.suo

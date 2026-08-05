@@ -51,9 +51,19 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
     if (!open) return
     insforge.database
       .from('credit_cards')
-      .select('*, card_product:card_products(*)')
-      .then(({ data, error: e }) => {
-        if (!e && data) setCards(data as CardWithProduct[])
+      .select('*')
+      .then(async ({ data: rawCards, error: e }) => {
+        if (e || !rawCards) return
+        const pIds = Array.from(new Set(rawCards.map((c: any) => c.card_product_id).filter(Boolean)))
+        let pMap: Record<string, CardProduct> = {}
+        if (pIds.length > 0) {
+          const { data: pData } = await insforge.database
+            .from('card_products')
+            .select('*')
+            .in('id', pIds)
+          if (pData) pMap = pData.reduce((acc, p) => ({ ...acc, [p.id]: p }), {})
+        }
+        setCards(rawCards.map((c: any) => ({ ...c, card_product: pMap[c.card_product_id] })) as CardWithProduct[])
       })
   }, [open])
 

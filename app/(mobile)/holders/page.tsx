@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Box, Typography, Fab, Skeleton, Stack, Container } from '@mui/material'
-import { Add as AddIcon } from '@mui/icons-material'
+import AddIcon from '@mui/icons-material/Add'
 import { getHolders, createHolder } from '@/lib/api/holders'
 import { HolderCard } from '@/components/mobile/HolderCard'
 import { HolderForm } from '@/components/mobile/HolderForm'
@@ -21,7 +21,7 @@ export default function HoldersPage() {
 
   const loadHolders = useCallback(async () => {
     try {
-      const data = await getHolders()
+      const data = await getHolders(user?.id)
       setHolders(data)
 
       // 联查每个持卡人的信用卡数量
@@ -42,7 +42,7 @@ export default function HoldersPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [user?.id])
 
   useEffect(() => {
     loadHolders()

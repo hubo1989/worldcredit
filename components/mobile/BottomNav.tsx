@@ -2,19 +2,17 @@
 
 import { usePathname, useRouter } from 'next/navigation'
 import { BottomNavigation, BottomNavigationAction, Paper } from '@mui/material'
-import {
-  Dashboard as DashboardIcon,
-  People as PeopleIcon,
-  Receipt as ReceiptIcon,
-  LocalOffer as PromoIcon,
-  Settings as SettingsIcon,
-} from '@mui/icons-material'
+import DashboardIcon from '@mui/icons-material/Dashboard'
+import PeopleIcon from '@mui/icons-material/People'
+import ReceiptIcon from '@mui/icons-material/Receipt'
+import AiIcon from '@mui/icons-material/AutoAwesome'
+import SettingsIcon from '@mui/icons-material/Settings'
 
 const navItems = [
   { label: '首页', icon: <DashboardIcon />, path: '/dashboard' },
   { label: '持卡人', icon: <PeopleIcon />, path: '/holders' },
   { label: '账单', icon: <ReceiptIcon />, path: '/bills' },
-  { label: '优惠', icon: <PromoIcon />, path: '/promos' },
+  { label: '✨助手', icon: <AiIcon />, path: '/ai' },
   { label: '设置', icon: <SettingsIcon />, path: '/settings' },
 ]
 
@@ -35,8 +33,9 @@ export function BottomNav() {
         left: 0,
         right: 0,
         zIndex: 1000,
-        borderTop: '1px solid',
-        borderColor: 'divider',
+        borderTop: '1px solid #DDDDDD',
+        boxShadow: '0px -2px 8px rgba(0, 0, 0, 0.06)',
+        backgroundColor: '#FFFFFF',
       }}
       elevation={0}
     >
@@ -46,7 +45,7 @@ export function BottomNav() {
           router.push(navItems[newValue].path)
         }}
         showLabels
-        sx={{ height: 64 }}
+        sx={{ height: 60, backgroundColor: 'transparent' }}
       >
         {navItems.map(item => (
           <BottomNavigationAction
@@ -54,8 +53,18 @@ export function BottomNav() {
             label={item.label}
             icon={item.icon}
             sx={{
+              color: '#636363',
+              fontFamily: '"Open Sans", sans-serif',
+              '& .MuiBottomNavigationAction-label': {
+                fontSize: '12px',
+                fontWeight: 400,
+              },
               '&.Mui-selected': {
-                color: 'primary.main',
+                color: '#030059',
+                '& .MuiBottomNavigationAction-label': {
+                  fontSize: '12px',
+                  fontWeight: 700,
+                },
               },
             }}
           />

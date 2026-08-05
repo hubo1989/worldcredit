@@ -195,3 +195,121 @@ export interface EmailParseLog {
   raw_ai_response?: string
   created_at: string
 }
+
+/**
+ * 用户登记的账单来源邮箱。
+ * 用于 Cloudflare Email Worker 在收到账单邮件后按 From/Reply-To 归属到登录用户。
+ */
+export interface BillEmailSource {
+  id: string
+  user_id: string
+  email: string
+  label?: string
+  is_active: boolean
+  created_at: string
+}
+
+/**
+ * 通用记录附件 metadata。文件保存在 InsForge Storage。
+ */
+export interface RecordAttachment {
+  id: string
+  record_type: string
+  record_id: string
+  bucket: string
+  storage_path: string
+  file_name: string
+  file_type?: string
+  file_size?: number
+  public_url?: string
+  uploaded_by?: string
+  created_at: string
+}
+
+/**
+ * 用户自定义显示偏好设置
+ */
+export interface UserDisplayConfig {
+  privacy_mode: boolean
+  show_min_payment: boolean
+  show_statement_date: boolean
+  show_annual_fee: boolean
+  show_card_last4: boolean
+  default_currency: string
+}
+
+/**
+ * 用户自定义提醒规则与通道设置
+ */
+export interface UserReminderConfig {
+  remind_days_before: number[]
+  quiet_hours_start?: string
+  quiet_hours_end?: string
+  enabled_channels: ('web_push' | 'email' | 'webhook')[]
+  custom_reminder_email?: string
+}
+
+/**
+ * 用户全局个性化配置
+ */
+export interface UserPreferences {
+  id?: string
+  user_id: string
+  display_config: UserDisplayConfig
+  reminder_config: UserReminderConfig
+  updated_at?: string
+}
+
+/* ============================================================
+ * AI 助手相关类型
+ * ============================================================ */
+
+/**
+ * AI 助手页面模式（驱动空状态/加载/错误/对话视图切换）
+ */
+export type AiPageMode = 'empty' | 'loading' | 'error' | 'conversation'
+
+/**
+ * AI 单条对话消息
+ */
+export interface AiMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  model?: string
+  created_at: number
+  error?: boolean
+}
+
+/**
+ * AI 助手欢迎横幅所需的真实个性化上下文
+ */
+export interface AiWelcomeContext {
+  /** 用于问候语的持卡人姓名（优先取第一个持卡人，否则用兜底文案） */
+  holderName?: string
+  /** 当前用户名下活跃卡数量 */
+  cardCount: number
+  /** 未结清账单数 */
+  pendingBills: number
+  /** 已逾期账单数 */
+  overdueCount: number
+  /** 未来 7 天内到期账单数 */
+  dueSoonCount: number
+  /** 剩余应还总额（CNY） */
+  totalRemaining: number
+}
+
+/**
+ * 场景化快捷问题分组
+ */
+export interface ScenarioGroup {
+  /** 分组唯一标识，如 'bills' */
+  id: string
+  /** 分组标题，如 "查账单" */
+  title: string
+  /** 图标 emoji 或 MUI icon 名 */
+  emoji: string
+  /** 该分组下的快捷问题列表 */
+  questions: string[]
+}
+

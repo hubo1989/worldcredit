@@ -97,7 +97,7 @@ git commit -m "chore: init vinext project with MUI"
 
 ## Task 2: InsForge 配置与数据库 Schema
 
-**目标：** 连接 InsForge，创建 9 张数据库表。
+**目标：** 连接 InsForge，创建 10 张数据库表（平台基础数据 + 用户数据，不含 users 中间表）。
 
 **Files:**
 - Create: `lib/insforge.ts`
@@ -128,135 +128,9 @@ npm install @insforge/js
 
 ```sql
 -- db/schema.sql
-
--- 用户表（由 InsForge Auth 管理，这里扩展 profile）
-CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  auth_id UUID UNIQUE NOT NULL,  -- InsForge Auth 用户 ID
-  email TEXT NOT NULL,
-  name TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin', 'member')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- 持卡人档案
-CREATE TABLE IF NOT EXISTS card_holders (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  managed_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  auth_user_id UUID REFERENCES users(id),  -- Phase 3: 持卡人独立账号
-  name TEXT NOT NULL,
-  phone TEXT,
-  avatar_color TEXT DEFAULT '#1976d2',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- 信用卡
-CREATE TABLE IF NOT EXISTS credit_cards (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  holder_id UUID NOT NULL REFERENCES card_holders(id) ON DELETE CASCADE,
-  country TEXT NOT NULL DEFAULT 'CN',
-  bank_name TEXT NOT NULL,
-  card_name TEXT NOT NULL,
-  card_number_last4 TEXT,
-  card_image_id TEXT,
-  credit_limit NUMERIC NOT NULL DEFAULT 0,
-  currency TEXT NOT NULL DEFAULT 'CNY',
-  billing_day INT NOT NULL CHECK (billing_day BETWEEN 1 AND 31),
-  payment_due_type TEXT NOT NULL DEFAULT 'after_billing'
-    CHECK (payment_due_type IN ('fixed', 'after_billing')),
-  payment_due_value INT NOT NULL DEFAULT 20,
-  annual_fee NUMERIC DEFAULT 0,
-  annual_fee_waiver TEXT,
-  status TEXT NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active', 'frozen', 'cancelled')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- 账单
-CREATE TABLE IF NOT EXISTS bills (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  card_id UUID NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
-  bill_month TEXT NOT NULL,  -- '2026-03'
-  statement_start DATE,
-  statement_end DATE,
-  statement_date DATE,
-  bill_amount NUMERIC NOT NULL DEFAULT 0,
-  min_payment NUMERIC DEFAULT 0,
-  due_date DATE NOT NULL,
-  status TEXT NOT NULL DEFAULT 'unpaid'
-    CHECK (status IN ('unpaid', 'partial', 'paid', 'overdue')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(card_id, bill_month)
-);
-
--- 还款记录
-CREATE TABLE IF NOT EXISTS payments (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  bill_id UUID NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
-  amount NUMERIC NOT NULL CHECK (amount > 0),
-  paid_at DATE NOT NULL DEFAULT CURRENT_DATE,
-  channel TEXT DEFAULT '手动还款',
-  note TEXT,
-  idempotency_key TEXT UNIQUE NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- 权益定义
-CREATE TABLE IF NOT EXISTS benefits (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  card_id UUID NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  description TEXT,
-  quota INT NOT NULL DEFAULT 1,
-  period TEXT NOT NULL DEFAULT 'yearly'
-    CHECK (period IN ('yearly', 'monthly', 'one_time')),
-  reset_month INT CHECK (reset_month BETWEEN 1 AND 12),
-  expiry_date DATE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- 权益使用记录
-CREATE TABLE IF NOT EXISTS benefit_usages (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  benefit_id UUID NOT NULL REFERENCES benefits(id) ON DELETE CASCADE,
-  used_at DATE NOT NULL DEFAULT CURRENT_DATE,
-  note TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- 优惠活动定义
-CREATE TABLE IF NOT EXISTS promos (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  card_id UUID REFERENCES credit_cards(id) ON DELETE SET NULL,
-  bank_name TEXT NOT NULL,
-  title TEXT NOT NULL,
-  description TEXT,
-  discount_type TEXT CHECK (discount_type IN ('满减', '折扣', '积分', '返现')),
-  start_date DATE,
-  end_date DATE,
-  conditions TEXT,
-  max_uses INT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- 优惠使用记录
-CREATE TABLE IF NOT EXISTS promo_usages (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  promo_id UUID NOT NULL REFERENCES promos(id) ON DELETE CASCADE,
-  card_id UUID REFERENCES credit_cards(id) ON DELETE SET NULL,
-  used_at DATE NOT NULL DEFAULT CURRENT_DATE,
-  note TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- 索引
-CREATE INDEX idx_card_holders_managed_by ON card_holders(managed_by);
-CREATE INDEX idx_credit_cards_holder ON credit_cards(holder_id);
-CREATE INDEX idx_bills_card ON bills(card_id);
-CREATE INDEX idx_bills_due_date ON bills(due_date);
-CREATE INDEX idx_payments_bill ON payments(bill_id);
-CREATE INDEX idx_benefit_usages_benefit ON benefit_usages(benefit_id);
-CREATE INDEX idx_promo_usages_promo ON promo_usages(promo_id);
+-- 完整 schema 见 db/schema.sql
+-- 平台基础数据：card_products, benefits, promos
+-- 用户数据：card_holders, credit_cards, bills, payments, benefit_usages, promo_usages
 ```
 
 **Step 4: 通过 InsForge 执行 schema**
@@ -279,112 +153,10 @@ export const insforge = createClient(insforgeUrl, insforgeKey)
 
 ```ts
 // lib/types.ts
-
-export interface User {
-  id: string
-  auth_id: string
-  email: string
-  name: string
-  role: 'admin' | 'member'
-  created_at: string
-}
-
-export interface CardHolder {
-  id: string
-  managed_by: string
-  auth_user_id?: string
-  name: string
-  phone?: string
-  avatar_color: string
-  created_at: string
-}
-
-export interface CreditCard {
-  id: string
-  holder_id: string
-  country: string
-  bank_name: string
-  card_name: string
-  card_number_last4?: string
-  card_image_id?: string
-  credit_limit: number
-  currency: string
-  billing_day: number
-  payment_due_type: 'fixed' | 'after_billing'
-  payment_due_value: number
-  annual_fee: number
-  annual_fee_waiver?: string
-  status: 'active' | 'frozen' | 'cancelled'
-  created_at: string
-}
-
-export interface Bill {
-  id: string
-  card_id: string
-  bill_month: string
-  statement_start?: string
-  statement_end?: string
-  statement_date?: string
-  bill_amount: number
-  min_payment: number
-  due_date: string
-  status: 'unpaid' | 'partial' | 'paid' | 'overdue'
-  created_at: string
-}
-
-export interface Payment {
-  id: string
-  bill_id: string
-  amount: number
-  paid_at: string
-  channel: string
-  note?: string
-  idempotency_key: string
-  created_at: string
-}
-
-export interface Benefit {
-  id: string
-  card_id: string
-  name: string
-  description?: string
-  quota: number
-  period: 'yearly' | 'monthly' | 'one_time'
-  reset_month?: number
-  expiry_date?: string
-  created_at: string
-}
-
-export interface BenefitUsage {
-  id: string
-  benefit_id: string
-  used_at: string
-  note?: string
-  created_at: string
-}
-
-export interface Promo {
-  id: string
-  card_id?: string
-  bank_name: string
-  title: string
-  description?: string
-  discount_type?: '满减' | '折扣' | '积分' | '返现'
-  start_date?: string
-  end_date?: string
-  conditions?: string
-  max_uses?: number
-  created_at: string
-}
-
-export interface PromoUsage {
-  id: string
-  promo_id: string
-  card_id?: string
-  used_at: string
-  note?: string
-  created_at: string
-}
+// 完整类型定义见 lib/types.ts
+// 平台数据：CardProduct, Benefit, Promo
+// 用户数据：CardHolder, CreditCard (含 card_product_id), Bill, Payment
+// 使用记录：BenefitUsage, PromoUsage
 ```
 
 **Step 7: 创建环境变量文件**
@@ -399,7 +171,7 @@ NEXT_PUBLIC_INSFORGE_ANON_KEY=your-anon-key-here
 
 ```bash
 git add .
-git commit -m "feat: add InsForge config and database schema (9 tables)"
+git commit -m "feat: add InsForge config and database schema (10 tables)"
 ```
 
 ---
@@ -990,7 +762,7 @@ export default function HoldersPage() {
   useEffect(() => { loadHolders() }, [loadHolders])
 
   const handleCreate = async (data: { name: string; phone?: string; avatar_color: string }) => {
-    await createHolder({ ...data, managed_by: user!.id })
+    await createHolder({ ...data, created_by: user!.id })
     loadHolders()
   }
 

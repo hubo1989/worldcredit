@@ -79,7 +79,24 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
     // --- 贷款类卡还款提醒 ---
     await checkLoanReminders()
 
-    // 1. Fetch unpaid bills due within next 3 days
+    // 0. 获取用户的 holder_ids -> card_ids
+    const { data: holders } = await insforge.database
+      .from('card_holders')
+      .select('id')
+      .eq('created_by', userId)
+
+    const holderIds = (holders || []).map(h => h.id)
+    if (holderIds.length === 0) return
+
+    const { data: userCards } = await insforge.database
+      .from('credit_cards')
+      .select('id, card_product_id')
+      .in('holder_id', holderIds)
+
+    const cardIds = (userCards || []).map(c => c.id)
+    if (cardIds.length === 0) return
+
+    // 1. Fetch unpaid bills due within next 3 days for user's cards
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     const threeDaysLater = new Date(today)
@@ -88,12 +105,35 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
     const todayStr = today.toISOString().slice(0, 10)
     const maxStr = threeDaysLater.toISOString().slice(0, 10)
 
-    const { data: bills, error: billsError } = await insforge.database
+    const { data: rawBills, error: billsError } = await insforge.database
       .from('bills')
-      .select('id, due_date, bill_amount, card:credit_cards(card_product:card_products(bank_name, card_name))')
+      .select('id, due_date, bill_amount, card_id')
+      .in('card_id', cardIds)
       .in('status', ['unpaid', 'partial', 'overdue'])
       .gte('due_date', todayStr)
       .lte('due_date', maxStr)
+
+    if (billsError || !rawBills || rawBills.length === 0) return
+
+    const pIds = Array.from(new Set((userCards || []).map(c => c.card_product_id).filter(Boolean)))
+    let pMap: Record<string, any> = {}
+    if (pIds.length > 0) {
+      const { data: products } = await insforge.database
+        .from('card_products')
+        .select('id, bank_name, card_name')
+        .in('id', pIds)
+      if (products) pMap = products.reduce((acc, p) => ({ ...acc, [p.id]: p }), {})
+    }
+
+    const cardMap = (userCards || []).reduce((acc, c) => {
+      acc[c.id] = { ...c, card_product: pMap[c.card_product_id] }
+      return acc
+    }, {} as Record<string, any>)
+
+    const bills = rawBills.map(b => ({
+      ...b,
+      card: cardMap[b.card_id]
+    }))
 
     if (billsError || !bills || bills.length === 0) return
 
@@ -168,13 +208,28 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
  */
 async function checkLoanReminders(): Promise<void> {
   // 查询当前用户的所有贷款类卡
-  const { data: loanCards, error: cardsError } = await insforge.database
+  const { data: rawLoanCards, error: cardsError } = await insforge.database
     .from('credit_cards')
-    .select('id, loan_due_day, card_product:card_products(bank_name, card_name)')
+    .select('id, card_product_id, loan_due_day')
     .eq('card_type', 'loan')
     .eq('status', 'active')
 
-  if (cardsError || !loanCards || loanCards.length === 0) return
+  if (cardsError || !rawLoanCards || rawLoanCards.length === 0) return
+
+  const cpIds = Array.from(new Set(rawLoanCards.map((c: any) => c.card_product_id).filter(Boolean)))
+  let cpMap: Record<string, any> = {}
+  if (cpIds.length > 0) {
+    const { data: cpData } = await insforge.database
+      .from('card_products')
+      .select('id, bank_name, card_name')
+      .in('id', cpIds)
+    if (cpData) cpMap = cpData.reduce((acc, p) => ({ ...acc, [p.id]: p }), {})
+  }
+
+  const loanCards = rawLoanCards.map((c: any) => ({
+    ...c,
+    card_product: cpMap[c.card_product_id]
+  }))
 
   const today = new Date()
   today.setHours(0, 0, 0, 0)

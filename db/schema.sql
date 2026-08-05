@@ -221,6 +221,46 @@ CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(use
 CREATE INDEX IF NOT EXISTS idx_reminder_logs_bill ON reminder_logs(bill_id);
 
 -- ============================================
+-- Bill Email Sources
+-- ============================================
+
+-- 用户登记的账单来源邮箱。用于 Email Worker 在收到账单邮件后按发件人归属用户。
+CREATE TABLE IF NOT EXISTS bill_email_sources (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL,
+  email TEXT NOT NULL,
+  label TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bill_email_sources_user ON bill_email_sources(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bill_email_sources_email ON bill_email_sources(lower(email)) WHERE is_active = true;
+
+-- ============================================
+-- Record Attachments
+-- ============================================
+
+-- 通用记录附件表。文件二进制存储在 InsForge Storage，业务表只保存 metadata 和 storage path。
+CREATE TABLE IF NOT EXISTS record_attachments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  record_type TEXT NOT NULL,
+  record_id UUID NOT NULL,
+  bucket TEXT NOT NULL DEFAULT 'record-attachments',
+  storage_path TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  file_type TEXT,
+  file_size BIGINT,
+  public_url TEXT,
+  uploaded_by UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(bucket, storage_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_record_attachments_record ON record_attachments(record_type, record_id, created_at DESC);
+
+-- ============================================
 -- Email 解析日志（账单自动录入）
 -- ============================================
 
@@ -238,3 +278,30 @@ CREATE TABLE IF NOT EXISTS email_parse_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_email_parse_logs_user ON email_parse_logs (user_id, created_at DESC);
+
+-- ============================================
+-- 用户个性化偏好配置（自定义显示要素与提醒规则）
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS user_preferences (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID UNIQUE NOT NULL,
+  display_config JSONB NOT NULL DEFAULT '{
+    "privacy_mode": false,
+    "show_min_payment": true,
+    "show_statement_date": true,
+    "show_annual_fee": true,
+    "show_card_last4": true,
+    "default_currency": "CNY"
+  }'::jsonb,
+  reminder_config JSONB NOT NULL DEFAULT '{
+    "remind_days_before": [3, 1, 0],
+    "quiet_hours_start": "22:00",
+    "quiet_hours_end": "08:00",
+    "enabled_channels": ["web_push"]
+  }'::jsonb,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_preferences_user ON user_preferences(user_id);
+

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Snackbar, Alert, Button } from '@mui/material'
-import { NotificationsActive as BellIcon } from '@mui/icons-material'
+import BellIcon from '@mui/icons-material/NotificationsActive'
 import { insforge } from '@/lib/insforge'
 import { useAuth } from '@/lib/auth'
 

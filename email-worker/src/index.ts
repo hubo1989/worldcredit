@@ -1,11 +1,12 @@
 /**
  * WorldCredit Email Worker
  *
- * Triggered by Cloudflare Email Routing for all mail delivered to
- * bills+{userId}@20160325.xyz
+ * Triggered by Cloudflare Email Routing for mail delivered to:
+ *   - bills+{userId}@20160325.xyz (direct user routing)
+ *   - bills@20160325.xyz, with From/Reply-To matched against bill_email_sources
  *
  * Flow:
- *   1. Parse userId from the To address (between + and @)
+ *   1. Resolve userId from the To address or registered source email
  *   2. Decode the raw MIME message and extract readable text
  *   3. Fetch ai_config (OpenAI key / baseURL / model) from system_settings
  *   4. Call OpenAI to extract bill fields from the email body
@@ -28,15 +29,16 @@ export default {
   ): Promise<void> {
     const db = new InsForgeClient(env.INSFORGE_URL, env.INSFORGE_SERVICE_KEY)
 
-    const fromEmail = message.from ?? null
+    const fromEmail = normalizeEmail(message.from ?? null)
     // message.to may be undefined in some runtime versions; fall back to headers
-    const toHeader = message.to ?? ''
+    const toHeader = message.to ?? getHeader(message, 'to') ?? ''
     const subject = extractSubject(message)
+    const senderCandidates = extractSenderCandidates(message, fromEmail)
 
-    // ── 1. Parse userId from To address ──────────────────────────────────────
-    const userId = parseUserId(toHeader)
+    // ── 1. Resolve userId from To address or registered source email ─────────
+    const userId = parseUserId(toHeader) ?? await findUserIdBySourceEmail(db, senderCandidates)
     if (!userId) {
-      console.warn(`[email-worker] Cannot parse userId from To="${toHeader}"; dropping.`)
+      console.warn(`[email-worker] Cannot resolve userId from To="${toHeader}" From="${fromEmail ?? ''}"; dropping.`)
       return
     }
 
@@ -144,16 +146,62 @@ function parseUserId(to: string): string | null {
   return candidate
 }
 
+function normalizeEmail(value: string | null | undefined): string | null {
+  if (!value) return null
+  const angleMatch = value.match(/<([^>]+)>/)
+  const raw = (angleMatch ? angleMatch[1] : value).trim().toLowerCase()
+  const emailMatch = raw.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+/i)
+  return emailMatch ? emailMatch[0].toLowerCase() : null
+}
+
+function getHeader(message: ForwardableEmailMessage, name: string): string | null {
+  try {
+    return message.headers.get(name) ?? null
+  } catch {
+    return null
+  }
+}
+
+function extractSenderCandidates(message: ForwardableEmailMessage, fromEmail: string | null): string[] {
+  const candidates = new Set<string>()
+  if (fromEmail) candidates.add(fromEmail)
+
+  for (const headerName of [
+    'reply-to',
+    'sender',
+    'return-path',
+    'x-original-from',
+    'x-forwarded-for',
+    'resent-from',
+  ]) {
+    const normalized = normalizeEmail(getHeader(message, headerName))
+    if (normalized) candidates.add(normalized)
+  }
+
+  return Array.from(candidates)
+}
+
+async function findUserIdBySourceEmail(db: InsForgeClient, emails: string[]): Promise<string | null> {
+  for (const email of emails) {
+    const rows = await db.select<{ user_id: string }>(
+      'bill_email_sources',
+      `email=eq.${encodeURIComponent(email)}&is_active=eq.true&select=user_id&limit=2`
+    )
+    if (rows.length === 1) return rows[0].user_id
+    if (rows.length > 1) {
+      console.warn(`[email-worker] Ambiguous source email mapping for ${email}; refusing to guess.`)
+      return null
+    }
+  }
+  return null
+}
+
 /**
  * Try to extract Subject from the ForwardableEmailMessage.
  * The Workers Email API exposes headers via message.headers (Headers object).
  */
 function extractSubject(message: ForwardableEmailMessage): string | null {
-  try {
-    return message.headers.get('subject') ?? null
-  } catch {
-    return null
-  }
+  return getHeader(message, 'subject')
 }
 
 // ─── OpenAI bill parser ───────────────────────────────────────────────────────
@@ -233,15 +281,15 @@ async function findCardId(
   // Step 2 – credit_cards for these holders
   // PostgREST: holder_id=in.(uuid1,uuid2,...)
   const inList = holderIds.map(id => encodeURIComponent(id)).join(',')
-  const cards = await db.select<{ id: string; card_last4: string | null }>(
+  const cards = await db.select<{ id: string; card_number_last4: string | null }>(
     'credit_cards',
-    `holder_id=in.(${inList})&select=id,card_last4`
+    `holder_id=in.(${inList})&select=id,card_number_last4`
   )
   if (!cards.length) return null
 
   // Step 3 – match by last4
   if (cardLast4) {
-    const match = cards.find(c => c.card_last4 === cardLast4)
+    const match = cards.find(c => c.card_number_last4 === cardLast4)
     if (match) return match.id
     // If we have a last4 from AI but no card matches, still fall through to single-card case
   }

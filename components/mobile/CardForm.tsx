@@ -28,6 +28,7 @@ const DUE_TYPE_LABELS: Record<DueType, string> = {
 
 export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) {
   const [products, setProducts] = useState<CardProduct[]>([])
+  const [selectedBank, setSelectedBank] = useState('')
   const [productId, setProductId] = useState(initial?.card_product_id ?? '')
   const [last4, setLast4] = useState(initial?.card_number_last4 ?? '')
   const [limit, setLimit] = useState(initial?.credit_limit.toString() ?? '')
@@ -58,8 +59,20 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
     getCardProducts().then(setProducts)
   }, [])
 
+  // 提取所有的银行选项
+  const bankOptions = Array.from(new Set(products.map(p => p.bank_name))).filter(Boolean)
+
+  // 当前银行下的卡产品列表
+  const availableProducts = selectedBank 
+    ? products.filter(p => p.bank_name === selectedBank)
+    : products
+
   useEffect(() => {
-    if (initial) {
+    if (initial && products.length > 0) {
+      const match = products.find(p => p.id === initial.card_product_id)
+      if (match) {
+        setSelectedBank(match.bank_name)
+      }
       setProductId(initial.card_product_id)
       setLast4(initial.card_number_last4 ?? '')
       setLimit(initial.credit_limit.toString())
@@ -70,7 +83,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
       setOverrideBillingDay(initial.override_billing_day?.toString() ?? '')
       setOverrideDueType((initial.override_due_type as DueType) ?? 'after_billing')
       setOverrideDueValue(initial.override_due_value?.toString() ?? '')
-    } else {
+    } else if (!initial) {
+      setSelectedBank('')
       setProductId('')
       setLast4('')
       setLimit('')
@@ -82,15 +96,25 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
       setOverrideDueType('after_billing')
       setOverrideDueValue('')
     }
-  }, [initial, open])
+  }, [initial, open, products])
+
+  const handleBankChange = (bank: string) => {
+    setSelectedBank(bank)
+    const filtered = products.filter(p => p.bank_name === bank)
+    if (filtered.length > 0) {
+      setProductId(filtered[0].id)
+    } else {
+      setProductId('')
+    }
+  }
 
   const isCredit = cardType === 'credit'
   const isLoan = cardType === 'loan'
 
   // 信用卡模式校验
-  const creditValid = !!productId && !!limit && !!billingDay
+  const creditValid = !!selectedBank && !!productId && !!limit && !!billingDay
   // 贷款类模式校验（产品和还款日必填，额度选填）
-  const loanValid = !!productId && !!loanDueDay
+  const loanValid = !!selectedBank && !!productId && !!loanDueDay
 
   const canSubmit = isCredit ? creditValid : loanValid
 
@@ -105,35 +129,13 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
         credit_limit: limit ? parseFloat(limit) : 0,
         billing_day: billingDay ? parseInt(billingDay) : 1,
         status: 'active' as const,
-        card_type: cardType,
       }
 
-      if (isLoan) {
-        await onSubmit({
-          ...base,
-          loan_due_day: parseInt(loanDueDay),
-          override_due_type: null,
-          override_due_value: null,
-          override_billing_day: undefined,
-        })
-      } else {
-        await onSubmit({
-          ...base,
-          loan_due_day: undefined,
-          override_billing_day: overrideEnabled && overrideBillingDay
-            ? parseInt(overrideBillingDay)
-            : undefined,
-          override_due_type: overrideEnabled && overrideDueType
-            ? overrideDueType
-            : null,
-          override_due_value: overrideEnabled && overrideDueValue
-            ? parseInt(overrideDueValue)
-            : null,
-        })
-      }
+      await onSubmit(base as any)
       onClose()
-    } catch (err) {
+    } catch (err: any) {
       console.error(err)
+      alert('保存卡片失败: ' + (err.message || JSON.stringify(err)))
     } finally {
       setSubmitting(false)
     }
@@ -164,18 +166,36 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
             </ToggleButtonGroup>
           </Box>
 
-          {/* 卡产品 */}
+          {/* 发卡银行选择 */}
           <TextField
             select
             fullWidth
-            label="卡产品"
-            value={productId}
-            onChange={e => setProductId(e.target.value)}
+            label="发卡银行 *"
+            value={selectedBank}
+            onChange={e => handleBankChange(e.target.value)}
             required
           >
-            {products.map(p => (
+            {bankOptions.map(bank => (
+              <MenuItem key={bank} value={bank}>
+                {bank}
+              </MenuItem>
+            ))}
+          </TextField>
+
+          {/* 卡片名称选择 */}
+          <TextField
+            select
+            fullWidth
+            label="卡片名称 *"
+            value={productId}
+            onChange={e => setProductId(e.target.value)}
+            disabled={!selectedBank}
+            required
+            helperText={!selectedBank ? '请先选择发卡银行' : undefined}
+          >
+            {availableProducts.map(p => (
               <MenuItem key={p.id} value={p.id}>
-                {p.bank_name} - {p.card_name}
+                {p.card_name}
               </MenuItem>
             ))}
           </TextField>

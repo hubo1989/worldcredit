@@ -24,7 +24,7 @@ export interface SystemSetting {
 export interface CreditCard {
   id: string
   holder_id: string
-  card_last4: string | null
+  card_number_last4: string | null
   credit_limit: number
   card_product_id: string | null
 }
