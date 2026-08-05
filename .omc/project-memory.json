@@ -1,0 +1,190 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1778090019121,
+  "projectRoot": "/Users/hubo/worktrees/worldcredit/init",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "react",
+        "version": "19.2.4",
+        "category": "frontend"
+      },
+      {
+        "name": "react-dom",
+        "version": "19.2.4",
+        "category": "frontend"
+      },
+      {
+        "name": "vite",
+        "version": "8.0.1",
+        "category": "build"
+      },
+      {
+        "name": "vitest",
+        "version": "4.1.5",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {
+      "test": "npx vitest run"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase",
+    "importStyle": "ES modules",
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "app",
+      "components",
+      "docs",
+      "lib",
+      "public"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "app": {
+      "path": "app",
+      "purpose": "Application code",
+      "fileCount": 1,
+      "lastAccessed": 1778090019097,
+      "keyFiles": [
+        "layout.tsx"
+      ]
+    },
+    "components": {
+      "path": "components",
+      "purpose": "UI components",
+      "fileCount": 1,
+      "lastAccessed": 1778090019097,
+      "keyFiles": [
+        "ThemeRegistry.tsx"
+      ]
+    },
+    "db": {
+      "path": "db",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1778090019104,
+      "keyFiles": [
+        "functions.sql",
+        "schema.sql"
+      ]
+    },
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 2,
+      "lastAccessed": 1778090019104,
+      "keyFiles": [
+        "sw.js",
+        "workbox-8c29f6e4.js"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1778090019105,
+      "keyFiles": []
+    },
+    "lib": {
+      "path": "lib",
+      "purpose": "Library code",
+      "fileCount": 12,
+      "lastAccessed": 1778090019115,
+      "keyFiles": [
+        "auth.tsx",
+        "billHealth.ts",
+        "billParser.ts",
+        "billRecognizer.ts",
+        "export.ts"
+      ]
+    },
+    "public": {
+      "path": "public",
+      "purpose": "Public files",
+      "fileCount": 1,
+      "lastAccessed": 1778090019116,
+      "keyFiles": [
+        "manifest.json"
+      ]
+    },
+    "worker": {
+      "path": "worker",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1778090019116,
+      "keyFiles": [
+        "index.ts"
+      ]
+    },
+    "db/migrations": {
+      "path": "db/migrations",
+      "purpose": "Database migrations",
+      "fileCount": 6,
+      "lastAccessed": 1778090019118,
+      "keyFiles": [
+        "001_add_holder_email.sql",
+        "002_enable_member_rls.sql",
+        "003_member_self_service_rls.sql"
+      ]
+    },
+    "lib/__tests__": {
+      "path": "lib/__tests__",
+      "purpose": "Test files",
+      "fileCount": 4,
+      "lastAccessed": 1778090019120,
+      "keyFiles": [
+        "billHealth.test.ts",
+        "billParser.test.ts",
+        "permissions.test.ts"
+      ]
+    },
+    "lib/api": {
+      "path": "lib/api",
+      "purpose": "API routes",
+      "fileCount": 14,
+      "lastAccessed": 1778090019121,
+      "keyFiles": [
+        "analytics.ts",
+        "benefitUsages.ts",
+        "benefits.ts"
+      ]
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}
