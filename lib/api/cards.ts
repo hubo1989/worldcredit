@@ -1,52 +1,34 @@
-// lib/api/cards.ts
-import { db } from '../insforge'
-import type { CreditCard } from '../types'
+import { insforge } from '@/lib/insforge'
+import type { CardProduct, CreditCard, CardHolder } from '@/lib/types'
 
-export async function getCardsByHolder(holderId: string): Promise<CreditCard[]> {
-  const { data, error } = await db
-    .from('credit_cards')
+export async function getCardProducts(): Promise<CardProduct[]> {
+  const { data, error } = await insforge.database
+    .from('card_products')
     .select('*')
-    .eq('holder_id', holderId)
-    .order('created_at', { ascending: false })
+    .eq('is_active', true)
+    .order('bank_name', { ascending: true })
+
   if (error) throw error
   return data || []
 }
 
-export async function getCard(id: string): Promise<CreditCard> {
-  const { data, error } = await db
-    .from('credit_cards')
+export async function getCardHolders(): Promise<CardHolder[]> {
+  const { data, error } = await insforge.database
+    .from('card_holders')
     .select('*')
-    .eq('id', id)
-    .single()
+    .order('created_at', { ascending: true })
+
   if (error) throw error
-  return data
+  return data || []
 }
 
-export async function createCard(card: Omit<CreditCard, 'id' | 'created_at'>): Promise<CreditCard> {
-  const { data, error } = await db
+export async function getCardsByHolder(holderId: string): Promise<CreditCard[]> {
+  const { data, error } = await insforge.database
     .from('credit_cards')
-    .insert(card)
-    .select()
-    .single()
-  if (error) throw error
-  return data
-}
+    .select('*, card_product:card_products(*)')
+    .eq('holder_id', holderId)
+    .order('created_at', { ascending: false })
 
-export async function updateCard(id: string, updates: Partial<CreditCard>): Promise<CreditCard> {
-  const { data, error } = await db
-    .from('credit_cards')
-    .update(updates)
-    .eq('id', id)
-    .select()
-    .single()
   if (error) throw error
-  return data
-}
-
-export async function deleteCard(id: string): Promise<void> {
-  const { error } = await db
-    .from('credit_cards')
-    .delete()
-    .eq('id', id)
-  if (error) throw error
+  return data || []
 }

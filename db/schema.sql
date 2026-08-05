@@ -1,47 +1,117 @@
 -- db/schema.sql
 
--- 用户表（由 InsForge Auth 管理，这里扩展 profile）
-CREATE TABLE IF NOT EXISTS users (
+-- ============================================
+-- 平台基础数据（管理员维护）
+-- ============================================
+
+-- 银行目录（维护支持的银行列表）
+CREATE TABLE IF NOT EXISTS banks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  auth_id UUID UNIQUE NOT NULL,  -- InsForge Auth 用户 ID
-  email TEXT NOT NULL,
-  name TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin', 'member')),
+  name TEXT UNIQUE NOT NULL,
+  full_name TEXT,
+  logo_url TEXT,
+  country TEXT NOT NULL DEFAULT 'CN',
+  customer_service_phone TEXT,
+  website_url TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 信用卡产品目录
+CREATE TABLE IF NOT EXISTS card_products (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  country TEXT NOT NULL DEFAULT 'CN',
+  bank_id UUID REFERENCES banks(id) ON DELETE SET NULL,
+  bank_name TEXT NOT NULL, -- 冗余字段或处理旧数据
+  card_name TEXT NOT NULL,
+  card_image_id TEXT,
+  description_md TEXT, -- Markdown 格式的卡片介绍
+  apply_url TEXT, -- 在线申请链接
+  rewards_summary TEXT, -- 积分/返现规则摘要
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  payment_due_type TEXT NOT NULL DEFAULT 'after_billing'
+    CHECK (payment_due_type IN ('fixed', 'after_billing')),
+  payment_due_value INT NOT NULL DEFAULT 20,
+  annual_fee NUMERIC DEFAULT 0,
+  annual_fee_waiver TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 卡产品权益
+CREATE TABLE IF NOT EXISTS benefits (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  card_product_id UUID NOT NULL REFERENCES card_products(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  quota INT NOT NULL DEFAULT 1,
+  period TEXT NOT NULL DEFAULT 'yearly'
+    CHECK (period IN ('yearly', 'monthly', 'one_time')),
+  reset_month INT CHECK (reset_month BETWEEN 1 AND 12),
+  expiry_date DATE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 优惠活动
+CREATE TABLE IF NOT EXISTS promos (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  card_product_id UUID REFERENCES card_products(id) ON DELETE SET NULL,
+  bank_id UUID REFERENCES banks(id) ON DELETE SET NULL,
+  bank_name TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  discount_type TEXT CHECK (discount_type IN ('满减', '折扣', '积分', '返现')),
+  start_date DATE,
+  end_date DATE,
+  conditions TEXT,
+  max_uses INT,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================
+-- 用户数据
+-- ============================================
 
 -- 持卡人档案
 CREATE TABLE IF NOT EXISTS card_holders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  managed_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  auth_user_id UUID REFERENCES users(id),  -- Phase 3: 持卡人独立账号
+  created_by UUID NOT NULL,  -- InsForge Auth user.id
   name TEXT NOT NULL,
   phone TEXT,
   avatar_color TEXT DEFAULT '#1976d2',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 信用卡
+-- 用户持有的信用卡
 CREATE TABLE IF NOT EXISTS credit_cards (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   holder_id UUID NOT NULL REFERENCES card_holders(id) ON DELETE CASCADE,
-  country TEXT NOT NULL DEFAULT 'CN',
-  bank_name TEXT NOT NULL,
-  card_name TEXT NOT NULL,
+  card_product_id UUID NOT NULL REFERENCES card_products(id) ON DELETE RESTRICT,
   card_number_last4 TEXT,
-  card_image_id TEXT,
   credit_limit NUMERIC NOT NULL DEFAULT 0,
-  currency TEXT NOT NULL DEFAULT 'CNY',
   billing_day INT NOT NULL CHECK (billing_day BETWEEN 1 AND 31),
-  payment_due_type TEXT NOT NULL DEFAULT 'after_billing'
-    CHECK (payment_due_type IN ('fixed', 'after_billing')),
-  payment_due_value INT NOT NULL DEFAULT 20,
-  annual_fee NUMERIC DEFAULT 0,
-  annual_fee_waiver TEXT,
   status TEXT NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'frozen', 'cancelled')),
+  -- 卡类型：信用卡 / 贷款类
+  card_type TEXT NOT NULL DEFAULT 'credit'
+    CHECK (card_type IN ('credit', 'loan')),
+  -- 贷款类专用：每月固定还款日（1-31）
+  loan_due_day INT CHECK (loan_due_day BETWEEN 1 AND 31),
+  -- 覆盖卡产品默认账单规则（NULL = 使用卡产品默认值）
+  override_billing_day INT CHECK (override_billing_day BETWEEN 1 AND 31),
+  override_due_type TEXT
+    CHECK (override_due_type IN ('fixed', 'after_billing', 'fixed_before_billing')),
+  override_due_value INT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ALTER TABLE migrations（新字段，若在已有库上执行）
+-- ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS card_type TEXT NOT NULL DEFAULT 'credit' CHECK (card_type IN ('credit', 'loan'));
+-- ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS loan_due_day INT CHECK (loan_due_day BETWEEN 1 AND 31);
+-- ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS override_billing_day INT CHECK (override_billing_day BETWEEN 1 AND 31);
+-- ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS override_due_type TEXT CHECK (override_due_type IN ('fixed', 'after_billing', 'fixed_before_billing'));
+-- ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS override_due_value INT;
 
 -- 账单
 CREATE TABLE IF NOT EXISTS bills (
@@ -60,27 +130,6 @@ CREATE TABLE IF NOT EXISTS bills (
   UNIQUE(card_id, bill_month)
 );
 
--- 账单明细（LLM 识别或手动录入）
-CREATE TABLE IF NOT EXISTS bill_items (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  bill_id UUID NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
-  transaction_date DATE,
-  post_date DATE,
-  description TEXT NOT NULL,
-  merchant_name TEXT,
-  category TEXT,
-  amount NUMERIC NOT NULL,
-  currency TEXT,
-  item_type TEXT NOT NULL DEFAULT 'purchase'
-    CHECK (item_type IN ('purchase', 'refund', 'fee', 'interest', 'payment', 'adjustment', 'other')),
-  source TEXT NOT NULL DEFAULT 'manual'
-    CHECK (source IN ('manual', 'llm', 'import')),
-  confidence NUMERIC CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
-  raw_text TEXT,
-  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 -- 还款记录
 CREATE TABLE IF NOT EXISTS payments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -93,41 +142,12 @@ CREATE TABLE IF NOT EXISTS payments (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 权益定义
-CREATE TABLE IF NOT EXISTS benefits (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  card_id UUID NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  description TEXT,
-  quota INT NOT NULL DEFAULT 1,
-  period TEXT NOT NULL DEFAULT 'yearly'
-    CHECK (period IN ('yearly', 'monthly', 'one_time')),
-  reset_month INT CHECK (reset_month BETWEEN 1 AND 12),
-  expiry_date DATE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 -- 权益使用记录
 CREATE TABLE IF NOT EXISTS benefit_usages (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   benefit_id UUID NOT NULL REFERENCES benefits(id) ON DELETE CASCADE,
   used_at DATE NOT NULL DEFAULT CURRENT_DATE,
   note TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- 优惠活动定义
-CREATE TABLE IF NOT EXISTS promos (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  card_id UUID REFERENCES credit_cards(id) ON DELETE SET NULL,
-  bank_name TEXT NOT NULL,
-  title TEXT NOT NULL,
-  description TEXT,
-  discount_type TEXT CHECK (discount_type IN ('满减', '折扣', '积分', '返现')),
-  start_date DATE,
-  end_date DATE,
-  conditions TEXT,
-  max_uses INT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -141,156 +161,147 @@ CREATE TABLE IF NOT EXISTS promo_usages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ============================================
+-- 系统配置
+-- ============================================
+
+-- 系统设置表（KV 存储）
+CREATE TABLE IF NOT EXISTS system_settings (
+  key TEXT PRIMARY KEY,
+  value JSONB,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- ============================================
 -- 索引
-CREATE INDEX idx_card_holders_managed_by ON card_holders(managed_by);
-CREATE INDEX idx_credit_cards_holder ON credit_cards(holder_id);
-CREATE INDEX idx_bills_card ON bills(card_id);
-CREATE INDEX idx_bills_due_date ON bills(due_date);
-CREATE INDEX idx_bill_items_bill ON bill_items(bill_id);
-CREATE INDEX idx_bill_items_transaction_date ON bill_items(transaction_date);
-CREATE INDEX idx_bill_items_category ON bill_items(category);
-CREATE INDEX idx_payments_bill ON payments(bill_id);
-CREATE INDEX idx_benefit_usages_benefit ON benefit_usages(benefit_id);
-CREATE INDEX idx_promo_usages_promo ON promo_usages(promo_id);
+-- ============================================
+CREATE INDEX IF NOT EXISTS idx_banks_name ON banks(name);
+CREATE INDEX IF NOT EXISTS idx_card_products_bank_id ON card_products(bank_id);
+CREATE INDEX IF NOT EXISTS idx_card_products_bank ON card_products(bank_name);
+CREATE INDEX IF NOT EXISTS idx_benefits_product ON benefits(card_product_id);
+CREATE INDEX IF NOT EXISTS idx_promos_product ON promos(card_product_id);
+CREATE INDEX IF NOT EXISTS idx_card_holders_created_by ON card_holders(created_by);
+CREATE INDEX IF NOT EXISTS idx_credit_cards_holder ON credit_cards(holder_id);
+CREATE INDEX IF NOT EXISTS idx_credit_cards_product ON credit_cards(card_product_id);
+CREATE INDEX IF NOT EXISTS idx_bills_card ON bills(card_id);
+CREATE INDEX IF NOT EXISTS idx_bills_due_date ON bills(due_date);
+CREATE INDEX IF NOT EXISTS idx_payments_bill ON payments(bill_id);
+CREATE INDEX IF NOT EXISTS idx_benefit_usages_benefit ON benefit_usages(benefit_id);
+CREATE INDEX IF NOT EXISTS idx_promo_usages_promo ON promo_usages(promo_id);
 
--- ===========================================
--- Row Level Security (RLS)
--- ===========================================
+-- ============================================
+-- PWA Push Notifications
+-- ============================================
 
--- 启用 RLS
-ALTER TABLE card_holders ENABLE ROW LEVEL SECURITY;
-ALTER TABLE credit_cards ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bills ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bill_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE benefits ENABLE ROW LEVEL SECURITY;
-ALTER TABLE benefit_usages ENABLE ROW LEVEL SECURITY;
-ALTER TABLE promos ENABLE ROW LEVEL SECURITY;
-ALTER TABLE promo_usages ENABLE ROW LEVEL SECURITY;
+-- push_subscriptions: 存储用户 Web Push 订阅
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
 
--- card_holders: 管理员只能访问自己管理的持卡人
-CREATE POLICY "admin_manage_holders" ON card_holders
-  FOR ALL
-  USING (managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid()))
-  WITH CHECK (managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid()));
+-- reminder_logs: 记录已发送提醒，防重复
+-- remind_type: '3days' | '1day' | 'due_day' | 'loan_3days' | 'loan_1day' | 'loan_due_day'
+CREATE TABLE IF NOT EXISTS reminder_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bill_id UUID REFERENCES bills(id) ON DELETE CASCADE,
+  -- 贷款类提醒无 bill_id，用 card_id + remind_type + remind_date 唯一
+  card_id UUID REFERENCES credit_cards(id) ON DELETE CASCADE,
+  remind_date DATE,
+  remind_type TEXT NOT NULL,
+  sent_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(bill_id, remind_type),
+  UNIQUE(card_id, remind_type, remind_date)
+);
 
--- Phase 3: 持卡人自助访问（取消注释启用）
--- CREATE POLICY "holder_self_access" ON card_holders
---   FOR SELECT
---   USING (auth_user_id IN (SELECT id FROM users WHERE auth_id = auth.uid()));
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_reminder_logs_bill ON reminder_logs(bill_id);
 
--- credit_cards: 通过 holder_id → card_holders 链式保护
-CREATE POLICY "admin_manage_cards" ON credit_cards
-  FOR ALL
-  USING (holder_id IN (
-    SELECT id FROM card_holders WHERE managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-  ))
-  WITH CHECK (holder_id IN (
-    SELECT id FROM card_holders WHERE managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-  ));
+-- ============================================
+-- Bill Email Sources
+-- ============================================
 
--- bills: 通过 card_id → credit_cards → card_holders 链式保护
-CREATE POLICY "admin_manage_bills" ON bills
-  FOR ALL
-  USING (card_id IN (
-    SELECT cc.id FROM credit_cards cc
-    JOIN card_holders ch ON cc.holder_id = ch.id
-    WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-  ))
-  WITH CHECK (card_id IN (
-    SELECT cc.id FROM credit_cards cc
-    JOIN card_holders ch ON cc.holder_id = ch.id
-    WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-  ));
+-- 用户登记的账单来源邮箱。用于 Email Worker 在收到账单邮件后按发件人归属用户。
+CREATE TABLE IF NOT EXISTS bill_email_sources (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL,
+  email TEXT NOT NULL,
+  label TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, email)
+);
 
--- bill_items: 通过 bill_id → bills → credit_cards → card_holders 链式保护
-CREATE POLICY "admin_manage_bill_items" ON bill_items
-  FOR ALL
-  USING (bill_id IN (
-    SELECT b.id FROM bills b
-    JOIN credit_cards cc ON b.card_id = cc.id
-    JOIN card_holders ch ON cc.holder_id = ch.id
-    WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-  ))
-  WITH CHECK (bill_id IN (
-    SELECT b.id FROM bills b
-    JOIN credit_cards cc ON b.card_id = cc.id
-    JOIN card_holders ch ON cc.holder_id = ch.id
-    WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-  ));
+CREATE INDEX IF NOT EXISTS idx_bill_email_sources_user ON bill_email_sources(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bill_email_sources_email ON bill_email_sources(lower(email)) WHERE is_active = true;
 
--- payments: 通过 bill_id → bills → credit_cards → card_holders 链式保护
-CREATE POLICY "admin_manage_payments" ON payments
-  FOR ALL
-  USING (bill_id IN (
-    SELECT b.id FROM bills b
-    JOIN credit_cards cc ON b.card_id = cc.id
-    JOIN card_holders ch ON cc.holder_id = ch.id
-    WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-  ))
-  WITH CHECK (bill_id IN (
-    SELECT b.id FROM bills b
-    JOIN credit_cards cc ON b.card_id = cc.id
-    JOIN card_holders ch ON cc.holder_id = ch.id
-    WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-  ));
+-- ============================================
+-- Record Attachments
+-- ============================================
 
--- benefits: 通过 card_id → credit_cards → card_holders 链式保护
-CREATE POLICY "admin_manage_benefits" ON benefits
-  FOR ALL
-  USING (card_id IN (
-    SELECT cc.id FROM credit_cards cc
-    JOIN card_holders ch ON cc.holder_id = ch.id
-    WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-  ))
-  WITH CHECK (card_id IN (
-    SELECT cc.id FROM credit_cards cc
-    JOIN card_holders ch ON cc.holder_id = ch.id
-    WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-  ));
+-- 通用记录附件表。文件二进制存储在 InsForge Storage，业务表只保存 metadata 和 storage path。
+CREATE TABLE IF NOT EXISTS record_attachments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  record_type TEXT NOT NULL,
+  record_id UUID NOT NULL,
+  bucket TEXT NOT NULL DEFAULT 'record-attachments',
+  storage_path TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  file_type TEXT,
+  file_size BIGINT,
+  public_url TEXT,
+  uploaded_by UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(bucket, storage_path)
+);
 
--- benefit_usages: 通过 benefit_id → benefits → credit_cards → card_holders 链式保护
-CREATE POLICY "admin_manage_benefit_usages" ON benefit_usages
-  FOR ALL
-  USING (benefit_id IN (
-    SELECT ben.id FROM benefits ben
-    JOIN credit_cards cc ON ben.card_id = cc.id
-    JOIN card_holders ch ON cc.holder_id = ch.id
-    WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-  ))
-  WITH CHECK (benefit_id IN (
-    SELECT ben.id FROM benefits ben
-    JOIN credit_cards cc ON ben.card_id = cc.id
-    JOIN card_holders ch ON cc.holder_id = ch.id
-    WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-  ));
+CREATE INDEX IF NOT EXISTS idx_record_attachments_record ON record_attachments(record_type, record_id, created_at DESC);
 
--- promos: card_id 可为 null（全行通用），因此需要特殊处理
-CREATE POLICY "admin_manage_promos" ON promos
-  FOR ALL
-  USING (
-    card_id IS NULL  -- 全行通用优惠所有管理员可见
-    OR card_id IN (
-      SELECT cc.id FROM credit_cards cc
-      JOIN card_holders ch ON cc.holder_id = ch.id
-      WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-    )
-  )
-  WITH CHECK (
-    card_id IS NULL
-    OR card_id IN (
-      SELECT cc.id FROM credit_cards cc
-      JOIN card_holders ch ON cc.holder_id = ch.id
-      WHERE ch.managed_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
-    )
-  );
+-- ============================================
+-- Email 解析日志（账单自动录入）
+-- ============================================
 
--- promo_usages: 通过 promo_id → promos 继承访问控制
-CREATE POLICY "admin_manage_promo_usages" ON promo_usages
-  FOR ALL
-  USING (promo_id IN (
-    SELECT id FROM promos  -- promos 已有 RLS 保护
-  ))
-  WITH CHECK (promo_id IN (
-    SELECT id FROM promos
-  ));
+-- email_parse_logs: 每封触发解析的邮件记录一条日志
+CREATE TABLE IF NOT EXISTS email_parse_logs (
+  id          UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id     UUID        NOT NULL,
+  from_email  TEXT,
+  subject     TEXT,
+  bill_id     UUID        REFERENCES bills(id) ON DELETE SET NULL,
+  status      TEXT        NOT NULL CHECK (status IN ('success', 'failed', 'skipped')),
+  error_msg   TEXT,
+  raw_ai_response TEXT,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_parse_logs_user ON email_parse_logs (user_id, created_at DESC);
+
+-- ============================================
+-- 用户个性化偏好配置（自定义显示要素与提醒规则）
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS user_preferences (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID UNIQUE NOT NULL,
+  display_config JSONB NOT NULL DEFAULT '{
+    "privacy_mode": false,
+    "show_min_payment": true,
+    "show_statement_date": true,
+    "show_annual_fee": true,
+    "show_card_last4": true,
+    "default_currency": "CNY"
+  }'::jsonb,
+  reminder_config JSONB NOT NULL DEFAULT '{
+    "remind_days_before": [3, 1, 0],
+    "quiet_hours_start": "22:00",
+    "quiet_hours_end": "08:00",
+    "enabled_channels": ["web_push"]
+  }'::jsonb,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_preferences_user ON user_preferences(user_id);
+

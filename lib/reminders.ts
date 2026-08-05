@@ -1,325 +1,281 @@
-// lib/reminders.ts
-import { db } from './insforge'
-import type { CreditCard, Bill, Promo, Benefit } from './types'
+/**
+ * lib/reminders.ts
+ *
+ * Client-side reminder scheduler.
+ * Called once when the App opens (from MobileShell).
+ *
+ * Flow:
+ *  1. Query unpaid/overdue bills with due_date within next 3 days (inclusive of today)
+ *  2. For each bill, determine remind_type: '3days' | '1day' | 'due_day'
+ *  3. Check reminder_logs → skip if already sent
+ *  4. Fetch push_subscriptions for current user → send push via browser PushManager
+ *  5. Insert reminder_log
+ *
+ * NOTE: This is a pure client-side approach. Push messages are only delivered
+ * while the app is open or the SW is running in the background (browser-dependent).
+ * A server-side cron would be required for reliable background delivery.
+ */
 
-export type ReminderType = 'bill_due' | 'bill_overdue' | 'promo_expiring' | 'benefit_expiring' | 'annual_fee_attention'
-export type ReminderSeverity = 'critical' | 'high' | 'medium' | 'low'
+import { insforge } from './insforge'
+import type { ReminderLog, CreditCard } from './types'
+import { getLoanNextDueDate } from './utils'
 
-export interface Reminder {
-  key: string
-  type: ReminderType
-  severity: ReminderSeverity
-  title: string
-  description: string
-  actionUrl: string
-  holderName: string
-  bankName: string
-  cardName?: string
-  amount?: number
-  dueDate?: string
-  expiryDate?: string
-  currency?: string
+type RemindType = '3days' | '1day' | 'due_day' | 'loan_3days' | 'loan_1day' | 'loan_due_day'
+
+// InsForge SDK returns relations as arrays; use `any` to avoid SDK shape mismatch
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type BillRow = any
+
+/**
+ * Returns days until due_date (negative if overdue, 0 if today).
+ */
+function daysUntilDue(dueDateStr: string): number {
+  const due = new Date(dueDateStr)
+  due.setHours(0, 0, 0, 0)
+  const now = new Date()
+  now.setHours(0, 0, 0, 0)
+  return Math.round((due.getTime() - now.getTime()) / 86_400_000)
 }
 
-interface BillWithCard extends Bill {
-  credit_cards: Pick<CreditCard, 'bank_name' | 'card_name' | 'card_number_last4' | 'currency' | 'holder_id'>
-}
-
-interface PromoWithCard extends Promo {
-  credit_cards?: Pick<CreditCard, 'bank_name' | 'card_name' | 'holder_id'>
-}
-
-interface BenefitWithCard extends Benefit {
-  credit_cards: Pick<CreditCard, 'bank_name' | 'card_name' | 'holder_id'>
-}
-
-interface CardWithHolder extends CreditCard {
-  card_holders: { name: string }
+function remindTypeForDays(days: number): RemindType | null {
+  if (days === 3) return '3days'
+  if (days === 1) return '1day'
+  if (days === 0) return 'due_day'
+  return null
 }
 
 /**
- * Calculate days until a date (negative if past)
+ * Show a local notification via the Service Worker registration.
+ * This works even when the app tab is in the background.
  */
-function daysUntil(dateStr: string): number {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const target = new Date(dateStr)
-  target.setHours(0, 0, 0, 0)
-  return Math.ceil((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-}
-
-/**
- * Get severity for days until deadline
- */
-function getSeverityForDays(days: number): ReminderSeverity {
-  if (days < 0) return 'critical'
-  if (days === 0) return 'critical'
-  if (days <= 1) return 'high'
-  if (days <= 3) return 'medium'
-  return 'low'
-}
-
-/**
- * Calculate bill-related reminders
- */
-async function getBillReminders(
-  unpaidBills: BillWithCard[],
-  holders: Map<string, string>
-): Promise<Reminder[]> {
-  const reminders: Reminder[] = []
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-
-  for (const bill of unpaidBills) {
-    if (!bill.due_date) continue
-
-    const days = daysUntil(bill.due_date)
-    const holderName = holders.get(bill.credit_cards.holder_id) || '未知持卡人'
-    const { bank_name, card_name, currency } = bill.credit_cards
-
-    // Overdue bills
-    if (days < 0 && bill.status !== 'paid') {
-      reminders.push({
-        key: `bill_overdue:${bill.id}`,
-        type: 'bill_overdue',
-        severity: 'critical',
-        title: '账单已逾期',
-        description: `${bank_name} ${card_name} 账单 ${Math.abs(days)} 天前到期，金额 ${bill.bill_amount} ${currency}`,
-        actionUrl: `/bills/${bill.id}`,
-        holderName,
-        bankName: bank_name,
-        cardName: card_name,
-        amount: bill.bill_amount,
-        dueDate: bill.due_date,
-        currency,
-      })
+async function showNotification(title: string, body: string): Promise<void> {
+  if (!('serviceWorker' in navigator)) return
+  try {
+    const reg = await navigator.serviceWorker.ready
+    await reg.showNotification(title, {
+      body,
+      icon: '/pwa-192x192.png',
+      badge: '/pwa-192x192.png',
+      tag: `reminder-${Date.now()}`,
+      data: { url: '/bills' },
+    })
+  } catch (err) {
+    // Fallback to Notification API
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(title, { body, icon: '/pwa-192x192.png' })
     }
-    // Bills due within 3 days
-    else if (days >= 0 && days <= 3 && bill.status !== 'paid') {
-      const severity = getSeverityForDays(days)
-      const dayText = days === 0 ? '今天' : days === 1 ? '明天' : `${days}天后`
-      reminders.push({
-        key: `bill_due:${bill.id}`,
-        type: 'bill_due',
-        severity,
-        title: `账单${dayText}到期`,
-        description: `${bank_name} ${card_name} 账单 ${dayText}到期，金额 ${bill.bill_amount} ${currency}`,
-        actionUrl: `/bills/${bill.id}`,
-        holderName,
-        bankName: bank_name,
-        cardName: card_name,
-        amount: bill.bill_amount,
-        dueDate: bill.due_date,
-        currency,
-      })
+    console.warn('[reminders] showNotification fallback:', err)
+  }
+}
+
+/**
+ * Main entry point. Call this once per app open, after user is authenticated.
+ */
+export async function checkAndSendReminders(userId: string): Promise<void> {
+  if (typeof window === 'undefined') return
+  if (!('Notification' in window) || Notification.permission !== 'granted') return
+
+  try {
+    // --- 贷款类卡还款提醒 ---
+    await checkLoanReminders()
+
+    // 0. 获取用户的 holder_ids -> card_ids
+    const { data: holders } = await insforge.database
+      .from('card_holders')
+      .select('id')
+      .eq('created_by', userId)
+
+    const holderIds = (holders || []).map(h => h.id)
+    if (holderIds.length === 0) return
+
+    const { data: userCards } = await insforge.database
+      .from('credit_cards')
+      .select('id, card_product_id')
+      .in('holder_id', holderIds)
+
+    const cardIds = (userCards || []).map(c => c.id)
+    if (cardIds.length === 0) return
+
+    // 1. Fetch unpaid bills due within next 3 days for user's cards
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const threeDaysLater = new Date(today)
+    threeDaysLater.setDate(threeDaysLater.getDate() + 3)
+
+    const todayStr = today.toISOString().slice(0, 10)
+    const maxStr = threeDaysLater.toISOString().slice(0, 10)
+
+    const { data: rawBills, error: billsError } = await insforge.database
+      .from('bills')
+      .select('id, due_date, bill_amount, card_id')
+      .in('card_id', cardIds)
+      .in('status', ['unpaid', 'partial', 'overdue'])
+      .gte('due_date', todayStr)
+      .lte('due_date', maxStr)
+
+    if (billsError || !rawBills || rawBills.length === 0) return
+
+    const pIds = Array.from(new Set((userCards || []).map(c => c.card_product_id).filter(Boolean)))
+    let pMap: Record<string, any> = {}
+    if (pIds.length > 0) {
+      const { data: products } = await insforge.database
+        .from('card_products')
+        .select('id, bank_name, card_name')
+        .in('id', pIds)
+      if (products) pMap = products.reduce((acc, p) => ({ ...acc, [p.id]: p }), {})
     }
-  }
 
-  return reminders
+    const cardMap = (userCards || []).reduce((acc, c) => {
+      acc[c.id] = { ...c, card_product: pMap[c.card_product_id] }
+      return acc
+    }, {} as Record<string, any>)
+
+    const bills = rawBills.map(b => ({
+      ...b,
+      card: cardMap[b.card_id]
+    }))
+
+    if (billsError || !bills || bills.length === 0) return
+
+    // 2. Fetch already-sent reminder_logs for these bill ids
+    const billIds = (bills as BillRow[]).map((b) => b.id as string)
+    const { data: logs } = await insforge.database
+      .from('reminder_logs')
+      .select('bill_id, remind_type')
+      .in('bill_id', billIds)
+
+    const sentSet = new Set<string>(
+      ((logs ?? []) as Pick<ReminderLog, 'bill_id' | 'remind_type'>[]).map(
+        (l) => `${l.bill_id}:${l.remind_type}`
+      )
+    )
+
+    // 3. Process each bill
+    for (const bill of bills as BillRow[]) {
+      const days = daysUntilDue(bill.due_date)
+      const remindType = remindTypeForDays(days)
+      if (!remindType) continue
+
+      const key = `${bill.id}:${remindType}`
+      if (sentSet.has(key)) continue
+
+      // Compose notification
+      // InsForge SDK may return card as array or object depending on query
+      const cardObj = Array.isArray(bill.card) ? bill.card[0] : bill.card
+      const cpObj = cardObj
+        ? (Array.isArray(cardObj.card_product) ? cardObj.card_product[0] : cardObj.card_product)
+        : null
+      const cardName = cpObj
+        ? `${cpObj.bank_name} ${cpObj.card_name}`
+        : '信用卡'
+      const amount = Number(bill.bill_amount).toLocaleString('zh-CN', {
+        style: 'currency',
+        currency: 'CNY',
+      })
+
+      let title = 'WorldCredit 还款提醒'
+      let body = ''
+      if (remindType === '3days') {
+        title = '还款提醒｜3 天后到期'
+        body = `${cardName} 账单 ${amount} 将于 3 天后到期，请提前安排还款。`
+      } else if (remindType === '1day') {
+        title = '还款提醒｜明天到期 ⚠️'
+        body = `${cardName} 账单 ${amount} 明天到期！请今日内完成还款。`
+      } else {
+        title = '还款提醒｜今日到期 🚨'
+        body = `${cardName} 账单 ${amount} 今天到期，立即还款避免逾期。`
+      }
+
+      await showNotification(title, body)
+
+      // 4. Log the reminder to prevent re-sending
+      await insforge.database
+        .from('reminder_logs')
+        .insert({ bill_id: bill.id, remind_type: remindType })
+        .then(({ error }) => {
+          if (error) console.warn('[reminders] log insert error:', error)
+        })
+    }
+  } catch (err) {
+    console.warn('[reminders] checkAndSendReminders error:', err)
+  }
 }
 
 /**
- * Calculate promo expiry reminders
+ * 贷款类卡还款提醒
+ * 查 card_type = 'loan' 的卡 → 用 getLoanNextDueDate 计算下一还款日
+ * 3天内到期 → 发推送，写 reminder_logs
  */
-async function getPromoReminders(
-  promos: PromoWithCard[],
-  holders: Map<string, string>
-): Promise<Reminder[]> {
-  const reminders: Reminder[] = []
-
-  for (const promo of promos) {
-    if (!promo.end_date) continue
-
-    const days = daysUntil(promo.end_date)
-    if (days < 0 || days > 7) continue
-
-    const holderName = promo.credit_cards
-      ? holders.get(promo.credit_cards.holder_id) || '未知持卡人'
-      : '全家'
-
-    reminders.push({
-      key: `promo_expiring:${promo.id}`,
-      type: 'promo_expiring',
-      severity: days <= 1 ? 'high' : 'medium',
-      title: `优惠${days === 0 ? '今天' : `${days}天后`}到期`,
-      description: `${promo.bank_name} ${promo.title} ${days === 0 ? '今天' : `${days}天后`}到期`,
-      actionUrl: promo.card_id ? `/cards/${promo.card_id}` : '/promos',
-      holderName,
-      bankName: promo.bank_name,
-      expiryDate: promo.end_date,
-    })
-  }
-
-  return reminders
-}
-
-/**
- * Calculate benefit expiry reminders
- */
-async function getBenefitReminders(
-  benefits: BenefitWithCard[],
-  holders: Map<string, string>
-): Promise<Reminder[]> {
-  const reminders: Reminder[] = []
-
-  for (const benefit of benefits) {
-    if (!benefit.expiry_date) continue
-
-    const days = daysUntil(benefit.expiry_date)
-    if (days < 0 || days > 30) continue
-
-    const holderName = holders.get(benefit.credit_cards.holder_id) || '未知持卡人'
-    const { bank_name, card_name } = benefit.credit_cards
-
-    reminders.push({
-      key: `benefit_expiring:${benefit.id}`,
-      type: 'benefit_expiring',
-      severity: days <= 7 ? 'medium' : 'low',
-      title: `权益${days <= 7 ? `${days}天后` : '即将'}到期`,
-      description: `${bank_name} ${card_name} ${benefit.name} ${days <= 7 ? `${days}天后` : '即将'}到期`,
-      actionUrl: `/cards/${benefit.card_id}`,
-      holderName,
-      bankName: bank_name,
-      cardName: card_name,
-      expiryDate: benefit.expiry_date,
-    })
-  }
-
-  return reminders
-}
-
-/**
- * Calculate annual fee attention reminders
- */
-async function getAnnualFeeReminders(
-  cards: CardWithHolder[],
-  holders: Map<string, string>
-): Promise<Reminder[]> {
-  const reminders: Reminder[] = []
-  const currentYear = new Date().getFullYear()
-
-  for (const card of cards) {
-    // Only cards with annual fee
-    if (!card.annual_fee || card.annual_fee <= 0) continue
-
-    // Cards with waiver conditions
-    if (!card.annual_fee_waiver) continue
-
-    const holderName = holders.get(card.id) || card.card_holders.name || '未知持卡人'
-
-    reminders.push({
-      key: `annual_fee:${card.id}:${currentYear}`,
-      type: 'annual_fee_attention',
-      severity: 'low',
-      title: '年费条件待关注',
-      description: `${card.bank_name} ${card.card_name} 年费 ${card.annual_fee} ${card.currency}，减免条件：${card.annual_fee_waiver}`,
-      actionUrl: `/cards/${card.id}`,
-      holderName,
-      bankName: card.bank_name,
-      cardName: card.card_name,
-      amount: card.annual_fee,
-      currency: card.currency,
-    })
-  }
-
-  return reminders
-}
-
-/**
- * Main function to calculate all reminders for a user
- */
-export async function calculateReminders(
-  userId: string,
-  role: 'admin' | 'member',
-  managedHolderIds?: string[]
-): Promise<Reminder[]> {
-  // Get holder names map
-  let holdersQuery = db
-    .from('card_holders')
-    .select('id, name')
-
-  if (role === 'member' && managedHolderIds) {
-    holdersQuery = holdersQuery.in('id', managedHolderIds.length > 0 ? managedHolderIds : ['00000000-0000-0000-0000-000000000000'])
-  }
-
-  const { data: holders } = await holdersQuery
-  const holderMap = new Map(holders?.map(h => [h.id, h.name]) || [])
-
-  // Get unpaid bills with card info
-  const { data: bills } = await db
-    .from('bills')
-    .select('*, credit_cards(bank_name, card_name, card_number_last4, currency, holder_id)')
-    .in('status', ['unpaid', 'partial', 'overdue'])
-
-  // Filter bills by holder access
-  let filteredBills = bills || []
-  if (role === 'member' && managedHolderIds) {
-    filteredBills = filteredBills.filter(b => managedHolderIds.includes(b.credit_cards.holder_id))
-  }
-
-  // Get active promos with card info
-  const today = new Date().toISOString().split('T')[0]
-  const { data: promos } = await db
-    .from('promos')
-    .select('*, credit_cards(bank_name, card_name, holder_id)')
-    .or(`end_date.is.null,end_date.gte.${today}`)
-    .order('end_date', { ascending: true })
-
-  // Filter promos by holder access
-  let filteredPromos = promos || []
-  if (role === 'member' && managedHolderIds) {
-    filteredPromos = filteredPromos.filter(p => !p.credit_cards || managedHolderIds.includes(p.credit_cards.holder_id))
-  }
-
-  // Get benefits with card info
-  const { data: benefits } = await db
-    .from('benefits')
-    .select('*, credit_cards(bank_name, card_name, holder_id)')
-    .not('expiry_date', 'is', null)
-    .order('expiry_date', { ascending: true })
-
-  // Filter benefits by holder access
-  let filteredBenefits = benefits || []
-  if (role === 'member' && managedHolderIds) {
-    filteredBenefits = filteredBenefits.filter(b => managedHolderIds.includes(b.credit_cards.holder_id))
-  }
-
-  // Get cards with annual fee
-  let cardsQuery = db
+async function checkLoanReminders(): Promise<void> {
+  // 查询当前用户的所有贷款类卡
+  const { data: rawLoanCards, error: cardsError } = await insforge.database
     .from('credit_cards')
-    .select('*, card_holders(name)')
-    .gt('annual_fee', 0)
-    .not('annual_fee_waiver', 'is', null)
+    .select('id, card_product_id, loan_due_day')
+    .eq('card_type', 'loan')
+    .eq('status', 'active')
 
-  if (role === 'member' && managedHolderIds) {
-    cardsQuery = cardsQuery.in('holder_id', managedHolderIds.length > 0 ? managedHolderIds : ['00000000-0000-0000-0000-000000000000'])
+  if (cardsError || !rawLoanCards || rawLoanCards.length === 0) return
+
+  const cpIds = Array.from(new Set(rawLoanCards.map((c: any) => c.card_product_id).filter(Boolean)))
+  let cpMap: Record<string, any> = {}
+  if (cpIds.length > 0) {
+    const { data: cpData } = await insforge.database
+      .from('card_products')
+      .select('id, bank_name, card_name')
+      .in('id', cpIds)
+    if (cpData) cpMap = cpData.reduce((acc, p) => ({ ...acc, [p.id]: p }), {})
   }
 
-  const { data: cards } = await cardsQuery
+  const loanCards = rawLoanCards.map((c: any) => ({
+    ...c,
+    card_product: cpMap[c.card_product_id]
+  }))
 
-  // Calculate all reminders
-  const [billReminders, promoReminders, benefitReminders, annualFeeReminders] = await Promise.all([
-    getBillReminders(filteredBills, holderMap),
-    getPromoReminders(filteredPromos, holderMap),
-    getBenefitReminders(filteredBenefits, holderMap),
-    getAnnualFeeReminders(cards || [], holderMap),
-  ])
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
 
-  const allReminders = [
-    ...billReminders,
-    ...promoReminders,
-    ...benefitReminders,
-    ...annualFeeReminders,
-  ]
+  for (const rawCard of loanCards as BillRow[]) {
+    const card = rawCard as CreditCard & { card_product: { bank_name: string; card_name: string } | { bank_name: string; card_name: string }[] }
+    if (!card.loan_due_day) continue
 
-  // Sort by severity
-  const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 }
-  return allReminders.sort((a, b) => {
-    const severityDiff = severityOrder[a.severity] - severityOrder[b.severity]
-    if (severityDiff !== 0) return severityDiff
+    const nextDue = getLoanNextDueDate(card.loan_due_day, today)
+    const daysUntil = Math.round((nextDue.getTime() - today.getTime()) / 86_400_000)
 
-    // Within same severity, sort by type
-    const typeOrder = { bill_overdue: 0, bill_due: 1, promo_expiring: 2, benefit_expiring: 3, annual_fee_attention: 4 }
-    return typeOrder[a.type] - typeOrder[b.type]
-  })
+    let remindType: 'loan_3days' | 'loan_1day' | 'loan_due_day' | null = null
+    if (daysUntil === 3) remindType = 'loan_3days'
+    else if (daysUntil === 1) remindType = 'loan_1day'
+    else if (daysUntil === 0) remindType = 'loan_due_day'
+
+    if (!remindType) continue
+
+    const remindDateStr = nextDue.toISOString().slice(0, 10)
+
+    // 检查是否已发送
+    const { data: existingLog } = await insforge.database
+      .from('reminder_logs')
+      .select('id')
+      .eq('card_id', card.id)
+      .eq('remind_type', remindType)
+      .eq('remind_date', remindDateStr)
+      .maybeSingle()
+
+    if (existingLog) continue
+
+    const cpRaw = (card as BillRow).card_product
+    const cp = Array.isArray(cpRaw) ? cpRaw[0] : cpRaw
+    const cardName = cp ? `${cp.bank_name} ${cp.card_name}` : '贷款'
+    const dateLabel = `${nextDue.getMonth() + 1}月${nextDue.getDate()}日`
+
+    await showNotification(
+      '贷款还款提醒',
+      `${cardName} 还款日 ${dateLabel}，请及时还款`
+    )
+
+    await insforge.database
+      .from('reminder_logs')
+      .insert({ card_id: card.id, remind_type: remindType, remind_date: remindDateStr })
+      .then(({ error }) => {
+        if (error) console.warn('[reminders] loan log insert error:', error)
+      })
+  }
 }

@@ -1,44 +1,55 @@
-import { defineConfig } from "vite";
-import vinext from "vinext";
-import { cloudflare } from "@cloudflare/vite-plugin";
-import { VitePWA } from 'vite-plugin-pwa';
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import vinext from 'vinext'
+import { VitePWA } from 'vite-plugin-pwa'
 
-export default defineConfig({
+export default defineConfig(({ command, isSsrBuild }) => ({
   server: {
-    port: 3050,
-    host: "credit.localhost",
+    port: 3050, // 强制使用 3050 端口
+    strictPort: true,
+    host: '127.0.0.1', // 配合 portless 映射
+    allowedHosts: ['credit.localhost']
   },
   plugins: [
     vinext(),
-    cloudflare({
-      viteEnvironment: {
-        name: "rsc",
-        childEnvironments: ["ssr"],
-      },
-    }),
-    VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['icons/icon.svg', 'icons/icon-512.svg'],
-      manifest: {
-        name: 'WorldCredit',
-        short_name: 'WorldCredit',
-        description: '家庭信用卡账单、还款、权益管理',
-        theme_color: '#1976d2',
-        icons: [
-          {
-            src: '/icons/icon.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
-            purpose: 'any maskable'
-          },
-          {
-            src: '/icons/icon-512.svg',
-            sizes: '512x512',
-            type: 'image/svg+xml',
-            purpose: 'any maskable'
-          }
-        ]
+    {
+      name: 'vinext-fix-ssr-entry',
+      config(config) {
+        if (config.build?.ssr) {
+          config.build.rollupOptions = config.build.rollupOptions || {}
+          config.build.rollupOptions.input = undefined
+        }
       }
-    })
-  ],
-});
+    },
+    // Only apply PWA plugin for client build
+    ...(!isSsrBuild ? [
+      VitePWA({
+        registerType: 'autoUpdate',
+        // Use custom sw.js in public/
+        strategies: 'injectManifest',
+        srcDir: 'public',
+        filename: 'sw.js',
+        manifest: {
+          name: 'WorldCredit',
+          short_name: 'WorldCredit',
+          description: '信用卡账单与还款管理',
+          theme_color: '#1976d2',
+          background_color: '#ffffff',
+          display: 'standalone',
+          start_url: '/dashboard',
+          icons: [
+            { src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+            { src: '/pwa-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+          ],
+        },
+        workbox: {
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        },
+        devOptions: {
+          enabled: false,
+          type: 'module',
+        },
+      })
+    ] : []),
+  ]
+}))

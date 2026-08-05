@@ -7,7 +7,8 @@ import {
   Box, Typography, IconButton, Skeleton, Alert,
   Card, CardContent, LinearProgress, Tooltip,
 } from '@mui/material'
-import { ArrowBack, Edit as EditIcon } from '@mui/icons-material'
+import ArrowBack from '@mui/icons-material/ArrowBack'
+import EditIcon from '@mui/icons-material/Edit'
 import { getHolder, getHolderStatsPageData } from '@/lib/api/holders'
 import type { StatsPageData } from '@/lib/api/holders'
 import { formatAmount } from '@/lib/utils'

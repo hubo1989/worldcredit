@@ -1,67 +1,72 @@
 // components/mobile/BillCard.tsx
 'use client'
 
-import { Card, CardActionArea, CardContent, Typography, Box, Chip } from '@mui/material'
-import { formatAmount } from '@/lib/utils'
-import { differenceInDays, parseISO } from 'date-fns'
+import { Card, CardContent, Typography, Box, Chip, Button } from '@mui/material'
+import { formatAmount, getBillStatusColor, getBillStatusText, daysUntilDue } from '@/lib/utils'
 import type { Bill, CreditCard } from '@/lib/types'
 
 interface Props {
-  bill: Bill & { credit_cards: Pick<CreditCard, 'bank_name' | 'card_name' | 'card_number_last4' | 'currency'> }
+  bill: Bill
+  card?: CreditCard
+  paidAmount?: number
+  onRecordPayment?: () => void
   onClick?: () => void
 }
 
-export function BillCard({ bill, onClick }: Props) {
-  const card = bill.credit_cards
-  const daysLeft = differenceInDays(parseISO(bill.due_date), new Date())
-
-  const getStatusColor = () => {
-    if (bill.status === 'paid') return 'success'
-    if (bill.status === 'overdue' || daysLeft < 0) return 'error'
-    if (daysLeft <= 3) return 'warning'
-    return 'default'
-  }
-
-  const getStatusText = () => {
-    if (bill.status === 'paid') return '已还清'
-    if (daysLeft < 0) return `逾期 ${Math.abs(daysLeft)} 天`
-    if (daysLeft === 0) return '今天最后期限'
-    return `${daysLeft} 天后截止`
-  }
+export function BillCard({ bill, card, paidAmount = 0, onRecordPayment, onClick }: Props) {
+  const days = daysUntilDue(bill.due_date)
+  const currency = card?.currency || 'CNY'
 
   return (
-    <Card sx={{ mb: 1.5, borderLeft: 6, borderColor: `${getStatusColor()}.main` }}>
-      <CardActionArea onClick={onClick}>
-        <CardContent sx={{ py: 1.5 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <Box>
+    <Card sx={{ mb: 1.5, borderRadius: 3, cursor: onClick ? 'pointer' : 'default' }} onClick={onClick}>
+      <CardContent sx={{ pb: 1.5, '&:last-child': { pb: 1.5 } }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+          <Box>
+            {card && (
               <Typography variant="subtitle2" fontWeight={600}>
-                {card.bank_name} · {card.card_name}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {bill.bill_month} 账单 · {bill.due_date} 截止
-              </Typography>
-            </Box>
-            <Chip
-              label={getStatusText()}
-              size="small"
-              color={getStatusColor() as any}
-              variant="outlined"
-            />
-          </Box>
-
-          <Box sx={{ mt: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="h6" fontWeight={700}>
-              {formatAmount(bill.bill_amount, (card as any).currency)}
-            </Typography>
-            {bill.status === 'partial' && (
-              <Typography variant="caption" color="warning.main">
-                部分还款
+                {card.bank_name} {card.card_name}
               </Typography>
             )}
+            <Typography variant="caption" color="text.secondary">
+              {bill.bill_month} 账单
+            </Typography>
           </Box>
-        </CardContent>
-      </CardActionArea>
+          <Chip
+            label={getBillStatusText(bill.status)}
+            size="small"
+            sx={{ bgcolor: getBillStatusColor(bill.status), color: '#fff', fontWeight: 600 }}
+          />
+        </Box>
+
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+          <Typography variant="body2">
+            账单: <strong>{formatAmount(bill.bill_amount, currency)}</strong>
+          </Typography>
+          <Typography variant="body2">
+            已还: {formatAmount(paidAmount, currency)}
+          </Typography>
+        </Box>
+
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Typography variant="body2" color="text.secondary">
+            还款日: {bill.due_date}
+            {bill.status !== 'paid' && days >= 0 && (
+              <Typography
+                component="span"
+                fontWeight={600}
+                color={days <= 3 ? 'error' : days <= 7 ? 'warning.main' : 'text.secondary'}
+              >
+                {' '}(还剩 {days} 天)
+              </Typography>
+            )}
+          </Typography>
+          {bill.status !== 'paid' && onRecordPayment && (
+            <Button size="small" variant="outlined" sx={{ borderRadius: 2 }} onClick={(e) => { e.stopPropagation(); onRecordPayment() }}>
+              还款
+            </Button>
+          )}
+        </Box>
+      </CardContent>
     </Card>
   )
 }

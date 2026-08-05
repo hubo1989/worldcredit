@@ -1,0 +1,25 @@
+export const COUNTRIES = [
+  { code: 'CN', name: '中国', label: 'CN - 中国' },
+  { code: 'HK', name: '香港', label: 'HK - 中国香港' },
+  { code: 'MO', name: '澳门', label: 'MO - 中国澳门' },
+  { code: 'TW', name: '台湾', label: 'TW - 中国台湾' },
+  { code: 'US', name: '美国', label: 'US - 美国' },
+  { code: 'SG', name: '新加坡', label: 'SG - 新加坡' },
+  { code: 'JP', name: '日本', label: 'JP - 日本' },
+  { code: 'KR', name: '韩国', label: 'KR - 韩国' },
+  { code: 'GB', name: '英国', label: 'GB - 英国' },
+  { code: 'FR', name: '法国', label: 'FR - 法国' },
+  { code: 'DE', name: '德国', label: 'DE - 德国' },
+  { code: 'CA', name: '加拿大', label: 'CA - 加拿大' },
+  { code: 'AU', name: '澳大利亚', label: 'AU - 澳大利亚' },
+  { code: 'MY', name: '马来西亚', label: 'MY - 马来西亚' },
+  { code: 'TH', name: '泰国', label: 'TH - 泰国' },
+  { code: 'VN', name: '越南', label: 'VN - 越南' },
+  { code: 'PH', name: '菲律宾', label: 'PH - 菲律宾' },
+  { code: 'AE', name: '阿联酋', label: 'AE - 阿联酋' },
+  { code: 'CH', name: '瑞士', label: 'CH - 瑞士' },
+  { code: 'VG', name: '英属维尔京群岛', label: 'VG - 英属维尔京群岛' },
+  { code: 'KY', name: '开曼群岛', label: 'KY - 开曼群岛' },
+] as const;
+
+export type CountryCode = typeof COUNTRIES[number]['code'];

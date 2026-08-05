@@ -1,50 +1,61 @@
-// app/register/page.tsx
 'use client'
 
 import { useState } from 'react'
 import {
   Box, Card, CardContent, TextField, Button,
-  Typography, Alert, CircularProgress, Link
+  Typography, Alert, CircularProgress, Stack,
+  IconButton, InputAdornment
 } from '@mui/material'
-import { CreditCard as CreditCardIcon } from '@mui/icons-material'
+import {
+  CreditCard as CreditCardIcon,
+  ArrowBack as BackIcon,
+  Visibility,
+  VisibilityOff
+} from '@mui/icons-material'
 import { useAuth } from '@/lib/auth'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 
 export default function RegisterPage() {
-  const [name, setName] = useState('')
+  const [step, setStep] = useState<'info' | 'otp'>('info')
   const [email, setEmail] = useState('')
+  const [name, setName] = useState('')
   const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
+  const [otp, setOtp] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const { signUp } = useAuth()
+  const { signUp, verifyEmail } = useAuth()
   const router = useRouter()
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-
-    if (password !== confirmPassword) {
-      setError('两次输入的密码不一致')
-      return
-    }
-    if (password.length < 6) {
-      setError('密码至少需要 6 个字符')
-      return
-    }
-
     setLoading(true)
     try {
-      await signUp(email, password, name)
-      router.push('/')
-    } catch (err: any) {
-      // 检查是否是"用户已存在"错误，引导去登录
-      const msg = err.message || ''
-      if (msg.includes('already registered') || msg.includes('already exists') || msg.includes('conflict')) {
-        setError('该邮箱已注册，请直接登录')
+      const data = await signUp(email, password, name)
+      if (data?.requireEmailVerification) {
+        setStep('otp')
       } else {
-        setError(msg || '注册失败')
+        router.push('/dashboard')
       }
+    } catch (err: any) {
+      setError(err.message || '注册失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      await verifyEmail(email, otp)
+      router.push('/dashboard')
+    } catch (err: any) {
+      setError(err.message || '验证失败')
     } finally {
       setLoading(false)
     }
@@ -56,63 +67,150 @@ export default function RegisterPage() {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      backgroundColor: '#F5F8FF',
       p: 2,
     }}>
-      <Card sx={{ maxWidth: 400, width: '100%' }}>
-        <CardContent sx={{ p: 4 }}>
-          <Box sx={{ textAlign: 'center', mb: 3 }}>
-            <CreditCardIcon sx={{ fontSize: 48, color: 'primary.main' }} />
-            <Typography variant="h5" fontWeight={700} mt={1}>
-              注册 WorldCredit
-            </Typography>
-            <Typography color="text.secondary" variant="body2">
-              创建你的信用卡管理账号
-            </Typography>
-          </Box>
+      <Card sx={{ 
+        maxWidth: 450, 
+        width: '100%', 
+        borderRadius: '5px', 
+        overflow: 'hidden', 
+        border: '1px solid #DDDDDD',
+        boxShadow: '0px 4px 8px rgba(0, 0, 0, 0.12)',
+        bgcolor: '#FFFFFF'
+      }}>
+        <Box sx={{ 
+          bgcolor: '#030059', 
+          color: '#FFFFFF',
+          px: 3, pt: 4, pb: 3, textAlign: 'center' 
+        }}>
+          <CreditCardIcon sx={{ fontSize: 44, color: '#A2C6FF', mb: 1 }} />
+          <Typography variant="h2" sx={{ color: '#FFFFFF', fontSize: '24px', fontWeight: 300, mb: 1 }}>
+            {step === 'info' ? '加入 WorldCredit' : '验证邮箱'}
+          </Typography>
+          <Typography sx={{ color: '#A2C6FF', fontSize: '14px', fontWeight: 400 }}>
+            {step === 'info' 
+              ? '开启您的专业信用卡管理之旅' 
+              : `验证码已发送至 ${email}`}
+          </Typography>
+        </Box>
 
-          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        <CardContent sx={{ p: { xs: 3, md: 4 } }}>
+          {error && <Alert severity="error" sx={{ mb: 3, borderRadius: '5px' }}>{error}</Alert>}
 
-          <form onSubmit={handleSubmit}>
-            <TextField
-              fullWidth label="姓名" margin="normal"
-              value={name} onChange={e => setName(e.target.value)}
-              required autoFocus autoComplete="name"
-              placeholder="你的名字"
-            />
-            <TextField
-              fullWidth label="邮箱" type="email" margin="normal"
-              value={email} onChange={e => setEmail(e.target.value)}
-              required autoComplete="email"
-              placeholder="用于登录的邮箱地址"
-            />
-            <TextField
-              fullWidth label="密码" type="password" margin="normal"
-              value={password} onChange={e => setPassword(e.target.value)}
-              required autoComplete="new-password"
-              placeholder="至少 6 个字符"
-            />
-            <TextField
-              fullWidth label="确认密码" type="password" margin="normal"
-              value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
-              required autoComplete="new-password"
-              error={!!confirmPassword && confirmPassword !== password}
-              helperText={confirmPassword && confirmPassword !== password ? '两次密码不一致' : ''}
-            />
+          {step === 'info' ? (
+            <form onSubmit={handleSignUp}>
+              <Stack spacing={2.5}>
+                <TextField
+                  fullWidth
+                  label="姓名"
+                  variant="outlined"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  required
+                />
+                <TextField
+                  fullWidth
+                  label="邮箱地址"
+                  type="email"
+                  variant="outlined"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  required
+                />
+                <TextField
+                  fullWidth
+                  label="设置密码"
+                  type={showPassword ? 'text' : 'password'}
+                  variant="outlined"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  required
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton onClick={() => setShowPassword(!showPassword)} edge="end">
+                          {showPassword ? <VisibilityOff /> : <Visibility />}
+                        </IconButton>
+                      </InputAdornment>
+                    ),
+                  }}
+                />
+                <Button
+                  fullWidth
+                  variant="contained"
+                  type="submit"
+                  disabled={loading}
+                  sx={{ 
+                    mt: 1, 
+                    height: 44, 
+                    borderRadius: '3px',
+                    fontWeight: 700,
+                    backgroundColor: '#A2C6FF',
+                    color: '#FFFFFF',
+                    '&:hover': {
+                      backgroundColor: '#7AADFF'
+                    }
+                  }}
+                >
+                  {loading ? <CircularProgress size={24} color="inherit" /> : '立 即 注 册'}
+                </Button>
+              </Stack>
+            </form>
+          ) : (
+            <form onSubmit={handleVerify}>
+              <Stack spacing={2.5}>
+                <Typography variant="body2" color="#636363" textAlign="center">
+                  请输入邮件中的 6 位验证码以激活账号
+                </Typography>
+                <TextField
+                  fullWidth
+                  label="验证码"
+                  placeholder="000000"
+                  variant="outlined"
+                  value={otp}
+                  onChange={e => setOtp(e.target.value)}
+                  required
+                  autoFocus
+                  inputProps={{ 
+                    maxLength: 6, 
+                    style: { textAlign: 'center', fontSize: '1.25rem', letterSpacing: '0.3rem', fontWeight: 700 } 
+                  }}
+                />
+                <Button
+                  fullWidth
+                  variant="contained"
+                  type="submit"
+                  disabled={loading}
+                  sx={{ 
+                    height: 44, 
+                    borderRadius: '3px', 
+                    fontWeight: 700,
+                    backgroundColor: '#A2C6FF',
+                    color: '#FFFFFF',
+                    '&:hover': { backgroundColor: '#7AADFF' }
+                  }}
+                >
+                  {loading ? <CircularProgress size={24} color="inherit" /> : '激活并登录'}
+                </Button>
+                <Button 
+                  fullWidth 
+                  variant="text" 
+                  onClick={() => setStep('info')}
+                  startIcon={<BackIcon />}
+                  sx={{ color: '#030059' }}
+                >
+                  返回修改信息
+                </Button>
+              </Stack>
+            </form>
+          )}
 
-            <Button
-              fullWidth variant="contained" type="submit" size="large"
-              disabled={loading} sx={{ mt: 2 }}
-            >
-              {loading ? <CircularProgress size={24} /> : '注册'}
-            </Button>
-          </form>
-
-          <Box sx={{ mt: 2, textAlign: 'center' }}>
-            <Typography variant="body2" color="text.secondary">
+          <Box sx={{ mt: 3, textAlign: 'center' }}>
+            <Typography variant="body2" color="#636363">
               已有账号？{' '}
-              <Link href="/login" underline="hover">
-                立即登录
+              <Link href="/login" style={{ color: '#030059', textDecoration: 'underline', fontWeight: 600 }}>
+                返回登录
               </Link>
             </Typography>
           </Box>
