@@ -21,7 +21,7 @@ export function BottomNav() {
   const pathname = usePathname()
   const router = useRouter()
   const currentIndex = navItems.findIndex(item =>
-    pathname === item.path || (item.path !== '/' && pathname.startsWith(item.path + '/'))
+    pathname === item.path || pathname.startsWith(item.path + '/')
   )
 
   return (

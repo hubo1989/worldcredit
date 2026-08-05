@@ -12,21 +12,12 @@ export function MobileShell({ children }: { children: ReactNode }) {
   const router = useRouter()
 
   useEffect(() => {
-    // 强制跳转登录页（如果未登录且是非公开路径）
-    if (!loading && !user) {
-      router.replace('/login')
-    }
+    if (!loading && !user) router.replace('/login')
   }, [user, loading, router])
 
   if (loading) {
     return (
-      <Box sx={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        minHeight: '100vh',
-        bgcolor: 'background.default'
-      }}>
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
         <CircularProgress />
       </Box>
     )
@@ -35,11 +26,7 @@ export function MobileShell({ children }: { children: ReactNode }) {
   if (!user) return null
 
   return (
-    <Box sx={{
-      pb: 7, // 给底部导航留出空间
-      minHeight: '100vh',
-      bgcolor: 'background.default'
-    }}>
+    <Box sx={{ pb: 7, minHeight: '100vh', bgcolor: 'grey.50' }}>
       {children}
       <BottomNav />
     </Box>

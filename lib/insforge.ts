@@ -1,15 +1,10 @@
 // lib/insforge.ts
 import { createClient } from '@insforge/sdk'
 
-const insforgeUrl = process.env.NEXT_PUBLIC_INSFORGE_URL!
-const insforgeKey = process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY!
-
-// 注意：如果 baseUrl 没配置，它会默认指向 http://localhost:7130
 export const insforge = createClient({
-  baseUrl: insforgeUrl,
-  anonKey: insforgeKey,
+  baseUrl: process.env.NEXT_PUBLIC_INSFORGE_URL!,
+  anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY!,
 })
 
+// 快捷引用：数据库查询用 db.from('table')
 export const db = insforge.database
-
-export default insforge

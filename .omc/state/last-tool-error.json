@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"git add .omc/project-memory.json .omc/state/last-tool-error.json && git commit -m \\\"$(cat <<'EOF'\\nchore: update project memory and clean up stale error state\\nEOF\\n)\\\"\",\"description\":\"Com...",
+  "error": "Exit code 1\nThe following paths are ignored by one of your .gitignore files:\n.omc/state\nhint: Use -f if you really want to add them.\nhint: Disable this message with \"git config set advice.addIgnoredFile false\"",
+  "timestamp": "2026-05-06T17:57:12.602Z",
+  "retry_count": 1
+}

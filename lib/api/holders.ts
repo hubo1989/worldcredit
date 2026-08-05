@@ -65,18 +65,26 @@ function computeStats(cards: CreditCard[], billsByCard: Record<string, Bill[]>):
   }
 }
 
-export async function getHolders(_userId: string): Promise<CardHolder[]> {
-  // TODO: Re-enable .eq('managed_by', userId) after running migration 001_add_managed_by.sql
-  const { data, error } = await db
+export async function getHolders(userId: string, role: 'admin' | 'member' = 'admin'): Promise<CardHolder[]> {
+  let query = db
     .from('card_holders')
     .select('*')
     .order('created_at', { ascending: false })
+
+  if (role === 'admin') {
+    query = query.eq('managed_by', userId)
+  } else {
+    // Member: only see their own linked holder profile
+    query = query.eq('auth_user_id', userId)
+  }
+
+  const { data, error } = await query
   if (error) throw error
   return data || []
 }
 
-export async function getHoldersWithStats(userId: string): Promise<HolderWithStats[]> {
-  const holders = await getHolders(userId)
+export async function getHoldersWithStats(userId: string, role: 'admin' | 'member' = 'admin'): Promise<HolderWithStats[]> {
+  const holders = await getHolders(userId, role)
   if (holders.length === 0) return []
 
   const holderIds = holders.map(h => h.id)
@@ -171,6 +179,7 @@ export async function getHolderStatsPageData(holderId: string): Promise<StatsPag
   const now = new Date()
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
+  // Fetch cards
   const { data: cards, error: cardError } = await db
     .from('credit_cards')
     .select('*')
@@ -181,6 +190,7 @@ export async function getHolderStatsPageData(holderId: string): Promise<StatsPag
   const activeCards = allCards.filter(c => c.status === 'active')
   const cardIds = allCards.map(c => c.id)
 
+  // Fetch bills
   let allBills: Bill[] = []
   if (cardIds.length > 0) {
     const { data: bills, error: billError } = await db
@@ -191,6 +201,7 @@ export async function getHolderStatsPageData(holderId: string): Promise<StatsPag
     allBills = (bills || []) as Bill[]
   }
 
+  // Summary
   const totalLimit = activeCards.reduce((s, c) => s + (Number(c.credit_limit) || 0), 0)
   const unpaidStatuses: Bill['status'][] = ['unpaid', 'partial', 'overdue']
   const unpaidBills = allBills.filter(b => unpaidStatuses.includes(b.status))
@@ -198,6 +209,7 @@ export async function getHolderStatsPageData(holderId: string): Promise<StatsPag
   const availableLimit = Math.max(0, totalLimit - totalUsed)
   const utilizationRate = totalLimit > 0 ? Math.min(Math.round((totalUsed / totalLimit) * 100), 100) : 0
 
+  // Quick stats
   const monthlyBills = allBills
     .filter(b => b.bill_month === currentMonth)
     .reduce((s, b) => s + (Number(b.bill_amount) || 0), 0)
@@ -208,6 +220,7 @@ export async function getHolderStatsPageData(holderId: string): Promise<StatsPag
     b => b.status === 'overdue' && new Date(b.due_date) < now
   ).length
 
+  // 6-month trend
   const monthlyTrend: StatsPageTrend[] = []
   for (let i = 5; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
@@ -223,4 +236,137 @@ export async function getHolderStatsPageData(holderId: string): Promise<StatsPag
     quickStats: { cardCount: activeCards.length, monthlyBills, pendingPayment, overdueCount },
     monthlyTrend,
   }
+}
+
+// --- Member binding ---
+
+export interface AutoBindResult {
+  boundCount: number
+  unmatched: string[]
+  multipleMatches: string[]
+  errors: Array<{ holderId: string; email: string; reason: string }>
+}
+
+export async function bindHolderToUser(holderId: string, authUserId: string): Promise<CardHolder> {
+  const { data, error } = await db
+    .from('card_holders')
+    .update({ auth_user_id: authUserId })
+    .eq('id', holderId)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function bindHolderByEmail(holderId: string, email: string): Promise<CardHolder> {
+  // Find user by email (case-insensitive)
+  const { data: users, error: userError } = await db
+    .from('users')
+    .select('id')
+    .ilike('email', email)
+  if (userError) throw userError
+  if (!users || users.length === 0) {
+    throw new Error('未找到该邮箱对应的成员账号')
+  }
+  if (users.length > 1) {
+    throw new Error('该邮箱对应多个成员账号，请联系管理员处理')
+  }
+
+  const authUserId = users[0].id
+  return bindHolderToUser(holderId, authUserId)
+}
+
+export async function unbindHolder(holderId: string): Promise<CardHolder> {
+  const { data, error } = await db
+    .from('card_holders')
+    .update({ auth_user_id: null })
+    .eq('id', holderId)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function autoBindHoldersByEmail(adminUserId: string): Promise<AutoBindResult> {
+  // Get all holders managed by this admin
+  const { data: holders, error: holderError } = await db
+    .from('card_holders')
+    .select('id, email, name')
+    .eq('managed_by', adminUserId)
+    .is('auth_user_id', null)
+  if (holderError) throw holderError
+  if (!holders || holders.length === 0) {
+    return { boundCount: 0, unmatched: [], multipleMatches: [], errors: [] }
+  }
+
+  // Get all users to match emails
+  const { data: users, error: userError } = await db
+    .from('users')
+    .select('id, email')
+  if (userError) throw userError
+  if (!users) {
+    return { boundCount: 0, unmatched: [], multipleMatches: [], errors: [] }
+  }
+
+  // Build email -> userIds map (case-insensitive)
+  const userEmailMap = new Map<string, string[]>()
+  for (const user of users) {
+    const emailLower = user.email.toLowerCase()
+    if (!userEmailMap.has(emailLower)) {
+      userEmailMap.set(emailLower, [])
+    }
+    userEmailMap.get(emailLower)!.push(user.id)
+  }
+
+  const result: AutoBindResult = {
+    boundCount: 0,
+    unmatched: [],
+    multipleMatches: [],
+    errors: [],
+  }
+
+  for (const holder of holders) {
+    if (!holder.email) continue
+
+    const emailLower = holder.email.toLowerCase()
+    const matchedUserIds = userEmailMap.get(emailLower)
+
+    if (!matchedUserIds || matchedUserIds.length === 0) {
+      result.unmatched.push(holder.email)
+      continue
+    }
+
+    if (matchedUserIds.length > 1) {
+      result.multipleMatches.push(`${holder.name} (${holder.email})`)
+      continue
+    }
+
+    // Single match - bind it
+    const { error: updateError } = await db
+      .from('card_holders')
+      .update({ auth_user_id: matchedUserIds[0] })
+      .eq('id', holder.id)
+
+    if (updateError) {
+      result.errors.push({
+        holderId: holder.id,
+        email: holder.email,
+        reason: updateError.message,
+      })
+    } else {
+      result.boundCount++
+    }
+  }
+
+  return result
+}
+
+export async function getMyHolderProfile(authUserId: string): Promise<CardHolder | null> {
+  const { data, error } = await db
+    .from('card_holders')
+    .select('*')
+    .eq('auth_user_id', authUserId)
+    .single()
+  if (error || !data) return null
+  return data as CardHolder
 }

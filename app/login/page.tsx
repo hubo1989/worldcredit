@@ -4,7 +4,7 @@
 import { useState } from 'react'
 import {
   Box, Card, CardContent, TextField, Button,
-  Typography, Alert, CircularProgress
+  Typography, Alert, CircularProgress, Link
 } from '@mui/material'
 import { CreditCard as CreditCardIcon } from '@mui/icons-material'
 import { useAuth } from '@/lib/auth'
@@ -26,7 +26,7 @@ export default function LoginPage() {
       await signIn(email, password)
       router.push('/')
     } catch (err: any) {
-      setError(err.message || '登录失败，请检查账号密码')
+      setError(err.message || '登录失败')
     } finally {
       setLoading(false)
     }
@@ -38,49 +38,48 @@ export default function LoginPage() {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
       p: 2,
     }}>
-      <Card sx={{ maxWidth: 400, width: '100%', borderRadius: 4 }}>
+      <Card sx={{ maxWidth: 400, width: '100%' }}>
         <CardContent sx={{ p: 4 }}>
-          <Box sx={{ textAlign: 'center', mb: 4 }}>
-            <Box sx={{
-              width: 64, height: 64, bgcolor: 'primary.main',
-              borderRadius: '50%', display: 'inline-flex',
-              alignItems: 'center', justifyContent: 'center', mb: 2
-            }}>
-              <CreditCardIcon sx={{ fontSize: 36, color: 'white' }} />
-            </Box>
-            <Typography variant="h5" fontWeight={800} color="primary">
+          <Box sx={{ textAlign: 'center', mb: 3 }}>
+            <CreditCardIcon sx={{ fontSize: 48, color: 'primary.main' }} />
+            <Typography variant="h5" fontWeight={700} mt={1}>
               WorldCredit
             </Typography>
-            <Typography color="text.secondary" variant="body2" sx={{ mt: 1 }}>
-              家庭信用卡智能管理系统
+            <Typography color="text.secondary" variant="body2">
+              信用卡管理
             </Typography>
           </Box>
-
           {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-
           <form onSubmit={handleSubmit}>
             <TextField
-              fullWidth label="邮箱地址" type="email" margin="normal"
+              fullWidth label="邮箱" type="email" margin="normal"
               value={email} onChange={e => setEmail(e.target.value)}
-              required autoFocus
-              variant="outlined"
+              required autoFocus autoComplete="email"
             />
             <TextField
-              fullWidth label="输入密码" type="password" margin="normal"
+              fullWidth label="密码" type="password" margin="normal"
               value={password} onChange={e => setPassword(e.target.value)}
-              required
-              variant="outlined"
+              required autoComplete="current-password"
             />
             <Button
               fullWidth variant="contained" type="submit" size="large"
-              disabled={loading} sx={{ mt: 4, py: 1.5, borderRadius: 3 }}
+              disabled={loading} sx={{ mt: 2 }}
             >
-              {loading ? <CircularProgress size={24} color="inherit" /> : '登录系统'}
+              {loading ? <CircularProgress size={24} /> : '登录'}
             </Button>
           </form>
+
+          <Box sx={{ mt: 2, textAlign: 'center' }}>
+            <Typography variant="body2" color="text.secondary">
+              还没有账号？{' '}
+              <Link href="/register" underline="hover">
+                立即注册
+              </Link>
+            </Typography>
+          </Box>
         </CardContent>
       </Card>
     </Box>
