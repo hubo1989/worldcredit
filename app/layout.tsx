@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next'
+import './globals.css'
 import { ThemeRegistry } from '@/components/ThemeRegistry'
 import { AuthProvider } from '@/lib/auth'
 

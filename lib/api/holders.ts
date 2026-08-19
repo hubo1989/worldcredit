@@ -166,6 +166,76 @@ export async function deleteHolder(id: string): Promise<void> {
   if (error) throw error
 }
 
+/**
+ * 将多个次要持卡人归拢合并到一个主持卡人下
+ * 1. 将源持卡人名下的所有信用卡转移到主持卡人
+ * 2. 收集源持卡人的名字并作为别名追加到主持卡人的 aliases 列表中
+ * 3. 删除源持卡人记录
+ */
+export async function mergeHolders(
+  primaryHolderId: string,
+  sourceHolderIds: string[]
+): Promise<{ mergedCardsCount: number; updatedAliases: string[] }> {
+  if (!primaryHolderId || sourceHolderIds.length === 0) {
+    return { mergedCardsCount: 0, updatedAliases: [] }
+  }
+
+  // 1. 获取主持卡人信息和所有源持卡人信息
+  const [primaryRes, sourcesRes] = await Promise.all([
+    db.from('card_holders').select('*').eq('id', primaryHolderId).single(),
+    db.from('card_holders').select('*').in('id', sourceHolderIds),
+  ])
+
+  if (primaryRes.error) throw primaryRes.error
+  if (sourcesRes.error) throw sourcesRes.error
+
+  const primaryHolder = primaryRes.data as CardHolder
+  const sourceHolders = (sourcesRes.data || []) as CardHolder[]
+
+  // 2. 汇总别名（包括源持卡人的姓名及其历史别名，去重并不包含主持卡人主姓名）
+  const aliasSet = new Set<string>(primaryHolder.aliases || [])
+  for (const s of sourceHolders) {
+    if (s.name && s.name !== primaryHolder.name) {
+      aliasSet.add(s.name)
+    }
+    if (Array.isArray(s.aliases)) {
+      for (const a of s.aliases) {
+        if (a && a !== primaryHolder.name) aliasSet.add(a)
+      }
+    }
+  }
+  const updatedAliases = Array.from(aliasSet)
+
+  // 3. 将源持卡人名下的信用卡全部转移到主持卡人
+  const { data: updatedCards, error: updateCardsError } = await db
+    .from('credit_cards')
+    .update({ holder_id: primaryHolderId })
+    .in('holder_id', sourceHolderIds)
+    .select('id')
+
+  if (updateCardsError) throw updateCardsError
+
+  const mergedCardsCount = (updatedCards || []).length
+
+  // 4. 更新主持卡人的别名列表
+  const { error: updatePrimaryError } = await db
+    .from('card_holders')
+    .update({ aliases: updatedAliases })
+    .eq('id', primaryHolderId)
+
+  if (updatePrimaryError) throw updatePrimaryError
+
+  // 5. 删除被合并的源持卡人记录
+  const { error: deleteError } = await db
+    .from('card_holders')
+    .delete()
+    .in('id', sourceHolderIds)
+
+  if (deleteError) throw deleteError
+
+  return { mergedCardsCount, updatedAliases }
+}
+
 // --- Stats page data ---
 
 export interface StatsPageSummary {

@@ -242,7 +242,7 @@ export default function GmailLedgerPage() {
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
         <Typography variant="h6" fontWeight={700}>
           <LedgerIcon sx={{ mr: 1, verticalAlign: 'middle', color: 'primary.main' }} />
-          Gmail 账单
+          邮箱账单流水
         </Typography>
         <IconButton onClick={fetchData} size="small"><RefreshIcon /></IconButton>
       </Box>

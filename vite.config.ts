@@ -33,7 +33,7 @@ export default defineConfig(({ command, isSsrBuild }) => ({
           name: 'WorldCredit',
           short_name: 'WorldCredit',
           description: '信用卡账单与还款管理',
-          theme_color: '#1976d2',
+          theme_color: '#0A1F44',
           background_color: '#ffffff',
           display: 'standalone',
           start_url: '/dashboard',
@@ -44,6 +44,9 @@ export default defineConfig(({ command, isSsrBuild }) => ({
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        },
+        injectManifest: {
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         },
         devOptions: {
           enabled: false,

@@ -10,16 +10,16 @@ import { ReactNode } from 'react'
 const theme = createTheme({
   palette: {
     primary: {
-      main: '#030059',
-      light: '#7AADFF',
-      dark: '#02003d',
+      main: '#0A1F44',
+      light: '#1E3A8A',
+      dark: '#061226',
       contrastText: '#ffffff',
     },
     secondary: {
       main: '#7AADFF',
-      light: '#A2C6FF',
-      dark: '#007CBA',
-      contrastText: '#ffffff',
+      light: '#A8C2FF',
+      dark: '#3B7AE0',
+      contrastText: '#0A1F44',
     },
     info: {
       main: '#A2C6FF',
@@ -41,35 +41,35 @@ const theme = createTheme({
       contrastText: '#ffffff',
     },
     background: {
-      default: '#F5F8FF', // Soft sky light background
+      default: '#F5F7FA', // Soft sky light background
       paper: '#FFFFFF',
     },
     text: {
-      primary: '#333333',
-      secondary: '#636363',
+      primary: '#0A1F44',
+      secondary: '#5B6478',
       disabled: '#999999',
     },
     divider: '#DDDDDD',
   },
   typography: {
-    fontFamily: '"Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    fontFamily: '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     h1: {
       fontSize: '32px',
       fontWeight: 300,
       lineHeight: '51.2px',
-      color: '#030059',
+      color: '#0A1F44',
     },
     h2: {
       fontSize: '24px',
       fontWeight: 300,
       lineHeight: '38.4px',
-      color: '#030059',
+      color: '#0A1F44',
     },
     h3: {
       fontSize: '16px',
       fontWeight: 400,
       lineHeight: '24px',
-      color: '#030059',
+      color: '#0A1F44',
     },
     subtitle1: {
       fontSize: '18px',
@@ -137,7 +137,7 @@ const theme = createTheme({
         },
         outlinedPrimary: {
           backgroundColor: 'transparent',
-          color: '#030059',
+          color: '#0A1F44',
           border: '1px solid #030059',
           fontWeight: 400,
           '&:hover': {
@@ -150,7 +150,7 @@ const theme = createTheme({
         },
         textPrimary: {
           backgroundColor: 'transparent',
-          color: '#030059',
+          color: '#0A1F44',
           fontWeight: 400,
           '&:hover': {
             backgroundColor: 'rgba(162, 198, 255, 0.2)',
@@ -216,7 +216,7 @@ const theme = createTheme({
           position: 'relative',
           transform: 'none',
           '&.Mui-focused': {
-            color: '#030059',
+            color: '#0A1F44',
           },
         },
       },
@@ -230,7 +230,7 @@ const theme = createTheme({
           padding: '4px 12px',
           height: 'auto',
           backgroundColor: '#A2C6FF',
-          color: '#030059',
+          color: '#0A1F44',
         },
         colorError: {
           backgroundColor: '#CF2E2E',
@@ -238,7 +238,7 @@ const theme = createTheme({
         },
         colorWarning: {
           backgroundColor: '#FCB900',
-          color: '#030059',
+          color: '#0A1F44',
         },
       },
     },
@@ -254,7 +254,7 @@ const theme = createTheme({
     MuiLink: {
       styleOverrides: {
         root: {
-          color: '#030059',
+          color: '#0A1F44',
           textDecoration: 'underline',
           '&:hover': {
             color: '#7AADFF',
@@ -274,11 +274,11 @@ export function ThemeRegistry({ children }: { children: ReactNode }) {
         body: {
           backgroundColor: '#F5F8FF',
           color: '#333333',
-          fontFamily: '"Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+          fontFamily: '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         },
-        h1: { color: '#030059', fontWeight: 300 },
-        h2: { color: '#030059', fontWeight: 300 },
-        h3: { color: '#030059', fontWeight: 400 },
+        h1: { color: '#0A1F44', fontWeight: 300 },
+        h2: { color: '#0A1F44', fontWeight: 300 },
+        h3: { color: '#0A1F44', fontWeight: 400 },
         '.privacy-blur': {
           filter: 'blur(7px)',
           transition: 'filter 0.25s cubic-bezier(0.4, 0, 0.2, 1)',

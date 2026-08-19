@@ -76,6 +76,7 @@ export interface CardHolder {
   name: string
   phone?: string
   avatar_color: string
+  aliases?: string[]
   created_at: string
 }
 

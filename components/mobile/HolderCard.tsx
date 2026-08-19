@@ -23,10 +23,15 @@ export function HolderCard({ holder, cardCount, onClick }: Props) {
           <Avatar sx={{ bgcolor: holder.avatar_color, width: 48, height: 48, fontSize: 20 }}>
             {holder.name.charAt(0)}
           </Avatar>
-          <Box sx={{ flex: 1 }}>
-            <Typography variant="subtitle1" fontWeight={600}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography variant="subtitle1" fontWeight={700} noWrap>
               {holder.name}
             </Typography>
+            {holder.aliases && holder.aliases.length > 0 && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }} noWrap>
+                别名: {holder.aliases.join('、')}
+              </Typography>
+            )}
             {holder.phone && (
               <Typography variant="body2" color="text.secondary">
                 {holder.phone}

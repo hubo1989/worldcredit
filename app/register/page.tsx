@@ -15,6 +15,7 @@ import {
 import { useAuth } from '@/lib/auth'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { getFriendlyAuthErrorMessage } from '@/lib/utils/auth-error'
 
 export default function RegisterPage() {
   const [step, setStep] = useState<'info' | 'otp'>('info')
@@ -41,7 +42,7 @@ export default function RegisterPage() {
         router.push('/dashboard')
       }
     } catch (err: any) {
-      setError(err.message || '注册失败')
+      setError(getFriendlyAuthErrorMessage(err, '注册失败，请检查填写信息后重试'))
     } finally {
       setLoading(false)
     }
@@ -55,7 +56,7 @@ export default function RegisterPage() {
       await verifyEmail(email, otp)
       router.push('/dashboard')
     } catch (err: any) {
-      setError(err.message || '验证失败')
+      setError(getFriendlyAuthErrorMessage(err, '验证码错误或已过期，请重试'))
     } finally {
       setLoading(false)
     }
