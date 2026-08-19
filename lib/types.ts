@@ -59,11 +59,13 @@ export interface Promo {
   bank_name: string
   title: string
   description?: string
-  discount_type?: '满减' | '折扣' | '积分' | '返现'
+  discount_type?: string
   start_date?: string
   end_date?: string
   conditions?: string
   max_uses?: number
+  /** 结构化使用规则（前端示例数据/展示用，云端可空） */
+  rules?: { category: string; quota: string; channel: string }
   created_at: string
 }
 
@@ -76,6 +78,7 @@ export interface CardHolder {
   name: string
   phone?: string
   avatar_color: string
+  aliases?: string[]
   created_at: string
 }
 

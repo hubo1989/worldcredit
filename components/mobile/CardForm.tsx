@@ -9,6 +9,7 @@ import {
 } from '@mui/material'
 import type { CreditCard, CardProduct } from '@/lib/types'
 import { getCardProducts } from '@/lib/api/cards'
+import { AiFillBox } from '@/components/mobile/AiFillBox'
 
 interface Props {
   open: boolean
@@ -148,6 +149,21 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
+          <AiFillBox mode="card" onFill={(data) => {
+            if (data.bank_name) setSelectedBank(String(data.bank_name))
+            if (data.card_number_last4) setLast4(String(data.card_number_last4).slice(-4))
+            if (data.billing_day) {
+              const d = String(data.billing_day).replace(/\D/g, '')
+              if (d) setBillingDay(d)
+            }
+            if (data.card_name) {
+              const match = products.find(p => p.card_name === data.card_name || p.card_name.includes(String(data.card_name)))
+              if (match) {
+                setSelectedBank(match.bank_name)
+                setProductId(match.id)
+              }
+            }
+          }} />
 
           {/* 卡类型选择 */}
           <Box>

@@ -2,25 +2,20 @@
 
 import { usePathname, useRouter } from 'next/navigation'
 import { BottomNavigation, BottomNavigationAction, Paper } from '@mui/material'
-import DashboardIcon from '@mui/icons-material/Dashboard'
-import PeopleIcon from '@mui/icons-material/People'
-import ReceiptIcon from '@mui/icons-material/Receipt'
-import AiIcon from '@mui/icons-material/AutoAwesome'
-import SettingsIcon from '@mui/icons-material/Settings'
+import { HomeIcon, BillsIcon, MineIcon } from '@/components/icons/WcIcon'
 
 const navItems = [
-  { label: '首页', icon: <DashboardIcon />, path: '/dashboard' },
-  { label: '持卡人', icon: <PeopleIcon />, path: '/holders' },
-  { label: '账单', icon: <ReceiptIcon />, path: '/bills' },
-  { label: '✨助手', icon: <AiIcon />, path: '/ai' },
-  { label: '设置', icon: <SettingsIcon />, path: '/settings' },
+  // §2.1: 3 tab（首页 / 账单 / 我的）；图标统一来自 WcIcon 线性 SVG 库
+  { label: '首页', icon: <HomeIcon />, path: '/dashboard' },
+  { label: '账单', icon: <BillsIcon />, path: '/bills' },
+  { label: '我的', icon: <MineIcon />, path: '/settings' },
 ]
 
 export function BottomNav() {
   const pathname = usePathname()
   const router = useRouter()
 
-  // 计算当前选中的索引
+  // 计算当前选中的索引（匹配 3 个新 tab 的路径）
   const currentIndex = navItems.findIndex(item =>
     pathname === item.path || (item.path !== '/' && pathname.startsWith(item.path))
   )
@@ -33,8 +28,9 @@ export function BottomNav() {
         left: 0,
         right: 0,
         zIndex: 1000,
-        borderTop: '1px solid #DDDDDD',
-        boxShadow: '0px -2px 8px rgba(0, 0, 0, 0.06)',
+        // §7.3 / §7.4：白色背景 + 顶部 1px 边框 + 向上阴影
+        borderTop: '1px solid var(--border)',
+        boxShadow: '0 -2px 8px rgba(10, 31, 68, 0.06)',
         backgroundColor: '#FFFFFF',
       }}
       elevation={0}
@@ -45,30 +41,54 @@ export function BottomNav() {
           router.push(navItems[newValue].path)
         }}
         showLabels
-        sx={{ height: 60, backgroundColor: 'transparent' }}
+        // 触控目标 ≥44pt：高度 56px
+        sx={{ height: 56, backgroundColor: 'transparent' }}
       >
-        {navItems.map(item => (
-          <BottomNavigationAction
-            key={item.path}
-            label={item.label}
-            icon={item.icon}
-            sx={{
-              color: '#636363',
-              fontFamily: '"Open Sans", sans-serif',
-              '& .MuiBottomNavigationAction-label': {
-                fontSize: '12px',
-                fontWeight: 400,
-              },
-              '&.Mui-selected': {
-                color: '#030059',
+        {navItems.map((item, idx) => {
+          const selected = idx === (currentIndex === -1 ? 0 : currentIndex)
+          return (
+            <BottomNavigationAction
+              key={item.path}
+              label={item.label}
+              icon={item.icon}
+              sx={{
+                // 非选中态灰色 / 选中态深蓝（§7.3）
+                color: selected ? 'var(--navy-600)' : '#5B6478',
+                fontFamily: '"Noto Sans SC", "PingFang SC", sans-serif',
+                padding: 0,
+                maxWidth: 'none',
+                transition: 'color 150ms ease',
+                position: 'relative',
                 '& .MuiBottomNavigationAction-label': {
                   fontSize: '12px',
-                  fontWeight: 700,
+                  fontWeight: selected ? 600 : 400,
+                  transition: 'font-weight 150ms ease',
                 },
-              },
-            }}
-          />
-        ))}
+                // 选中态顶部金色短线（§7.3）
+                '&::before': selected
+                  ? {
+                      content: '""',
+                      position: 'absolute',
+                      top: 0,
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      width: 24,
+                      height: 3,
+                      borderRadius: 2,
+                      backgroundColor: 'var(--gold-500)',
+                    }
+                  : {},
+                '&.Mui-selected': {
+                  color: 'var(--navy-600)',
+                  '& .MuiBottomNavigationAction-label': {
+                    fontSize: '12px',
+                    fontWeight: 600,
+                  },
+                },
+              }}
+            />
+          )
+        })}
       </BottomNavigation>
     </Paper>
   )
