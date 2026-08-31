@@ -81,8 +81,8 @@ export function ScenarioQuickQuestions({ onSelectQuestion, disabled }: ScenarioQ
                   border: '1px solid #E5E7EB',
                   '&:hover': {
                     bgcolor: '#E0E7FF',
-                    borderColor: '#2563EB',
-                    color: '#2563EB',
+                    borderColor: 'primary.main',
+                    color: 'primary.main',
                   },
                   '&.Mui-disabled': {
                     opacity: 0.5,

@@ -102,7 +102,7 @@ worldcredit/
 ├── public/                     # PWA 图标资源
 ├── .env.local                  # 环境变量（InsForge URL + Anon Key）
 ├── .insforge/project.json      # InsForge 项目配置
-├── vite.config.ts              # Vite 配置（端口3050 + vinext插件）
+├── vite.config.mts           # Vite 配置（端口3050 + vinext插件，.mts 保证 ESM 加载）
 ├── tsconfig.json               # TypeScript 配置
 └── package.json
 ```

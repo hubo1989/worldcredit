@@ -164,6 +164,7 @@ export default function BillsPage() {
         </Typography>
         <IconButton 
           id="sync-bills-btn"
+          aria-label="同步账单"
           color="primary" 
           onClick={handleSync} 
           disabled={syncing}

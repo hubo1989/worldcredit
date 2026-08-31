@@ -1,409 +1,216 @@
-# Design System Inspired by Solutions Treatment Center
+---
+name: WorldCredit
+description: 家庭信用卡管理 PWA —— 账单、还款、权益、优惠的家庭财务台面
+colors:
+  primary: "#1976d2"
+  primary-dark: "#1565c0"
+  primary-deep: "#0d47a1"
+  ink-navy: "#030059"
+  gradient-purple: "#9c27b0"
+  mist-bg: "#F5F8FF"
+  surface: "#FFFFFF"
+  text-body: "#333333"
+  text-secondary: "#636363"
+  text-disabled: "#999999"
+  border-light: "#DDDDDD"
+  success: "#2e7d32"
+  warning: "#ed6c02"
+  danger: "#d32f2f"
+  info: "#0277bd"
+  admin-night: "#181a24"
+  admin-panel: "#1e2028"
+  admin-indigo: "#4f46e5"
+  admin-indigo-deep: "#4338ca"
+  admin-indigo-light: "#818cf8"
+  admin-ink: "#e4e6eb"
+  admin-muted: "#9ca3af"
+  amber-accent: "#f59e0b"
+  emerald: "#10b981"
+  rose: "#f43f5e"
+  sky-on-navy: "#A2C6FF"
+  ink-slate: "#1F2937"
+  card-gradient-deep: "#004f78"
+typography:
+  display:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, HarmonyOS Sans SC, MiSans, Noto Sans SC Variable, Noto Sans SC, Microsoft YaHei, sans-serif"
+    fontSize: "clamp(2.5rem, 6vw, 4.5rem)"
+    fontWeight: 800
+    lineHeight: 1.2
+  title:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, HarmonyOS Sans SC, MiSans, Noto Sans SC Variable, Noto Sans SC, Microsoft YaHei, sans-serif"
+    fontSize: "1.5rem"
+    fontWeight: 600
+    lineHeight: 1.35
+  body:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, HarmonyOS Sans SC, MiSans, Noto Sans SC Variable, Noto Sans SC, Microsoft YaHei, sans-serif"
+    fontSize: "0.875rem"
+    fontWeight: 400
+    lineHeight: 1.6
+  label:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, HarmonyOS Sans SC, MiSans, Noto Sans SC Variable, Noto Sans SC, Microsoft YaHei, sans-serif"
+    fontSize: "0.75rem"
+    fontWeight: 700
+rounded:
+  xs: "3px"
+  sm: "5px"
+  md: "8px"
+  lg: "10px"
+  pill: "12px"
+spacing:
+  xs: "8px"
+  sm: "12px"
+  md: "16px"
+  lg: "24px"
+components:
+  button-primary:
+    backgroundColor: "{colors.primary}"
+    textColor: "#ffffff"
+    rounded: "{rounded.xs}"
+    height: "40px"
+  button-primary-hover:
+    backgroundColor: "{colors.primary-dark}"
+  button-text:
+    textColor: "{colors.primary-dark}"
+  card:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text-body}"
+    rounded: "{rounded.sm}"
+    padding: "24px"
+  input:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text-body}"
+    rounded: "{rounded.sm}"
+    height: "40px"
+  chip:
+    backgroundColor: "{colors.primary}"
+    textColor: "{colors.primary}"
+    rounded: "{rounded.pill}"
+---
 
-## 1. Visual Theme & Atmosphere
+# Design System: WorldCredit
 
-Solutions Treatment Center's design embodies therapeutic warmth, healing hope, and professional compassion. The visual system combines a deep, grounded navy foundation with calming sky blues, creating an environment that feels both trustworthy and approachable. Layered imagery of nature, wellness rituals, and human connection reinforces the center's holistic approach to mental health treatment. The typography leans toward clean, readable Open Sans with generous spacing, fostering clarity and reducing cognitive load for visitors navigating sensitive mental health topics. Green accent elements symbolize growth and renewal, while the overall palette—dominated by cool tones—evokes serenity and safety.
+## Overview
 
-**Key Characteristics**
+**Creative North Star: "家庭财务的仪表台"（The Family Ledger Console）**
 
-- Deep navy foundation (`#030059`) providing trust and stability
-- Soft sky blue accents (`#7AADFF`, `#A2C6FF`) creating calm and accessibility
-- Human-centered imagery layered with nature and wellness symbolism
-- Clean, spacious typography reducing overwhelm
-- Green accent tones representing healing and growth
-- Professional yet compassionate visual language
-- High contrast between text and backgrounds for readability
-- Warm, inviting component styling with rounded edges
+WorldCredit 是家庭自用的信用卡管理工具：一个管理员在手机 PWA 上打理全家的账单、还款、权益和优惠，在桌面管理后台维护银行/卡产品目录。视觉体系服务于「可信、清晰、不焦虑地看钱」：亮色世界（移动端 + 落地页）以品牌蓝 #1976d2 为唯一主色，深藏青 #030059 做文字锚点；暗色世界（管理后台）是独立主题的深色运营台，靛蓝做行动色。色彩用量克制——蓝只属于动作、选中和状态，渐变只属于信用卡视觉和落地页一个瞬间。
 
-## 2. Color Palette & Roles
+> 历史：2026-08 之前代码中并存三套视觉世界（声明主题「疗养中心藏青」、移动端 MUI 默认蓝、管理端硬编码暗色）。本次统一以移动端蓝为基底收敛为双主题体系（`lib/theme.ts` 的 lightTheme + adminDarkTheme），三世界详情见 git 历史中的 DESIGN.md 版本。
+
+**Key Characteristics:**
+
+- 双主题：全局亮色（lightTheme）+ 管理后台暗色（adminDarkTheme，独立 ThemeProvider），取色一律走 MUI token
+- 中文优先字体体系：系统 Latin → 原生 CJK（苹方/鸿蒙/小米）→ 真实加载的 Noto Sans SC Variable（@fontsource-variable，unicode-range 子集按需下载）→ 雅黑兜底
+- WCAG AA 为硬底线：主色填充 #1976d2 白字 4.6:1；主色作文字用 primary-dark #1565c0（雾底上 5.4:1）
+- 语义状态色承担账单语言：待还/部分/已还/逾期各有固定色，不只靠色相区分
+- 隐私本能：金额支持 `.privacy-blur` 打码
+- 单组件库 MUI v7；无第二套 UI 库
+
+## Colors
+
+冷静可信的蓝色系工具台面：雾蓝底上白卡片，一个行动蓝，状态色只出现在账单和开关上。
 
 ### Primary
-- **Deep Navy** (`#030059`): Primary brand color for headings, core UI elements, and dominant backgrounds; establishes trust and therapeutic authority
-- **Primary Blue** (`#7AADFF`): Secondary primary for interactive states, hover effects, and accent sections; bridges deep navy with calming sky tones
+- **品牌蓝 Brand Blue** (#1976d2)：主色，只用于填充——按钮底、开关、进度、选中态。白字其上 4.6:1（AA ✓）。viewport themeColor 同色。
+- **品牌深蓝 Brand Blue Deep** (#1565c0)：主色作文字/描边时的强制档位——文字按钮、链接、outline 描边。雾底 #F5F8FF 上 5.4:1（AA ✓）。hover 深档 #0d47a1。
 
-### Accent Colors
-- **Light Sky Blue** (`#A2C6FF`): Tertiary accent for subtle highlights, secondary backgrounds, and supporting UI; very light, non-intrusive
-- **Teal Accent** (`#007CBA`): Alternative accent for CTAs and healing-related sections; professional and approachable
-- **Purple Accent** (`#7A00DF`): Rare accent used for special emphasis or spiritual/holistic messaging elements
+### Secondary
+- **墨藏青 Ink Navy** (#030059)：文字锚点与品牌印记——标题、底部导航激活态、管理端侧边栏底、focus outline。白底上 ≈15:1。
+- **渐变紫 Gradient Purple** (#9c27b0)：唯一装饰色，只出现在落地页标题渐变（`90deg, #1976d2 → #9c27b0`）的尾端。
 
-### Interactive
-- **CTA Blue** (`#A2C6FF`): Button and link backgrounds for primary calls-to-action; light, inviting tone
-- **Link Navy** (`#030059`): Text links maintaining visual hierarchy; underlined for accessibility
-- **Hover State Light** (`#0073AA`): Interactive hover color for secondary interactions and focus states
-
-### Neutral Scale
-- **Text Dark** (`#333333`): Primary text color for body copy, labels, and standard content; warm dark grey
-- **Text Black** (`#000000`): High-contrast text for headings and emphasis when maximum readability needed
-- **Text Light** (`#111111`): Rare near-black for very subtle emphasis or alt text
-- **Text Medium** (`#636363`): Secondary text for captions, metadata, and de-emphasized content
-- **Surface Neutral** (`#FFFFFF`): Primary surface and container background; clinical cleanliness
-- **Border Light** (`#DDDDDD`): Subtle borders between sections; low visual weight
-- **Border Medium** (`#D2D2D2`): Standard borders around input fields and container edges
-- **Border Dark** (`#CCCCCC`): Stronger borders when definition needed; rare usage
-
-### Surface & Borders
-- **White Surface** (`#FFFFFF`): Primary card, container, and modal backgrounds; clinical and clean
-- **Light Border** (`#DDDDDD`): Dividers and subtle container outlines maintaining visual separation without harshness
+### Neutral
+- **雾底 Mist** (#F5F8FF)：全局背景；**面板白 Surface** (#FFFFFF)：卡片、输入框、底栏；**正文灰 Text Body** (#333333)：主文字；**次级灰 Text Secondary** (#636363)：说明文字（白底 6.0:1 ✓）；**分隔线 Border Light** (#DDDDDD)：1px 边框与分隔。
 
 ### Semantic / Status
-- **Error Red** (`#CF2E2E`): Error states, validation messages, and alerts indicating problems
-- **Warning Yellow** (`#FCB900`): Warning states, cautions, and non-critical alerts
+- **成功绿** (#2e7d32，白字 5.1:1)：已结清、权益已用尽、开关开启
+- **警告橙** (#ed6c02，配墨藏青文字 5.9:1)：待还、临期
+- **错误红** (#d32f2f，白字 5.0:1)：逾期、删除、失败
+- **信息蓝** (#0277bd，白字 4.6:1)：部分还款、提示
 
-## 3. Typography Rules
+### 管理后台暗色世界（adminDarkTheme，仅在 /admin 生效）
+- **夜色底 Night** (#181a24) / **面板 Panel** (#1e2028)：两级表面
+- **面板字 Ink** (#e4e6eb，12:1 ✓) / **次级字 Muted** (#9ca3af，6.8:1 ✓)：文字两档
+- **管理靛蓝 Admin Indigo**：填充用 #4f46e5（白字 6.3:1 ✓），hover #4338ca；暗底上的靛蓝文字/图标用 light 档 #818cf8（5.8:1 ✓）
+- 语义色适配暗底：成功 #10b981、警告 #f59e0b、错误 #f87171（暗底文字 5.9:1）
 
-### Font Family
-**Primary:** Open Sans (sans-serif stack: `Open Sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`)
-**Secondary:** Helvetica (system stack: `Helvetica, Arial, sans-serif`)
+### Named Rules
+
+**The One Blue Rule.** 亮色世界只有一个主色 #1976d2。填充用 main 档，文字/描边一律降到 dark 档 #1565c0——这是 AA 的机械保证，不逐处争论。
+
+**The Two-Worlds Rule.** 亮色主题与暗色主题是两套独立构图，不是明暗互转；管理端配色只经由 adminDarkTheme 的 token 表达，禁止在页面里硬编码色值。
+
+## Typography
+
+**字体栈（全站唯一，`lib/theme.ts` fontStack）：** `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans SC Variable", "Noto Sans SC", "Microsoft YaHei", sans-serif`
+
+**加载方式：** `@fontsource-variable/noto-sans-sc` 在 ThemeRegistry 中 import，Vite 打包，unicode-range 子集按需下载；装有原生 CJK（macOS/鸿蒙/小米/Windows 雅黑）的设备直接用原生字体，其余平台回退 Noto Sans SC。
+
+**Character:** 系统原生优先、网页字体兜底的实用主义组合——中文渲染永远清晰，不赌网络。CJK 不使用斜体和 300 以下字重。
 
 ### Hierarchy
+- **Display**（800，clamp 2.5rem–4.5rem，1.2）：仅落地页主标题（渐变填充）
+- **Title**（600，1.5rem±，1.35）：页面与卡片标题；金额数字同权重、建议 tabular-nums
+- **Body**（400，14–16px，1.6）：列表、表单、说明；表单输入 ≥16px 防 iOS 聚焦缩放
+- **Label**（700，12px）：Chip、状态徽标、表单标签
 
-| Role | Font | Size | Weight | Line Height | Letter Spacing | Notes |
-|------|------|------|--------|-------------|----------------|-------|
-| Display (H1) | Open Sans | 32px | 300 | 51.2px | 0px | Hero section titles; large, airy, light weight |
-| Heading 2 (H2) | Open Sans | 24px | 300 | 38.4px | 0px | Section titles, major content headers |
-| Heading 3 (H3) | Open Sans | 16px | 400 | 24px | 0px | Subsection titles, card headers |
-| Span Emphasis | Open Sans | 22px | 400 | 37.7px | 0px | Highlighted callout text, taglines |
-| Body Standard | Open Sans | 16px | 400 | 25.6px | 0px | Primary body text, paragraphs, descriptions |
-| Body Small | Open Sans | 14px | 400 | 21px | 0px | List items, secondary content, captions |
-| Label / Form | Open Sans | 16px | 700 | 20.8px | 0px | Form labels, emphasis text |
-| Button | Helvetica | 14px | 400 | 20px | 0px | Button text, minimal weight |
-| Link | Open Sans | 16px | 400 | 16px | 0px | Inline links; underline applied via text-decoration |
+### Named Rules
 
-### Principles
-- **Light weight hierarchy:** Use weight 300–400; reserve 700 only for form labels and critical emphasis
-- **Generous line height:** Maintain 1.5–1.6× multiplier for readability and reduced cognitive load
-- **Accessibility first:** Minimum 16px for body text; always maintain sufficient contrast (`#333333` text on `#FFFFFF` backgrounds)
-- **Therapeutic tone:** Avoid heavy, aggressive typography; favor clarity and calm over drama
-- **Consistent baseline:** All text aligns to 8px grid for rhythm and visual harmony
+**The Loaded-Font Rule.** 字体必须「声明 + 真实加载」成对出现；`fontFamily` 里出现的名字要么有 @font-face/包来源，要么从栈里删掉。
 
-## 4. Component Stylings
+## Layout
+
+双外壳：移动端单列 + 底部 TabBar（首页/持卡人/账单/优惠），页面纵向滚动；管理端 260px 藏青侧边栏（可折叠，paper 以 transform 平移动画，内容区瞬时重排）+ 顶栏 + 内容区。断点以 MUI `sx` 的 xs/md 粒度响应；管理端面向桌面属设计意图。间距走 MUI 8px 网格，卡片内边距 16–24px。
+
+## Elevation & Depth
+
+低浮雕：亮色世界白卡 + 1px #DDDDDD 边 + `0 2px 4px rgba(0,0,0,0.08)` 微影；暗色世界以表面明度差（#181a24 → #1e2028）+ 1px `rgba(255,255,255,0.08)` 分隔表达层级，几乎不用阴影。阴影只在浮层（菜单、对话框）出现。
+
+## Shapes
+
+圆角五档：按钮 3px、卡片/输入 5px、管理端面板 8px、对话框/英雄卡 10px、Chip 12px。小圆角工具感。边框语言：亮色 1px #DDDDDD，暗色 1px rgba(255,255,255,0.08)。禁止 >1px 的单侧彩色边条（side-tab）。
+
+## Components
 
 ### Buttons
+- **Shape:** 3px 圆角、40px 高、无阴影
+- **Primary:** #1976d2 底白字，hover #1565c0；文字按钮/outline 用 #1565c0 字
+- **Focus:** 2px #030059 outline + 2px offset（管理端 2px #818cf8）
+- **Disabled:** MUI 默认灰
 
-#### Primary Button
-- **Background:** `#A2C6FF`
-- **Text Color:** `#FFFFFF`
-- **Font:** Open Sans, 14px, weight 700
-- **Padding:** `0px 20px`
-- **Height:** 40px
-- **Border Radius:** `3px`
-- **Border:** None
-- **Box Shadow:** None
-- **Hover State:** Background `#7AADFF`, cursor pointer
-- **Focus State:** Outline `2px solid #030059`, offset `2px`
-- **Disabled State:** Background `#CCCCCC`, color `#636363`, cursor not-allowed
+### Cards / Containers
+- **Corner Style:** 5px（亮）/ 8px（暗）
+- **Background:** #FFFFFF（亮）/ #181a24、#1e2028（暗）
+- **Border:** 1px #DDDDDD（亮）/ 1px rgba(255,255,255,0.08)（暗）
+- **Internal Padding:** 16–24px
 
-#### Secondary Button
-- **Background:** Transparent
-- **Text Color:** `#030059`
-- **Font:** Open Sans, 14px, weight 400
-- **Padding:** `0px 20px`
-- **Height:** 40px
-- **Border Radius:** `3px`
-- **Border:** `1px solid #030059`
-- **Box Shadow:** None
-- **Hover State:** Background `#A2C6FF` at 20% opacity, border color `#7AADFF`
-- **Focus State:** Outline `2px solid #030059`
-- **Active State:** Background `#A2C6FF`
-
-#### Ghost Button
-- **Background:** Transparent
-- **Text Color:** `#FFFFFF`
-- **Font:** Open Sans, 14px, weight 400
-- **Padding:** `0px 20px`
-- **Height:** 40px
-- **Border Radius:** `3px`
-- **Border:** None
-- **Box Shadow:** None
-- **Hover State:** Background `rgba(162, 198, 255, 0.2)`, color `#FFFFFF`
-
-### Cards & Containers
-
-#### Standard Card
-- **Background:** `#FFFFFF`
-- **Text Color:** `#333333`
-- **Font:** Open Sans, 16px, weight 400
-- **Padding:** `24px`
-- **Border Radius:** `5px`
-- **Border:** `1px solid #DDDDDD`
-- **Box Shadow:** `0px 2px 4px rgba(0, 0, 0, 0.08)`
-- **Line Height:** 25.6px
-- **Min Height:** Auto (content-driven)
-
-#### Featured Card / Callout
-- **Background:** `#A2C6FF`
-- **Text Color:** `#FFFFFF`
-- **Font:** Open Sans, 18px, weight 400
-- **Padding:** `24px`
-- **Border Radius:** `10px`
-- **Border:** None
-- **Box Shadow:** `0px 4px 8px rgba(0, 0, 0, 0.12)`
-
-#### Info Box
-- **Background:** `#F5F8FF` (light blue tint)
-- **Text Color:** `#333333`
-- **Padding:** `20px 24px`
-- **Border Radius:** `5px`
-- **Border:** `1px solid #A2C6FF`
-- **Border Left:** `4px solid #7AADFF` (accent stripe)
-
-### Inputs & Forms
-
-#### Text Input
-- **Background:** `#FFFFFF`
-- **Text Color:** `#333333`
-- **Font:** Open Sans, 16px, weight 400
-- **Padding:** `8px 12px`
-- **Height:** 40px
-- **Border Radius:** `5px`
-- **Border:** `1px solid #CCCCCC`
-- **Box Shadow:** None
-- **Focus State:** Border `1px solid #7AADFF`, box-shadow `0px 0px 0px 3px rgba(122, 173, 255, 0.1)`
-- **Error State:** Border `1px solid #CF2E2E`, background tint `rgba(207, 46, 46, 0.02)`
-
-#### Label
-- **Font:** Open Sans, 16px, weight 700
-- **Color:** `#333333`
-- **Margin Bottom:** `8px`
-- **Display:** Block
-
-#### Placeholder Text
-- **Color:** `#636363`
-- **Font Style:** Italic
-- **Opacity:** 0.7
+### Inputs / Fields
+- **Style:** MUI OutlinedInput，白底、#CCCCCC 描边、40px 高、输入 ≥16px
+- **Focus:** 主色描边 + 3px rgba(25,118,210,0.15) 光晕；管理端走暗色主题默认
 
 ### Navigation
+- **移动端底部 TabBar:** 白底，激活 #030059，未激活 #636363
+- **管理端:** 藏青 #030059 侧边栏，选中项 #4f46e5 底白字；顶栏 background.paper + text.primary
 
-#### Top Navigation Bar
-- **Background:** `#7AADFF`
-- **Height:** 40px
-- **Padding:** `0px 32px`
-- **Display:** Flex, align-items center
-- **Font:** Open Sans, 14px, weight 400
-- **Text Color:** `#FFFFFF`
+### 信用卡视觉（Signature）
+135° 藏青→深青渐变卡面（`#030059 → #004f78`，尾色深度保证天蓝说明字 ≥5:1），大圆角白字；银行品牌色表见 CreditCardVisual（数据性用色，不进体系）。
 
-#### Navigation Link
-- **Color:** `#FFFFFF`
-- **Font:** Open Sans, 16px, weight 400
-- **Padding:** `0px 20px`
-- **Height:** 40px
-- **Line Height:** 40px
-- **Text Decoration:** None
-- **Hover State:** Background `rgba(255, 255, 255, 0.1)`, transition 200ms ease
-- **Active State:** Background `#030059`
+### 状态徽标（Chips）
+语义色底 + AA 校验文字色；待还=警告橙（配墨藏青字）、已结清=成功绿、逾期=错误红、部分=信息蓝。状态永远带文字，不只靠颜色。
 
-#### Navigation Link (Dark Theme)
-- **Color:** `#030059`
-- **Hover State:** Color `#7AADFF`, text-decoration underline
+## Do's and Don'ts
 
-### Links
+### Do:
 
-#### Inline Text Link
-- **Background:** Transparent
-- **Text Color:** `#030059`
-- **Font:** Open Sans, 16px, weight 400
-- **Text Decoration:** Underline
-- **Padding:** `0px`
-- **Border:** None
-- **Hover State:** Color `#7AADFF`, text-decoration underline-dashed
-- **Focus State:** Outline `2px solid #030059`
+- **Do** 一律从 `lib/theme.ts` 的两个主题取 token（`primary.main`、`background.paper`、`success.main`…）
+- **Do** 主色填充用 `primary.main`，主色文字/描边用 `primary.dark`（The One Blue Rule）
+- **Do** 账单状态走语义 token：unpaid→warning、paid→success、overdue→error、partial→info，且附文字标签
+- **Do** 金额、日期用 tabular-nums；金额界面提供 privacy-blur
+- **Do** 动画只用 transform/opacity（如侧边栏 paper 平移），200–300ms ease-out
 
-#### Link Button (Primary CTA Link)
-- **Background:** `#A2C6FF`
-- **Text Color:** `#FFFFFF`
-- **Font:** Open Sans, 14px, weight 700
-- **Padding:** `0px 20px`
-- **Height:** 40px
-- **Line Height:** 40px
-- **Border Radius:** `3px`
-- **Border:** None
-- **Text Decoration:** None
-- **Hover State:** Background `#7AADFF`
-- **Focus State:** Outline `2px solid #030059`
+### Don't:
 
-### Badges & Status Indicators
-
-#### Badge (Default)
-- **Background:** `#A2C6FF`
-- **Text Color:** `#030059`
-- **Font:** Open Sans, 12px, weight 700
-- **Padding:** `4px 12px`
-- **Border Radius:** `12px`
-- **Border:** None
-
-#### Badge (Error)
-- **Background:** `#CF2E2E`
-- **Text Color:** `#FFFFFF`
-- **Font:** Open Sans, 12px, weight 700
-- **Padding:** `4px 12px`
-- **Border Radius:** `12px`
-
-#### Badge (Warning)
-- **Background:** `#FCB900`
-- **Text Color:** `#030059`
-- **Font:** Open Sans, 12px, weight 700
-- **Padding:** `4px 12px`
-- **Border Radius:** `12px`
-
-## 5. Layout Principles
-
-### Spacing System
-
-**Base Unit:** 4px
-
-**Scale:**
-- `4px`: Micro spacing, internal component padding
-- `8px`: Tight spacing, adjacent elements
-- `12px`: Standard padding, form inputs
-- `16px`: Comfortable spacing, component margins
-- `20px`: Section breathing room
-- `24px`: Card internal padding
-- `32px`: Major section spacing
-- `40px`: Full section separation
-
-**Usage Context:**
-- Components use `8px`–`12px` internally
-- Section containers use `24px` padding minimum
-- Major sections separated by `32px`–`40px` margins
-- Forms and cards use `24px` internal padding
-- List items use `8px` between entries
-
-### Grid & Container
-
-**Max Width:** `1200px` (standard content container)
-
-**Column Strategy:**
-- Desktop: 12-column grid, 8px gutters
-- Tablet (768px–1024px): 8-column grid, 6px gutters
-- Mobile (<768px): Single column, full width with `16px` side padding
-
-**Section Patterns:**
-- Hero sections: full-width with centered content max-width `1200px`
-- Content sections: contained within `1200px`, centered on viewport
-- Sidebar layouts: main content 70%, sidebar 30% (tablet: stacked)
-- Two-column content: 50/50 split on desktop, stacked on tablet
-
-### Whitespace Philosophy
-
-Whitespace is therapeutic—it reduces cognitive load and supports emotional safety. Every section breathes with `24px`–`40px` vertical spacing. Cards and containers maintain internal `24px` padding minimum. Text-heavy sections use 1.6× line-height and generous margins between paragraphs. Navigation and UI chrome use tighter spacing (`8px`–`12px`) to stay unobtrusive. Visual hierarchy is achieved through space, weight, and color—never through visual noise or crowding.
-
-### Border Radius Scale
-
-- `3px`: Buttons, small interactive elements; minimal softening
-- `5px`: Input fields, standard cards; subtle approachability
-- `10px`: Featured cards, modal windows, image overlays; stronger softness
-- `12px`: Badge elements, pills, rounded buttons
-- `20px`: Large hero sections, container backgrounds (rare); maximum softness
-
-## 6. Depth & Elevation
-
-| Level | Treatment | Use |
-|-------|-----------|-----|
-| **Ground** | No shadow, `border: 1px solid #DDDDDD` | Default cards, section backgrounds, inputs |
-| **Raised (Tier 1)** | `box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.08)` | Standard interactive cards, hover state |
-| **Elevated (Tier 2)** | `box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.12)` | Featured cards, callout boxes, focus states |
-| **Floating (Tier 3)** | `box-shadow: 0px 8px 16px rgba(0, 0, 0, 0.15)` | Modals, dropdowns, overlays |
-| **Floating (Tier 4)** | `box-shadow: 0px 12px 24px rgba(0, 0, 0, 0.18)` | Tooltips, popovers, highest-priority overlays |
-
-**Shadow Philosophy:** Shadows are subtle and warm-leaning (using pure black with low opacity). They serve to distinguish layers without creating visual heaviness or anxiety. The design avoids harsh, dark shadows that might feel clinical or cold. Elevation increases as content moves from static to interactive to modal. Motion and transitions (200ms ease) accompany shadow changes to reinforce depth shifts.
-
-## 7. Do's and Don'ts
-
-### Do
-
-- Use `#030059` navy as the visual anchor for trust and authority; it appears in headings, CTAs, and core brand moments
-- Combine `#7AADFF` and `#A2C6FF` blues to create calming, accessible experiences; these colors communicate safety
-- Maintain minimum `16px` font size for all body text to reduce cognitive load for visitors in distress
-- Apply `24px`–`40px` vertical spacing between major sections; whitespace is healing
-- Use open, rounded borders (`5px` and `10px` radii) to soften interfaces and reduce anxiety
-- Include green accent elements (`#00AA00` or similar, if expanded) to reinforce growth and renewal messaging
-- Test all interactive elements for 4.5:1 minimum contrast ratio; healthcare interfaces must be maximally accessible
-- Layer imagery (nature, wellness, human connection) behind or alongside text for emotional resonance
-- Use Open Sans throughout for consistency; its readability supports vulnerable audiences
-- Include clear, visible focus states (`2px solid #030059` outline, offset `2px`) for keyboard navigation
-
-### Don't
-
-- Avoid pure black (`#000000`) text except in rare emphasis scenarios; use `#333333` dark grey for comfort
-- Don't use harsh reds or high-saturation colors for non-error states; maintain the calm palette
-- Avoid shadows darker than `rgba(0, 0, 0, 0.18)` or heavy, dramatic depths; keep interfaces gentle
-- Don't crowd content; every element needs breathing room—follow the `24px` minimum spacing guideline
-- Avoid heavy font weights (700+) in body text; reserve bold for labels, CTAs, and emphasis only
-- Don't use more than two accent colors in a single view; complexity increases anxiety
-- Avoid rapid blink or flash animations; use smooth 200ms–400ms transitions instead
-- Don't place critical information in color alone; always pair with text or icons for accessibility
-- Avoid serif fonts; stick to Open Sans and system sans-serif stacks for consistency and readability
-- Don't use extended shadows or 3D effects; maintain a clean, modern, therapeutic flatness
-
-## 8. Responsive Behavior
-
-### Breakpoints
-
-| Name | Width | Key Changes |
-|------|-------|-------------|
-| **Mobile** | <576px | Single column, full-width, 16px side padding, font-sizes -2px, spacing -8px |
-| **Tablet** | 576px–1024px | 2-column layouts, 8-column grid, 24px side padding, standard font-sizes, 80% of desktop spacing |
-| **Desktop** | 1024px–1440px | 3+ columns, 12-column grid, 32px side padding, full typography scale, full spacing scale |
-| **Large Desktop** | >1440px | Content max-width `1200px` centered, generous side margins, abundant whitespace |
-
-### Touch Targets
-
-- **Minimum Size:** 40px × 40px for all interactive elements (buttons, links, inputs)
-- **Spacing Between Targets:** Minimum 8px separation to prevent mis-taps
-- **Button/Link Padding:** `0px 20px` horizontally, `0px 12px` vertically (40px height total)
-- **Icon Buttons:** 40px × 40px with centered icon
-- **Form Inputs:** 40px height minimum, `8px 12px` padding
-- **Checkbox/Radio:** 24px × 24px hit area with label extension
-- **Mobile Navigation:** 44px–56px height for touch comfort
-
-### Collapsing Strategy
-
-- **Hero Sections:** Full viewport height on desktop (min 400px), 60vh on tablet, 50vh on mobile
-- **Navigation:** Horizontal bar on desktop/tablet, collapsible hamburger menu <768px with overlay
-- **Two-Column Layouts:** Side-by-side on desktop (70/30), single column stacked on tablet/mobile (main content first)
-- **Image Grid:** 3 columns on desktop, 2 on tablet, 1 on mobile
-- **Form Labels:** Beside inputs on desktop, stacked above on mobile
-- **Typography:** Maintain 16px minimum body text across all breakpoints; reduce headings by max 20% on mobile
-- **Spacing:** Reduce margins by 20% on tablet, 40% on mobile; padding remains consistent for internal components
-- **Cards:** 1 column mobile, 2 columns tablet, 3 columns desktop
-- **Sidebar Widgets:** Full-width stacked on mobile, floated right on tablet/desktop with 32px gutter
-
-## 9. Agent Prompt Guide
-
-### Quick Color Reference
-
-- **Primary CTA:** CTA Blue (`#A2C6FF`) for button backgrounds; white text (`#FFFFFF`)
-- **Primary Heading Text:** Deep Navy (`#030059`)
-- **Body Text:** Text Dark (`#333333`)
-- **Link Text:** Link Navy (`#030059`), underlined
-- **Background:** White Surface (`#FFFFFF`) for cards and containers
-- **Secondary Background:** Light Sky Blue (`#A2C6FF`) for featured sections
-- **Navigation Bar:** Primary Blue (`#7AADFF`) background with white text
-- **Border:** Border Light (`#DDDDDD`) for subtle separation
-- **Error State:** Error Red (`#CF2E2E`)
-- **Warning State:** Warning Yellow (`#FCB900`)
-- **Focus Outline:** Deep Navy (`#030059`), `2px solid`, offset `2px`
-- **Hover State:** Primary Blue (`#7AADFF`) for interactive lightening
-- **Disabled State:** Border Dark (`#CCCCCC`) with Text Medium (`#636363`)
-
-### Iteration Guide
-
-1. **Start with the navy (`#030059`) and sky blues (`#7AADFF`, `#A2C6FF`):** These three colors form the backbone; all layouts should use navy for headings/anchors and blues for interactive/accent zones.
-
-2. **Set typography to Open Sans, 16px minimum body, 1.6× line-height:** All text must maintain readability and calm; avoid compressed spacing that increases cognitive load.
-
-3. **Apply 24px–40px vertical spacing between major sections:** Whitespace is therapeutic; never crowd content.
-
-4. **Use 5px–10px border radius on cards and containers:** Softness reduces anxiety; avoid sharp corners.
-
-5. **Ensure 4.5:1 contrast minimum for all text:** Test `#030059` on `#FFFFFF` (passes), `#333333` on `#FFFFFF` (passes), `#FFFFFF` on `#7AADFF` (passes).
-
-6. **Make all interactive elements 40px height minimum with clear focus states:** Include `2px solid #030059` outlines for keyboard navigation.
-
-7. **Layer imagery (nature, wellness, people) to reinforce healing messaging:** Images should communicate hope, connection, and growth.
-
-8. **Use subtle shadows (`0px 2px 4px rgba(0, 0, 0, 0.08)` base level):** Avoid harsh depths; keep interfaces gentle and approachable.
-
-9. **Adopt a calm, compassionate tone in all messaging:** Pair visual design with language that reduces shame and increases hope.
-
-10. **Test responsive layouts at 576px, 768px, 1024px, 1440px breakpoints:** Ensure no content breaks, touch targets remain 40px, and typography remains readable across devices.
+- **Don't** 在页面组件里硬编码十六进制色值（检测器的 design-system-color advisory 就是这个债）
+- **Don't** 白字配浅蓝底（#A2C6FF/#7AADFF 均不达 AA）；主色文字勿用 main 档压雾底
+- **Don't** CJK 用 300 字重或斜体（合成渲染发虚）
+- **Don't** 用 width/height/margin 做动画
+- **Don't** 给管理端页面内联覆盖暗色配色——它已经属于 adminDarkTheme

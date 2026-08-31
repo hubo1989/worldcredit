@@ -66,6 +66,8 @@ function BankLogo({ bank, size = 24 }: { bank: string; size?: number }) {
       alt={bank.split('/')[0]}
       width={size}
       height={size}
+      loading="lazy"
+      decoding="async"
       style={{ borderRadius: size * 0.25, flexShrink: 0, objectFit: 'cover' }}
     />
   )
@@ -244,7 +246,7 @@ export default function GmailLedgerPage() {
           <LedgerIcon sx={{ mr: 1, verticalAlign: 'middle', color: 'primary.main' }} />
           Gmail 账单
         </Typography>
-        <IconButton onClick={fetchData} size="small"><RefreshIcon /></IconButton>
+        <IconButton aria-label="刷新" onClick={fetchData} size="small"><RefreshIcon /></IconButton>
       </Box>
 
       {/* Summary Cards */}
@@ -310,7 +312,7 @@ export default function GmailLedgerPage() {
             {banks.map(b => <option key={b} value={b}>{b.split('/')[0]}</option>)}
           </TextField>
           {bankFilter && (
-            <IconButton size="small" onClick={() => setBankFilter('')}><CloseIcon /></IconButton>
+            <IconButton aria-label="清除银行筛选" size="small" onClick={() => setBankFilter('')}><CloseIcon /></IconButton>
           )}
         </Stack>
       )}

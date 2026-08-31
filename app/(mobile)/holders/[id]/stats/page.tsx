@@ -75,12 +75,12 @@ export default function HolderStatsPage() {
       {/* 顶部栏 */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <IconButton onClick={() => router.back()} size="small">
+          <IconButton aria-label="返回" onClick={() => router.back()} size="small">
             <ArrowBack />
           </IconButton>
           <Typography variant="h6" fontWeight={800}>{holder.name}</Typography>
         </Box>
-        <IconButton size="small" sx={{ border: '1px solid', borderColor: 'divider' }}>
+        <IconButton aria-label="编辑持卡人" size="small" sx={{ border: '1px solid', borderColor: 'divider' }}>
           <EditIcon fontSize="small" />
         </IconButton>
       </Box>
@@ -200,7 +200,6 @@ export default function HolderStatsPage() {
                           background: t.totalAmount > 0
                             ? 'linear-gradient(180deg, #1976d2, #42a5f5)'
                             : '#e0e0e0',
-                          transition: 'height 0.3s ease',
                         }} />
                         <Typography variant="caption" color="text.secondary" sx={{ fontSize: 10 }}>
                           {formatMonth(t.month)}

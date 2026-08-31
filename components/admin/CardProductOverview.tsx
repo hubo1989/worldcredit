@@ -11,7 +11,7 @@ interface CardProductOverviewProps {
 }
 
 const cellSx = {
-  color: '#c4c7d0',
+  color: 'text.secondary',
   borderBottom: '1px solid rgba(255,255,255,0.04)',
   fontSize: 13,
   py: 1.5,
@@ -19,7 +19,7 @@ const cellSx = {
 
 const headSx = {
   ...cellSx,
-  color: '#6b7280',
+  color: '#9ca3af',
   fontWeight: 600,
   fontSize: 12,
   textTransform: 'uppercase' as const,
@@ -38,7 +38,7 @@ export function CardProductOverview({ data }: CardProductOverviewProps) {
         <Typography variant="subtitle2" sx={{ color: '#e4e6eb', fontWeight: 600 }}>
           信用卡产品目录
         </Typography>
-        <Typography variant="caption" sx={{ color: '#6b7280' }}>
+        <Typography variant="caption" sx={{ color: '#9ca3af' }}>
           共 {data.length} 个在册产品
         </Typography>
       </Box>
@@ -58,7 +58,7 @@ export function CardProductOverview({ data }: CardProductOverviewProps) {
           <TableBody>
             {data.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} sx={{ ...cellSx, textAlign: 'center', py: 4, color: '#6b7280' }}>
+                <TableCell colSpan={6} sx={{ ...cellSx, textAlign: 'center', py: 4, color: '#9ca3af' }}>
                   暂无卡产品数据
                 </TableCell>
               </TableRow>
@@ -92,7 +92,7 @@ export function CardProductOverview({ data }: CardProductOverviewProps) {
                     {p.annual_fee_waiver || '—'}
                   </TableCell>
                   <TableCell sx={cellSx} align="right">
-                    <Typography component="span" sx={{ color: '#4ade80', fontWeight: 700, fontSize: 14 }}>
+                    <Typography component="span" sx={{ color: 'success.main', fontWeight: 700, fontSize: 14 }}>
                       {p.card_count}
                     </Typography>
                   </TableCell>

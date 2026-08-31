@@ -118,6 +118,7 @@ export function EmailBillsList({ onBillSynced }: Props) {
               </Typography>
               <Tooltip title={copied ? '已复制！' : '复制地址'}>
                 <IconButton
+                  aria-label="复制"
                   size="small"
                   onClick={handleCopy}
                   color={copied ? 'success' : 'default'}

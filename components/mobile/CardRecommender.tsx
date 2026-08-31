@@ -248,7 +248,7 @@ export function CardRecommender({ holderId }: CardRecommenderProps) {
                         评分: {result.score}
                       </Typography>
                     </Box>
-                    <IconButton size="small" onClick={() => toggleCardExpansion(result.cardId)}>
+                    <IconButton aria-label={isExpanded ? '收起卡片详情' : '展开卡片详情'} size="small" onClick={() => toggleCardExpansion(result.cardId)}>
                       {isExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
                     </IconButton>
                   </Box>

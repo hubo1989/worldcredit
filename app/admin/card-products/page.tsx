@@ -149,7 +149,7 @@ export default function CardProductsPage() {
           <Typography variant="h4" sx={{ color: '#e4e6eb', fontWeight: 700, mb: 0.5 }}>
             卡产品管理
           </Typography>
-          <Typography variant="body2" sx={{ color: '#6b7280' }}>
+          <Typography variant="body2" sx={{ color: '#9ca3af' }}>
             管理全平台信用卡产品目录、年费政策及账期规则
           </Typography>
         </Box>
@@ -158,8 +158,8 @@ export default function CardProductsPage() {
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
           sx={{
-            bgcolor: '#6366f1',
-            '&:hover': { bgcolor: '#4f46e5' },
+            bgcolor: '#818cf8',
+            '&:hover': { bgcolor: '#4338ca' },
             textTransform: 'none',
             borderRadius: 2,
             px: 3
@@ -182,7 +182,7 @@ export default function CardProductsPage() {
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
-                    <SearchIcon sx={{ color: '#6b7280', fontSize: 20 }} />
+                    <SearchIcon sx={{ color: '#9ca3af', fontSize: 20 }} />
                   </InputAdornment>
                 ),
                 sx: { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' }
@@ -207,7 +207,7 @@ export default function CardProductsPage() {
             </TextField>
           </Grid>
           <Grid size={{ xs: 12, md: 5 }} sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
-            <IconButton onClick={fetchData} sx={{ color: '#9ca3af' }}>
+            <IconButton aria-label="刷新" onClick={fetchData} sx={{ color: '#9ca3af' }}>
               <RefreshIcon />
             </IconButton>
           </Grid>
@@ -231,12 +231,12 @@ export default function CardProductsPage() {
             {loading ? (
               <TableRow>
                 <TableCell colSpan={6} align="center" sx={{ py: 10 }}>
-                  <CircularProgress size={24} sx={{ color: '#6366f1' }} />
+                  <CircularProgress size={24} sx={{ color: '#818cf8' }} />
                 </TableCell>
               </TableRow>
             ) : filteredProducts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} align="center" sx={{ py: 10, color: '#6b7280' }}>
+                <TableCell colSpan={6} align="center" sx={{ py: 10, color: '#9ca3af' }}>
                   {fetchError ? `加载失败: ${fetchError}` : '未检索到卡产品数据'}
                 </TableCell>
               </TableRow>
@@ -278,10 +278,10 @@ export default function CardProductsPage() {
                     </Box>
                   </TableCell>
                   <TableCell align="right">
-                    <IconButton size="small" onClick={() => handleOpenDialog(product)} sx={{ color: '#9ca3af' }}>
+                    <IconButton aria-label="编辑" size="small" onClick={() => handleOpenDialog(product)} sx={{ color: '#9ca3af' }}>
                       <EditIcon fontSize="small" />
                     </IconButton>
-                    <IconButton size="small" onClick={() => handleDelete(product.id)} sx={{ color: '#f43f5e', ml: 1 }}>
+                    <IconButton aria-label="删除" size="small" onClick={() => handleDelete(product.id)} sx={{ color: '#f43f5e', ml: 1 }}>
                       <DeleteIcon fontSize="small" />
                     </IconButton>
                   </TableCell>
@@ -499,7 +499,7 @@ export default function CardProductsPage() {
             onClick={handleSubmit}
             variant="contained"
             disabled={submitting}
-            sx={{ bgcolor: '#6366f1', '&:hover': { bgcolor: '#4f46e5' }, px: 4, borderRadius: 2 }}
+            sx={{ bgcolor: '#818cf8', '&:hover': { bgcolor: '#4338ca' }, px: 4, borderRadius: 2 }}
           >
             {submitting ? '保存中...' : '确定'}
           </Button>

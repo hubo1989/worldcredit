@@ -91,11 +91,12 @@ export default function DashboardPage() {
       {/* 顶部标题与隐私模式切换 */}
       <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Box>
-          <Typography variant="h1" sx={{ fontSize: '28px', fontWeight: 300, color: '#030059' }}>概览</Typography>
+          <Typography variant="h1" sx={{ fontSize: '28px', fontWeight: 600, color: '#030059' }}>概览</Typography>
           <Typography variant="body2" color="#636363">管控您的信用卡资产与还款日程</Typography>
         </Box>
         <Tooltip title={displayConfig.privacy_mode ? '显示敏感金额' : '隐匿敏感金额'}>
           <IconButton
+            aria-label="切换隐私模式"
             onClick={togglePrivacyMode}
             sx={{
               bgcolor: '#FFFFFF',
@@ -112,7 +113,7 @@ export default function DashboardPage() {
       {/* 核心统计卡片 (Solutions Treatment Center 深蓝基底) */}
       <Paper sx={{ 
         p: 3, mb: 3, borderRadius: '10px', 
-        background: 'linear-gradient(135deg, #030059 0%, #007CBA 100%)',
+        background: 'linear-gradient(135deg, #030059 0%, #004f78 100%)',
         color: '#FFFFFF',
         boxShadow: '0px 4px 8px rgba(0, 0, 0, 0.12)',
         position: 'relative',
@@ -121,7 +122,7 @@ export default function DashboardPage() {
         <Typography variant="subtitle2" sx={{ color: '#A2C6FF', mb: 1, fontWeight: 400 }}>应还总额 (所有银行卡)</Typography>
         
         {/* 金额 */}
-        <Typography variant="h1" sx={{ color: '#FFFFFF', fontSize: '32px', fontWeight: 300, mb: 2.5 }} className={blurClass}>
+        <Typography variant="h1" sx={{ color: '#FFFFFF', fontSize: '32px', fontWeight: 600, mb: 2.5 }} className={blurClass}>
           ¥{stats.totalOwed.toLocaleString()}
         </Typography>
 
@@ -141,39 +142,27 @@ export default function DashboardPage() {
 
       {/* 快捷操作按键组 */}
       <Stack direction="row" spacing={2} sx={{ mb: 4 }}>
-        <Button 
+        <Button
           fullWidth variant="contained"
           startIcon={<AddIcon />}
           onClick={() => router.push('/holders')}
-          sx={{ 
-            borderRadius: '3px', py: 1.2, 
-            backgroundColor: '#A2C6FF', color: '#FFFFFF', fontWeight: 700,
-            '&:hover': { backgroundColor: '#7AADFF' }
-          }}
+          sx={{ borderRadius: '3px', py: 1.2, fontWeight: 700 }}
         >
           持卡人
         </Button>
-        <Button 
+        <Button
           fullWidth variant="outlined"
           startIcon={<SyncIcon />}
           onClick={() => router.push('/bills')}
-          sx={{ 
-            borderRadius: '3px', py: 1.2, 
-            borderColor: '#030059', color: '#030059', fontWeight: 400,
-            '&:hover': { backgroundColor: 'rgba(162, 198, 255, 0.2)', borderColor: '#7AADFF' }
-          }}
+          sx={{ borderRadius: '3px', py: 1.2 }}
         >
           账单
         </Button>
-        <Button 
+        <Button
           fullWidth variant="outlined"
           startIcon={<AiIcon />}
           onClick={() => router.push('/ai')}
-          sx={{ 
-            borderRadius: '3px', py: 1.2, 
-            borderColor: '#7AADFF', color: '#007CBA', fontWeight: 400,
-            '&:hover': { backgroundColor: 'rgba(162, 198, 255, 0.2)' }
-          }}
+          sx={{ borderRadius: '3px', py: 1.2 }}
         >
           AI 助手
         </Button>
@@ -181,8 +170,8 @@ export default function DashboardPage() {
 
       {/* 临近提醒 */}
       <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography variant="h3" sx={{ fontSize: '18px', fontWeight: 300, color: '#030059', display: 'flex', alignItems: 'center', gap: 1 }}>
-          <AlertIcon sx={{ color: '#FCB900', fontSize: 20 }} />
+        <Typography variant="h3" sx={{ fontSize: '18px', fontWeight: 600, color: '#030059', display: 'flex', alignItems: 'center', gap: 1 }}>
+          <AlertIcon sx={{ color: 'warning.main', fontSize: 20 }} />
           临近还款
         </Typography>
         <Button size="small" onClick={() => router.push('/bills')} sx={{ color: '#030059', textDecoration: 'underline' }}>查看全部</Button>
@@ -202,7 +191,7 @@ export default function DashboardPage() {
 
       {/* 财务健康卡片 (运用 Design.md 的 Info Box 样式) */}
       <Box sx={{ mt: 4, mb: 2 }}>
-         <Typography variant="h3" sx={{ fontSize: '18px', fontWeight: 300, color: '#030059' }}>财务健康</Typography>
+         <Typography variant="h3" sx={{ fontSize: '18px', fontWeight: 600, color: '#030059' }}>财务健康</Typography>
       </Box>
       <Box className="info-box">
         <Stack direction="row" spacing={2} alignItems="center">

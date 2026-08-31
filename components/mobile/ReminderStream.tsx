@@ -150,6 +150,7 @@ function ReminderItem({ reminder, onRead, onDismiss }: ReminderItemProps) {
         </Box>
 
         <IconButton
+          aria-label="忽略此提醒"
           size="small"
           onClick={(e) => {
             e.stopPropagation()
@@ -282,7 +283,7 @@ export function ReminderStream({ holderId, cardId, type }: ReminderStreamProps) 
             sx={{ height: 20, minWidth: 20, fontSize: '0.75rem' }}
           />
         </Box>
-        <IconButton size="small" onClick={loadReminders}>
+        <IconButton aria-label="刷新" size="small" onClick={loadReminders}>
           <RefreshIcon fontSize="small" />
         </IconButton>
       </Box>

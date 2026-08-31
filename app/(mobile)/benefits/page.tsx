@@ -222,7 +222,7 @@ export default function BenefitsPage() {
                     </Box>
                     <Stack direction="row" spacing={0.5}>
                       <Tooltip title="编辑">
-                        <IconButton size="small" onClick={() => {
+                        <IconButton aria-label="编辑权益" size="small" onClick={() => {
                           setEditingBenefit(b)
                           setEditOpen(true)
                         }}>
@@ -230,7 +230,7 @@ export default function BenefitsPage() {
                         </IconButton>
                       </Tooltip>
                       <Tooltip title="删除">
-                        <IconButton size="small" color="error" onClick={() => handleDeleteBenefit(b.id)}>
+                        <IconButton aria-label="删除权益" size="small" color="error" onClick={() => handleDeleteBenefit(b.id)}>
                           <DeleteIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
