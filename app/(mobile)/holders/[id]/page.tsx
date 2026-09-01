@@ -1,11 +1,11 @@
 // app/(mobile)/holders/[id]/page.tsx
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   Box, Typography, IconButton, Skeleton, Fab,
-  Avatar, Card, CardContent
+  Avatar
 } from '@mui/material'
 import {
   ArrowBack as ArrowBackIcon,
@@ -13,20 +13,20 @@ import {
   CreditCard as CreditCardIcon
 } from '@mui/icons-material'
 import { getHolder } from '@/lib/api/holders'
-import { getCardsByHolder, deleteCard } from '@/lib/api/cards'
+import { createCard, getCardsByHolder, updateCard, type CreditCardWithProduct } from '@/lib/api/cards'
 import { CardForm } from '@/components/mobile/CardForm'
 import { CreditCardVisual } from '@/components/mobile/CreditCardVisual'
-import type { CardHolder, CreditCard } from '@/lib/types'
+import type { CardHolder } from '@/lib/types'
 
 export default function HolderDetailPage() {
   const { id } = useParams<{ id: string }>()
   const [holder, setHolder] = useState<CardHolder | null>(null)
-  const [cards, setCards] = useState<CreditCard[]>([])
+  const [cards, setCards] = useState<CreditCardWithProduct[]>([])
   const [formOpen, setFormOpen] = useState(false)
-  const [editingCard, setEditingCard] = useState<CreditCard | undefined>(undefined)
+  const [editingCard, setEditingCard] = useState<CreditCardWithProduct | undefined>(undefined)
   const router = useRouter()
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const [h, c] = await Promise.all([getHolder(id), getCardsByHolder(id)])
       setHolder(h)
@@ -34,19 +34,9 @@ export default function HolderDetailPage() {
     } catch (err) {
       console.error('Failed to load holder:', err)
     }
-  }
+  }, [id])
 
-  useEffect(() => { loadData() }, [id])
-
-  const handleDeleteCard = async (card: CreditCard) => {
-    if (!confirm(`确定删除「${card.bank_name} ${card.card_name}」吗？相关账单也将被删除。`)) return
-    try {
-      await deleteCard(card.id)
-      loadData()
-    } catch (err) {
-      alert('删除失败：' + (err as any).message)
-    }
-  }
+  useEffect(() => { loadData() }, [loadData])
 
   if (!holder) return <Skeleton variant="rounded" height={200} sx={{ m: 2 }} />
 
@@ -98,7 +88,14 @@ export default function HolderDetailPage() {
         open={formOpen}
         onClose={() => { setFormOpen(false); setEditingCard(undefined) }}
         holderId={id}
-        onSaved={loadData}
+        onSubmit={async (data) => {
+          if (editingCard) {
+            await updateCard(editingCard.id, data)
+          } else {
+            await createCard(data)
+          }
+          await loadData()
+        }}
         initial={editingCard}
       />
     </Box>

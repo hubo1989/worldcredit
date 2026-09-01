@@ -11,7 +11,7 @@ import { StatusBadge, SourceBadge } from '@/components/mobile/WcBadge'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { ChevronRightIcon, BankIcon, UserIcon, ClockIcon } from '@/components/icons/WcIcon'
-import { getEffectiveBillingDay, getEffectiveDueConfig } from '@/lib/utils'
+import { getDueDate, getEffectiveBillingDay, getEffectiveDueConfig, getLoanNextDueDate } from '@/lib/utils'
 import type { Bill, Payment, CreditCard, CardProduct, CardHolder } from '@/lib/types'
 
 type BillDetail = Bill & {
@@ -135,10 +135,16 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   // 账单日 / 还款日 / 免息期
   const billingDay = card ? getEffectiveBillingDay(card) : 0
   const dueConfig = card && product ? getEffectiveDueConfig(card, product) : null
-  const dueDayOfMonth =
-    card?.loan_due_day ??
+  const calculatedDueDate = card?.card_type === 'loan' && card.loan_due_day
+    ? getLoanNextDueDate(card.loan_due_day, new Date())
+    : card && product
+      ? getDueDate(card, product, new Date(bill.statement_end || bill.statement_date || bill.bill_month || bill.due_date))
+      : null
+  const dueDayOfMonth = calculatedDueDate?.getDate() ??
     (dueConfig && dueConfig.type !== 'after_billing' ? dueConfig.value : 0)
-  const grace = billingDay && dueDayOfMonth ? Math.max(0, dueDayOfMonth - billingDay) : 0
+  const grace = calculatedDueDate && (bill.statement_end || bill.statement_date)
+    ? Math.max(0, Math.ceil((calculatedDueDate.getTime() - new Date(bill.statement_end || bill.statement_date || bill.due_date).getTime()) / (24 * 60 * 60 * 1000)))
+    : 0
 
   const periodStart = bill.statement_start ? format(new Date(bill.statement_start), 'M/d') : ''
   const periodEnd = bill.statement_end ? format(new Date(bill.statement_end), 'M/d') : ''

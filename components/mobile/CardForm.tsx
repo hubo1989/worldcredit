@@ -123,20 +123,26 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
     if (!canSubmit) return
     setSubmitting(true)
     try {
-      const base = {
+      const base: Omit<CreditCard, 'id' | 'created_at'> = {
         holder_id: holderId,
         card_product_id: productId,
         card_number_last4: last4 || undefined,
         credit_limit: limit ? parseFloat(limit) : 0,
         billing_day: billingDay ? parseInt(billingDay) : 1,
-        status: 'active' as const,
+        status: 'active',
+        card_type: cardType,
+        loan_due_day: isLoan && loanDueDay ? parseInt(loanDueDay) : undefined,
+        override_billing_day: overrideEnabled && overrideBillingDay ? parseInt(overrideBillingDay) : undefined,
+        override_due_type: overrideEnabled ? overrideDueType : null,
+        override_due_value: overrideEnabled && overrideDueValue ? parseInt(overrideDueValue) : undefined,
       }
 
-      await onSubmit(base as any)
+      await onSubmit(base)
       onClose()
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err)
-      alert('保存卡片失败: ' + (err.message || JSON.stringify(err)))
+      const message = err instanceof Error ? err.message : JSON.stringify(err)
+      alert('保存卡片失败: ' + message)
     } finally {
       setSubmitting(false)
     }

@@ -1,5 +1,6 @@
 import { insforge } from '../insforge'
 import type { Bill, Payment, CreditCard, CardProduct } from '../types'
+import { getDueDate, getLoanNextDueDate } from '../utils'
 
 export type BillDashboardItem = Bill & {
   card: CreditCard & { card_product: CardProduct }
@@ -10,6 +11,32 @@ export type BillDashboardItem = Bill & {
   days_until_due: number
   interest_free_days_left: number
   computed_status: Bill['status']
+}
+
+
+export type BillWithCard = Bill & {
+  credit_cards: CreditCard & {
+    bank_name?: string
+    card_name?: string
+    card_number_last4?: string
+    card_product?: CardProduct
+  }
+}
+
+export type PaymentWithBill = Payment & {
+  bill: BillWithCard
+}
+
+function withCreditCardProductFields(bill: BillWithCard): BillWithCard {
+  const card = bill.credit_cards
+  return {
+    ...bill,
+    credit_cards: {
+      ...card,
+      bank_name: card.bank_name ?? card.card_product?.bank_name,
+      card_name: card.card_name ?? card.card_product?.card_name,
+    },
+  }
 }
 
 function daysUntil(date: string): number {
@@ -190,55 +217,38 @@ export async function getBillDashboardItems(limit = 100, userId?: string): Promi
 /**
  * 精确计算信用卡当前周期的刷卡免息期与账单日/还款日
  */
-export function calculateCardGracePeriod(card: {
-  billing_day?: number
-  override_billing_day?: number
-  loan_due_day?: number
-  card_product?: {
-    payment_due_type?: string
-    payment_due_value?: number
-  }
-}) {
+export function calculateCardGracePeriod(card: CreditCard & { card_product: CardProduct }) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  const currentDay = today.getDate()
 
-  const billingDay = Number(card.override_billing_day || card.billing_day || 10)
-  const dueType = card.card_product?.payment_due_type || 'after_billing'
-  const dueValue = Number(card.card_product?.payment_due_value || 20)
+  const billingDay = Number(card.override_billing_day ?? card.billing_day ?? 10)
 
-  // 1. 下一个账单日
-  let nextBillingDate: Date
-  if (currentDay <= billingDay) {
-    nextBillingDate = new Date(today.getFullYear(), today.getMonth(), billingDay)
-  } else {
-    nextBillingDate = new Date(today.getFullYear(), today.getMonth() + 1, billingDay)
-  }
-
-  // 2. 对应还款日
-  let nextDueDate: Date
-  if (dueType === 'after_billing') {
-    nextDueDate = new Date(nextBillingDate.getTime() + dueValue * 24 * 60 * 60 * 1000)
-  } else if (card.loan_due_day) {
-    const dueDay = Number(card.loan_due_day)
-    if (dueDay > billingDay) {
-      nextDueDate = new Date(nextBillingDate.getFullYear(), nextBillingDate.getMonth(), dueDay)
-    } else {
-      nextDueDate = new Date(nextBillingDate.getFullYear(), nextBillingDate.getMonth() + 1, dueDay)
+  if (card.card_type === 'loan' && card.loan_due_day) {
+    const nextDueDate = getLoanNextDueDate(card.loan_due_day, today)
+    const diffMs = nextDueDate.getTime() - today.getTime()
+    return {
+      billingDay,
+      nextBillingDate: nextDueDate,
+      nextDueDate,
+      graceDays: Math.max(1, Math.ceil(diffMs / (24 * 60 * 60 * 1000))),
     }
-  } else {
-    nextDueDate = new Date(nextBillingDate.getTime() + 20 * 24 * 60 * 60 * 1000)
   }
 
-  // 3. 计算今日刷卡实际可享受的免息天数 (正整数)
+  let purchaseMonth = new Date(today.getFullYear(), today.getMonth(), 1)
+  const effectiveBillingDay = Math.min(billingDay, new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate())
+  if (today.getDate() > effectiveBillingDay) {
+    purchaseMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1)
+  }
+
+  const nextBillingDate = new Date(purchaseMonth.getFullYear(), purchaseMonth.getMonth(), effectiveBillingDay)
+  const nextDueDate = getDueDate(card, card.card_product, purchaseMonth)
   const diffMs = nextDueDate.getTime() - today.getTime()
-  const graceDays = Math.max(1, Math.ceil(diffMs / (24 * 60 * 60 * 1000)))
 
   return {
     billingDay,
     nextBillingDate,
     nextDueDate,
-    graceDays,
+    graceDays: Math.max(1, Math.ceil(diffMs / (24 * 60 * 60 * 1000))),
   }
 }
 
@@ -411,6 +421,18 @@ export async function updateBillStatus(id: string, status: Bill['status']): Prom
 /**
  * 获取账单相关的还款记录
  */
+
+export async function getBillsByHolder(holderId: string): Promise<BillWithCard[]> {
+  const { data, error } = await insforge.database
+    .from('bills')
+    .select('*, credit_cards!inner(*, card_product:card_products(*))')
+    .eq('credit_cards.holder_id', holderId)
+    .order('bill_month', { ascending: false })
+
+  if (error) throw error
+  return ((data || []) as BillWithCard[]).map(withCreditCardProductFields)
+}
+
 export async function getPaymentsByBill(billId: string): Promise<Payment[]> {
   const { data, error } = await insforge.database
     .from('payments')
@@ -479,35 +501,33 @@ export async function markAllOverdueBillsAsPaid(
   const today = new Date().toISOString().split('T')[0]
   let totalAmount = 0
 
-  const paymentRows = overdueBills.map(bill => {
+  overdueBills.forEach(bill => {
     const remaining = (bill.remaining_amount !== undefined && bill.remaining_amount > 0)
       ? bill.remaining_amount
       : Number(bill.bill_amount || 0)
     totalAmount += remaining
-    return {
-      bill_id: bill.id,
-      amount: remaining,
-      paid_at: today,
-      channel: '快捷全额结清',
-      note: '一键全部还款结清',
-      idempotency_key: `pay_${Date.now()}_${Math.random().toString(36).slice(2)}`
-    }
   })
 
-  // 1. 批量插入还款流水
-  if (paymentRows.length > 0) {
-    const { error: payErr } = await insforge.database.from('payments').insert(paymentRows)
-    if (payErr) console.warn('Batch payments insert error:', payErr)
+  const { data: rpcResult, error: rpcErr } = await insforge.database.rpc('mark_bills_paid_atomic', {
+    p_user_id: userId,
+    p_bill_ids: billIds,
+    p_paid_at: today,
+    p_channel: '快捷全额结清',
+    p_note: '一键全部还款结清',
+  })
+
+  if (rpcErr) {
+    const msg = String(rpcErr.message || rpcErr)
+    if (msg.includes('mark_bills_paid_atomic')) {
+      throw new Error('缺少数据库函数 mark_bills_paid_atomic，请先执行 migrations/20260901000001_add_atomic_bill_payment.sql')
+    }
+    throw rpcErr
   }
 
-  // 2. 批量更新账单状态为 paid
-  const { error: billErr } = await insforge.database
-    .from('bills')
-    .update({ status: 'paid' })
-    .in('id', billIds)
-
-  if (billErr) throw billErr
-
-  return { count: overdueBills.length, totalAmount }
+  const result = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult
+  return {
+    count: Number(result?.paid_count ?? result?.count ?? overdueBills.length),
+    totalAmount: Number(result?.total_amount ?? totalAmount),
+  }
 }
 
