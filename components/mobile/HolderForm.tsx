@@ -56,7 +56,8 @@ export function HolderForm({ open, onClose, onSubmit, initial }: Props) {
               onClick={() => setColor(c)}
               sx={{
                 width: 36, height: 36, borderRadius: '50%', bgcolor: c, cursor: 'pointer',
-                border: c === color ? '3px solid #000' : '3px solid transparent',
+                border: '3px solid',
+                borderColor: c === color ? 'primary.main' : 'transparent',
                 transition: 'border 0.2s',
               }}
             />

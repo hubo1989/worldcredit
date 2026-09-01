@@ -135,7 +135,7 @@ export default function PromosPage() {
           <Typography variant="h4" sx={{ color: '#e4e6eb', fontWeight: 700, mb: 0.5 }}>
             优惠活动管理
           </Typography>
-          <Typography variant="body2" sx={{ color: '#6b7280' }}>
+          <Typography variant="body2" sx={{ color: '#9ca3af' }}>
             管理全平台银行优惠活动，支持设置满减、返现、折扣等活动细节
           </Typography>
         </Box>
@@ -143,7 +143,7 @@ export default function PromosPage() {
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
-          sx={{ bgcolor: '#6366f1', '&:hover': { bgcolor: '#4f46e5' }, textTransform: 'none', borderRadius: 2, px: 3 }}
+          sx={{ bgcolor: '#818cf8', '&:hover': { bgcolor: '#4338ca' }, textTransform: 'none', borderRadius: 2, px: 3 }}
         >
           发布新活动
         </Button>
@@ -162,7 +162,7 @@ export default function PromosPage() {
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
-                    <SearchIcon sx={{ color: '#6b7280', fontSize: 20 }} />
+                    <SearchIcon sx={{ color: '#9ca3af', fontSize: 20 }} />
                   </InputAdornment>
                 ),
                 sx: { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' }
@@ -170,7 +170,7 @@ export default function PromosPage() {
             />
           </Grid>
           <Grid size={{ xs: 12, md: 8 }} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <IconButton onClick={fetchData} sx={{ color: '#9ca3af' }}>
+            <IconButton aria-label="刷新" onClick={fetchData} sx={{ color: '#9ca3af' }}>
               <RefreshIcon />
             </IconButton>
           </Grid>
@@ -193,9 +193,9 @@ export default function PromosPage() {
           </TableHead>
           <TableBody>
             {loading ? (
-              <TableRow><TableCell colSpan={7} align="center" sx={{ py: 10 }}><CircularProgress size={24} sx={{ color: '#6366f1' }} /></TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} align="center" sx={{ py: 10 }}><CircularProgress size={24} sx={{ color: '#818cf8' }} /></TableCell></TableRow>
             ) : filteredPromos.length === 0 ? (
-              <TableRow><TableCell colSpan={7} align="center" sx={{ py: 10, color: '#6b7280' }}>未找到优惠活动</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} align="center" sx={{ py: 10, color: '#9ca3af' }}>未找到优惠活动</TableCell></TableRow>
             ) : (
               paginatedPromos.map((promo) => (
                 <TableRow key={promo.id} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' }, borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
@@ -217,8 +217,8 @@ export default function PromosPage() {
                     />
                   </TableCell>
                   <TableCell align="right">
-                    <IconButton size="small" onClick={() => handleOpenDialog(promo)} sx={{ color: '#9ca3af' }}><EditIcon fontSize="small" /></IconButton>
-                    <IconButton size="small" onClick={() => handleDelete(promo.id)} sx={{ color: '#f43f5e', ml: 1 }}><DeleteIcon fontSize="small" /></IconButton>
+                    <IconButton aria-label="编辑" size="small" onClick={() => handleOpenDialog(promo)} sx={{ color: '#9ca3af' }}><EditIcon fontSize="small" /></IconButton>
+                    <IconButton aria-label="删除" size="small" onClick={() => handleDelete(promo.id)} sx={{ color: '#f43f5e', ml: 1 }}><DeleteIcon fontSize="small" /></IconButton>
                   </TableCell>
                 </TableRow>
               ))
@@ -283,7 +283,7 @@ export default function PromosPage() {
         </DialogContent>
         <DialogActions sx={{ p: 3 }}>
           <Button onClick={() => setDialogOpen(false)} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: '#6366f1', '&:hover': { bgcolor: '#4f46e5' }, px: 4, borderRadius: 2 }}>确定</Button>
+          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: '#818cf8', '&:hover': { bgcolor: '#4338ca' }, px: 4, borderRadius: 2 }}>确定</Button>
         </DialogActions>
       </Dialog>
     </Box>

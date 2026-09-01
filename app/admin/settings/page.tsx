@@ -79,7 +79,7 @@ export default function SettingsPage() {
   }
 
   if (loading) {
-    return <Box sx={{ display: 'flex', justifyContent: 'center', py: 10 }}><CircularProgress sx={{ color: '#6366f1' }} /></Box>
+    return <Box sx={{ display: 'flex', justifyContent: 'center', py: 10 }}><CircularProgress sx={{ color: '#818cf8' }} /></Box>
   }
 
   return (
@@ -89,7 +89,7 @@ export default function SettingsPage() {
           <Typography variant="h4" sx={{ color: '#e4e6eb', fontWeight: 700, mb: 0.5 }}>
             系统设置
           </Typography>
-          <Typography variant="body2" sx={{ color: '#6b7280' }}>
+          <Typography variant="body2" sx={{ color: '#9ca3af' }}>
             配置全平台基础参数、运行模式及通知信息
           </Typography>
         </Box>
@@ -98,7 +98,7 @@ export default function SettingsPage() {
           startIcon={<SaveIcon />}
           onClick={handleSaveAll}
           disabled={saving}
-          sx={{ bgcolor: '#6366f1', '&:hover': { bgcolor: '#4f46e5' }, textTransform: 'none', borderRadius: 2, px: 3 }}
+          sx={{ bgcolor: '#818cf8', '&:hover': { bgcolor: '#4338ca' }, textTransform: 'none', borderRadius: 2, px: 3 }}
         >
           {saving ? '保存中...' : '保存全部'}
         </Button>
@@ -146,19 +146,19 @@ export default function SettingsPage() {
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 2, bgcolor: 'rgba(255,255,255,0.02)', borderRadius: 2 }}>
                 <Box>
                   <Typography sx={{ color: '#e4e6eb', fontWeight: 500 }}>开放新用户注册</Typography>
-                  <Typography variant="caption" sx={{ color: '#6b7280' }}>关闭后，登录页将隐藏注册入口</Typography>
+                  <Typography variant="caption" sx={{ color: '#9ca3af' }}>关闭后，登录页将隐藏注册入口</Typography>
                 </Box>
                 <Switch
                   checked={settings.enableRegistration}
                   onChange={(e) => handleSave('enableRegistration', e.target.checked)}
-                  sx={{ '& .MuiSwitch-switchBase.Mui-checked': { color: '#6366f1' }, '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { bgcolor: '#6366f1' } }}
+                  sx={{ '& .MuiSwitch-switchBase.Mui-checked': { color: '#818cf8' }, '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { bgcolor: '#818cf8' } }}
                 />
               </Box>
 
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 2, bgcolor: 'rgba(255,255,255,0.02)', borderRadius: 2 }}>
                 <Box>
                   <Typography sx={{ color: '#e4e6eb', fontWeight: 500 }}>维护模式</Typography>
-                  <Typography variant="caption" sx={{ color: '#6b7280' }}>开启后，非管理员用户登录将显示维护提示</Typography>
+                  <Typography variant="caption" sx={{ color: '#9ca3af' }}>开启后，非管理员用户登录将显示维护提示</Typography>
                 </Box>
                 <Switch
                   checked={settings.maintenanceMode}
@@ -181,7 +181,7 @@ export default function SettingsPage() {
         <Grid size={{ xs: 12 }}>
           <Paper sx={{ p: 4, bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 3 }}>
             <Typography variant="h6" sx={{ color: '#e4e6eb', mb: 1, fontWeight: 600 }}>AI Agent 自动化配置</Typography>
-            <Typography variant="body2" sx={{ color: '#6b7280', mb: 3 }}>
+            <Typography variant="body2" sx={{ color: '#9ca3af', mb: 3 }}>
               集成 OpenAI 兼容接口，为银行和信用卡管理提供自动补全功能
             </Typography>
             <Grid container spacing={3}>

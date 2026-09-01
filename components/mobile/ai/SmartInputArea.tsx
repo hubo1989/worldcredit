@@ -104,7 +104,7 @@ export function SmartInputArea({
           px: 1.5,
           borderRadius: 3,
           border: '1px solid',
-          borderColor: canSend ? '#2563EB' : '#E5E7EB',
+          borderColor: canSend ? 'primary.main' : '#E5E7EB',
           bgcolor: '#fff',
           transition: 'border-color 0.2s',
         }}
@@ -147,11 +147,12 @@ export function SmartInputArea({
 
           {/* 发送按钮：三态 */}
           <IconButton
+            aria-label="发送"
             onClick={onSubmit}
             disabled={!canSend}
             size="small"
             sx={{
-              bgcolor: canSend ? '#2563EB' : '#E5E7EB',
+              bgcolor: canSend ? 'primary.main' : '#E5E7EB',
               color: canSend ? '#fff' : '#9CA3AF',
               '&:hover': { bgcolor: canSend ? '#1D4ED8' : '#E5E7EB' },
               width: 34,
@@ -184,7 +185,7 @@ export function SmartInputArea({
               fontSize: 12,
               fontWeight: 500,
               p: 0,
-              '&:hover': { color: '#2563EB' },
+              '&:hover': { color: 'primary.main' },
             }}
           >
             {t}

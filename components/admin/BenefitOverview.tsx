@@ -32,13 +32,13 @@ export function BenefitOverview({ data }: BenefitOverviewProps) {
 
       {data.length === 0 ? (
         <Box sx={{ py: 4, textAlign: 'center' }}>
-          <Typography variant="body2" sx={{ color: '#6b7280' }}>暂无权益数据</Typography>
+          <Typography variant="body2" sx={{ color: '#9ca3af' }}>暂无权益数据</Typography>
         </Box>
       ) : (
         <Stack spacing={2}>
           {data.map(b => {
             const usageRate = b.quota > 0 ? Math.min((b.usage_count / b.quota) * 100, 100) : 0
-            const periodColor = PERIOD_COLOR[b.period] || '#6b7280'
+            const periodColor = PERIOD_COLOR[b.period] || '#9ca3af'
 
             return (
               <Box key={b.id} sx={{
@@ -62,7 +62,7 @@ export function BenefitOverview({ data }: BenefitOverviewProps) {
                       }}
                     />
                   </Box>
-                  <Typography variant="caption" sx={{ color: '#6b7280', fontSize: 11 }}>
+                  <Typography variant="caption" sx={{ color: '#9ca3af', fontSize: 11 }}>
                     {b.usage_count}/{b.quota}
                   </Typography>
                 </Box>
@@ -80,7 +80,7 @@ export function BenefitOverview({ data }: BenefitOverviewProps) {
                   }}
                 />
 
-                <Typography variant="caption" sx={{ color: '#6b7280', fontSize: 11 }}>
+                <Typography variant="caption" sx={{ color: '#9ca3af', fontSize: 11 }}>
                   {b.bank_name} · {b.card_product_name}
                 </Typography>
               </Box>

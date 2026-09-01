@@ -70,7 +70,7 @@ export default function BillDetailPage() {
   return (
     <Box sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-        <IconButton onClick={() => router.back()}>
+        <IconButton aria-label="返回" onClick={() => router.back()}>
           <ArrowBack />
         </IconButton>
         <Typography variant="h6" fontWeight={700} sx={{ flex: 1 }}>

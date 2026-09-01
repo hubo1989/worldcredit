@@ -11,9 +11,9 @@ export default function PromosPage() {
 
       <Box sx={{
         textAlign: 'center', p: 4, bgcolor: '#fff', borderRadius: 4,
-        border: '2px dashed #eee', mt: 4
+        border: '2px dashed', borderColor: 'divider', mt: 4
       }}>
-        <PromoIcon sx={{ fontSize: 48, color: '#ccc', mb: 2 }} />
+        <PromoIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 2 }} />
         <Typography variant="subtitle1" fontWeight={600}>优惠活动管理</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
           此功能将在 Phase 2 版本中实现

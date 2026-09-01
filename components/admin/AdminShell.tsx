@@ -70,7 +70,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: '#F5F8FF' }}>
+    <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
       {/* 侧边栏 */}
       <Drawer
         variant="persistent"
@@ -78,13 +78,14 @@ export function AdminShell({ children }: { children: ReactNode }) {
         sx={{
           width: drawerOpen ? DRAWER_WIDTH : 0,
           flexShrink: 0,
-          transition: 'width 0.3s ease',
           '& .MuiDrawer-paper': {
             width: DRAWER_WIDTH,
             bgcolor: '#030059',
             borderRight: '1px solid #02003d',
             color: '#FFFFFF',
             boxSizing: 'border-box',
+            transform: drawerOpen ? 'none' : `translateX(-${DRAWER_WIDTH}px)`,
+            transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
           },
         }}
       >
@@ -111,7 +112,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
               </Typography>
             </Box>
           </Box>
-          <IconButton size="small" onClick={() => setDrawerOpen(false)} sx={{ color: '#A2C6FF' }}>
+          <IconButton aria-label="收起侧边栏" size="small" onClick={() => setDrawerOpen(false)} sx={{ color: '#A2C6FF' }}>
             <ChevronLeftIcon fontSize="small" />
           </IconButton>
         </Box>
@@ -129,10 +130,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 borderRadius: '3px', mb: 0.5, py: 1,
                 color: 'rgba(255, 255, 255, 0.85)',
                 '&.Mui-selected': {
-                  bgcolor: '#7AADFF',
-                  color: '#FFFFFF',
+                  bgcolor: 'primary.main',
+                  color: 'primary.contrastText',
                   fontWeight: 700,
-                  '& .MuiListItemIcon-root': { color: '#FFFFFF' },
+                  '& .MuiListItemIcon-root': { color: 'inherit' },
                 },
                 '&:hover': {
                   bgcolor: 'rgba(255,255,255,0.1)',
@@ -144,7 +145,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
               </ListItemIcon>
               <ListItemText
                 primary={item.label}
-                primaryTypographyProps={{ fontSize: 14, fontFamily: '"Open Sans", sans-serif' }}
+                primaryTypographyProps={{ fontSize: 14 }}
               />
             </ListItemButton>
           ))}
@@ -185,25 +186,25 @@ export function AdminShell({ children }: { children: ReactNode }) {
         display: 'flex',
         flexDirection: 'column',
         minWidth: 0,
-        transition: 'margin-left 0.3s ease',
       }}>
         {/* 顶栏 */}
         <AppBar
           position="sticky"
           elevation={0}
           sx={{
-            bgcolor: '#7AADFF',
-            color: '#FFFFFF',
-            borderBottom: '1px solid #DDDDDD',
+            bgcolor: 'background.paper',
+            color: 'text.primary',
+            borderBottom: '1px solid',
+            borderColor: 'divider',
           }}
         >
           <Toolbar sx={{ minHeight: '40px !important' }}>
             {!drawerOpen && (
-              <IconButton onClick={() => setDrawerOpen(true)} sx={{ color: '#FFFFFF', mr: 2 }}>
+              <IconButton aria-label="展开侧边栏" onClick={() => setDrawerOpen(true)} sx={{ color: 'text.primary', mr: 2 }}>
                 <MenuIcon />
               </IconButton>
             )}
-            <Typography variant="h3" sx={{ fontWeight: 400, color: '#FFFFFF', fontSize: 16 }}>
+            <Typography variant="h3" sx={{ fontWeight: 600, color: 'text.primary', fontSize: 16 }}>
               控制台
             </Typography>
             <Box sx={{ flex: 1 }} />
@@ -213,20 +214,20 @@ export function AdminShell({ children }: { children: ReactNode }) {
               startIcon={<PhoneIphoneIcon fontSize="small" />}
               onClick={() => router.push('/dashboard')}
               sx={{
-                color: '#FFFFFF',
-                borderColor: '#FFFFFF',
+                color: 'primary.main',
+                borderColor: 'primary.main',
                 mr: 2,
                 fontSize: 12,
                 borderRadius: '3px',
                 '&:hover': {
-                  bgcolor: 'rgba(255, 255, 255, 0.1)',
-                  borderColor: '#FFFFFF'
+                  bgcolor: 'action.hover',
+                  borderColor: 'primary.light'
                 }
               }}
             >
               返回前台 App
             </Button>
-            <Typography variant="caption" sx={{ color: '#FFFFFF' }}>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
               {new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}
             </Typography>
           </Toolbar>
@@ -236,7 +237,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         <Box sx={{
           flex: 1, p: 3,
           overflowY: 'auto',
-          bgcolor: '#F5F8FF',
+          bgcolor: 'background.default',
         }}>
           {children}
         </Box>
@@ -247,20 +248,11 @@ export function AdminShell({ children }: { children: ReactNode }) {
         anchorEl={anchorEl}
         open={Boolean(anchorEl)}
         onClose={() => setAnchorEl(null)}
-        PaperProps={{
-          sx: {
-            bgcolor: '#FFFFFF',
-            color: '#333333',
-            borderRadius: '5px',
-            border: '1px solid #DDDDDD',
-            boxShadow: '0px 8px 16px rgba(0,0,0,0.15)',
-          }
-        }}
       >
         <MenuItem onClick={() => { setAnchorEl(null); router.push('/dashboard'); }} sx={{ gap: 1.5, fontSize: 14 }}>
           <PhoneIphoneIcon fontSize="small" /> 返回前台 App
         </MenuItem>
-        <MenuItem onClick={handleLogout} sx={{ gap: 1.5, fontSize: 14, color: '#CF2E2E' }}>
+        <MenuItem onClick={handleLogout} sx={{ gap: 1.5, fontSize: 14, color: 'error.main' }}>
           <LogoutIcon fontSize="small" /> 退出登录
         </MenuItem>
       </Menu>

@@ -221,7 +221,7 @@ function MessageBubble({ message }: { message: AiMessage }) {
           borderRadius: 2,
           px: 1.5,
           py: 1,
-          bgcolor: isUser ? '#2563EB' : '#fff',
+          bgcolor: isUser ? 'primary.main' : '#fff',
           color: isUser ? '#fff' : '#1F2937',
           border: isUser ? 'none' : '1px solid #E5E7EB',
           boxShadow: isUser ? '0 2px 8px rgba(37, 99, 235, 0.2)' : 'none',
@@ -229,8 +229,8 @@ function MessageBubble({ message }: { message: AiMessage }) {
       >
         {!isUser && (
           <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mb: 0.5 }}>
-            <AutoAwesomeIcon sx={{ fontSize: 14, color: '#2563EB' }} />
-            <Typography variant="caption" fontWeight={700} sx={{ fontSize: 11, color: '#2563EB' }}>
+            <AutoAwesomeIcon sx={{ fontSize: 14, color: 'primary.main' }} />
+            <Typography variant="caption" fontWeight={700} sx={{ fontSize: 11, color: 'primary.main' }}>
               AI 回复
             </Typography>
             {message.model && (

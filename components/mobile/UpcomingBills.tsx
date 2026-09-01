@@ -44,7 +44,7 @@ export function UpcomingBills({ bills }: Props) {
             <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 }, display: 'flex', alignItems: 'center', gap: 2 }}>
               <Box sx={{
                 width: 40, height: 40, borderRadius: 2,
-                bgcolor: isUrgent ? '#f44336' : isWarning ? '#ff9800' : '#1976d2',
+                bgcolor: isUrgent ? 'error.main' : isWarning ? 'warning.main' : '#1976d2',
                 color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
                 flexShrink: 0
               }}>

@@ -33,7 +33,7 @@ export function PromoOverview({ data }: PromoOverviewProps) {
           <Typography variant="subtitle2" sx={{ color: '#e4e6eb', fontWeight: 600 }}>
             优惠活动
           </Typography>
-          <Typography variant="caption" sx={{ color: '#6b7280' }}>
+          <Typography variant="caption" sx={{ color: '#9ca3af' }}>
             进行中 {activeCount} · 共 {data.length}
           </Typography>
         </Box>
@@ -42,7 +42,7 @@ export function PromoOverview({ data }: PromoOverviewProps) {
       {data.length === 0 ? (
         <Box sx={{ py: 4, textAlign: 'center' }}>
           <PromoIcon sx={{ fontSize: 40, color: '#374151', mb: 1 }} />
-          <Typography variant="body2" sx={{ color: '#6b7280' }}>暂无优惠活动</Typography>
+          <Typography variant="body2" sx={{ color: '#9ca3af' }}>暂无优惠活动</Typography>
         </Box>
       ) : (
         <Stack spacing={1.5}>
@@ -61,13 +61,13 @@ export function PromoOverview({ data }: PromoOverviewProps) {
                     {promo.title}
                   </Typography>
                   {promo.is_active ? (
-                    <ActiveIcon sx={{ fontSize: 14, color: '#4ade80' }} />
+                    <ActiveIcon sx={{ fontSize: 14, color: 'success.main' }} />
                   ) : (
-                    <ExpiredIcon sx={{ fontSize: 14, color: '#6b7280' }} />
+                    <ExpiredIcon sx={{ fontSize: 14, color: '#9ca3af' }} />
                   )}
                 </Box>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Typography variant="caption" sx={{ color: '#6b7280', fontSize: 11 }}>
+                  <Typography variant="caption" sx={{ color: '#9ca3af', fontSize: 11 }}>
                     {promo.bank_name}
                   </Typography>
                   {promo.discount_type && (
@@ -76,14 +76,14 @@ export function PromoOverview({ data }: PromoOverviewProps) {
                       size="small"
                       sx={{
                         height: 18, fontSize: 10,
-                        bgcolor: `${DISCOUNT_COLORS[promo.discount_type] || '#6b7280'}18`,
-                        color: DISCOUNT_COLORS[promo.discount_type] || '#6b7280',
+                        bgcolor: `${DISCOUNT_COLORS[promo.discount_type] || '#9ca3af'}18`,
+                        color: DISCOUNT_COLORS[promo.discount_type] || '#9ca3af',
                         fontWeight: 600,
                       }}
                     />
                   )}
                   {promo.end_date && (
-                    <Typography variant="caption" sx={{ color: '#6b7280', fontSize: 11 }}>
+                    <Typography variant="caption" sx={{ color: '#9ca3af', fontSize: 11 }}>
                       截止 {promo.end_date}
                     </Typography>
                   )}
@@ -93,7 +93,7 @@ export function PromoOverview({ data }: PromoOverviewProps) {
                 <Typography variant="body2" sx={{ color: '#e4e6eb', fontWeight: 700, fontSize: 15 }}>
                   {promo.usage_count}
                 </Typography>
-                <Typography variant="caption" sx={{ color: '#6b7280', fontSize: 10 }}>
+                <Typography variant="caption" sx={{ color: '#9ca3af', fontSize: 10 }}>
                   已使用
                 </Typography>
               </Box>

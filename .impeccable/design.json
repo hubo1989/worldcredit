@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-29T00:00:00+08:00",
+  "title": "Design System: WorldCredit",
+  "extensions": {
+    "colorMeta": {
+      "primary": { "role": "primary", "displayName": "品牌蓝", "canonical": "#1976d2", "tonalRamp": ["#0d47a1", "#1565c0", "#1976d2", "#42a5f5", "#90caf9", "#bbdefb", "#e3f2fd", "#f2f8fd"] },
+      "ink-navy": { "role": "secondary", "displayName": "墨藏青", "canonical": "#030059", "tonalRamp": ["#030059", "#0a0a75", "#161695", "#2a2ab5", "#4a4ad0", "#8080e0", "#b3b3ef", "#e0e0f8"] },
+      "mist-bg": { "role": "neutral", "displayName": "雾底", "canonical": "#F5F8FF", "tonalRamp": ["#c9d4e8", "#d6dfef", "#e2e9f4", "#ecf1f9", "#F5F8FF", "#f8fafe", "#fbfcff", "#ffffff"] },
+      "success": { "role": "status", "displayName": "成功绿", "canonical": "#2e7d32", "tonalRamp": ["#1b4d1e", "#256628", "#2e7d32", "#43a047", "#66bb6a", "#a5d6a7", "#c8e6c9", "#e8f5e9"] },
+      "warning": { "role": "status", "displayName": "警告橙", "canonical": "#ed6c02", "tonalRamp": ["#8a3f00", "#b85500", "#ed6c02", "#f57c00", "#fb8c00", "#ffb74d", "#ffcc80", "#ffe0b2"] },
+      "danger": { "role": "status", "displayName": "错误红", "canonical": "#d32f2f", "tonalRamp": ["#7f1717", "#a31d1d", "#d32f2f", "#e53935", "#ef5350", "#ef9a9a", "#ffcdd2", "#ffebee"] },
+      "info": { "role": "status", "displayName": "信息蓝", "canonical": "#0277bd", "tonalRamp": ["#01436a", "#015c92", "#0277bd", "#0288d1", "#039be5", "#4fc3f7", "#81d4fa", "#e1f5fe"] },
+      "admin-night": { "role": "neutral", "displayName": "夜色底", "canonical": "#181a24", "tonalRamp": ["#0e1017", "#121420", "#181a24", "#1e2028", "#2a2d3a", "#3a3e50", "#6b7280", "#9ca3af"] },
+      "admin-indigo": { "role": "primary", "displayName": "管理靛蓝", "canonical": "#4f46e5", "tonalRamp": ["#312e81", "#3730a3", "#4338ca", "#4f46e5", "#6366f1", "#818cf8", "#a5b4fc", "#e0e7ff"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "仅落地页主标题，蓝紫渐变填充。" },
+      "title": { "displayName": "Title", "purpose": "页面/卡片标题与金额数字（tabular-nums）。" },
+      "body": { "displayName": "Body", "purpose": "列表、表单、说明文字；输入 ≥16px。" },
+      "label": { "displayName": "Label", "purpose": "Chip、状态徽标、表单标签。" }
+    },
+    "shadows": [
+      { "name": "card-rest", "value": "0 2px 4px rgba(0,0,0,0.08)", "purpose": "亮色世界卡片静置微影。" },
+      { "name": "float-overlay", "value": "0 8px 16px rgba(0,0,0,0.15)", "purpose": "菜单、对话框等浮层。" }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "状态过渡与侧边栏 paper 平移；只用 transform/opacity。" }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "600px" },
+      { "name": "md", "value": "900px" },
+      { "name": "lg", "value": "1200px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "主行动按钮：品牌蓝填充白字，hover 加深。",
+      "html": "<button class=\"ds-btn-primary\">记一笔还款</button>",
+      "css": ".ds-btn-primary { background: #1976d2; color: #fff; height: 40px; padding: 0 20px; border: none; border-radius: 3px; font: 600 14px/20px -apple-system, 'PingFang SC', 'Noto Sans SC Variable', sans-serif; transition: background-color 0.2s cubic-bezier(0.4,0,0.2,1); } .ds-btn-primary:hover { background: #1565c0; } .ds-btn-primary:focus-visible { outline: 2px solid #030059; outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Button",
+      "kind": "button",
+      "refersTo": "button-text",
+      "description": "低强调动作：主色深档文字，满足 AA。",
+      "html": "<button class=\"ds-btn-text\">查看全部账单</button>",
+      "css": ".ds-btn-text { background: none; color: #1565c0; height: 40px; padding: 0 20px; border: none; border-radius: 3px; font: 600 14px/20px -apple-system, 'PingFang SC', 'Noto Sans SC Variable', sans-serif; } .ds-btn-text:hover { background: rgba(21,101,192,0.08); } .ds-btn-text:focus-visible { outline: 2px solid #030059; outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "40px 高描边输入框，聚焦主色光晕。",
+      "html": "<input class=\"ds-input\" placeholder=\"卡号后四位\" />",
+      "css": ".ds-input { background: #fff; color: #333; height: 40px; padding: 8px 12px; border: 1px solid #ccc; border-radius: 5px; font: 400 16px/1.5 -apple-system, 'PingFang SC', 'Noto Sans SC Variable', sans-serif; } .ds-input::placeholder { color: #636363; opacity: 0.8; } .ds-input:hover { border-color: rgba(25,118,210,0.5); } .ds-input:focus { outline: none; border-color: #1976d2; box-shadow: 0 0 0 3px rgba(25,118,210,0.15); }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "白卡 + 1px 边 + 微影，账单/持卡人内容容器。",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-title\">招商银行 · 8888</div><div class=\"ds-card-body\">本期账单 ¥2,340.00 · 3 天后到期</div></div>",
+      "css": ".ds-card { background: #fff; color: #333; border: 1px solid #ddd; border-radius: 5px; padding: 24px; box-shadow: 0 2px 4px rgba(0,0,0,0.08); font-family: -apple-system, 'PingFang SC', 'Noto Sans SC Variable', sans-serif; } .ds-card-title { font-size: 16px; font-weight: 600; color: #030059; margin-bottom: 8px; } .ds-card-body { font-size: 14px; line-height: 1.6; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "账单状态徽标：语义色底 + AA 文字，永远带文字。",
+      "html": "<span class=\"ds-chip ds-chip-warning\">待还</span> <span class=\"ds-chip ds-chip-success\">已结清</span>",
+      "css": ".ds-chip { display: inline-block; padding: 4px 12px; border-radius: 12px; font: 700 12px/1.4 -apple-system, 'PingFang SC', 'Noto Sans SC Variable', sans-serif; } .ds-chip-warning { background: #ed6c02; color: #030059; } .ds-chip-success { background: #2e7d32; color: #fff; }"
+    },
+    {
+      "name": "Bottom Nav Item",
+      "kind": "nav",
+      "refersTo": "nav",
+      "description": "移动端底部导航：白底，激活墨藏青。",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item ds-nav-active\" href=\"#\">首页</a><a class=\"ds-nav-item\" href=\"#\">账单</a></nav>",
+      "css": ".ds-nav { display: flex; background: #fff; border-top: 1px solid #ddd; } .ds-nav-item { flex: 1; text-align: center; padding: 12px 0; color: #636363; font: 400 12px/1.4 -apple-system, 'PingFang SC', 'Noto Sans SC Variable', sans-serif; text-decoration: none; } .ds-nav-active { color: #030059; font-weight: 700; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "家庭财务的仪表台（The Family Ledger Console）",
+    "overview": "WorldCredit 是家庭自用的信用卡管理工具：一个管理员在手机 PWA 上打理全家的账单、还款、权益和优惠，在桌面管理后台维护银行/卡产品目录。视觉体系服务于「可信、清晰、不焦虑地看钱」：亮色世界以品牌蓝 #1976d2 为唯一主色，深藏青做文字锚点；暗色世界（管理后台）是独立主题的深色运营台，靛蓝做行动色。色彩用量克制——蓝只属于动作、选中和状态，渐变只属于信用卡视觉和落地页一个瞬间。",
+    "keyCharacteristics": [
+      "双主题：全局亮色 + 管理后台暗色，取色一律走 MUI token",
+      "中文优先字体体系：原生 CJK 优先，Noto Sans SC Variable 真实加载兜底",
+      "WCAG AA 为硬底线：主色填充 4.6:1，主色文字用深档 5.4:1",
+      "语义状态色承担账单语言，状态永远带文字",
+      "隐私本能：金额支持 privacy-blur 打码"
+    ],
+    "rules": [
+      { "name": "The One Blue Rule", "body": "亮色世界只有一个主色 #1976d2。填充用 main 档，文字/描边一律降到 dark 档 #1565c0——这是 AA 的机械保证，不逐处争论。", "section": "colors" },
+      { "name": "The Two-Worlds Rule", "body": "亮色主题与暗色主题是两套独立构图，不是明暗互转；管理端配色只经由 adminDarkTheme 的 token 表达，禁止在页面里硬编码色值。", "section": "colors" },
+      { "name": "The Loaded-Font Rule", "body": "字体必须「声明 + 真实加载」成对出现；fontFamily 里出现的名字要么有 @font-face/包来源，要么从栈里删掉。", "section": "typography" }
+    ],
+    "dos": [
+      "Do 一律从 lib/theme.ts 的两个主题取 token",
+      "Do 主色填充用 primary.main，主色文字/描边用 primary.dark",
+      "Do 账单状态走语义 token 且附文字标签",
+      "Do 金额、日期用 tabular-nums；金额界面提供 privacy-blur",
+      "Do 动画只用 transform/opacity，200–300ms ease-out"
+    ],
+    "donts": [
+      "Don't 在页面组件里硬编码十六进制色值",
+      "Don't 白字配浅蓝底；主色文字勿用 main 档压雾底",
+      "Don't CJK 用 300 字重或斜体",
+      "Don't 用 width/height/margin 做动画",
+      "Don't 给管理端页面内联覆盖暗色配色"
+    ]
+  }
+}

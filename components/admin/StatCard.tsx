@@ -42,11 +42,11 @@ export function StatCard({ icon, label, value, subtitle, color }: StatCardProps)
         <Typography variant="caption" sx={{ color: '#636363', fontSize: 12, fontWeight: 500 }}>
           {label}
         </Typography>
-        <Typography variant="h2" sx={{ color: '#030059', fontSize: '24px', fontWeight: 300, lineHeight: 1.3, mt: 0.25 }}>
+        <Typography variant="h2" sx={{ color: '#030059', fontSize: '24px', fontWeight: 600, lineHeight: 1.3, mt: 0.25 }}>
           {value}
         </Typography>
         {subtitle && (
-          <Typography variant="caption" sx={{ color: '#00AA00', fontSize: 11, fontWeight: 700 }}>
+          <Typography variant="caption" sx={{ color: 'success.main', fontSize: 11, fontWeight: 700 }}>
             {subtitle}
           </Typography>
         )}

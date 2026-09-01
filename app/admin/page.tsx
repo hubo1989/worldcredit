@@ -83,7 +83,7 @@ export default function AdminDashboardPage() {
         <Typography variant="body2" sx={{ color: '#636363', mb: 0.5 }}>
           平台运营概览
         </Typography>
-        <Typography variant="h1" sx={{ color: '#030059', fontSize: '28px', fontWeight: 300 }}>
+        <Typography variant="h1" sx={{ color: '#030059', fontSize: '28px', fontWeight: 600 }}>
           WorldCredit 控制台
         </Typography>
       </Box>
@@ -127,15 +127,15 @@ export default function AdminDashboardPage() {
 
       {/* 快捷模块入口 */}
       <Box sx={{ mb: 4 }}>
-        <Typography variant="h3" sx={{ color: '#030059', mb: 2, fontSize: '18px', fontWeight: 300, display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Typography variant="h3" sx={{ color: '#030059', mb: 2, fontSize: '18px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1 }}>
            核心管理模块
         </Typography>
         <Grid container spacing={2}>
            {[
-            { title: '银行管理', path: '/admin/banks', icon: <BankIcon />, color: '#00AA00', desc: '维护支持的银行列表' },
+            { title: '银行管理', path: '/admin/banks', icon: <BankIcon />, color: 'success.main', desc: '维护支持的银行列表' },
             { title: '卡产品管理', path: '/admin/card-products', icon: <CardIcon />, color: '#030059', desc: '管理信用卡产品及账期' },
-            { title: '优惠活动', path: '/admin/promos', icon: <PromoIcon />, color: '#FCB900', desc: '全平台营销活动维护' },
-            { title: '权益管理', path: '/admin/benefits', icon: <BenefitIcon />, color: '#7A00DF', desc: '卡权益库及限额维护' }
+            { title: '优惠活动', path: '/admin/promos', icon: <PromoIcon />, color: 'warning.main', desc: '全平台营销活动维护' },
+            { title: '权益管理', path: '/admin/benefits', icon: <BenefitIcon />, color: 'primary.light', desc: '卡权益库及限额维护' }
            ].map(module => (
              <Grid key={module.path} size={{ xs: 12, sm: 6, md: 3 }}>
                <Box 

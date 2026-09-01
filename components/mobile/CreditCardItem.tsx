@@ -19,7 +19,7 @@ export function CreditCardItem({ card, onClick }: Props) {
       sx={{ 
         mb: 2, 
         borderRadius: '10px', 
-        background: 'linear-gradient(135deg, #030059 0%, #007CBA 100%)',
+        background: 'linear-gradient(135deg, #030059 0%, #004f78 100%)',
         color: '#FFFFFF',
         boxShadow: '0px 4px 8px rgba(0, 0, 0, 0.12)',
         cursor: onClick ? 'pointer' : 'default',

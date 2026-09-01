@@ -81,7 +81,7 @@ export default function CardDetailPage() {
     <Box sx={{ p: 2, pb: 2 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-        <IconButton onClick={() => router.back()}>
+        <IconButton aria-label="返回" onClick={() => router.back()}>
           <ArrowBackIcon />
         </IconButton>
         <Box sx={{ flex: 1, ml: 1 }}>
@@ -147,7 +147,7 @@ export default function CardDetailPage() {
       {bills.length === 0 ? (
         <Box sx={{
           textAlign: 'center', p: 3, bgcolor: '#fff', borderRadius: 4,
-          border: '2px dashed #eee'
+          border: '2px dashed', borderColor: 'divider'
         }}>
           <Typography color="text.secondary">暂无账单记录</Typography>
         </Box>

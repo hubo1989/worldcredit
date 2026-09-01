@@ -73,7 +73,7 @@ export function SampleDialoguePreview({ onUseQuestion }: SampleDialoguePreviewPr
             示例
           </Box>
         </Stack>
-        <IconButton size="small" sx={{ p: 0.5 }}>
+        <IconButton aria-label="展开示例对话" size="small" sx={{ p: 0.5 }}>
           <ExpandMoreIcon
             sx={{
               transition: 'transform 0.2s',
@@ -104,7 +104,7 @@ export function SampleDialoguePreview({ onUseQuestion }: SampleDialoguePreviewPr
                     height: 22,
                     borderRadius: '50%',
                     bgcolor: '#E0E7FF',
-                    color: '#2563EB',
+                    color: 'primary.main',
                     fontSize: 11,
                     fontWeight: 700,
                     display: 'flex',
@@ -128,7 +128,7 @@ export function SampleDialoguePreview({ onUseQuestion }: SampleDialoguePreviewPr
                     width: 22,
                     height: 22,
                     borderRadius: '50%',
-                    bgcolor: '#2563EB',
+                    bgcolor: 'primary.main',
                     color: '#fff',
                     display: 'flex',
                     alignItems: 'center',
@@ -165,7 +165,7 @@ export function SampleDialoguePreview({ onUseQuestion }: SampleDialoguePreviewPr
                     sx={{
                       border: 'none',
                       background: 'transparent',
-                      color: '#2563EB',
+                      color: 'primary.main',
                       cursor: 'pointer',
                       fontSize: 12,
                       fontWeight: 600,

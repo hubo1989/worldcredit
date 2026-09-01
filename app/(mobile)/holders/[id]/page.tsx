@@ -54,7 +54,7 @@ export default function HolderDetailPage() {
     <Box sx={{ p: 2, pb: 2 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-        <IconButton onClick={() => router.back()}>
+        <IconButton aria-label="返回" onClick={() => router.back()}>
           <ArrowBackIcon />
         </IconButton>
         <Avatar sx={{ bgcolor: holder.avatar_color, width: 40, height: 40, ml: 1, mr: 1.5 }}>
@@ -70,9 +70,9 @@ export default function HolderDetailPage() {
       {cards.length === 0 ? (
         <Box sx={{
           textAlign: 'center', p: 4, bgcolor: '#fff', borderRadius: 4,
-          border: '2px dashed #eee'
+          border: '2px dashed', borderColor: 'divider'
         }}>
-          <CreditCardIcon sx={{ fontSize: 48, color: '#ccc', mb: 1 }} />
+          <CreditCardIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
           <Typography color="text.secondary">暂无信用卡，点击右下角添加</Typography>
         </Box>
       ) : (

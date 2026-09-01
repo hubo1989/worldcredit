@@ -141,7 +141,7 @@ export default function BanksPage() {
           <Typography variant="h4" sx={{ color: '#e4e6eb', fontWeight: 700, mb: 0.5 }}>
             银行管理
           </Typography>
-          <Typography variant="body2" sx={{ color: '#6b7280' }}>
+          <Typography variant="body2" sx={{ color: '#9ca3af' }}>
             维护系统中支持的银行列表及所属国家
           </Typography>
         </Box>
@@ -150,8 +150,8 @@ export default function BanksPage() {
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
           sx={{
-            bgcolor: '#6366f1',
-            '&:hover': { bgcolor: '#4f46e5' },
+            bgcolor: '#818cf8',
+            '&:hover': { bgcolor: '#4338ca' },
             textTransform: 'none',
             borderRadius: 2,
             px: 3
@@ -173,7 +173,7 @@ export default function BanksPage() {
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
-                    <SearchIcon sx={{ color: '#6b7280', fontSize: 20 }} />
+                    <SearchIcon sx={{ color: '#9ca3af', fontSize: 20 }} />
                   </InputAdornment>
                 ),
                 sx: { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' }
@@ -201,7 +201,7 @@ export default function BanksPage() {
             />
           </Grid>
           <Grid size={{ xs: 12, md: 4 }} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <IconButton onClick={fetchData} sx={{ color: '#9ca3af' }}>
+            <IconButton aria-label="刷新" onClick={fetchData} sx={{ color: '#9ca3af' }}>
               <RefreshIcon />
             </IconButton>
           </Grid>
@@ -223,12 +223,12 @@ export default function BanksPage() {
             {loading ? (
               <TableRow>
                 <TableCell colSpan={5} align="center" sx={{ py: 10 }}>
-                  <CircularProgress size={24} sx={{ color: '#6366f1' }} />
+                  <CircularProgress size={24} sx={{ color: '#818cf8' }} />
                 </TableCell>
               </TableRow>
             ) : filteredBanks.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} align="center" sx={{ py: 10, color: '#6b7280' }}>
+                <TableCell colSpan={5} align="center" sx={{ py: 10, color: '#9ca3af' }}>
                   {fetchError ? `加载失败: ${fetchError}` : '暂无银行数据'}
                 </TableCell>
               </TableRow>
@@ -260,10 +260,10 @@ export default function BanksPage() {
                     />
                   </TableCell>
                   <TableCell align="right">
-                    <IconButton size="small" onClick={() => handleOpenDialog(bank)} sx={{ color: '#9ca3af' }}>
+                    <IconButton aria-label="编辑" size="small" onClick={() => handleOpenDialog(bank)} sx={{ color: '#9ca3af' }}>
                       <EditIcon fontSize="small" />
                     </IconButton>
-                    <IconButton size="small" onClick={() => handleDelete(bank.id)} sx={{ color: '#f43f5e', ml: 1 }}>
+                    <IconButton aria-label="删除" size="small" onClick={() => handleDelete(bank.id)} sx={{ color: '#f43f5e', ml: 1 }}>
                       <DeleteIcon fontSize="small" />
                     </IconButton>
                   </TableCell>
@@ -377,7 +377,7 @@ export default function BanksPage() {
         </DialogContent>
         <DialogActions sx={{ p: 3 }}>
           <Button onClick={() => setDialogOpen(false)} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: '#6366f1', px: 4 }}>
+          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: '#818cf8', px: 4 }}>
             {submitting ? '保存中...' : '确定'}
           </Button>
         </DialogActions>
