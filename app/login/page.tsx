@@ -34,6 +34,9 @@ const ADMIN_EMAILS = ['admin@worldcredit.com']
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+const getPostLoginRoute = (em?: string | null) =>
+  em && ADMIN_EMAILS.includes(em.trim().toLowerCase()) ? '/admin' : '/dashboard'
+
 /* ============ 页面 ============ */
 
 export default function LoginPage() {
@@ -50,7 +53,7 @@ export default function LoginPage() {
   const [googleLoading, setGoogleLoading] = useState(false)
   const [toast, setToast] = useState<ToastState>({ open: false, message: '', severity: 'error' })
 
-  const { signIn, resendVerificationEmail, verifyEmail, signInWithGoogle } = useAuth()
+  const { user, loading: authLoading, signIn, resendVerificationEmail, verifyEmail, signInWithGoogle } = useAuth()
   const router = useRouter()
 
   // Toast 自动消失由 Snackbar autoHideDuration 处理；此处仅切换登录方式时清理错误
@@ -59,6 +62,12 @@ export default function LoginPage() {
     setOtpSent(false)
     setGlobalError('')
   }, [loginMethod])
+
+  useEffect(() => {
+    if (!authLoading && user) {
+      router.replace(getPostLoginRoute(user.email))
+    }
+  }, [authLoading, user, router])
 
   /* ----- 工具函数 ----- */
 
@@ -71,8 +80,7 @@ export default function LoginPage() {
   const validateEmail = (v: string) => EMAIL_REGEX.test(v)
 
   const routeAfterLogin = (em: string) => {
-    const target = ADMIN_EMAILS.includes(em.trim().toLowerCase()) ? '/admin' : '/dashboard'
-    router.push(target)
+    router.push(getPostLoginRoute(em))
   }
 
   /* ----- 实时校验：输入变化时清除对应错误 ----- */
@@ -122,7 +130,7 @@ export default function LoginPage() {
       await signIn(email.trim(), password)
       showToast('登录成功，正在跳转…', 'success')
       routeAfterLogin(email)
-    } catch (err: any) {
+    } catch (err: unknown) {
       setGlobalError(getFriendlyAuthErrorMessage(err, '邮箱或密码错误，请检查后重试'))
     } finally {
       setLoading(false)
@@ -154,7 +162,7 @@ export default function LoginPage() {
       await resendVerificationEmail(email.trim())
       setOtpSent(true)
       showToast('验证码已发送至您的邮箱', 'success')
-    } catch (err: any) {
+    } catch (err: unknown) {
       setGlobalError(getFriendlyAuthErrorMessage(err, '发送验证码失败，请稍后重试'))
     } finally {
       setLoading(false)
@@ -171,7 +179,7 @@ export default function LoginPage() {
       await verifyEmail(email.trim(), otp)
       showToast('登录成功，正在跳转…', 'success')
       routeAfterLogin(email)
-    } catch (err: any) {
+    } catch (err: unknown) {
       setGlobalError(getFriendlyAuthErrorMessage(err, '验证码错误或已失效，请重新获取'))
     } finally {
       setLoading(false)
@@ -186,7 +194,7 @@ export default function LoginPage() {
     try {
       await signInWithGoogle()
       // 成功时通常已重定向到 Google OAuth 页面，无需额外处理
-    } catch (err: any) {
+    } catch (err: unknown) {
       setGlobalError(getFriendlyAuthErrorMessage(err, 'Google 登录唤起失败，请重试'))
       setGoogleLoading(false)
     }
