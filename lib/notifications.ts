@@ -1,6 +1,6 @@
 // lib/notifications.ts
 import { db } from './insforge'
-import type { Bill, CreditCard, User } from './types'
+import type { Bill, CardProduct, CreditCard, User } from './types'
 
 export interface NotificationPreferences {
   user_id: string
@@ -24,7 +24,9 @@ export interface NotificationHistory {
 }
 
 interface BillWithCard extends Bill {
-  credit_cards: Pick<CreditCard, 'bank_name' | 'card_name' | 'card_number_last4' | 'currency' | 'holder_id'>
+  credit_cards: Pick<CreditCard, 'card_number_last4' | 'holder_id'> & {
+    card_products: Pick<CardProduct, 'bank_name' | 'card_name'>
+  }
 }
 
 interface NotificationPreferenceRow {
@@ -114,7 +116,8 @@ function createNotificationContent(
   bill: BillWithCard,
   type: 'due' | 'overdue'
 ): { title: string; body: string } {
-  const { bank_name, card_name, currency } = bill.credit_cards
+  const { bank_name, card_name } = bill.credit_cards.card_products
+  const currency = 'CNY' // credit_cards 表无币种列，账单统一人民币
   const daysUntil = bill.due_date
     ? Math.ceil((new Date(bill.due_date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
     : 0
@@ -213,7 +216,7 @@ export async function dailyNotificationScan(): Promise<void> {
   // Get all unpaid bills
   const { data: bills, error: billsError } = await db
     .from('bills')
-    .select('*, credit_cards(bank_name, card_name, currency, holder_id)')
+    .select('*, credit_cards(card_number_last4, holder_id, card_products(bank_name, card_name))')
     .in('status', ['unpaid', 'partial', 'overdue'])
 
   if (billsError) {

@@ -70,6 +70,23 @@ export interface Promo {
 }
 
 /**
+ * 用户角色（应用层邮箱判定的逻辑角色，非数据库字段）
+ */
+export type UserRole = 'admin' | 'member'
+
+/**
+ * 应用层用户（由 InsForge Auth 的 UserSchema 派生，见 lib/permissions.ts 的 toUser）
+ */
+export interface User {
+  id: string
+  auth_id: string
+  email: string
+  name: string
+  role: UserRole
+  created_at: string
+}
+
+/**
  * 持卡人档案
  */
 export interface CardHolder {

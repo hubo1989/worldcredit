@@ -16,7 +16,6 @@ import { getAnalyticsSummary, getMonthlyDebtTrend, getCategoryBreakdown } from '
 import { getHolders } from '@/lib/api/holders'
 import { getCardsByHolder } from '@/lib/api/cards'
 import { useAuth } from '@/lib/auth'
-import { asRole } from '@/lib/permissions'
 import { ExportDialog } from '@/components/mobile/ExportDialog'
 import type { CardHolder } from '@/lib/types'
 
@@ -29,7 +28,7 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D'
 
 export default function AnalyticsPage() {
   const router = useRouter()
-  const { profile } = useAuth()
+  const { user } = useAuth()
   const [filters, setFilters] = useState<Filters>({ months: 6 })
   const [holderOptions, setHolderOptions] = useState<Array<{ id: string; name: string }>>([])
   const [summary, setSummary] = useState<any>(null)
@@ -42,9 +41,9 @@ export default function AnalyticsPage() {
   const [cardOptions, setCardOptions] = useState<Array<{ id: string; label: string; card: any }>>([])
 
   const loadHolders = useCallback(async () => {
-    if (!profile) return
+    if (!user) return
     try {
-      const holdersData = await getHolders(profile.id, asRole(profile))
+      const holdersData = await getHolders(user.id)
       setHolders(holdersData)
       setHolderOptions(holdersData.map(h => ({ id: h.id, name: h.name })))
 
@@ -56,7 +55,7 @@ export default function AnalyticsPage() {
           cards.forEach(c => {
             allCards.push({
               id: c.id,
-              label: `${h.name} - ${c.bank_name} ${c.card_name}`,
+              label: `${h.name} - ${c.card_product?.bank_name ?? ''} ${c.card_product?.card_name ?? ''}`,
               card: c,
             })
           })
@@ -66,7 +65,7 @@ export default function AnalyticsPage() {
     } catch (err) {
       console.error('Failed to load holders:', err)
     }
-  }, [profile])
+  }, [user])
 
   const loadData = useCallback(async () => {
     setLoading(true)

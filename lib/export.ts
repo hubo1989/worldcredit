@@ -1,14 +1,14 @@
 // lib/export.ts
 import { format, endOfMonth } from 'date-fns'
 import { getBillsByHolder } from './api/bills'
+import { getCardsByHolder } from './api/cards'
 import { getPaymentsByHolder } from './api/payments'
-import { getBillItemsByHolder } from './api/billItems'
 import { getBenefitUsagesByHolder } from './api/benefitUsages'
 import { getPromoUsagesByHolder } from './api/promoUsages'
 import { getAnalyticsByHolder } from './api/analytics'
 import type { CardHolder } from './types'
 
-export type ExportType = 'bills' | 'payments' | 'bill_items' | 'benefit_usages' | 'promo_usages'
+export type ExportType = 'bills' | 'payments' | 'benefit_usages' | 'promo_usages'
 
 export interface ExportFilters {
   holderId?: string
@@ -78,7 +78,6 @@ export function generateFilename(type: ExportType, startDate: string, endDate: s
   const typeLabel: Record<ExportType, string> = {
     bills: '账单',
     payments: '还款',
-    bill_items: '账单明细',
     benefit_usages: '权益使用',
     promo_usages: '优惠使用',
   }
@@ -108,8 +107,6 @@ export async function getExportData(
       return exportBills(holderId, cardId, bankName, startDate, endDate)
     case 'payments':
       return exportPayments(holderId, cardId, startDate, endDate)
-    case 'bill_items':
-      return exportBillItems(holderId, cardId, bankName, startDate, endDate)
     case 'benefit_usages':
       return exportBenefitUsages(holderId, cardId, startDate, endDate)
     case 'promo_usages':
@@ -147,7 +144,7 @@ async function exportBills(
       '卡片': bill.credit_cards.card_name,
       '卡号末四位': bill.credit_cards.card_number_last4 || '',
       '账单金额': bill.bill_amount.toFixed(2),
-      '最低还款': bill.min_payment.toFixed(2),
+      '最低还款': bill.min_payment?.toFixed(2) ?? '',
       '还款截止日': bill.due_date,
       '状态': bill.status,
       '账单周期开始': bill.statement_start || '',
@@ -186,45 +183,6 @@ async function exportPayments(
 }
 
 /**
- * Export bill items data.
- */
-async function exportBillItems(
-  holderId: string,
-  cardId?: string,
-  bankName?: string,
-  startDate?: string,
-  endDate?: string
-): Promise<CsvRow[]> {
-  const items = await getBillItemsByHolder(holderId)
-
-  return items
-    .filter(item => {
-      if (cardId && item.bill.card_id !== cardId) return false
-      if (bankName && item.bill.credit_cards.bank_name !== bankName) return false
-      if (startDate && item.transaction_date && item.transaction_date < startDate) return false
-      if (endDate && item.transaction_date && item.transaction_date > endDate) return false
-      return true
-    })
-    .map(item => ({
-      '交易日期': item.transaction_date || '',
-      '入账日期': item.post_date || '',
-      '银行': item.bill.credit_cards.bank_name,
-      '卡片': item.bill.credit_cards.card_name,
-      '卡号末四位': item.bill.credit_cards.card_number_last4 || '',
-      '商户': item.description,
-      '商户名称': item.merchant_name || '',
-      '分类': item.category || '',
-      '金额': item.amount.toFixed(2),
-      '币种': item.currency || '',
-      '类型': item.item_type,
-      '来源': item.source,
-      '置信度': item.confidence ? item.confidence.toFixed(2) : '',
-      '原始文本': item.raw_text || '',
-      '账单月份': item.bill.bill_month,
-    }))
-}
-
-/**
  * Export benefit usages data.
  */
 async function exportBenefitUsages(
@@ -235,17 +193,24 @@ async function exportBenefitUsages(
 ): Promise<CsvRow[]> {
   const usages = await getBenefitUsagesByHolder(holderId)
 
+  // 卡筛选传的是 credit_cards.id，权益挂在 card_products 上，需映射
+  let cardProductId: string | undefined
+  if (cardId) {
+    const cards = await getCardsByHolder(holderId)
+    cardProductId = cards.find(c => c.id === cardId)?.card_product_id
+  }
+
   return usages
     .filter(usage => {
-      if (cardId && usage.benefit.card_id !== cardId) return false
+      if (cardProductId && usage.benefit.card_product_id !== cardProductId) return false
       if (startDate && usage.used_at < startDate) return false
       if (endDate && usage.used_at > endDate) return false
       return true
     })
     .map(usage => ({
       '使用日期': usage.used_at,
-      '银行': usage.benefit.credit_cards.bank_name,
-      '卡片': usage.benefit.credit_cards.card_name,
+      '银行': usage.benefit.card_products.bank_name,
+      '卡片': usage.benefit.card_products.card_name,
       '权益名称': usage.benefit.name,
       '权益描述': usage.benefit.description || '',
       '备注': usage.note || '',

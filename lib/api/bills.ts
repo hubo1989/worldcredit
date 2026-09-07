@@ -374,13 +374,33 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
 /**
  * 创建账单
  */
-export async function createBill(bill: Omit<Bill, 'id' | 'created_at'>): Promise<Bill> {
+/** 账单明细输入（智能导入解析结果；明细暂存于 bill_import_drafts.parsed_payload，bills 表无明细列） */
+export interface BillItemInput {
+  transaction_date?: string
+  post_date?: string
+  description: string
+  merchant_name?: string
+  category?: string
+  amount: number
+  currency?: string
+  item_type: 'purchase' | 'refund' | 'fee' | 'interest'
+  source: 'manual' | 'llm' | 'email' | 'sms' | 'image' | 'pdf'
+  confidence?: number
+  raw_text?: string
+  metadata?: Record<string, unknown>
+}
+
+export async function createBill(
+  bill: Omit<Bill, 'id' | 'created_at'> & { items?: BillItemInput[] }
+): Promise<Bill> {
+  // items 不入 bills 表（无此列），仅供调用方在确认草稿时透传
+  const { items: _items, ...billRow } = bill
   const { data, error } = await insforge.database
     .from('bills')
-    .insert([bill])
+    .insert([billRow])
     .select()
     .single()
-  
+
   if (error) throw error
   return data
 }

@@ -239,7 +239,6 @@ export function ExportDialog({ open, onClose, holderId, holders, cards }: Props)
     const labels: Record<ExportType, string> = {
       bills: '账单',
       payments: '还款',
-      bill_items: '账单明细',
       benefit_usages: '权益使用',
       promo_usages: '优惠使用',
     }
@@ -320,7 +319,6 @@ export function ExportDialog({ open, onClose, holderId, holders, cards }: Props)
                 >
                   <MenuItem value="bills">账单</MenuItem>
                   <MenuItem value="payments">还款</MenuItem>
-                  <MenuItem value="bill_items">账单明细</MenuItem>
                   <MenuItem value="benefit_usages">权益使用</MenuItem>
                   <MenuItem value="promo_usages">优惠使用</MenuItem>
                 </Select>

@@ -66,3 +66,4 @@ tsconfig.tsbuildinfo
 .LSOverride
 Icon
 *.tsbuildinfo
+.video_agent/

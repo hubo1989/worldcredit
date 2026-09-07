@@ -54,7 +54,7 @@ export function BenefitForm({ open, onClose, onSubmit, initial }: Props) {
   const handleSubmit = () => {
     if (!isValid()) return
     onSubmit({
-      card_id: initial?.card_id ?? '',
+      card_product_id: initial?.card_product_id ?? '',
       name: name.trim(),
       description: description.trim() || undefined,
       quota,

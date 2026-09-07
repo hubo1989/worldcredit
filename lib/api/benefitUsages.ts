@@ -1,38 +1,37 @@
 // lib/api/benefitUsages.ts
 import { db } from '../insforge'
-import type { Benefit, BenefitUsage, CreditCard } from '../types'
+import type { Benefit, BenefitUsage, CardProduct } from '../types'
 
 export interface BenefitUsageWithBenefit extends BenefitUsage {
   benefit: Benefit & {
-    credit_cards: Pick<CreditCard, 'bank_name' | 'card_name'>
+    card_products: Pick<CardProduct, 'bank_name' | 'card_name'>
   }
 }
 
 export async function getBenefitUsagesByHolder(holderId: string): Promise<BenefitUsageWithBenefit[]> {
-  // Get all card IDs for this holder
+  // 持卡人名下所有卡片关联的卡产品 ID（benefits 挂在卡产品上）
   const { data: cards, error: cardError } = await db
     .from('credit_cards')
-    .select('id')
+    .select('card_product_id')
     .eq('holder_id', holderId)
   if (cardError) throw cardError
-  if (!cards || cards.length === 0) return []
+  const productIds = Array.from(new Set((cards || []).map(c => c.card_product_id).filter(Boolean)))
+  if (productIds.length === 0) return []
 
-  const cardIds = cards.map(c => c.id)
-
-  // Get all benefits for these cards
+  // 这些卡产品名下的权益
   const { data: benefits, error: benefitError } = await db
     .from('benefits')
     .select('id')
-    .in('card_id', cardIds)
+    .in('card_product_id', productIds)
   if (benefitError) throw benefitError
   if (!benefits || benefits.length === 0) return []
 
   const benefitIds = benefits.map(b => b.id)
 
-  // Get all benefit usages for these benefits
+  // 权益使用记录（带卡产品的银行/卡名用于展示）
   const { data, error } = await db
     .from('benefit_usages')
-    .select('*, benefit:benefits(*, credit_cards(bank_name, card_name))')
+    .select('*, benefit:benefits(*, card_products(bank_name, card_name))')
     .in('benefit_id', benefitIds)
     .order('used_at', { ascending: false })
 
