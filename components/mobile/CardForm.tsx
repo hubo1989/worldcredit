@@ -9,6 +9,7 @@ import {
 } from '@mui/material'
 import type { CreditCard, CardProduct } from '@/lib/types'
 import { getCardProducts } from '@/lib/api/cards'
+import { AiFillBox } from '@/components/mobile/AiFillBox'
 
 interface Props {
   open: boolean
@@ -122,20 +123,26 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
     if (!canSubmit) return
     setSubmitting(true)
     try {
-      const base = {
+      const base: Omit<CreditCard, 'id' | 'created_at'> = {
         holder_id: holderId,
         card_product_id: productId,
         card_number_last4: last4 || undefined,
         credit_limit: limit ? parseFloat(limit) : 0,
         billing_day: billingDay ? parseInt(billingDay) : 1,
-        status: 'active' as const,
+        status: 'active',
+        card_type: cardType,
+        loan_due_day: isLoan && loanDueDay ? parseInt(loanDueDay) : undefined,
+        override_billing_day: overrideEnabled && overrideBillingDay ? parseInt(overrideBillingDay) : undefined,
+        override_due_type: overrideEnabled ? overrideDueType : null,
+        override_due_value: overrideEnabled && overrideDueValue ? parseInt(overrideDueValue) : undefined,
       }
 
-      await onSubmit(base as any)
+      await onSubmit(base)
       onClose()
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err)
-      alert('保存卡片失败: ' + (err.message || JSON.stringify(err)))
+      const message = err instanceof Error ? err.message : JSON.stringify(err)
+      alert('保存卡片失败: ' + message)
     } finally {
       setSubmitting(false)
     }
@@ -148,6 +155,21 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
+          <AiFillBox mode="card" onFill={(data) => {
+            if (data.bank_name) setSelectedBank(String(data.bank_name))
+            if (data.card_number_last4) setLast4(String(data.card_number_last4).slice(-4))
+            if (data.billing_day) {
+              const d = String(data.billing_day).replace(/\D/g, '')
+              if (d) setBillingDay(d)
+            }
+            if (data.card_name) {
+              const match = products.find(p => p.card_name === data.card_name || p.card_name.includes(String(data.card_name)))
+              if (match) {
+                setSelectedBank(match.bank_name)
+                setProductId(match.id)
+              }
+            }
+          }} />
 
           {/* 卡类型选择 */}
           <Box>

@@ -2,11 +2,13 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Box, Typography, Fab, Skeleton, Stack, Container } from '@mui/material'
+import { Box, Typography, Fab, Skeleton, Stack, Container, Button, Snackbar, Alert } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
+import MergeTypeIcon from '@mui/icons-material/MergeType'
 import { getHolders, createHolder } from '@/lib/api/holders'
 import { HolderCard } from '@/components/mobile/HolderCard'
 import { HolderForm } from '@/components/mobile/HolderForm'
+import { MergeHoldersDialog } from '@/components/mobile/MergeHoldersDialog'
 import { useAuth } from '@/lib/auth'
 import { db } from '@/lib/insforge'
 import type { CardHolder } from '@/lib/types'
@@ -16,6 +18,8 @@ export default function HoldersPage() {
   const [cardCounts, setCardCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false)
+  const [toast, setToast] = useState<{ open: boolean; message: string }>({ open: false, message: '' })
   const { user } = useAuth()
   const router = useRouter()
 
@@ -54,11 +58,36 @@ export default function HoldersPage() {
     loadHolders()
   }
 
+  const handleMergeSuccess = () => {
+    setToast({ open: true, message: '🎉 持卡人已成功归拢合并！名下信用卡已全部转移。' })
+    loadHolders()
+  }
+
   return (
     <Container sx={{ py: 3, pb: 10 }}>
-      <Typography variant="h5" fontWeight={700} sx={{ mb: 3 }}>
-        持卡人
-      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h5" fontWeight={800}>
+          持卡人管理
+        </Typography>
+        {holders.length > 1 && (
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<MergeTypeIcon />}
+            onClick={() => setMergeDialogOpen(true)}
+            sx={{
+              borderRadius: 'var(--radius-pill)',
+              fontWeight: 700,
+              fontSize: 12,
+              textTransform: 'none',
+              borderColor: 'var(--navy-600)',
+              color: 'var(--navy-600)',
+            }}
+          >
+            合并归拢
+          </Button>
+        )}
+      </Box>
 
       {loading ? (
         <Stack spacing={1.5}>
@@ -97,6 +126,25 @@ export default function HoldersPage() {
         onClose={() => setFormOpen(false)}
         onSubmit={handleCreate}
       />
+
+      <MergeHoldersDialog
+        open={mergeDialogOpen}
+        onClose={() => setMergeDialogOpen(false)}
+        holders={holders}
+        cardCounts={cardCounts}
+        onSuccess={handleMergeSuccess}
+      />
+
+      <Snackbar
+        open={toast.open}
+        autoHideDuration={3500}
+        onClose={() => setToast(prev => ({ ...prev, open: false }))}
+      >
+        <Alert severity="success" sx={{ borderRadius: 3, fontWeight: 600 }}>
+          {toast.message}
+        </Alert>
+      </Snackbar>
     </Container>
   )
 }
+

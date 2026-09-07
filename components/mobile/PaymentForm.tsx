@@ -12,6 +12,10 @@ interface Props {
   onSubmit: (data: { amount: number; paid_at: string; note?: string }) => Promise<void>
   totalAmount: number
   billMonth?: string
+  /** 调用方可选传入：账单 ID（预留附件场景，当前对话框未使用） */
+  billId?: string
+  /** 调用方可选传入：附件变更后的刷新回调（预留附件场景，当前未使用） */
+  onAttachmentChanged?: () => Promise<void>
 }
 
 export function PaymentForm({ open, onClose, onSubmit, totalAmount, billMonth }: Props) {

@@ -38,6 +38,7 @@ export interface GmailLedgerEntry {
   last_payment_update: string | null
   matched_card_id: string | null
   matched_bill_id: string | null
+  created_by: string | null
   created_at: string
   updated_at: string
   // Joined fields (not in DB)

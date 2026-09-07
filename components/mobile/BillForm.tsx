@@ -10,6 +10,7 @@ import { format } from 'date-fns'
 import { insforge } from '@/lib/insforge'
 import { createBill, updateBill } from '@/lib/api/bills'
 import type { CreditCard, CardProduct, Bill } from '@/lib/types'
+import { AiFillBox } from '@/components/mobile/AiFillBox'
 
 interface BillFormData {
   card_id: string
@@ -181,6 +182,16 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           {error && <Alert severity="error">{error}</Alert>}
+          <AiFillBox mode="bill" onFill={(data) => {
+            setForm(prev => ({
+              ...prev,
+              ...(data.bill_amount != null ? { bill_amount: String(data.bill_amount).replace(/[,¥元\s]/g, '') } : {}),
+              ...(data.min_payment != null ? { min_payment: String(data.min_payment).replace(/[,¥元\s]/g, '') } : {}),
+              ...(data.due_date ? { due_date: String(data.due_date).slice(0, 10) } : {}),
+              ...(data.statement_date ? { statement_date: String(data.statement_date).slice(0, 10) } : {}),
+              ...(data.bill_month ? { bill_month: String(data.bill_month).slice(0, 7) } : {}),
+            }))
+          }} />
 
           {existingBillId && !existingBill && (
             <Alert severity="info" sx={{ py: 0.5 }}>

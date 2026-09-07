@@ -4,10 +4,10 @@
 import { Card, CardActionArea, CardContent, Typography, Box, LinearProgress } from '@mui/material'
 import { CreditCard as CreditCardIcon } from '@mui/icons-material'
 import { formatAmount } from '@/lib/utils'
-import type { CreditCard } from '@/lib/types'
+import type { CreditCard, CardProduct } from '@/lib/types'
 
 interface Props {
-  card: CreditCard
+  card: CreditCard & { card_product?: CardProduct; bank_name?: string; card_name?: string }
   usedAmount?: number
   onClick?: () => void
 }
@@ -34,7 +34,10 @@ const BANK_COLORS: Record<string, string> = {
 export function CreditCardVisual({ card, usedAmount = 0, onClick }: Props) {
   const available = card.credit_limit - usedAmount
   const usagePercent = card.credit_limit > 0 ? (usedAmount / card.credit_limit) * 100 : 0
-  const bankColor = BANK_COLORS[card.bank_name] || '#1976d2'
+  const bankName = card.bank_name ?? card.card_product?.bank_name ?? '银行卡'
+  const cardName = card.card_name ?? card.card_product?.card_name ?? '信用卡'
+  const bankColor = BANK_COLORS[bankName] || '#1976d2'
+  const currency = card.card_product?.currency ?? 'CNY'
 
   return (
     <Card sx={{ mb: 1.5, borderRadius: 3, overflow: 'hidden' }}>
@@ -47,11 +50,11 @@ export function CreditCardVisual({ card, usedAmount = 0, onClick }: Props) {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <CreditCardIcon fontSize="small" />
             <Typography variant="subtitle2" fontWeight={600}>
-              {card.bank_name}
+              {bankName}
             </Typography>
           </Box>
           <Typography variant="caption" sx={{ opacity: 0.8 }}>
-            {card.card_name} {card.card_number_last4 ? `•••• ${card.card_number_last4}` : ''}
+            {cardName} {card.card_number_last4 ? `•••• ${card.card_number_last4}` : ''}
           </Typography>
         </Box>
 
@@ -59,10 +62,10 @@ export function CreditCardVisual({ card, usedAmount = 0, onClick }: Props) {
         <CardContent sx={{ pt: 1.5, '&:last-child': { pb: 1.5 } }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
             <Typography variant="body2" color="text.secondary">
-              已用 {formatAmount(usedAmount, card.currency)}
+              已用 {formatAmount(usedAmount, currency)}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              额度 {formatAmount(card.credit_limit, card.currency)}
+              额度 {formatAmount(card.credit_limit, currency)}
             </Typography>
           </Box>
 
@@ -74,7 +77,7 @@ export function CreditCardVisual({ card, usedAmount = 0, onClick }: Props) {
           />
 
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            可用 {formatAmount(available, card.currency)}
+            可用 {formatAmount(available, currency)}
           </Typography>
         </CardContent>
       </CardActionArea>

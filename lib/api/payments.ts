@@ -1,6 +1,7 @@
 // lib/api/payments.ts
 import { insforge } from '../insforge'
 import type { Payment } from '../types'
+import type { PaymentWithBill } from './bills'
 import { generateIdempotencyKey } from '../utils'
 
 export async function getPaymentsByBill(billId: string): Promise<Payment[]> {
@@ -42,4 +43,16 @@ export async function recalcBillStatus(billId: string, billAmount: number): Prom
     .update({ status })
     .eq('id', billId)
   if (error) throw error
+}
+
+
+export async function getPaymentsByHolder(holderId: string): Promise<PaymentWithBill[]> {
+  const { data, error } = await insforge.database
+    .from('payments')
+    .select('*, bill:bills!inner(*, credit_cards!inner(*, card_product:card_products(*)))')
+    .eq('bill.credit_cards.holder_id', holderId)
+    .order('paid_at', { ascending: false })
+
+  if (error) throw error
+  return (data || []) as PaymentWithBill[]
 }
