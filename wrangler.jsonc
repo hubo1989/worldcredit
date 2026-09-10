@@ -26,5 +26,10 @@
       "binding": "ATTACHMENTS",
       "bucket_name": "worldcredit-attachments"
     }
-  ]
+  ],
+  "triggers": {
+    "crons": [
+      "0 9 * * *"
+    ]
+  }
 }
