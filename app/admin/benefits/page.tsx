@@ -84,7 +84,7 @@ export default function BenefitsPage() {
 
   const handleToggleStatus = async (benefit: any) => {
     try {
-      await updateBenefit(benefit.id, { is_active: !benefit.is_active })
+      await updateBenefit(benefit.id, { is_active: !benefit.is_active } as any)
       setBenefits(benefits.map(b => b.id === benefit.id ? { ...b, is_active: !b.is_active } : b))
     } catch (error) {
       console.error('Failed to toggle status:', error)

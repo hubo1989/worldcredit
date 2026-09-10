@@ -130,7 +130,7 @@ export default function CardProductsPage() {
         const updated = await updateCardProduct(currentProduct.id, currentProduct)
         setProducts(products.map(p => p.id === currentProduct.id ? { ...p, ...updated } : p))
       } else {
-        const created = await createCardProduct(currentProduct)
+        const created = await createCardProduct(currentProduct) as any
         setProducts([created, ...products])
       }
       setDialogOpen(false)
