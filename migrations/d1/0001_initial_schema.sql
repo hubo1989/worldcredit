@@ -9,7 +9,7 @@ PRAGMA foreign_keys = ON;
 -- Users & Auth (replaces InsForge Auth)
 -- ============================================
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
@@ -22,7 +22,7 @@ CREATE TABLE users (
 -- Platform catalog data (admin maintained)
 -- ============================================
 
-CREATE TABLE banks (
+CREATE TABLE IF NOT EXISTS banks (
   id TEXT PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
   full_name TEXT,
@@ -34,7 +34,7 @@ CREATE TABLE banks (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE card_products (
+CREATE TABLE IF NOT EXISTS card_products (
   id TEXT PRIMARY KEY,
   country TEXT NOT NULL DEFAULT 'CN',
   bank_id TEXT REFERENCES banks(id) ON DELETE SET NULL,
@@ -53,7 +53,7 @@ CREATE TABLE card_products (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE benefits (
+CREATE TABLE IF NOT EXISTS benefits (
   id TEXT PRIMARY KEY,
   card_product_id TEXT NOT NULL REFERENCES card_products(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -65,7 +65,7 @@ CREATE TABLE benefits (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE promos (
+CREATE TABLE IF NOT EXISTS promos (
   id TEXT PRIMARY KEY,
   card_product_id TEXT REFERENCES card_products(id) ON DELETE SET NULL,
   bank_id TEXT REFERENCES banks(id) ON DELETE SET NULL,
@@ -85,7 +85,7 @@ CREATE TABLE promos (
 -- User data
 -- ============================================
 
-CREATE TABLE card_holders (
+CREATE TABLE IF NOT EXISTS card_holders (
   id TEXT PRIMARY KEY,
   created_by TEXT NOT NULL,
   managed_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -96,7 +96,7 @@ CREATE TABLE card_holders (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE credit_cards (
+CREATE TABLE IF NOT EXISTS credit_cards (
   id TEXT PRIMARY KEY,
   holder_id TEXT NOT NULL REFERENCES card_holders(id) ON DELETE CASCADE,
   card_product_id TEXT NOT NULL REFERENCES card_products(id) ON DELETE RESTRICT,
@@ -112,7 +112,7 @@ CREATE TABLE credit_cards (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE bills (
+CREATE TABLE IF NOT EXISTS bills (
   id TEXT PRIMARY KEY,
   card_id TEXT NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
   bill_month TEXT NOT NULL,
@@ -127,7 +127,7 @@ CREATE TABLE bills (
   UNIQUE(card_id, bill_month)
 );
 
-CREATE TABLE payments (
+CREATE TABLE IF NOT EXISTS payments (
   id TEXT PRIMARY KEY,
   bill_id TEXT NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
   amount REAL NOT NULL CHECK (amount > 0),
@@ -138,7 +138,7 @@ CREATE TABLE payments (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE benefit_usages (
+CREATE TABLE IF NOT EXISTS benefit_usages (
   id TEXT PRIMARY KEY,
   benefit_id TEXT NOT NULL REFERENCES benefits(id) ON DELETE CASCADE,
   used_at TEXT NOT NULL DEFAULT (date('now')),
@@ -146,7 +146,7 @@ CREATE TABLE benefit_usages (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE promo_usages (
+CREATE TABLE IF NOT EXISTS promo_usages (
   id TEXT PRIMARY KEY,
   promo_id TEXT NOT NULL REFERENCES promos(id) ON DELETE CASCADE,
   card_id TEXT REFERENCES credit_cards(id) ON DELETE SET NULL,
@@ -159,7 +159,7 @@ CREATE TABLE promo_usages (
 -- System config
 -- ============================================
 
-CREATE TABLE system_settings (
+CREATE TABLE IF NOT EXISTS system_settings (
   key TEXT PRIMARY KEY,
   value TEXT, -- JSON string
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -169,7 +169,7 @@ CREATE TABLE system_settings (
 -- PWA Push Notifications
 -- ============================================
 
-CREATE TABLE push_subscriptions (
+CREATE TABLE IF NOT EXISTS push_subscriptions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   endpoint TEXT NOT NULL UNIQUE,
@@ -178,7 +178,7 @@ CREATE TABLE push_subscriptions (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE reminder_logs (
+CREATE TABLE IF NOT EXISTS reminder_logs (
   id TEXT PRIMARY KEY,
   bill_id TEXT REFERENCES bills(id) ON DELETE CASCADE,
   card_id TEXT REFERENCES credit_cards(id) ON DELETE CASCADE,
@@ -193,7 +193,7 @@ CREATE TABLE reminder_logs (
 -- Bill Email Sources
 -- ============================================
 
-CREATE TABLE bill_email_sources (
+CREATE TABLE IF NOT EXISTS bill_email_sources (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   email TEXT NOT NULL,
@@ -207,7 +207,7 @@ CREATE TABLE bill_email_sources (
 -- Record Attachments (R2)
 -- ============================================
 
-CREATE TABLE record_attachments (
+CREATE TABLE IF NOT EXISTS record_attachments (
   id TEXT PRIMARY KEY,
   record_type TEXT NOT NULL,
   record_id TEXT NOT NULL,
@@ -225,7 +225,7 @@ CREATE TABLE record_attachments (
 -- Email parse logs
 -- ============================================
 
-CREATE TABLE email_parse_logs (
+CREATE TABLE IF NOT EXISTS email_parse_logs (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   from_email TEXT,
@@ -241,7 +241,7 @@ CREATE TABLE email_parse_logs (
 -- User preferences
 -- ============================================
 
-CREATE TABLE user_preferences (
+CREATE TABLE IF NOT EXISTS user_preferences (
   id TEXT PRIMARY KEY,
   user_id TEXT UNIQUE NOT NULL,
   display_config TEXT NOT NULL DEFAULT '{"privacy_mode":false,"show_min_payment":true,"show_statement_date":true,"show_annual_fee":true,"show_card_last4":true,"default_currency":"CNY"}',
@@ -253,7 +253,7 @@ CREATE TABLE user_preferences (
 -- Gmail ledger (from InsForge migrations)
 -- ============================================
 
-CREATE TABLE gmail_ledger_entries (
+CREATE TABLE IF NOT EXISTS gmail_ledger_entries (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   gmail_message_id TEXT UNIQUE NOT NULL,
@@ -268,7 +268,7 @@ CREATE TABLE gmail_ledger_entries (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE bill_import_drafts (
+CREATE TABLE IF NOT EXISTS bill_import_drafts (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   source_type TEXT NOT NULL DEFAULT 'gmail',
@@ -306,3 +306,31 @@ CREATE INDEX idx_bill_email_sources_email ON bill_email_sources(email) WHERE is_
 CREATE INDEX idx_record_attachments_record ON record_attachments(record_type, record_id, created_at DESC);
 CREATE INDEX idx_email_parse_logs_user ON email_parse_logs(user_id, created_at DESC);
 CREATE INDEX idx_user_preferences_user ON user_preferences(user_id);
+
+-- ============================================
+-- Notification preferences & history (from Postgres migrations)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS notification_preferences (
+  user_id TEXT PRIMARY KEY,
+  bill_due_enabled INTEGER NOT NULL DEFAULT 1,
+  overdue_enabled INTEGER NOT NULL DEFAULT 1,
+  due_days_before INTEGER NOT NULL DEFAULT 3,
+  notify_time TEXT NOT NULL DEFAULT '09:00',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS notification_history (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  notification_key TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+  status TEXT NOT NULL DEFAULT 'sent' CHECK (status IN ('sent', 'failed', 'skipped')),
+  error TEXT,
+  UNIQUE(user_id, notification_key)
+);
+
+CREATE INDEX idx_notification_history_user ON notification_history(user_id, sent_at DESC);
