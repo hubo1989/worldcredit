@@ -2,11 +2,17 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { insforge } from "./insforge";
-import type { UserSchema } from "@insforge/sdk";
+
+interface AuthUser {
+  id: string;
+  email: string;
+  name: string | null;
+  role: 'admin' | 'member';
+  created_at: string;
+}
 
 interface AuthContextType {
-  user: UserSchema | null;
+  user: AuthUser | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, name: string) => Promise<{ requireEmailVerification: boolean }>;
@@ -19,14 +25,14 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<UserSchema | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 获取当前用户（OAuth 回跳时 SDK 会在初始化阶段自动完成 code 交换）
     const checkUser = async () => {
       try {
-        const { data } = await insforge.auth.getCurrentUser();
+        const res = await fetch('/api/auth/session');
+        const data = await res.json();
         if (data?.user) {
           setUser(data.user);
         }
@@ -36,57 +42,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       }
     };
-
     checkUser();
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    const { data, error } = await insforge.auth.signInWithPassword({ email, password });
-    if (error) throw error;
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '登录失败');
     if (data?.user) {
       setUser(data.user);
     }
   };
 
   const signUp = async (email: string, password: string, name: string) => {
-    const { data, error } = await insforge.auth.signUp({
-      email,
-      password,
-      name: name || undefined,
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, name }),
     });
-    if (error) throw error;
-    const created = data?.user ?? null;
-    if (created?.emailVerified) {
-      setUser(created);
-    }
-    return { requireEmailVerification: !created || !created.emailVerified };
-  };
-
-  const verifyEmail = async (email: string, otp: string) => {
-    const { data, error } = await insforge.auth.verifyEmail({ otp, email });
-    if (error) throw error;
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '注册失败');
     if (data?.user) {
       setUser(data.user);
     }
-  };
-
-  const resendVerificationEmail = async (email: string) => {
-    const { error } = await insforge.auth.resendVerificationEmail({ email });
-    if (error) throw error;
-  };
-
-  const signInWithGoogle = async () => {
-    const { error } = await insforge.auth.signInWithOAuth({
-      provider: "google",
-      redirectTo: `${window.location.origin}/login`,
-    });
-    if (error) throw error;
+    return { requireEmailVerification: false };
   };
 
   const signOut = async () => {
-    const { error } = await insforge.auth.signOut();
-    if (error) throw error;
+    await fetch('/api/auth/logout', { method: 'POST' });
     setUser(null);
+  };
+
+  const verifyEmail = async (_email: string, _otp: string) => {
+    throw new Error('邮箱验证暂不支持，请直接登录');
+  };
+
+  const resendVerificationEmail = async (_email: string) => {
+    throw new Error('邮箱验证暂不支持');
+  };
+
+  const signInWithGoogle = async () => {
+    throw new Error('Google OAuth 暂不支持，请使用邮箱登录');
   };
 
   return (
