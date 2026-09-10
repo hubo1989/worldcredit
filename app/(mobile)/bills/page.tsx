@@ -26,7 +26,7 @@ import {
 } from '@/lib/api/bills'
 import { syncGmailLedgerToCardsAndBills } from '@/lib/api/sync-gmail'
 import { getHolders } from '@/lib/api/holders'
-import { insforge } from '@/lib/insforge'
+import { clientDb } from '@/lib/client-db'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
 import { format } from 'date-fns'
@@ -424,13 +424,13 @@ export default function BillsPage() {
         note: data.note,
       })
 
-      const { data: allPayments } = await insforge.database
+      const { data: allPayments } = await clientDb
         .from('payments')
         .select('amount')
         .eq('bill_id', selectedBill.id)
 
       const totalPaid = (allPayments || []).reduce(
-        (sum: number, p: { amount: number }) => sum + Number(p.amount), 0
+        (sum, p) => sum + Number(p.amount), 0
       )
       const billAmount = Number(selectedBill.bill_amount)
 

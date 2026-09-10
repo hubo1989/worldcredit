@@ -9,7 +9,7 @@ import {
 } from '@mui/material'
 import CheckIcon from '@mui/icons-material/CheckCircleOutline'
 import { useRouter } from 'next/navigation'
-import { insforge } from '@/lib/insforge'
+import { clientDb } from '@/lib/client-db'
 import { getBillDashboardItems, markBillAsPaid, markAllOverdueBillsAsPaid, type BillDashboardItem } from '@/lib/api/bills'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
 import { useAuth } from '@/lib/auth'
@@ -123,12 +123,12 @@ export default function DashboardPage() {
     try {
       // 并行：持卡人 / 卡片 / 账单
       const [holdersRes, cardsRes, allBills] = await Promise.all([
-        insforge.database
+        clientDb
           .from('card_holders')
           .select('*')
           .eq('created_by', user.id)
           .order('created_at', { ascending: true }),
-        insforge.database
+        clientDb
           .from('credit_cards')
           .select('id, holder_id, card_holders!inner(created_by)')
           .eq('card_holders.created_by', user.id),
@@ -137,7 +137,7 @@ export default function DashboardPage() {
       if (holdersRes.error) throw holdersRes.error
       if (cardsRes.error) throw cardsRes.error
 
-      setHolders((holdersRes.data as CardHolder[]) || [])
+      setHolders((holdersRes.data as unknown as CardHolder[]) || [])
       setCards((cardsRes.data || []).map((c: any) => ({ id: c.id, holder_id: c.holder_id })))
       setBills(allBills)
     } catch (err: any) {

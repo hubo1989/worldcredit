@@ -7,7 +7,7 @@ import {
   CircularProgress
 } from '@mui/material'
 import { format } from 'date-fns'
-import { insforge } from '@/lib/insforge'
+import { clientDb } from '@/lib/client-db'
 import { createBill, updateBill } from '@/lib/api/bills'
 import type { CreditCard, CardProduct, Bill } from '@/lib/types'
 import { AiFillBox } from '@/components/mobile/AiFillBox'
@@ -50,7 +50,7 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
   // 加载所有信用卡
   useEffect(() => {
     if (!open) return
-    insforge.database
+    clientDb
       .from('credit_cards')
       .select('*')
       .then(async ({ data: rawCards, error: e }) => {
@@ -58,7 +58,7 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
         const pIds = Array.from(new Set(rawCards.map((c: any) => c.card_product_id).filter(Boolean)))
         let pMap: Record<string, CardProduct> = {}
         if (pIds.length > 0) {
-          const { data: pData } = await insforge.database
+          const { data: pData } = await clientDb
             .from('card_products')
             .select('*')
             .in('id', pIds)
@@ -91,7 +91,7 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
   // 当选择信用卡或账单月份变化时，检查当月账单是否已存在
   useEffect(() => {
     if (!form.card_id || !form.bill_month || existingBill) return
-    insforge.database
+    clientDb
       .from('bills')
       .select('id, bill_amount, min_payment, statement_date, due_date')
       .eq('card_id', form.card_id)

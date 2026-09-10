@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Snackbar, Alert, Button } from '@mui/material'
 import BellIcon from '@mui/icons-material/NotificationsActive'
-import { insforge } from '@/lib/insforge'
+import { clientDb } from '@/lib/client-db'
 import { useAuth } from '@/lib/auth'
 
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string
@@ -27,17 +27,26 @@ async function savePushSubscription(
   sub: globalThis.PushSubscription
 ): Promise<void> {
   const json = sub.toJSON()
-  const { error } = await insforge.database
-    .from('push_subscriptions')
-    .upsert(
-      {
+  const existing = await clientDb.from('push_subscriptions').select('id').eq('endpoint', sub.endpoint).maybeSingle()
+  let error: { message: string } | null = null
+  if (existing?.data) {
+    const result = await clientDb.from('push_subscriptions')
+      .eq('endpoint', sub.endpoint)
+      .update({
         user_id: userId,
-        endpoint: sub.endpoint,
         p256dh: json.keys?.p256dh ?? '',
         auth: json.keys?.auth ?? '',
-      },
-      { onConflict: 'endpoint' }
-    )
+      })
+    error = result.error
+  } else {
+    const result = await clientDb.from('push_subscriptions').insert({
+      user_id: userId,
+      endpoint: sub.endpoint,
+      p256dh: json.keys?.p256dh ?? '',
+      auth: json.keys?.auth ?? '',
+    })
+    error = result.error
+  }
   if (error) throw error
 }
 

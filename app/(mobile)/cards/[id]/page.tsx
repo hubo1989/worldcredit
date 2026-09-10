@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Container, Box, Typography, Stack, IconButton, Paper } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import { format } from 'date-fns'
-import { insforge } from '@/lib/insforge'
+import { clientDb } from '@/lib/client-db'
 import { StatusBadge } from '@/components/mobile/WcBadge'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import { ChevronRightIcon, ClockIcon } from '@/components/icons/WcIcon'
@@ -35,7 +35,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       setError(null)
 
       // 1. 卡 + 卡产品 + 持卡人
-      const { data: rawCard, error: e1 } = await insforge.database
+      const { data: rawCard, error: e1 } = await clientDb
         .from('credit_cards')
         .select('*, card_product:card_products(*), card_holders(*)')
         .eq('id', id)
@@ -43,10 +43,10 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       if (e1) throw e1
       if (!rawCard) throw new Error('卡片不存在')
 
-      const cardData = rawCard as CardDetail
+      const cardData = rawCard as unknown as CardDetail
 
       // 2. 该卡账单（按 due_date desc，limit 3）+ 还款聚合
-      const { data: rawBills, error: e2 } = await insforge.database
+      const { data: rawBills, error: e2 } = await clientDb
         .from('bills')
         .select('*, payments(amount)')
         .eq('card_id', id)
@@ -72,18 +72,18 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       // 3. 权益 + 使用记录
       let benefitList: Array<Benefit & { used: number }> = []
       if (cardData.card_product_id) {
-        const { data: rawBenefits } = await insforge.database
+        const { data: rawBenefits } = await clientDb
           .from('benefits')
           .select('*')
           .eq('card_product_id', cardData.card_product_id)
-        const bs = (rawBenefits || []) as Benefit[]
+        const bs = (rawBenefits || []) as unknown as Benefit[]
         if (bs.length > 0) {
           const ids = bs.map(b => b.id)
-          const { data: usages } = await insforge.database
+          const { data: usages } = await clientDb
             .from('benefit_usages')
             .select('benefit_id, used_at')
             .in('benefit_id', ids)
-          const allUsages = (usages || []) as BenefitUsage[]
+          const allUsages = (usages || []) as unknown as BenefitUsage[]
           const now = new Date()
          benefitList = bs.map(b => {
            const periodUsages = allUsages.filter(u => {

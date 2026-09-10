@@ -8,7 +8,7 @@ import { PaymentForm } from './PaymentForm'
 import { CardForm } from './CardForm'
 import { getHolders } from '@/lib/api/holders'
 import { createPayment, updateBillStatus } from '@/lib/api/bills'
-import { insforge } from '@/lib/insforge'
+import { clientDb } from '@/lib/client-db'
 import type { CardHolder } from '@/lib/types'
 
 /**
@@ -60,7 +60,7 @@ export function QuickActionSheet({ open, onClose, onChanged }: Props) {
   const handlePickBill = async () => {
     // 拉取未还账单供选择
     try {
-      const { data, error } = await insforge.database
+      const { data, error } = await clientDb
         .from('bills')
         .select('id, bill_month, bill_amount, status')
         .neq('status', 'paid')
@@ -84,7 +84,7 @@ export function QuickActionSheet({ open, onClose, onChanged }: Props) {
       note: data.note,
     })
     // 重算状态
-    const { data: allPayments } = await insforge.database
+    const { data: allPayments } = await clientDb
       .from('payments')
       .select('amount')
       .eq('bill_id', pickedBill.id)
@@ -99,18 +99,16 @@ export function QuickActionSheet({ open, onClose, onChanged }: Props) {
 
   const handleCardSubmit = async (data: any) => {
     if (!pickedHolder) return
-    const { data: created, error } = await insforge.database
+    const { data: created, error } = await clientDb
       .from('credit_cards')
-      .insert([{
+      .insert({
         holder_id: pickedHolder.id,
         card_product_id: data.card_product_id,
         card_number_last4: data.card_number_last4 || null,
         credit_limit: Number(data.credit_limit) || 0,
         billing_day: Number(data.billing_day) || 1,
         status: 'active',
-      }])
-      .select()
-      .single()
+      })
     if (error) throw error
     onChanged?.()
     return created

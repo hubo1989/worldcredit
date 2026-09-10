@@ -20,7 +20,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import CreditCardIcon from '@mui/icons-material/CreditCard'
 import FilterListIcon from '@mui/icons-material/FilterList'
-import { insforge } from '@/lib/insforge'
+import { clientDb } from '@/lib/client-db'
 import { useAuth } from '@/lib/auth'
 import type { Promo } from '@/lib/types'
 
@@ -120,7 +120,7 @@ export default function PromosPage() {
       setLoading(true)
       
       // 1. 获取 DB 中的优惠列表
-      const { data: dbPromos } = await insforge.database
+      const { data: dbPromos } = await clientDb
         .from('promos')
         .select('*')
         .order('end_date', { ascending: true })
@@ -143,7 +143,7 @@ export default function PromosPage() {
 
       // 2. 获取用户卡包银行
       if (user?.id) {
-        const { data: cards } = await insforge.database
+        const { data: cards } = await clientDb
           .from('credit_cards')
           .select('bank_name, card_name')
         
@@ -211,7 +211,7 @@ export default function PromosPage() {
     }
     setSubmitting(true)
     try {
-      await insforge.database
+      await clientDb
         .from('promos')
         .insert([{
           bank_name: newBank,

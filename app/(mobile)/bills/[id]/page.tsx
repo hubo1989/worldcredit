@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Container, Box, Typography, Stack, IconButton, Button, Paper } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import { format } from 'date-fns'
-import { insforge } from '@/lib/insforge'
+import { clientDb } from '@/lib/client-db'
 import { createPayment, updateBillStatus } from '@/lib/api/bills'
 import { StatusBadge, SourceBadge } from '@/components/mobile/WcBadge'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
@@ -51,7 +51,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     try {
       setLoading(true)
       setError(null)
-      const { data, error: e } = await insforge.database
+      const { data, error: e } = await clientDb
         .from('bills')
         .select('*, card:credit_cards(*, card_holders(*), card_product:card_products(*)), payments(*)')
         .eq('id', id)
@@ -85,7 +85,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
       note: data.note,
     })
     // 重算状态
-    const { data: allPayments } = await insforge.database
+    const { data: allPayments } = await clientDb
       .from('payments')
       .select('amount')
       .eq('bill_id', bill.id)

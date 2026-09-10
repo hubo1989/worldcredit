@@ -10,7 +10,7 @@ import { HolderCard } from '@/components/mobile/HolderCard'
 import { HolderForm } from '@/components/mobile/HolderForm'
 import { MergeHoldersDialog } from '@/components/mobile/MergeHoldersDialog'
 import { useAuth } from '@/lib/auth'
-import { db } from '@/lib/insforge'
+import { clientDb as db } from '@/lib/client-db'
 import type { CardHolder } from '@/lib/types'
 
 export default function HoldersPage() {
