@@ -1,5 +1,5 @@
 // lib/api/gmail-ledger.ts
-import { db } from '../insforge'
+import { query, queryOne, execute } from '../db'
 
 export interface GmailLedgerEntry {
   id: string
@@ -120,26 +120,32 @@ function extractHolderFromEvidence(evidence: string | null): string | undefined 
 async function buildCardHolderMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>()
   try {
-    const { data: cards } = await db.from('credit_cards').select('id,holder_id,card_number_last4')
+    const { data: cards } = await query<{ id: string; holder_id: string; card_number_last4: string | null; card_product_id: string }>(
+      'SELECT id, holder_id, card_number_last4, card_product_id FROM credit_cards'
+    )
     if (!cards) return map
 
-    const productIds = [...new Set(cards.map((c: any) => c.card_product_id).filter(Boolean))]
+    const productIds = [...new Set(cards.map((c) => c.card_product_id).filter(Boolean))]
     let products: { id: string; bank_name: string }[] = []
     if (productIds.length > 0) {
-      const { data: pd } = await db.from('card_products').select('id,bank_name').in('id', productIds)
+      const { data: pd } = await query<{ id: string; bank_name: string }>(
+        `SELECT id, bank_name FROM card_products WHERE id IN (${productIds.map(() => '?').join(',')})`, productIds
+      )
       products = (pd || []) as typeof products
     }
     const productMap = new Map(products.map(p => [p.id, p.bank_name]))
 
-    const holderIds = [...new Set(cards.map((c: any) => c.holder_id).filter(Boolean))]
+    const holderIds = [...new Set(cards.map((c) => c.holder_id).filter(Boolean))]
     let holders: { id: string; name: string }[] = []
     if (holderIds.length > 0) {
-      const { data: hd } = await db.from('card_holders').select('id,name').in('id', holderIds)
+      const { data: hd } = await query<{ id: string; name: string }>(
+        `SELECT id, name FROM card_holders WHERE id IN (${holderIds.map(() => '?').join(',')})`, holderIds
+      )
       holders = (hd || []) as typeof holders
     }
     const holderMap = new Map(holders.map(h => [h.id, h.name]))
 
-    for (const card of cards as any[]) {
+    for (const card of cards) {
       if (!card.card_number_last4) continue
       const bname = productMap.get(card.card_product_id) || ''
       const hname = holderMap.get(card.holder_id) || ''
@@ -246,19 +252,24 @@ export async function getGmailLedgerEntries(options?: {
   limit?: number
   offset?: number
 }): Promise<GmailLedgerEntry[]> {
-  let query = db.from('gmail_ledger_entries').select('*')
-
-  if (options?.status) query = query.eq('payment_status', options.status)
-  if (options?.bank) query = query.ilike('bank', `%${options.bank}%`)
-
-  query = query.order('due_date', { ascending: true, nullsFirst: false })
-    .order('created_at', { ascending: false })
-
+  const conditions: string[] = []
+  const params: unknown[] = []
+  if (options?.status) {
+    conditions.push('payment_status = ?')
+    params.push(options.status)
+  }
+  if (options?.bank) {
+    conditions.push('bank LIKE ?')
+    params.push(`%${options.bank}%`)
+  }
+  const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''
   const fetchLimit = Math.min(options?.limit ? options.limit * 3 : 500, 500)
-  query = query.limit(fetchLimit)
 
-  const { data, error } = await query
-  if (error) throw error
+  const { data, error } = await query<GmailLedgerEntry>(
+    `SELECT * FROM gmail_ledger_entries${where} ORDER BY due_date ASC, created_at DESC LIMIT ?`,
+    [...params, fetchLimit]
+  )
+  if (error) throw new Error(error.message)
 
   let entries = (data || []) as GmailLedgerEntry[]
 
@@ -331,20 +342,26 @@ export async function markPayment(ledgerId: string, updates: {
   payment_note?: string
   payment_date?: string
 }): Promise<GmailLedgerEntry> {
-  const now = new Date().toISOString()
-  const { data, error } = await db
-    .from('gmail_ledger_entries')
-    .update({
-      ...updates,
-      last_payment_update: now,
-      updated_at: now,
-    })
-    .eq('ledger_id', ledgerId)
-    .select()
-    .single()
+  const ts = new Date().toISOString()
+  const fields: string[] = []
+  const params: unknown[] = []
+  if (updates.paid_amount !== undefined) { fields.push('paid_amount = ?'); params.push(updates.paid_amount) }
+  if (updates.remaining_amount !== undefined) { fields.push('remaining_amount = ?'); params.push(updates.remaining_amount) }
+  if (updates.completed !== undefined) { fields.push('completed = ?'); params.push(updates.completed ? 1 : 0) }
+  if (updates.payment_status !== undefined) { fields.push('payment_status = ?'); params.push(updates.payment_status) }
+  if (updates.payment_note !== undefined) { fields.push('payment_note = ?'); params.push(updates.payment_note) }
+  if (updates.payment_date !== undefined) { fields.push('payment_date = ?'); params.push(updates.payment_date) }
+  fields.push('last_payment_update = ?', 'updated_at = ?')
+  params.push(ts, ts, ledgerId)
 
-  if (error) throw error
-  return data as GmailLedgerEntry
+  const { error } = await execute(`UPDATE gmail_ledger_entries SET ${fields.join(', ')} WHERE ledger_id = ?`, params)
+  if (error) throw new Error(error.message)
+
+  const { data: updated } = await queryOne<GmailLedgerEntry>(
+    'SELECT * FROM gmail_ledger_entries WHERE ledger_id = ?', [ledgerId]
+  )
+  if (!updated) throw new Error('记录不存在')
+  return updated
 }
 
 /** 获取银行列表 */

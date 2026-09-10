@@ -255,17 +255,35 @@ CREATE TABLE IF NOT EXISTS user_preferences (
 
 CREATE TABLE IF NOT EXISTS gmail_ledger_entries (
   id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  gmail_message_id TEXT UNIQUE NOT NULL,
-  thread_id TEXT,
-  from_email TEXT,
+  ledger_id TEXT UNIQUE NOT NULL,
+  bank TEXT NOT NULL,
+  account_tail TEXT,
+  kind TEXT NOT NULL DEFAULT '信用卡',
+  region TEXT DEFAULT '国内/中国',
+  currency TEXT DEFAULT 'CNY',
+  statement_amount REAL DEFAULT 0,
+  statement_amount_raw TEXT,
+  minimum_payment REAL DEFAULT 0,
+  minimum_payment_raw TEXT,
+  due_date TEXT,
+  statement_date TEXT,
   subject TEXT,
-  snippet TEXT,
-  internal_date TEXT,
-  label_ids TEXT, -- JSON array string
-  raw_text TEXT,
-  parsed_bill TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  source TEXT,
+  message_id TEXT,
+  thread_id TEXT,
+  evidence TEXT,
+  attachment_path TEXT,
+  paid_amount REAL DEFAULT 0,
+  remaining_amount REAL DEFAULT 0,
+  completed INTEGER NOT NULL DEFAULT 0,
+  payment_status TEXT NOT NULL DEFAULT '未还款' CHECK (payment_status IN ('未还款', '部分还款', '已还清')),
+  payment_note TEXT,
+  payment_date TEXT,
+  last_payment_update TEXT,
+  matched_card_id TEXT REFERENCES credit_cards(id) ON DELETE SET NULL,
+  matched_bill_id TEXT REFERENCES bills(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS bill_import_drafts (
@@ -284,6 +302,10 @@ CREATE TABLE IF NOT EXISTS bill_import_drafts (
 -- Indexes
 -- ============================================
 
+CREATE INDEX IF NOT EXISTS idx_gmail_ledger_bank ON gmail_ledger_entries(bank);
+CREATE INDEX IF NOT EXISTS idx_gmail_ledger_due_date ON gmail_ledger_entries(due_date);
+CREATE INDEX IF NOT EXISTS idx_gmail_ledger_payment_status ON gmail_ledger_entries(payment_status);
+CREATE INDEX IF NOT EXISTS idx_gmail_ledger_matched_bill ON gmail_ledger_entries(matched_bill_id);
 CREATE INDEX idx_banks_name ON banks(name);
 CREATE INDEX idx_card_products_bank_id ON card_products(bank_id);
 CREATE INDEX idx_card_products_bank ON card_products(bank_name);
