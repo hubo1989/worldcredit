@@ -288,15 +288,18 @@ CREATE TABLE IF NOT EXISTS gmail_ledger_entries (
 
 CREATE TABLE IF NOT EXISTS bill_import_drafts (
   id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  source_type TEXT NOT NULL DEFAULT 'gmail',
-  source_id TEXT,
+  created_by TEXT NOT NULL,
   card_id TEXT,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'discarded')),
-  draft_data TEXT NOT NULL, -- JSON string
-  confirmed_bill_id TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  source_type TEXT NOT NULL DEFAULT 'text',
+  raw_text TEXT,
+  file_ref TEXT,
+  parsed_payload TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'confirmed', 'discarded')),
+  confidence REAL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  confirmed_at TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_bill_import_drafts_user ON bill_import_drafts(created_by, created_at DESC);
 
 -- ============================================
 -- Indexes
