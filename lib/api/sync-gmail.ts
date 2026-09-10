@@ -1,4 +1,4 @@
-import { insforge } from '../insforge'
+import { query, queryOne, execute, uuid, now } from '../db'
 import type { Bill, CardHolder, CardProduct, CreditCard } from '../types'
 
 type GmailLedgerSyncEntry = {
@@ -55,28 +55,21 @@ export async function syncGmailLedgerToCardsAndBills(targetUserId?: string): Pro
     throw new Error('同步邮件账单需要当前用户 ID，禁止全局同步')
   }
 
-  // 1. 只同步明确归属当前用户的 Gmail ledger 记录，禁止全局扫描/认领历史未归属数据。
-  const { data: rawEntries, error: fetchErr } = await insforge.database
-    .from('gmail_ledger_entries')
-    .select('*')
-    .eq('created_by', targetUserId)
-
-  if (fetchErr) throw fetchErr
-  const entries = (rawEntries || []) as GmailLedgerSyncEntry[]
+  const { data: rawEntries, error: fetchErr } = await query<GmailLedgerSyncEntry>(
+    'SELECT * FROM gmail_ledger_entries WHERE created_by = ?', [targetUserId]
+  )
+  if (fetchErr) throw new Error(fetchErr.message)
+  const entries = rawEntries || []
   if (entries.length === 0) {
     return { syncedCardsCount: 0, syncedBillsCount: 0 }
   }
 
-  // 2. 仅使用当前用户的持卡人，禁止把其它用户的 holder 当默认归属。
-  const { data: rawHolders, error: holderErr } = await insforge.database
-    .from('card_holders')
-    .select('id, name, aliases, created_by')
-    .eq('created_by', targetUserId)
-    .order('created_at', { ascending: true })
+  const { data: rawHolders, error: holderErr } = await query<CardHolder>(
+    'SELECT * FROM card_holders WHERE created_by = ? ORDER BY created_at ASC', [targetUserId]
+  )
+  if (holderErr) throw new Error(holderErr.message)
 
-  if (holderErr) throw holderErr
-
-  let holders = (rawHolders || []) as CardHolder[]
+  let holders = rawHolders || []
   let defaultHolderId = holders[0]?.id || null
   const holderByNameMap = new Map<string, string>()
 
@@ -93,50 +86,59 @@ export async function syncGmailLedgerToCardsAndBills(targetUserId?: string): Pro
       }
     })
   }
-
   rebuildHolderMap()
 
   if (!defaultHolderId) {
-    const { data: newHolder, error: createDefaultErr } = await insforge.database
-      .from('card_holders')
-      .insert([{ name: '主持卡人', created_by: targetUserId }])
-      .select()
-      .single()
-
-    if (createDefaultErr) throw createDefaultErr
-    if (!newHolder?.id) throw new Error('创建默认持卡人失败')
-
-    const createdHolder = newHolder as CardHolder
-    holders = [createdHolder]
-    defaultHolderId = createdHolder.id
+    const newHolderId = uuid()
+    const { error: createDefaultErr } = await execute(
+      'INSERT INTO card_holders (id, created_by, managed_by, name) VALUES (?, ?, ?, ?)',
+      [newHolderId, targetUserId, targetUserId, '主持卡人']
+    )
+    if (createDefaultErr) throw new Error(createDefaultErr.message)
+    holders = [{ id: newHolderId, created_by: targetUserId, name: '主持卡人', avatar_color: '#1976d2', created_at: now() }]
+    defaultHolderId = newHolderId
     rebuildHolderMap()
   }
 
-  // 3. 获取当前用户信用卡与产品。银行名来自 card_product，不写入 credit_cards 非法字段。
-  const { data: existingCards, error: cardsErr } = await insforge.database
-    .from('credit_cards')
-    .select('*, card_product:card_products(bank_name, card_name)')
-    .in('holder_id', holders.map(h => h.id))
+  const holderIds = holders.map(h => h.id)
+  const hPlaceholders = holderIds.map(() => '?').join(',')
+  const { data: rawCards, error: cardsErr } = await query<Record<string, unknown>>(
+    `SELECT cc.id, cc.holder_id, cc.card_product_id, cc.card_number_last4, cc.credit_limit,
+            cc.billing_day, cc.status, cc.card_type, cc.created_at,
+            cp.bank_name, cp.card_name
+     FROM credit_cards cc
+     LEFT JOIN card_products cp ON cc.card_product_id = cp.id
+     WHERE cc.holder_id IN (${hPlaceholders})`, holderIds
+  )
+  if (cardsErr) throw new Error(cardsErr.message)
 
-  if (cardsErr) throw cardsErr
+  const { data: products, error: productsErr } = await query<CardProduct>(
+    'SELECT * FROM card_products WHERE is_active = 1'
+  )
+  if (productsErr) throw new Error(productsErr.message)
 
-  const { data: products, error: productsErr } = await insforge.database
-    .from('card_products')
-    .select('*')
-    .eq('is_active', true)
-
-  if (productsErr) throw productsErr
-
-  const activeProducts = (products || []) as CardProduct[]
+  const activeProducts = products || []
   if (activeProducts.length === 0) {
     throw new Error('缺少可用卡产品，无法从邮件账单自动创建信用卡')
   }
 
   const cardByBankAndTail = new Map<string, ExistingCard>()
-  ;((existingCards || []) as ExistingCard[]).forEach(card => {
-    const tail = card.card_number_last4
+  ;(rawCards || []).forEach(row => {
+    const tail = row.card_number_last4 as string | null
     if (!tail) return
-    const bankName = normalizeBank(card.card_product?.bank_name)
+    const bankName = normalizeBank(row.bank_name as string)
+    const card: ExistingCard = {
+      id: row.id as string,
+      holder_id: row.holder_id as string,
+      card_product_id: row.card_product_id as string,
+      card_number_last4: tail,
+      credit_limit: (row.credit_limit as number) || 0,
+      billing_day: (row.billing_day as number) || 10,
+      status: 'active',
+      card_type: 'credit',
+      created_at: (row.created_at as string) || '',
+      card_product: row.bank_name ? { bank_name: row.bank_name as string, card_name: row.card_name as string } : undefined,
+    }
     cardByBankAndTail.set(`${bankName}:${tail}`, card)
     cardByBankAndTail.set(`:${tail}`, card)
   })
@@ -155,16 +157,13 @@ export async function syncGmailLedgerToCardsAndBills(targetUserId?: string): Pro
   let syncedCardsCount = 0
   let syncedBillsCount = 0
 
-  // 4. 循环同步
   for (const entry of entries) {
     const tail = entry.account_tail ? String(entry.account_tail).trim() : null
     const bankShort = normalizeBank(entry.bank)
     const amount = Number(entry.statement_amount || 0)
     const billMonth = getEntryMonth(entry)
-
     if (!tail || !entry.due_date || !billMonth || amount <= 0) continue
 
-    // A. 卡片匹配或自动创建
     const cardKey = `${bankShort}:${tail}`
     let card = cardByBankAndTail.get(cardKey) || cardByBankAndTail.get(`:${tail}`) || null
 
@@ -172,84 +171,59 @@ export async function syncGmailLedgerToCardsAndBills(targetUserId?: string): Pro
       const rawHolderName = entry.cardholder_name?.trim() || '主持卡人'
       const normalizedHolderName = normalizeName(rawHolderName)
       let holderId = holderByNameMap.get(normalizedHolderName)
-
-      // 保守匹配：只在同姓且带脱敏符号/称谓时归并，避免同姓真实用户误合并。
       if (!holderId && rawHolderName && /[*＊]|先生|女士/.test(rawHolderName)) {
         const firstChar = rawHolderName[0]
         const matched = holders.find(holder => holder.name?.[0] === firstChar)
         holderId = matched?.id
       }
-
       if (!holderId) holderId = defaultHolderId
       if (!holderId) throw new Error('缺少当前用户持卡人，无法同步账单')
 
       const product = getProductForBank(bankShort)
-      const { data: newCard, error: createCardErr } = await insforge.database
-        .from('credit_cards')
-        .insert([{
-          holder_id: holderId,
-          card_product_id: product.id,
-          card_number_last4: tail,
-          credit_limit: 50000,
-          billing_day: pickStatementDay(entry.statement_date),
-          status: 'active',
-          card_type: entry.kind?.includes('贷款') ? 'loan' : 'credit',
-        }])
-        .select('*, card_product:card_products(bank_name, card_name)')
-        .single()
+      const newCardId = uuid()
+      const { error: createCardErr } = await execute(
+        `INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type)
+         VALUES (?, ?, ?, ?, 50000, ?, ?, ?)`,
+        [newCardId, holderId, product.id, tail, pickStatementDay(entry.statement_date), 'active',
+         entry.kind?.includes('贷款') ? 'loan' : 'credit']
+      )
+      if (createCardErr) throw new Error(createCardErr.message)
 
-      if (createCardErr) throw createCardErr
-      if (!newCard) throw new Error('自动创建信用卡失败')
-
-      card = newCard as ExistingCard
+      card = {
+        id: newCardId, holder_id: holderId, card_product_id: product.id,
+        card_number_last4: tail, credit_limit: 50000, billing_day: pickStatementDay(entry.statement_date),
+        status: 'active', card_type: entry.kind?.includes('贷款') ? 'loan' : 'credit',
+        created_at: now(),
+        card_product: { bank_name: product.bank_name, card_name: product.card_name },
+      }
       cardByBankAndTail.set(cardKey, card)
       cardByBankAndTail.set(`:${tail}`, card)
       syncedCardsCount++
     }
 
-    // B. 账单匹配或自动创建
-    const { data: existingBill, error: findBillErr } = await insforge.database
-      .from('bills')
-      .select('id')
-      .eq('card_id', card.id)
-      .eq('bill_month', billMonth)
-      .maybeSingle()
-
-    if (findBillErr) throw findBillErr
+    const { data: existingBill } = await queryOne<{ id: string }>(
+      'SELECT id FROM bills WHERE card_id = ? AND bill_month = ?', [card.id, billMonth]
+    )
 
     if (!existingBill) {
-      const { data: newBill, error: createBillErr } = await insforge.database
-        .from('bills')
-        .insert([{
-          card_id: card.id,
-          bill_month: billMonth,
-          statement_start: entry.statement_date || entry.due_date,
-          statement_end: entry.statement_date || entry.due_date,
-          bill_amount: amount,
-          min_payment: Number(entry.minimum_payment || 0),
-          due_date: entry.due_date,
-          status: mapPaymentStatus(entry),
-        }])
-        .select()
-        .single()
-
-      if (createBillErr) throw createBillErr
-      if (!newBill) throw new Error('自动创建账单失败')
-
-      const { error: linkErr } = await insforge.database
-        .from('gmail_ledger_entries')
-        .update({ matched_card_id: card.id, matched_bill_id: newBill.id })
-        .eq('id', entry.id)
-
-      if (linkErr) throw linkErr
+      const newBillId = uuid()
+      const { error: createBillErr } = await execute(
+        `INSERT INTO bills (id, card_id, bill_month, statement_start, statement_end, bill_amount, min_payment, due_date, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [newBillId, card.id, billMonth, entry.statement_date || entry.due_date, entry.statement_date || entry.due_date,
+         amount, Number(entry.minimum_payment || 0), entry.due_date, mapPaymentStatus(entry)]
+      )
+      if (createBillErr) throw new Error(createBillErr.message)
+      await execute(
+        'UPDATE gmail_ledger_entries SET matched_card_id = ?, matched_bill_id = ? WHERE id = ?',
+        [card.id, newBillId, entry.id]
+      )
       syncedBillsCount++
     } else {
-      const { error: linkErr } = await insforge.database
-        .from('gmail_ledger_entries')
-        .update({ matched_card_id: card.id, matched_bill_id: existingBill.id })
-        .eq('id', entry.id)
-
-      if (linkErr) throw linkErr
+      await execute(
+        'UPDATE gmail_ledger_entries SET matched_card_id = ?, matched_bill_id = ? WHERE id = ?',
+        [card.id, existingBill.id, entry.id]
+      )
     }
   }
 
