@@ -1,73 +1,66 @@
 # Cloudflare D1 + Workers + R2 迁移计划
 
-> 日期：2026-09-10
-> 决策：抛弃 InsForge（Postgres + Auth + Storage），全部迁到 Cloudflare 免费层。
+> 日期：2026-09-10 → 2026-09-11
 > 分支：`feat/cloudflare-d1-migration`
+> 状态：**Phase 1-5 已完成**
 
-## 已完成
+## 架构
 
-- D1 数据库 `worldcredit` 已创建（ID: `6ce5f678-e5bb-46cc-88d7-a316f1a209cb`）
+```
+前端 PWA → Cloudflare Pages / Workers (vinext)
+API → Cloudflare Workers (app/api routes + lib/api)
+数据库 → D1 (worldcredit, ID: 6ce5f678-e5bb-46cc-88d7-a316f1a209cb)
+附件 → R2 (worldcredit-attachments)
+邮件解析 → Email Worker (worldcredit-email-worker, D1 binding)
+定时提醒 → Cron Trigger (0 9 * * * UTC), worker/cron.ts
+认证 → 自建 PBKDF2 + /api/auth 路由
+AI → 直连 OpenAI API (key 存 system_settings 表)
+```
+
+## 完成清单
+
+### Phase 1：基础设施 ✅
+- D1 数据库 `worldcredit` 已创建
 - R2 bucket `worldcredit-attachments` 已创建
-- `wrangler.jsonc` 已配置 DB 和 ATTACHMENTS 绑定
-- `migrations/d1/0001_initial_schema.sql` 已写好并在本地 SQLite 验证通过（21 张表）
-- `lib/db/` 目录已建好（client.ts / types.ts）
+- `wrangler.jsonc` 配置 DB、ATTACHMENTS、IMAGES、ASSETS 绑定
+- `migrations/d1/0001_initial_schema.sql`：22 张表（SQLite），本地验证通过
+- `lib/db/client.ts`：`cloudflare:workers` env.DB，eval-based require 绕过浏览器构建
+- `lib/db/helpers.ts`：query/queryOne/execute/batch/uuid/now/today
+- `lib/db/types.ts`：SQLite 行类型
+- Auth API 路由：login/register/logout/session，PBKDF2 哈希
 
-## 迁移范围（34 个文件引用 insforge）
+### Phase 2：数据层替换 ✅
+- 15 个 `lib/api/*.ts` 全部从 `insforge.database` 迁到 D1 参数化查询 + JOIN
+- `lib/auth.tsx` 改调 `/api/auth` 路由
+- `lib/api/attachments.ts` 改用 R2 直写
+- `lib/api/ai-assistant.ts` + `ai.ts` 改为直连 OpenAI API
+- 9 个客户端组件改用 `lib/client-db.ts` 桥接 `/api/db-proxy`
+- `lib/insforge.ts` 和 `@insforge/sdk` 已删除
 
-| 层 | 现状 | 目标 | 影响文件 |
-|---|---|---|---|
-| DB 客户端 | `lib/insforge.ts` (@insforge/sdk) | `lib/db/client.ts` (D1) | 全部 15 个 lib/api 文件 |
-| 认证 | InsForge Auth（邮箱+OAuth） | 自建：Worker 端 JWT + bcrypt 或 WebAuthn | lib/auth.tsx + Worker 新增 /api/auth 路由 |
-| 数据库 schema | Postgres + RLS | SQLite（D1），无 RLS，权限在应用层 | db/schema.sql → migrations/d1/ |
-| 附件存储 | InsForge Storage | R2（已建 bucket） | lib/api/attachments.ts |
-| 邮件 Worker | email-worker 调 InsForge API | email-worker 直连 D1（通过 binding） | email-worker/src/ |
-| 推送/通知 | InsForge + Web Push | Worker Cron + Web Push（VAPID 已有） | lib/notifications.ts, worker/cron.ts |
-| AI 调用 | InsForge AI 模块 | 直连 OpenAI API（key 存 Worker Secret） | lib/api/ai*.ts |
-| 部署 | vinext + Cloudflare Worker | 不变（已在 Cloudflare 上） | 无需改 |
+### Phase 3：提醒 & 邮件 Worker ✅
+- `email-worker/` 从 InsForge REST 改为 D1 binding 直连
+- `worker/cron.ts`：定时扫描到期账单，查 push_subscriptions，发 Web Push（stub），写 notification_history
+- `wrangler.jsonc` 添加 Cron Trigger `0 9 * * *`（UTC 9:00 = 北京时间 17:00）
+- `worker/index.ts` 导出 fetch + scheduled
 
-## 认证方案（简化，单管理员 + 少量成员）
+### Phase 4：数据迁移脚本 ✅
+- `scripts/export-insforge.mjs`：从 InsForge Postgres REST 导出全部 22 张表为 JSON
+- `scripts/import-to-d1.mjs`：读取 JSON，生成 SQLite INSERT，写入 `data/import.sql`
+- `npm run db:export` / `npm run db:import`
+- ⚠️ 尚未执行（需要先跑 db:export 拿到真实数据，再 db:import 到 D1）
 
-- 登录：邮箱 + 密码，Worker 端用 PBKDF2 哈希（Workers 无 bcrypt 原生支持）
-- 会话：JWT（HttpOnly cookie），签名密钥存 Worker Secret
-- OAuth Google：如需要后续加，P0 不做
-- 权限：管理员全权；成员只能看自己 holder 关联的数据（应用层过滤）
+### Phase 5：清理 & 部署 ✅
+- `@insforge/sdk` 从 package.json 移除
+- `lib/insforge.ts` 删除
+- `vite.config.mjs` 移除 InsForge 环境变量
+- `npm test` 改为 `vitest run`，`npm run typecheck` 新增
+- `tsc --noEmit` 0 错误，`vitest run` 21 tests passed，`vite build` 成功
+- ⚠️ 尚未部署到 Cloudflare（需要跑 `npx wrangler deploy`）
 
-## 执行顺序
+## 下一步
 
-### Phase 1：基础设施（1-2 天）
-- [x] D1 + R2 创建，wrangler 配置
-- [x] schema 迁移文件
-- [ ] 用户表 + auth worker 路由（注册/登录/session）
-- [ ] lib/db/client.ts 在 server 端正确初始化（vinext + D1 binding）
-
-### Phase 2：数据层替换（3-5 天）
-- [ ] lib/api/*.ts 逐文件把 `insforge.database` 替换为 `getDb().prepare()`
-- [ ] lib/auth.tsx 改调自建 /api/auth
-- [ ] 附件上传/下载改 R2
-- [ ] email-worker 改 D1 binding
-
-### Phase 3：提醒 & 定时（1-2 天）
-- [ ] Worker Cron Trigger 扫描到期账单
-- [ ] Web Push 发送（VAPID key 已有）
-- [ ] reminder_logs 去重
-
-### Phase 4：数据迁移（1 天）
-- [ ] 从 InsForge Postgres 导出 JSON
-- [ ] 转换为 SQLite INSERT
-- [ ] 导入 D1
-- [ ] 验证行数和关键字段
-
-### Phase 5：清理 & 部署（1 天）
-- [ ] 删除 @insforge/sdk 依赖
-- [ ] 删除 lib/insforge.ts
-- [ ] typecheck + build + lint 通过
-- [ ] 部署到 Cloudflare Workers
-- [ ] 冒烟测试
-
-## 注意事项
-
-- D1 是 SQLite，无 `gen_random_uuid()` → 用 `crypto.randomUUID()`
-- 无 RLS → 单管理员模型下不需要；如果做多家庭再考虑
-- `TIMESTAMPTZ` → `TEXT` (ISO 8601)；`NUMERIC` → `REAL`；`JSONB` → `TEXT`
-- `auth.uid()` 不存在 → session 中取 userId
-- D1 batch() 可用于事务性多写操作
+1. 运行 `npm run db:export` 从 InsForge 导出真实数据
+2. 运行 `npm run db:import && npx wrangler d1 execute worldcredit --remote --file=data/import.sql`
+3. 设置 Worker Secrets：`npx wrangler secret put VAPID_PRIVATE_KEY`
+4. 部署：`npx vite build && npx wrangler deploy`
+5. 冒烟测试：登录、添加卡片、创建账单、还款、权益核销
