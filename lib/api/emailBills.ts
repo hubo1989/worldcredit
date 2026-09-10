@@ -57,11 +57,11 @@ export async function syncEmailBillToAccount(params: SyncEmailBillParams): Promi
   // 1. Get or create holder
   let targetHolderId = holderId
   if (!targetHolderId) {
-    const { data: existingHolder } = await queryOne<{ id: string }>(
+    const holderResult = await queryOne<{ id: string }>(
       'SELECT id FROM card_holders ORDER BY created_at ASC LIMIT 1'
     )
-    if (existingHolder) {
-      targetHolderId = existingHolder.id
+    if (holderResult?.data) {
+      targetHolderId = holderResult.data.id
     } else {
       const newHolderId = uuid()
       const { error: err } = await execute(
@@ -75,11 +75,11 @@ export async function syncEmailBillToAccount(params: SyncEmailBillParams): Promi
 
   // 2. Get or create bank
   let bankId: string | undefined = undefined
-  const { data: existingBank } = await queryOne<{ id: string }>(
+  const bankResult = await queryOne<{ id: string }>(
     'SELECT id FROM banks WHERE name = ?', [bankName]
   )
-  if (existingBank) {
-    bankId = existingBank.id
+  if (bankResult?.data) {
+    bankId = bankResult.data.id
   } else {
     const newBankId = uuid()
     const { error: err } = await execute(
@@ -91,11 +91,11 @@ export async function syncEmailBillToAccount(params: SyncEmailBillParams): Promi
 
   // 3. Get or create card product
   let cardProductId: string
-  const { data: existingProduct } = await queryOne<{ id: string }>(
+  const productResult = await queryOne<{ id: string }>(
     'SELECT id FROM card_products WHERE bank_name = ? AND card_name = ?', [bankName, cardName]
   )
-  if (existingProduct) {
-    cardProductId = existingProduct.id
+  if (productResult?.data) {
+    cardProductId = productResult.data.id
   } else {
     cardProductId = uuid()
     const { error: err } = await execute(
@@ -113,11 +113,11 @@ export async function syncEmailBillToAccount(params: SyncEmailBillParams): Promi
     cardConditions.push('card_number_last4 = ?')
     cardParams.push(cardNumberLast4)
   }
-  const { data: existingCard } = await queryOne<{ id: string }>(
+  const cardResult = await queryOne<{ id: string }>(
     `SELECT id FROM credit_cards WHERE ${cardConditions.join(' AND ')}`, cardParams
   )
-  if (existingCard) {
-    targetCardId = existingCard.id
+  if (cardResult?.data) {
+    targetCardId = cardResult.data.id
   } else {
     targetCardId = uuid()
     const { error: err } = await execute(
@@ -129,11 +129,11 @@ export async function syncEmailBillToAccount(params: SyncEmailBillParams): Promi
 
   // 5. Create or update bill
   let targetBillId: string
-  const { data: existingBill } = await queryOne<{ id: string }>(
+  const billResult = await queryOne<{ id: string }>(
     'SELECT id FROM bills WHERE card_id = ? AND bill_month = ?', [targetCardId, billMonth]
   )
-  if (existingBill) {
-    targetBillId = existingBill.id
+  if (billResult?.data) {
+    targetBillId = billResult.data.id
     await execute(
       'UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?, statement_end = ?, status = ? WHERE id = ?',
       [billAmount, minPayment, dueDate, statementDate || null, statementDate || null, 'unpaid', targetBillId]
