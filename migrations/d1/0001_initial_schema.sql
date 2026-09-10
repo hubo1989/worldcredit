@@ -155,6 +155,25 @@ CREATE TABLE IF NOT EXISTS promo_usages (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS bill_items (
+  id TEXT PRIMARY KEY,
+  bill_id TEXT NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
+  transaction_date TEXT,
+  post_date TEXT,
+  description TEXT NOT NULL,
+  merchant_name TEXT,
+  category TEXT,
+  amount REAL NOT NULL DEFAULT 0,
+  currency TEXT DEFAULT 'CNY',
+  item_type TEXT NOT NULL DEFAULT 'purchase' CHECK (item_type IN ('purchase', 'refund', 'fee', 'interest')),
+  source TEXT NOT NULL DEFAULT 'manual',
+  confidence REAL,
+  raw_text TEXT,
+  metadata TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_bill_items_bill ON bill_items(bill_id);
+
 -- ============================================
 -- System config
 -- ============================================
