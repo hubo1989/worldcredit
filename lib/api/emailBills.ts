@@ -1,4 +1,4 @@
-import { insforge } from '../insforge'
+import { query, queryOne, execute, uuid, now } from '../db'
 import type { EmailParseLog } from '../types'
 
 export interface ParsedEmailBillData {
@@ -18,32 +18,22 @@ export type EmailParseLogWithParsed = EmailParseLog & {
   parsedData?: ParsedEmailBillData
 }
 
-/**
- * 获取所有的邮件解析/账单日志列表
- */
+
 export async function getEmailParseLogs(): Promise<EmailParseLogWithParsed[]> {
-  const { data, error } = await insforge.database
-    .from('email_parse_logs')
-    .select('*')
-    .order('created_at', { ascending: false })
-
-  if (error) throw error
-
-  return (data || []).map((log: EmailParseLog) => {
+  const { data, error } = await query<EmailParseLog>(
+    'SELECT * FROM email_parse_logs ORDER BY created_at DESC'
+  )
+  if (error) throw new Error(error.message)
+  return (data || []).map(log => {
     let parsedData: ParsedEmailBillData | undefined = undefined
     if (log.raw_ai_response) {
       try {
-        parsedData = typeof log.raw_ai_response === 'string'
-          ? JSON.parse(log.raw_ai_response)
-          : log.raw_ai_response
-      } catch (e) {
+        parsedData = JSON.parse(log.raw_ai_response)
+      } catch {
         console.warn('Parse raw_ai_response failed for log:', log.id)
       }
     }
-    return {
-      ...log,
-      parsedData
-    }
+    return { ...log, parsedData }
   })
 }
 
@@ -61,198 +51,107 @@ export interface SyncEmailBillParams {
   statementDate?: string
 }
 
-/**
- * 将邮件账单同步并建立到用户本账户中（建立持卡对象/银行/卡片及生成对应账单）
- */
 export async function syncEmailBillToAccount(params: SyncEmailBillParams): Promise<{ cardId: string; billId: string }> {
-  const {
-    logId,
-    holderId,
-    bankName,
-    cardName,
-    cardNumberLast4,
-    billingDay,
-    billAmount,
-    minPayment = 0,
-    billMonth,
-    dueDate,
-    statementDate
-  } = params
+  const { logId, holderId, bankName, cardName, cardNumberLast4, billingDay, billAmount, minPayment = 0, billMonth, dueDate, statementDate } = params
 
-  // 1. 获取/保证持卡人 (card_holder)
+  // 1. Get or create holder
   let targetHolderId = holderId
   if (!targetHolderId) {
-    const { data: existingHolders } = await insforge.database
-      .from('card_holders')
-      .select('id')
-      .order('created_at', { ascending: true })
-      .limit(1)
-
-    if (existingHolders && existingHolders.length > 0) {
-      targetHolderId = existingHolders[0].id
+    const { data: existingHolder } = await queryOne<{ id: string }>(
+      'SELECT id FROM card_holders ORDER BY created_at ASC LIMIT 1'
+    )
+    if (existingHolder) {
+      targetHolderId = existingHolder.id
     } else {
-      // 自动新建默认持卡人“本人”
-      const { data } = await insforge.auth.getCurrentUser()
-      const { data: newHolder, error: createHolderErr } = await insforge.database
-        .from('card_holders')
-        .insert([{
-          name: '本人',
-          created_by: data?.user?.id || '00000000-0000-0000-0000-000000000000',
-          avatar_color: '#1976d2'
-        }])
-        .select()
-        .single()
-      if (createHolderErr) throw createHolderErr
-      targetHolderId = newHolder.id
+      const newHolderId = uuid()
+      const { error: err } = await execute(
+        'INSERT INTO card_holders (id, created_by, managed_by, name, avatar_color) VALUES (?, ?, ?, ?, ?)',
+        [newHolderId, '00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-000000000000', '本人', '#1976d2']
+      )
+      if (err) throw new Error(err.message)
+      targetHolderId = newHolderId
     }
   }
 
-  // 2. 匹配/创建 银行 (banks)
+  // 2. Get or create bank
   let bankId: string | undefined = undefined
-  const { data: existingBanks } = await insforge.database
-    .from('banks')
-    .select('id')
-    .eq('name', bankName)
-    .maybeSingle()
-
-  if (existingBanks) {
-    bankId = existingBanks.id
+  const { data: existingBank } = await queryOne<{ id: string }>(
+    'SELECT id FROM banks WHERE name = ?', [bankName]
+  )
+  if (existingBank) {
+    bankId = existingBank.id
   } else {
-    const { data: newBank } = await insforge.database
-      .from('banks')
-      .insert([{
-        name: bankName,
-        full_name: bankName,
-        country: 'CN'
-      }])
-      .select()
-      .single()
-    bankId = newBank?.id
+    const newBankId = uuid()
+    const { error: err } = await execute(
+      'INSERT INTO banks (id, name, full_name, country) VALUES (?, ?, ?, ?)',
+      [newBankId, bankName, bankName, 'CN']
+    )
+    if (!err) bankId = newBankId
   }
 
-  // 3. 匹配/创建 卡产品 (card_products)
+  // 3. Get or create card product
   let cardProductId: string
-  const { data: existingProduct } = await insforge.database
-    .from('card_products')
-    .select('id')
-    .eq('bank_name', bankName)
-    .eq('card_name', cardName)
-    .maybeSingle()
-
+  const { data: existingProduct } = await queryOne<{ id: string }>(
+    'SELECT id FROM card_products WHERE bank_name = ? AND card_name = ?', [bankName, cardName]
+  )
   if (existingProduct) {
     cardProductId = existingProduct.id
   } else {
-    const { data: newProduct, error: productErr } = await insforge.database
-      .from('card_products')
-      .insert([{
-        bank_id: bankId,
-        bank_name: bankName,
-        card_name: cardName,
-        country: 'CN',
-        currency: 'CNY',
-        payment_due_type: 'after_billing',
-        payment_due_value: 20
-      }])
-      .select()
-      .single()
-
-    if (productErr) throw productErr
-    cardProductId = newProduct.id
+    cardProductId = uuid()
+    const { error: err } = await execute(
+      'INSERT INTO card_products (id, bank_id, bank_name, card_name, country, currency, payment_due_type, payment_due_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [cardProductId, bankId || null, bankName, cardName, 'CN', 'CNY', 'after_billing', 20]
+    )
+    if (err) throw new Error(err.message)
   }
 
-  // 4. 匹配/创建 用户的信用卡 (credit_cards)
+  // 4. Get or create credit card
   let targetCardId: string
-  // 按照末尾4位或产品查找现有持卡账户
-  let query = insforge.database
-    .from('credit_cards')
-    .select('id')
-    .eq('holder_id', targetHolderId)
-    .eq('card_product_id', cardProductId)
-
+  const cardConditions = ['holder_id = ?', 'card_product_id = ?']
+  const cardParams: unknown[] = [targetHolderId, cardProductId]
   if (cardNumberLast4) {
-    query = query.eq('card_number_last4', cardNumberLast4)
+    cardConditions.push('card_number_last4 = ?')
+    cardParams.push(cardNumberLast4)
   }
-
-  const { data: existingCard } = await query.maybeSingle()
-
+  const { data: existingCard } = await queryOne<{ id: string }>(
+    `SELECT id FROM credit_cards WHERE ${cardConditions.join(' AND ')}`, cardParams
+  )
   if (existingCard) {
     targetCardId = existingCard.id
   } else {
-    // 建立新卡片账户
-    const { data: newCard, error: cardErr } = await insforge.database
-      .from('credit_cards')
-      .insert([{
-        holder_id: targetHolderId,
-        card_product_id: cardProductId,
-        card_number_last4: cardNumberLast4,
-        credit_limit: 0,
-        billing_day: billingDay,
-        status: 'active',
-        card_type: 'credit'
-      }])
-      .select()
-      .single()
-
-    if (cardErr) throw cardErr
-    targetCardId = newCard.id
+    targetCardId = uuid()
+    const { error: err } = await execute(
+      'INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type) VALUES (?, ?, ?, ?, 0, ?, ?, ?)',
+      [targetCardId, targetHolderId, cardProductId, cardNumberLast4, billingDay, 'active', 'credit']
+    )
+    if (err) throw new Error(err.message)
   }
 
-  // 5. 创建/更新 对应的账单 (bills)
+  // 5. Create or update bill
   let targetBillId: string
-  const { data: existingBill } = await insforge.database
-    .from('bills')
-    .select('id')
-    .eq('card_id', targetCardId)
-    .eq('bill_month', billMonth)
-    .maybeSingle()
-
+  const { data: existingBill } = await queryOne<{ id: string }>(
+    'SELECT id FROM bills WHERE card_id = ? AND bill_month = ?', [targetCardId, billMonth]
+  )
   if (existingBill) {
     targetBillId = existingBill.id
-    const { error: billUpdateErr } = await insforge.database
-      .from('bills')
-      .update({
-        bill_amount: billAmount,
-        min_payment: minPayment,
-        due_date: dueDate,
-        statement_date: statementDate || undefined,
-        statement_end: statementDate || undefined,
-        status: 'unpaid'
-      })
-      .eq('id', targetBillId)
-    if (billUpdateErr) throw billUpdateErr
+    await execute(
+      'UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?, statement_end = ?, status = ? WHERE id = ?',
+      [billAmount, minPayment, dueDate, statementDate || null, statementDate || null, 'unpaid', targetBillId]
+    )
   } else {
-    const { data: newBill, error: billCreateErr } = await insforge.database
-      .from('bills')
-      .insert([{
-        card_id: targetCardId,
-        bill_month: billMonth,
-        statement_start: statementDate || undefined,
-        statement_end: statementDate || undefined,
-        statement_date: statementDate || undefined,
-        bill_amount: billAmount,
-        min_payment: minPayment,
-        due_date: dueDate,
-        status: 'unpaid'
-      }])
-      .select()
-      .single()
-
-    if (billCreateErr) throw billCreateErr
-    targetBillId = newBill.id
+    targetBillId = uuid()
+    const { error: err } = await execute(
+      'INSERT INTO bills (id, card_id, bill_month, statement_start, statement_end, statement_date, bill_amount, min_payment, due_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [targetBillId, targetCardId, billMonth, statementDate || null, statementDate || null, statementDate || null, billAmount, minPayment, dueDate, 'unpaid']
+    )
+    if (err) throw new Error(err.message)
   }
 
-  // 6. 更新邮件解析日志记录 (email_parse_logs) 为成功状态
-  await insforge.database
-    .from('email_parse_logs')
-    .update({
-      status: 'success',
-      bill_id: targetBillId,
-      error_msg: null
-    })
-    .eq('id', logId)
+  // 6. Update parse log
+  await execute(
+    "UPDATE email_parse_logs SET status = 'success', bill_id = ?, error_msg = NULL WHERE id = ?",
+    [targetBillId, logId]
+  )
 
-  return {
-    cardId: targetCardId,
-    billId: targetBillId
-  }
+  return { cardId: targetCardId, billId: targetBillId }
 }
