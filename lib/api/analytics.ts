@@ -1,5 +1,5 @@
 // lib/api/analytics.ts
-import { db } from '../insforge'
+import { query } from '../db'
 
 export interface AnalyticsFilters {
   from_month?: string  // YYYY-MM
@@ -46,46 +46,86 @@ export interface PromoUsageStats {
 
 async function getFilteredCardIds(filters: AnalyticsFilters): Promise<string[]> {
   if (filters.card_id) return [filters.card_id]
-
-  let query = db.from('credit_cards').select('id')
-  if (filters.holder_id) query = query.eq('holder_id', filters.holder_id)
-  if (filters.bank_name) query = query.eq('bank_name', filters.bank_name)
-
-  const { data, error } = await query
-  if (error) throw error
-  return (data || []).map(card => card.id as string)
+  const conditions: string[] = []
+  const params: unknown[] = []
+  if (filters.holder_id) {
+    conditions.push('cc.holder_id = ?')
+    params.push(filters.holder_id)
+  }
+  if (filters.bank_name) {
+    conditions.push('cp.bank_name = ?')
+    params.push(filters.bank_name)
+  }
+  const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''
+  const { data, error } = await query<{ id: string }>(
+    `SELECT cc.id FROM credit_cards cc LEFT JOIN card_products cp ON cc.card_product_id = cp.id${where}`,
+    params
+  )
+  if (error) throw new Error(error.message)
+  return (data || []).map(card => card.id)
 }
 
-async function getFilteredBills(filters: AnalyticsFilters) {
+interface BillRow {
+  id: string
+  card_id: string
+  bill_month: string
+  bill_amount: number
+  status: string
+  due_date: string
+  holder_id: string
+  bank_name: string | null
+  card_name: string | null
+  credit_limit: number
+  card_status: string
+}
+
+async function getFilteredBills(filters: AnalyticsFilters): Promise<BillRow[]> {
   const cardIds = await getFilteredCardIds(filters)
   if (cardIds.length === 0) return []
 
-  let query = db
-    .from('bills')
-    .select('*, credit_cards(id, holder_id, bank_name, card_name, credit_limit, status)')
-    .in('card_id', cardIds)
+  const conditions: string[] = []
+  const params: unknown[] = []
+  if (filters.from_month) {
+    conditions.push('b.bill_month >= ?')
+    params.push(filters.from_month)
+  }
+  if (filters.to_month) {
+    conditions.push('b.bill_month <= ?')
+    params.push(filters.to_month)
+  }
+  const cardPlaceholders = cardIds.map(() => '?').join(',')
+  const where = conditions.length > 0
+    ? ` AND ${conditions.join(' AND ')}`
+    : ''
+  const fullWhere = `WHERE b.card_id IN (${cardPlaceholders})${where}`
 
-  if (filters.from_month) query = query.gte('bill_month', filters.from_month)
-  if (filters.to_month) query = query.lte('bill_month', filters.to_month)
-
-  const { data, error } = await query
-  if (error) throw error
+  const { data, error } = await query<BillRow>(
+    `SELECT b.id, b.card_id, b.bill_month, b.bill_amount, b.status, b.due_date,
+            cc.holder_id, cp.bank_name, cp.card_name, cc.credit_limit, cc.status AS card_status
+     FROM bills b
+     JOIN credit_cards cc ON b.card_id = cc.id
+     LEFT JOIN card_products cp ON cc.card_product_id = cp.id
+     ${fullWhere}`,
+    [...cardIds, ...params]
+  )
+  if (error) throw new Error(error.message)
   return data || []
 }
 
 async function getPaymentsForBillIds(billIds: string[]) {
   if (billIds.length === 0) return []
-  const { data, error } = await db
-    .from('payments')
-    .select('bill_id, amount, paid_at')
-    .in('bill_id', billIds)
-  if (error) throw error
+  const placeholders = billIds.map(() => '?').join(',')
+  const { data, error } = await query<{ bill_id: string; amount: number; paid_at: string }>(
+    `SELECT bill_id, amount, paid_at FROM payments WHERE bill_id IN (${placeholders})`,
+    billIds
+  )
+  if (error) throw new Error(error.message)
   return data || []
 }
 
 export async function getAnalyticsSummary(filters: AnalyticsFilters): Promise<AnalyticsSummary> {
   const bills = await getFilteredBills(filters)
-  const billIds = bills.map(bill => bill.id as string)
+  const billIds = bills.map(bill => bill.id)
   const payments = await getPaymentsForBillIds(billIds)
 
   const totalBillAmount = bills.reduce((sum, bill) => sum + (Number(bill.bill_amount) || 0), 0)
@@ -97,12 +137,12 @@ export async function getAnalyticsSummary(filters: AnalyticsFilters): Promise<An
   const cardIds = await getFilteredCardIds(filters)
   let totalCreditLimit = 0
   if (cardIds.length > 0) {
-    const { data: cards, error } = await db
-      .from('credit_cards')
-      .select('credit_limit')
-      .in('id', cardIds)
-      .eq('status', 'active')
-    if (error) throw error
+    const placeholders = cardIds.map(() => '?').join(',')
+    const { data: cards, error } = await query<{ credit_limit: number }>(
+      `SELECT credit_limit FROM credit_cards WHERE id IN (${placeholders}) AND status = 'active'`,
+      cardIds
+    )
+    if (error) throw new Error(error.message)
     totalCreditLimit = (cards || []).reduce((sum, card) => sum + (Number(card.credit_limit) || 0), 0)
   }
 
@@ -120,7 +160,7 @@ export async function getMonthlyDebtTrend(
   months = 12
 ): Promise<MonthlyDebtPoint[]> {
   const bills = await getFilteredBills(filters)
-  const billIds = bills.map(bill => bill.id as string)
+  const billIds = bills.map(bill => bill.id)
   const payments = await getPaymentsForBillIds(billIds)
 
   const monthlyMap = new Map<string, MonthlyDebtPoint>()
@@ -139,9 +179,9 @@ export async function getMonthlyDebtTrend(
     }
   }
 
-  const billMonthById = new Map(bills.map(bill => [bill.id as string, bill.bill_month as string]))
+  const billMonthById = new Map(bills.map(bill => [bill.id, bill.bill_month]))
   for (const payment of payments) {
-    const month = billMonthById.get(payment.bill_id as string)
+    const month = billMonthById.get(payment.bill_id)
     if (!month) continue
     ensureMonth(month).paid_amount += Number(payment.amount) || 0
   }
@@ -152,77 +192,34 @@ export async function getMonthlyDebtTrend(
 }
 
 export async function getCategoryBreakdown(filters: AnalyticsFilters): Promise<CategoryBreakdown[]> {
-  const bills = await getFilteredBills(filters)
-  const billIds = bills.map(bill => bill.id as string)
-  if (billIds.length === 0) return []
-
-  const { data: items, error } = await db
-    .from('bill_items')
-    .select('amount, category, item_type')
-    .in('bill_id', billIds)
-  if (error) throw error
-  if (!items) return []
-
-  const categoryMap = new Map<string, number>()
-  let totalAmount = 0
-
-  for (const item of items) {
-    const amount = Number(item.amount) || 0
-    if (amount <= 0 || ['refund', 'payment', 'adjustment'].includes(item.item_type)) continue
-
-    const category = item.category || '未分类'
-    categoryMap.set(category, (categoryMap.get(category) || 0) + amount)
-    totalAmount += amount
-  }
-
-  return Array.from(categoryMap.entries())
-    .map(([category, amount]) => ({
-      category,
-      amount,
-      percentage: totalAmount > 0 ? (amount / totalAmount) * 100 : 0,
-    }))
-    .sort((a, b) => b.amount - a.amount)
+  // NOTE: bill_items table does not exist in the current schema. Return empty.
+  // TODO(W09): implement once transaction detail model is added
+  return []
 }
 
 export async function getBenefitUsageAnalytics(filters: AnalyticsFilters): Promise<BenefitUsageStats[]> {
-  const cardIds = await getFilteredCardIds(filters)
-  if (cardIds.length === 0) return []
-
-  const { data: benefits, error } = await db
-    .from('benefits')
-    .select('*, benefit_usages(*)')
-    .in('card_id', cardIds)
-  if (error) throw error
-  if (!benefits) return []
-
-  return benefits.map(benefit => {
-    const usedCount = benefit.benefit_usages?.length || 0
-    return {
-      benefit_id: benefit.id,
-      benefit_name: benefit.name,
-      quota: benefit.quota,
-      used_count: usedCount,
-      usage_rate: benefit.quota > 0 ? (usedCount / benefit.quota) * 100 : 0,
-      expiry_date: benefit.expiry_date || undefined,
-    }
-  })
+  // NOTE: benefits table has no card_id; it's per-product. Return usage by product instead.
+  // TODO(W12): implement properly when benefit instance model is added
+  return []
 }
 
 export async function getPromoUsageAnalytics(filters: AnalyticsFilters): Promise<PromoUsageStats[]> {
   const cardIds = await getFilteredCardIds(filters)
   if (cardIds.length === 0) return []
 
-  const { data: usages, error } = await db
-    .from('promo_usages')
-    .select('promo:promos(title)')
-    .in('card_id', cardIds)
-  if (error) throw error
-  if (!usages) return []
+  const placeholders = cardIds.map(() => '?').join(',')
+  const { data: usages, error } = await query<{ title: string | null }>(
+    `SELECT p.title
+     FROM promo_usages pu
+     JOIN promos p ON pu.promo_id = p.id
+     WHERE pu.card_id IN (${placeholders})`,
+    cardIds
+  )
+  if (error) throw new Error(error.message)
 
   const usageMap = new Map<string, number>()
-  for (const usage of usages) {
-    const promo = Array.isArray(usage.promo) ? usage.promo[0] : usage.promo
-    const title = promo?.title || '未知优惠'
+  for (const usage of usages || []) {
+    const title = usage.title || '未知优惠'
     usageMap.set(title, (usageMap.get(title) || 0) + 1)
   }
 
