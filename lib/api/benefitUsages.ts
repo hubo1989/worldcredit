@@ -1,5 +1,4 @@
-// lib/api/benefitUsages.ts
-import { db } from '../insforge'
+import { query } from '../db'
 import type { Benefit, BenefitUsage, CardProduct } from '../types'
 
 export interface BenefitUsageWithBenefit extends BenefitUsage {
@@ -8,33 +7,53 @@ export interface BenefitUsageWithBenefit extends BenefitUsage {
   }
 }
 
+interface BenefitUsageJoinRow {
+  id: string
+  benefit_id: string
+  used_at: string
+  note: string | null
+  created_at: string
+  name: string
+  description: string | null
+  quota: number
+  period: string
+  reset_month: number | null
+  expiry_date: string | null
+  bank_name: string
+  card_name: string
+}
+
 export async function getBenefitUsagesByHolder(holderId: string): Promise<BenefitUsageWithBenefit[]> {
-  // 持卡人名下所有卡片关联的卡产品 ID（benefits 挂在卡产品上）
-  const { data: cards, error: cardError } = await db
-    .from('credit_cards')
-    .select('card_product_id')
-    .eq('holder_id', holderId)
-  if (cardError) throw cardError
-  const productIds = Array.from(new Set((cards || []).map(c => c.card_product_id).filter(Boolean)))
-  if (productIds.length === 0) return []
-
-  // 这些卡产品名下的权益
-  const { data: benefits, error: benefitError } = await db
-    .from('benefits')
-    .select('id')
-    .in('card_product_id', productIds)
-  if (benefitError) throw benefitError
-  if (!benefits || benefits.length === 0) return []
-
-  const benefitIds = benefits.map(b => b.id)
-
-  // 权益使用记录（带卡产品的银行/卡名用于展示）
-  const { data, error } = await db
-    .from('benefit_usages')
-    .select('*, benefit:benefits(*, card_products(bank_name, card_name))')
-    .in('benefit_id', benefitIds)
-    .order('used_at', { ascending: false })
-
-  if (error) throw error
-  return data || []
+  const { data, error } = await query<BenefitUsageJoinRow>(
+    `SELECT bu.id, bu.benefit_id, bu.used_at, bu.note, bu.created_at,
+            b.name, b.description, b.quota, b.period, b.reset_month, b.expiry_date,
+            cp.bank_name, cp.card_name
+     FROM benefit_usages bu
+     JOIN benefits b ON bu.benefit_id = b.id
+     JOIN card_products cp ON b.card_product_id = cp.id
+     JOIN credit_cards cc ON cp.id = cc.card_product_id
+     WHERE cc.holder_id = ?
+     ORDER BY bu.used_at DESC`,
+    [holderId]
+  )
+  if (error) throw new Error(error.message)
+  return (data || []).map(row => ({
+    id: row.id,
+    benefit_id: row.benefit_id,
+    used_at: row.used_at,
+    note: row.note || undefined,
+    created_at: row.created_at,
+    benefit: {
+      id: row.benefit_id,
+      card_product_id: '',
+      name: row.name,
+      description: row.description || undefined,
+      quota: row.quota,
+      period: row.period as Benefit['period'],
+      reset_month: row.reset_month || undefined,
+      expiry_date: row.expiry_date || undefined,
+      created_at: row.created_at,
+      card_products: { bank_name: row.bank_name, card_name: row.card_name },
+    },
+  }))
 }
