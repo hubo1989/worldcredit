@@ -4,7 +4,7 @@ import vinext from "vinext";
 import { VitePWA } from "vite-plugin-pwa";
 import { cloudflare } from "@cloudflare/vite-plugin";
 
-const requiredPublicEnv: string[] = [];
+const requiredPublicEnv = [];
 
 function replaceInFile(filePath, replacements) {
   if (!existsSync(filePath)) return;

@@ -9,15 +9,22 @@ let _db: D1Database | null = null
 
 export function getDb(): D1Database {
   if (_db) return _db
-  // cloudflare:workers is only available in Workers runtime.
+  // eval-based require bypasses bundler static analysis of "cloudflare:workers",
+  // which only exists in the Workers runtime and breaks browser/client builds.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mod = require('cloudflare:workers') as { env: { DB?: D1Database } }
-  const db = mod.env.DB
-  if (!db) {
-    throw new Error('D1 binding "DB" not found. Check wrangler.jsonc d1_databases.')
+  const dynamicRequire: (m: string) => any = eval('typeof require !== "undefined" ? require : null')
+  if (dynamicRequire) {
+    try {
+      const mod = dynamicRequire('cloudflare' + ':workers') as { env: { DB?: D1Database } }
+      if (mod?.env?.DB) {
+        _db = mod.env.DB
+        return _db
+      }
+    } catch {
+      // Not in Workers runtime
+    }
   }
-  _db = db
-  return db
+  throw new Error('D1 database not available. Must run in Cloudflare Workers runtime or call setDb().')
 }
 
 /** For tests: inject a mock D1Database (or null to reset). */
