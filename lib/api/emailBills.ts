@@ -28,7 +28,7 @@ export async function getEmailParseLogs(): Promise<EmailParseLogWithParsed[]> {
     let parsedData: ParsedEmailBillData | undefined = undefined
     if (log.raw_ai_response) {
       try {
-        parsedData = JSON.parse(log.raw_ai_response)
+        parsedData = JSON.parse(log.raw_ai_response as string)
       } catch {
         console.warn('Parse raw_ai_response failed for log:', log.id)
       }
