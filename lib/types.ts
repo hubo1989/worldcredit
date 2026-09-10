@@ -91,9 +91,11 @@ export interface User {
  */
 export interface CardHolder {
   id: string
-  created_by: string // InsForge Auth user.id
+  created_by: string
+  managed_by?: string
   name: string
   phone?: string
+  email?: string
   avatar_color: string
   aliases?: string[]
   created_at: string
