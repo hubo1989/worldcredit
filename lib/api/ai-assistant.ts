@@ -1,5 +1,5 @@
-import { insforge } from '../insforge'
 import { getBillDashboardItems } from './bills'
+import { getSystemSettings } from './admin'
 
 export interface AiAssistantRequest {
   prompt: string
@@ -60,33 +60,39 @@ export async function askAiAssistant({ prompt }: AiAssistantRequest): Promise<Ai
   if (!trimmed) throw new Error('请输入问题')
 
   const context = await buildFinancialContext()
-  const completion = await insforge.ai.chat.completions.create({
-    model: DEFAULT_MODEL,
-    messages: [
-      {
-        role: 'system',
-        content: `你是 WorldCredit 的个人信用卡与账单管理助手。请用中文回答用户的自然语言问题。
+  const settings = await getSystemSettings()
+  const baseURL = ((typeof settings.ai_base_url === 'string' && settings.ai_base_url) || 'https://api.openai.com/v1').replace(/\/$/, '')
+  const apiKey = typeof settings.ai_api_key === 'string' ? settings.ai_api_key : ''
+  if (!apiKey) throw new Error('AI API 密钥未配置')
 
-你可以基于提供的账单上下文做：
-- 还款优先级建议；
-- 到期/逾期风险提醒；
-- 当前负债和现金流摘要；
-- 解释账单状态；
-- 给出下一步操作建议。
-
-约束：
-- 不要编造上下文里没有的卡、账单或支付记录。
-- 如果用户问投资、借贷或高风险金融建议，只给保守的信息整理和风险提示，不承诺收益。
-- 回答要直接、可执行，优先列出重点。`,
-      },
-      {
-        role: 'user',
-        content: `以下是当前 WorldCredit 数据库里的账单上下文：\n\n${context}\n\n用户问题：${trimmed}`,
-      },
-    ],
-    temperature: 0.2,
+  const response = await fetch(`${baseURL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: DEFAULT_MODEL,
+      messages: [
+        {
+          role: 'system',
+          content: '你是 WorldCredit 的个人信用卡与账单管理助手。请用中文回答。基于账单上下文做还款建议、风险提醒、负债摘要。不编造数据。不承诺收益。',
+        },
+        {
+          role: 'user',
+          content: `以下是当前账单上下文：\n\n${context}\n\n用户问题：${trimmed}`,
+        },
+      ],
+      temperature: 0.2,
+    }),
   })
 
+  if (!response.ok) {
+    const errText = await response.text()
+    throw new Error(`AI API 调用失败 (${response.status}): ${errText.slice(0, 200)}`)
+  }
+
+  const completion = await response.json()
   const answer = completion?.choices?.[0]?.message?.content
   if (!answer) throw new Error('AI 未返回有效内容')
   return { answer, model: DEFAULT_MODEL }

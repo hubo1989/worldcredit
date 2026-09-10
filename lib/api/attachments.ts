@@ -1,4 +1,5 @@
-import { insforge } from '../insforge'
+import { getDb } from '../db'
+import { query, queryOne, execute, uuid, now } from '../db'
 
 export const ATTACHMENT_BUCKET = 'record-attachments'
 
@@ -33,21 +34,18 @@ function randomId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-function buildStoragePath(recordType: string, recordId: string, file: File): string {
-  const safeName = sanitizeFileName(file.name)
+function buildStoragePath(recordType: string, recordId: string, fileName: string): string {
+  const safeName = sanitizeFileName(fileName)
   return `${recordType}/${recordId}/${Date.now()}-${randomId()}-${safeName}`
 }
 
 export async function getAttachments(recordType: string, recordId: string): Promise<RecordAttachment[]> {
-  const { data, error } = await insforge.database
-    .from('record_attachments')
-    .select('*')
-    .eq('record_type', recordType)
-    .eq('record_id', recordId)
-    .order('created_at', { ascending: false })
-
-  if (error) throw error
-  return data || []
+  const { data, error } = await query<RecordAttachment>(
+    'SELECT * FROM record_attachments WHERE record_type = ? AND record_id = ? ORDER BY created_at DESC',
+    [recordType, recordId]
+  )
+  if (error) throw new Error(error.message)
+  return (data || []).map(a => ({ ...a, public_url: `/api/attachments/${a.id}` }))
 }
 
 export async function uploadRecordAttachment(
@@ -56,46 +54,49 @@ export async function uploadRecordAttachment(
   file: File,
   uploadedBy?: string
 ): Promise<RecordAttachment> {
-  const storagePath = buildStoragePath(recordType, recordId, file)
-  const bucket = insforge.storage.from(ATTACHMENT_BUCKET)
+  const storagePath = buildStoragePath(recordType, recordId, file.name)
+  const r2 = getDb // not db — need R2 binding, but this runs in Worker so we use cloudflare:workers
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { env } = require('cloudflare:workers') as { env: { ATTACHMENTS?: R2Bucket } }
+  const bucket = env.ATTACHMENTS
+  if (!bucket) throw new Error('R2 binding "ATTACHMENTS" not found')
 
-  const { error: uploadError } = await bucket.upload(storagePath, file)
-  if (uploadError) throw uploadError
+  const buffer = await file.arrayBuffer()
+  await bucket.put(storagePath, buffer, {
+    httpMetadata: { contentType: file.type || 'application/octet-stream' },
+  })
 
-  const publicUrl = bucket.getPublicUrl(storagePath)
-  const { data, error } = await insforge.database
-    .from('record_attachments')
-    .insert([{
-      record_type: recordType,
-      record_id: recordId,
-      bucket: ATTACHMENT_BUCKET,
-      storage_path: storagePath,
-      file_name: file.name,
-      file_type: file.type || null,
-      file_size: file.size,
-      public_url: publicUrl,
-      uploaded_by: uploadedBy || null,
-    }])
-    .select()
-    .single()
+  const id = uuid()
+  const { error } = await execute(
+    `INSERT INTO record_attachments (id, record_type, record_id, bucket, storage_path, file_name, file_type, file_size, uploaded_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, recordType, recordId, ATTACHMENT_BUCKET, storagePath, file.name,
+     file.type || null, file.size, uploadedBy || null, now()]
+  )
+  if (error) throw new Error(error.message)
 
-  if (error) throw error
-  return data
+  const created = await getAttachmentById(id)
+  if (!created) throw new Error('附件记录创建失败')
+  return created
+}
+
+async function getAttachmentById(id: string): Promise<RecordAttachment | null> {
+  const { data } = await queryOne<RecordAttachment>(
+    'SELECT * FROM record_attachments WHERE id = ?', [id]
+  )
+  return data ? { ...data, public_url: `/api/attachments/${data.id}` } : null
 }
 
 export async function deleteRecordAttachment(attachment: RecordAttachment): Promise<void> {
-  const bucket = insforge.storage.from(attachment.bucket || ATTACHMENT_BUCKET)
-  const { error: removeError } = await bucket.remove(attachment.storage_path)
-  if (removeError) throw removeError
-
-  const { error } = await insforge.database
-    .from('record_attachments')
-    .delete()
-    .eq('id', attachment.id)
-
-  if (error) throw error
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { env } = require('cloudflare:workers') as { env: { ATTACHMENTS?: R2Bucket } }
+  const bucket = env.ATTACHMENTS
+  if (bucket) {
+    await bucket.delete(attachment.storage_path)
+  }
+  await execute('DELETE FROM record_attachments WHERE id = ?', [attachment.id])
 }
 
 export function getAttachmentUrl(attachment: RecordAttachment): string {
-  return attachment.public_url || insforge.storage.from(attachment.bucket || ATTACHMENT_BUCKET).getPublicUrl(attachment.storage_path)
+  return attachment.public_url || `/api/attachments/${attachment.id}`
 }
