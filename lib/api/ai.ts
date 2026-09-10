@@ -111,7 +111,7 @@ const CARD_SYSTEM_PROMPT = `你是一个信用卡产品专家。根据用户提�
 export async function aiComplete(params: AiCompleteRequest) {
   // 1. 获取 AI 配置
   const settings = await getSystemSettings()
-  const baseURL = settings.ai_base_url || 'https://api.openai.com/v1'
+  const baseURL = (typeof settings.ai_base_url === 'string' && settings.ai_base_url) || 'https://api.openai.com/v1'
   const model = settings.ai_model || 'gpt-4o'
   const apiKey = settings.ai_api_key
 
@@ -235,7 +235,7 @@ const BENEFIT_SYSTEM_PROMPT = `你是一个信用卡权益专家。根据提供�
  */
 export async function aiCollectCardBenefits(bankName: string, cardName: string) {
   const settings = await getSystemSettings()
-  const baseURL = settings.ai_base_url || 'https://api.openai.com/v1'
+  const baseURL = (typeof settings.ai_base_url === 'string' && settings.ai_base_url) || 'https://api.openai.com/v1'
   const model = settings.ai_model || 'gpt-4o'
   const apiKey = settings.ai_api_key
 
