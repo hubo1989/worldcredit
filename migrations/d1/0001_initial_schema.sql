@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS card_holders (
   name TEXT NOT NULL,
   phone TEXT,
   email TEXT,
+  aliases TEXT DEFAULT NULL,
   avatar_color TEXT DEFAULT '#1976d2',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -301,6 +302,7 @@ CREATE TABLE IF NOT EXISTS gmail_ledger_entries (
   last_payment_update TEXT,
   matched_card_id TEXT REFERENCES credit_cards(id) ON DELETE SET NULL,
   matched_bill_id TEXT REFERENCES bills(id) ON DELETE SET NULL,
+  created_by TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -328,6 +330,8 @@ CREATE INDEX IF NOT EXISTS idx_gmail_ledger_bank ON gmail_ledger_entries(bank);
 CREATE INDEX IF NOT EXISTS idx_gmail_ledger_due_date ON gmail_ledger_entries(due_date);
 CREATE INDEX IF NOT EXISTS idx_gmail_ledger_payment_status ON gmail_ledger_entries(payment_status);
 CREATE INDEX IF NOT EXISTS idx_gmail_ledger_matched_bill ON gmail_ledger_entries(matched_bill_id);
+ALTER TABLE gmail_ledger_entries ADD COLUMN created_by TEXT;
+CREATE INDEX IF NOT EXISTS idx_gmail_ledger_created_by ON gmail_ledger_entries(created_by);
 CREATE INDEX idx_banks_name ON banks(name);
 CREATE INDEX idx_card_products_bank_id ON card_products(bank_id);
 CREATE INDEX idx_card_products_bank ON card_products(bank_name);

@@ -1,0 +1,47 @@
+{
+  "scope": "local code with synthetic data; no network or database writes",
+  "results": [
+    {
+      "case": "文本无千分位金额1234.56",
+      "expected": 1234.56,
+      "actual": 234.56
+    },
+    {
+      "case": "2026-08月账单周期结束日",
+      "expected": "2026-08-31",
+      "actual": "2026-08-01"
+    },
+    {
+      "case": "账单1000已还400分析待还",
+      "expected": 600,
+      "actual": 1000
+    },
+    {
+      "case": "USD100+HKD100主页总额原始计算",
+      "expected": "按USD/HKD分别汇总，无汇率不得显示CNY200",
+      "actual": 200
+    },
+    {
+      "case": "部分还款且已逾期",
+      "expected": "partial且is_overdue=true（现有枚举未表达双维状态）",
+      "actual": "partial"
+    },
+    {
+      "case": "paid无流水：聚合与详情不一致",
+      "expected": "同一状态/余额口径",
+      "actual": {
+        "aggregate": "paid",
+        "detail": {
+          "paid": 0,
+          "remaining": 1000,
+          "status": "unpaid"
+        }
+      }
+    },
+    {
+      "case": "同卡USD/HKD两个子账单去重",
+      "expected": 2,
+      "actual": 1
+    }
+  ]
+}
