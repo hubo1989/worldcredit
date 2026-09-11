@@ -330,7 +330,6 @@ CREATE INDEX IF NOT EXISTS idx_gmail_ledger_bank ON gmail_ledger_entries(bank);
 CREATE INDEX IF NOT EXISTS idx_gmail_ledger_due_date ON gmail_ledger_entries(due_date);
 CREATE INDEX IF NOT EXISTS idx_gmail_ledger_payment_status ON gmail_ledger_entries(payment_status);
 CREATE INDEX IF NOT EXISTS idx_gmail_ledger_matched_bill ON gmail_ledger_entries(matched_bill_id);
-ALTER TABLE gmail_ledger_entries ADD COLUMN created_by TEXT;
 CREATE INDEX IF NOT EXISTS idx_gmail_ledger_created_by ON gmail_ledger_entries(created_by);
 CREATE INDEX idx_banks_name ON banks(name);
 CREATE INDEX idx_card_products_bank_id ON card_products(bank_id);
