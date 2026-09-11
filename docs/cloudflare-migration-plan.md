@@ -2,7 +2,7 @@
 
 > 日期：2026-09-10 → 2026-09-11
 > 分支：`feat/cloudflare-d1-migration`
-> 状态：**Phase 1-3、5-7 已完成；Phase 4（数据迁移）按产品决定跳过**
+> 状态：**Phase 1-3、5-8 已完成；Phase 4（数据迁移）按产品决定跳过**
 
 ## 架构
 
@@ -109,6 +109,41 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 ## 下一步（真实剩余项）
 
 1. **登录态真机回归**：本轮未用真实账号做 Phase 6 式 17 路由 Chrome 爬测；登录走一遍核心页面，并在浏览器授权通知后调用 `POST /api/push/test` 验证端到端推送（cron 0 9 * * * UTC 定时推送可用 `wrangler tail` 观察）
-2. **wc_user cookie 未签名**：任何人可伪造 cookie 冒充任意用户（HttpOnly 只防 JS 读取，防不住手工构造请求）。RPC 已把身份绑定收口到服务端，但"身份本身可伪造"仍在；下一步应换成签名 session（HMAC 签名 cookie 或带验签的 JWT）
+2. **email-worker 回归**：worldcredit-email-worker 本轮未回归，若 Gmail 解析仍在用需单独验证
+3. **数据迁移仍按产品决定跳过**（Phase 4 脚本就绪但未执行）
+
+## Phase 8：签名 Session 与家庭成员权限（plan.md 阶段 0 / D1 / D2）✅（2026-09-11）
+
+### wc_user HMAC 签名 session ✅（关闭原"下一步"第 2 项）
+
+- 新增 `lib/session.ts`：cookie 值为 `base64url(JSON payload).base64url(HMAC-SHA256)`，带 7 天 exp；签名密钥 `SESSION_SECRET` 走 worker env（本地 `.dev.vars`，生产 `wrangler secret put`），不落入 `system_settings`（getSystemSettings 会把整表返回给前端）
+- `login` / `register` / `google callback` 统一签发签名 cookie；`session`、`/api/rpc`、`/api/push/test`、`/api/attachments/*` 统一经 `readSession` 验签；未签名旧 cookie 一律 401（全部登录态需重新登录一次）
+- `register` 改为首个注册用户 admin、之后注册一律 member（否则开放注册即管理员）
+- 单测锁定：`lib/__tests__/session.test.ts`（round-trip / 篡改拒绝 / 旧格式拒绝 / 过期拒绝）
+
+### D1 家庭成员账号与权限 ✅
+
+- 迁移 `migrations/d1/0002_member_binding.sql`：`card_holders.auth_user_id TEXT REFERENCES users(id)` + 部分索引（本地与远端 D1 均已执行）
+- 绑定方式：持卡人档案填成员邮箱 → 服务端按 `lower(email)` 匹配 `users` 自动写 `auth_user_id`（createHolder/updateHolder 同步，清空邮箱即解绑）；HolderForm 增加邮箱字段，HolderCard 增加编辑入口与"已绑定成员账号"标识
+- 数据范围：所有按 `ch.created_by = ?` 过滤的查询改为 `(ch.created_by = ? OR ch.auth_user_id = ?)`（getBillDashboardItems、getCardsWithBillsSummary、getAllMyBenefits、getDueBillsForReminders、getHolders）；admin 传自己 id 走 created_by，成员传自己 id 走 auth_user_id，同一条查询路径
+- 隔离守卫：`lib/api/member-scope.ts` + registry 每函数声明 `memberGuard` / `memberFilter`（holder/card/bill/benefit/附件/邮箱来源/导入草稿逐参数校验；analytics 强制 holder_id 归一；getUnpaidBills/getActiveLoanCards 按成员 holder 过滤），守卫失败统一 403
+- 成员基础资料写操作全部 admin-only：createCard/updateCard、createBill/updateBill/updateBillStatus、confirmBillImportDraft、createHolder/updateHolder/mergeHolders、createUserPromo、gmail-ledger 全部、syncGmail/syncEmailBill
+
+### D2 成员自助记录 ✅
+
+- 成员可记录自己的还款：`createPayment` / `markBillAsPaid` 按账单归属守卫（自己卡片的账单 200，他人的 403）；`markAllOverdueBillsAsPaid` 逐单校验
+- 成员可记录自己的权益使用：`recordBenefitUsage` 校验权益所属卡产品在自己名下
+- 优惠使用记录（createUserPromo）当前写全局 promos 表（无归属列），按 D2"不破坏基础数据"原则暂收 admin；待 C 阶段引入 per-user 优惠使用模型后放开
+
+### 验证
+
+- 本地：typecheck 0 错误、eslint --max-warnings=0 通过、vitest 31 passed（新增 session 4 例 + registry 权限矩阵 2 例）、vite build 成功
+- 本地 E2E（wrangler dev + curl）：注册首用户 admin / 次用户 member；admin 建持卡人并绑成员邮箱（伪造 created_by 被服务端覆盖）；成员 getHolders 只见自己的档案；成员读他人/不存在 holder 403；成员 getDashboardStats / createCard 403；成员 getUnpaidBills 只见自己的账单；成员对自己账单 createPayment 200、对他人账单 403；analytics 自动归一到成员 holder；改 payload 的伪造 cookie 与未签名旧 cookie 均 401
+- 线上：迁移 0002 已执行（23 表）；`SESSION_SECRET` 已配置；`wrangler deploy` 版本 `ea7dc2f4-4c5a-484f-a7e3-32a5c2bfdeb7`；冒烟 /api/push/public-key 200、未登录 RPC 401、旧格式 cookie session 返回 user:null（验签生效）、登录路由 401 正常
+
+## 更新后的下一步
+
+1. **登录态真机回归**：本轮未用真实账号做 Phase 6 式 17 路由 Chrome 爬测；登录走一遍核心页面，并在浏览器授权通知后调用 `POST /api/push/test` 验证端到端推送（cron 0 9 * * * UTC 定时推送可用 `wrangler tail` 观察）
+2. **成员端 UI 收尾**：成员登录后导航/入口仍按 admin 视角渲染（后端已 403 兜底，不会泄露数据）；按角色隐藏 admin 入口、成员首页文案
 3. **email-worker 回归**：worldcredit-email-worker 本轮未回归，若 Gmail 解析仍在用需单独验证
 4. **数据迁移仍按产品决定跳过**（Phase 4 脚本就绪但未执行）
