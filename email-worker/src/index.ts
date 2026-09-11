@@ -8,7 +8,7 @@
  * Uses D1 binding directly (no InsForge REST client).
  */
 
-import type { Env, AiConfig, BillParseResult, BillRow, EmailParseLogRow } from './types'
+import type { Env, AiConfig, BillParseResult, EmailParseLogRow } from './types'
 import { streamToString, extractTextFromRaw } from './mime'
 
 export default {

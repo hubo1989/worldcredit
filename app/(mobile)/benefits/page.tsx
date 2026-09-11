@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import {
   Container, Typography, Box, Stack, Paper,
   Button, Skeleton, Card, CardContent, LinearProgress,
-  Chip, Dialog, DialogTitle, DialogContent, DialogActions, TextField,
+  Dialog, DialogTitle, DialogContent, DialogActions, TextField,
   IconButton, Tooltip, Alert
 } from '@mui/material'
 import BenefitIcon from '@mui/icons-material/Star'
@@ -77,8 +77,8 @@ export default function BenefitsPage() {
       setUseOpen(false)
       setNote('')
       loadData()
-    } catch (err: any) {
-      alert('登记失败: ' + err.message)
+    } catch (err) {
+      alert('登记失败: ' + (err instanceof Error ? err.message : String(err)))
     } finally {
       setSubmitting(false)
     }
@@ -106,8 +106,8 @@ export default function BenefitsPage() {
       } else {
         alert('未检索到更多新权益。')
       }
-    } catch (err: any) {
-      alert('AI 自动搜集失败: ' + err.message)
+    } catch (err) {
+      alert('AI 自动搜集失败: ' + (err instanceof Error ? err.message : String(err)))
     } finally {
       setCollectingAi(false)
     }
@@ -118,8 +118,8 @@ export default function BenefitsPage() {
     try {
       await deleteBenefit(id)
       loadData()
-    } catch (err: any) {
-      alert('删除失败: ' + err.message)
+    } catch (err) {
+      alert('删除失败: ' + (err instanceof Error ? err.message : String(err)))
     }
   }
 

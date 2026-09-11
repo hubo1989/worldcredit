@@ -50,8 +50,8 @@ export function BillAttachments({ billId, onChanged }: Props) {
     setError(null)
     try {
       setAttachments(await getAttachments('bill', billId))
-    } catch (err: any) {
-      setError(err?.message || '加载附件失败')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载附件失败')
     } finally {
       setLoading(false)
     }
@@ -73,8 +73,8 @@ export function BillAttachments({ billId, onChanged }: Props) {
       await uploadRecordAttachment('bill', billId, file, user?.id)
       await load()
       onChanged?.()
-    } catch (err: any) {
-      setError(err?.message || '上传失败')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '上传失败')
     } finally {
       setUploading(false)
     }
@@ -86,8 +86,8 @@ export function BillAttachments({ billId, onChanged }: Props) {
       await deleteRecordAttachment(attachment)
       await load()
       onChanged?.()
-    } catch (err: any) {
-      setError(err?.message || '删除失败')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除失败')
     }
   }
 

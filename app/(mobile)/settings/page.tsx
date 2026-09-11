@@ -143,8 +143,8 @@ export default function SettingsPage() {
     try {
       await signOut()
       router.push('/login')
-    } catch (err: any) {
-      setNotice({ open: true, message: err?.message || '退出登录失败', severity: 'error' })
+    } catch (err) {
+      setNotice({ open: true, message: err instanceof Error ? err.message : '退出登录失败', severity: 'error' })
     }
   }
 
@@ -173,8 +173,8 @@ export default function SettingsPage() {
     setLoadingSources(true)
     try {
       setSources(await getBillEmailSources(user.id))
-    } catch (err: any) {
-      setNotice({ open: true, message: err?.message || '加载邮箱失败', severity: 'error' })
+    } catch (err) {
+      setNotice({ open: true, message: err instanceof Error ? err.message : '加载邮箱失败', severity: 'error' })
     } finally {
       setLoadingSources(false)
     }
@@ -216,8 +216,8 @@ export default function SettingsPage() {
       setSourceLabel('')
       await loadSources()
       setNotice({ open: true, message: '账单来源邮箱已添加', severity: 'success' })
-    } catch (err: any) {
-      setNotice({ open: true, message: err?.message || '添加失败', severity: 'error' })
+    } catch (err) {
+      setNotice({ open: true, message: err instanceof Error ? err.message : '添加失败', severity: 'error' })
     } finally {
       setSavingSource(false)
     }
@@ -227,8 +227,8 @@ export default function SettingsPage() {
     try {
       await setBillEmailSourceActive(source.id, !source.is_active)
       await loadSources()
-    } catch (err: any) {
-      setNotice({ open: true, message: err?.message || '更新失败', severity: 'error' })
+    } catch (err) {
+      setNotice({ open: true, message: err instanceof Error ? err.message : '更新失败', severity: 'error' })
     }
   }
 
@@ -237,8 +237,8 @@ export default function SettingsPage() {
       await deleteBillEmailSource(source.id)
       await loadSources()
       setNotice({ open: true, message: '已删除来源邮箱', severity: 'success' })
-    } catch (err: any) {
-      setNotice({ open: true, message: err?.message || '删除失败', severity: 'error' })
+    } catch (err) {
+      setNotice({ open: true, message: err instanceof Error ? err.message : '删除失败', severity: 'error' })
     }
   }
 

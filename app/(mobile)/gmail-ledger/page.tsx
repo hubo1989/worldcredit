@@ -5,8 +5,8 @@ import {
   Box, Typography, Card, CardContent, Chip, IconButton,
   Button, TextField, Dialog, DialogTitle, DialogContent,
   DialogActions, LinearProgress, Tabs, Tab, Stack, Divider,
-  Alert, Snackbar, Collapse, List, ListItem, ListItemText,
-  Fab, Tooltip, Badge, alpha, Checkbox, FormControlLabel
+  Alert, Snackbar, List, ListItem, ListItemText,
+  alpha, Checkbox, FormControlLabel
 } from '@mui/material'
 import PaidIcon from '@mui/icons-material/CheckCircle'
 import UnpaidIcon from '@mui/icons-material/Pending'
@@ -14,10 +14,8 @@ import PartialIcon from '@mui/icons-material/Warning'
 import PayIcon from '@mui/icons-material/Payment'
 import FilterIcon from '@mui/icons-material/FilterList'
 import RefreshIcon from '@mui/icons-material/Refresh'
-import NoteIcon from '@mui/icons-material/NoteAdd'
 import CloseIcon from '@mui/icons-material/Close'
 import LedgerIcon from '@mui/icons-material/Receipt'
-import BankIcon from '@mui/icons-material/AccountBalance'
 import DateIcon from '@mui/icons-material/CalendarMonth'
 import AmountIcon from '@mui/icons-material/Payments'
 import ReceiptIcon from '@mui/icons-material/ReceiptLong'
@@ -101,8 +99,8 @@ export default function GmailLedgerPage() {
       setEntries(entriesData)
       setSummary(summaryData)
       setBanks(banksData)
-    } catch (e: any) {
-      setSnack({ open: true, message: `加载失败: ${e.message}`, severity: 'error' })
+    } catch (e) {
+      setSnack({ open: true, message: `加载失败: ${e instanceof Error ? e.message : String(e)}`, severity: 'error' })
     } finally {
       setLoading(false)
     }
@@ -139,8 +137,8 @@ export default function GmailLedgerPage() {
       setSelectedEntry(null)
       setPayForm({ amount: '', note: '' })
       fetchData()
-    } catch (e: any) {
-      setSnack({ open: true, message: `操作失败: ${e.message}`, severity: 'error' })
+    } catch (e) {
+      setSnack({ open: true, message: `操作失败: ${e instanceof Error ? e.message : String(e)}`, severity: 'error' })
     }
   }
 
@@ -155,8 +153,8 @@ export default function GmailLedgerPage() {
       })
       setSnack({ open: true, message: `${entry.bank} 已标记为${status}`, severity: 'success' })
       fetchData()
-    } catch (e: any) {
-      setSnack({ open: true, message: `操作失败: ${e.message}`, severity: 'error' })
+    } catch (e) {
+      setSnack({ open: true, message: `操作失败: ${e instanceof Error ? e.message : String(e)}`, severity: 'error' })
     }
   }
 

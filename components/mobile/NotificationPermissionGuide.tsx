@@ -2,11 +2,10 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { Box, Typography, Button, Alert, Paper, Stack } from '@mui/material'
+import { Box, Typography, Button, Paper, Stack } from '@mui/material'
 import {
   Notifications as NotificationsIcon,
   NotificationsNone as NotificationsNoneIcon,
-  CheckCircle as CheckIcon,
 } from '@mui/icons-material'
 import { requestNotificationPermission } from '@/lib/notifications'
 

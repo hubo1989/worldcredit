@@ -2,10 +2,10 @@
 
 import { useState, useEffect } from 'react'
 import {
-  Box, Typography, Paper, Button, TextField, Grid, Divider,
-  Switch, FormControlLabel, CircularProgress, Alert, Snackbar
+  Box, Typography, Paper, Button, TextField, Grid,
+  Switch, CircularProgress, Alert, Snackbar
 } from '@mui/material'
-import { Save as SaveIcon, Refresh as RefreshIcon } from '@mui/icons-material'
+import { Save as SaveIcon } from '@mui/icons-material'
 import { getSystemSettings, updateSystemSettings } from '@/lib/api/admin'
 
 interface SystemSettings {
@@ -17,7 +17,7 @@ interface SystemSettings {
   ai_api_key?: string
   ai_base_url?: string
   ai_model?: string
-  [key: string]: any
+  [key: string]: unknown
 }
 
 export default function SettingsPage() {
@@ -38,7 +38,7 @@ export default function SettingsPage() {
       try {
         const data = await getSystemSettings()
         if (Object.keys(data).length > 0) {
-          setSettings(prev => ({ ...prev, ...data }))
+          setSettings(prev => ({ ...prev, ...data }) as SystemSettings)
         }
       } catch (error) {
         console.error('Failed to fetch settings:', error)
@@ -49,7 +49,7 @@ export default function SettingsPage() {
     fetchData()
   }, [])
 
-  const handleSave = async (key: string, value: any) => {
+  const handleSave = async (key: string, value: string | boolean) => {
     setSaving(true)
     try {
       await updateSystemSettings(key, value)

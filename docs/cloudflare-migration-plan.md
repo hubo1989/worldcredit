@@ -2,7 +2,7 @@
 
 > 日期：2026-09-10 → 2026-09-11
 > 分支：`feat/cloudflare-d1-migration`
-> 状态：**Phase 1-3、5-6 已完成；Phase 4（数据迁移）按产品决定跳过**
+> 状态：**Phase 1-3、5-7 已完成；Phase 4（数据迁移）按产品决定跳过**
 
 ## 架构
 
@@ -67,9 +67,48 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 - `/api/db-proxy` 加固：`__in/__neq/__gte/__lte` 过滤算子，insert/update/delete 列名与 order-by 标识符校验（3a06c6e、c320eb0）
 - 验证方式：真实 Chrome 登录后爬测全部 17 个路由，控制台 0 错误；还款登记端到端走通（INSERT/UPDATE/重查）后清理种子数据
 
-## 下一步
+## Phase 7：撤桥、真实 Web Push、SW 修复、lint 清零 ✅（2026-09-11）
 
-1. 拆专用 API 路由替换迁移期桥（`/api/sql-proxy`、`/api/db-proxy`、`lib/client-db.ts`），撤掉任意-SQL 桥的暴露面
-2. 设置 Worker Secrets：`npx wrangler secret put VAPID_PRIVATE_KEY`（Web Push 目前是 stub）
-3. PWA Service Worker 每次部署后首载可能命中旧一代预缓存，刷新一次恢复
-4. 基线 lint 债：dashboard 等页面存在改造前遗留的 unused imports（9 errors），与本迁移无关，择期清理
+### 专用 RPC API 替换迁移期桥 ✅
+
+- `lib/api/*.ts` 拆成两层：`*.server.ts`（D1 实现，仅服务端）+ `*.ts`（浏览器 RPC 包装，函数签名与原来一致，页面几乎零改动）
+- 新增 `/api/rpc/[module]/[fn]` 单入口调度 + `lib/api/registry.ts` 显式 allowlist（每函数声明 bindUser / bindField / admin）
+- 身份固定从 wc_user 会话 cookie 解析，客户端传入的 userId/created_by 一律被服务端覆盖；admin 接口要求 role=admin
+- 新增服务端聚合函数替代 clientDb 手工拼装：getCardDetail、getBillDetail、getUnpaidBills、getPaymentTotal、getBillByCardMonth、getHolderCardCounts、getCardsBasicByHolders、getAllCardsWithProduct、getPromosWithBanks、createUserPromo、subscribePush、reminders.* 等
+- 附件改走专用路由：`POST /api/attachments/upload`（FormData→R2）与 `GET/DELETE /api/attachments/[id]`（R2 流式读取；此前浏览器直连路径实际不可用）
+- `lib/reminders.ts` 改为纯客户端调度器，D1 读写全部经 reminders.server RPC
+- 删除 `/api/sql-proxy`、`/api/db-proxy`、`lib/client-db.ts`；`lib/db/helpers` 移除浏览器转发分支
+- `lib/__tests__/rpc-registry.test.ts` 锁定契约：客户端每个 rpc 调用必须在 allowlist 内、桥文件保持删除、用户态函数必须绑定会话身份
+
+### Web Push 从 stub 到真实推送 ✅
+
+- `worker/cron.ts` 用 `web-push`（nodejs_compat）+ VAPID 真实发送，payload 含 title/body/url；404/410 自动清理失效订阅
+- 公钥作为 var（`VAPID_PUBLIC_KEY`、`VAPID_SUBJECT`）随 wrangler.jsonc 部署；私钥已 `wrangler secret put VAPID_PRIVATE_KEY`；本地开发用 gitignored `.dev.vars`
+- 新增 `GET /api/push/public-key`（运行时下发公钥，替换从未配置过的 `VITE_VAPID_PUBLIC_KEY` 构建期变量）与 `POST /api/push/test`（登录用户自助测试推送）
+- PushPermission 订阅经 `push.subscribePush` RPC upsert（endpoint 唯一约束）
+
+### PWA 旧缓存首载修复 ✅
+
+- `public/sw.js` 增加 `cleanupOutdatedCaches()`，部署后自动清除旧一代预缓存
+- MobileShell 监听 `controllerchange`，新 SW 接管时一次性自动刷新页面（修复部署后首载命中旧缓存需手动刷新的问题）
+
+### 基线 lint 债清零 ✅
+
+- 实际基线不是 9 errors，而是 276 problems（172 errors + 104 warnings，含 no-undef 配置噪音与 30+ 文件的 unused imports/any）
+- eslint 配置：TS 文件补 globals、sw.js 补 serviceworker globals、排除 next-env.d.ts/env.d.ts 与一次性脚本（scripts/docs/db/import_bills.mjs）
+- 移除全部 unused imports/死变量，88 处 no-explicit-any 换成真实类型，empty catch 注释化，删除 insforge/ 残留目录
+- `npm run lint`（--max-warnings=0）、`npm run typecheck`、`npm test`（25 tests）全部通过
+- 顺带修复 admin 优惠/权益页读取不存在的 `row.card_products` 字段错配（改读 RPC 实际返回的 product_bank_name/product_card_name）
+
+### 验证
+
+- 本地：typecheck 0 错误、vitest 25 passed、vite build 成功（SW 18 个预缓存条目）
+- 线上：`npx wrangler deploy` 版本 ca45a4c8（https://worldcredit.hubo1989.workers.dev）
+- 冒烟：/api/push/public-key 200 且公钥正确；/api/rpc 未登录 401；伪造 member cookie 访问 admin RPC 403；伪造用户 cookie 正常走通 getHolders 200（身份绑定生效）；/api/sql-proxy 与 /api/db-proxy 均 404；非 allowlist 函数 404；线上 sw.js 已含 cleanupOutdatedCaches
+
+## 下一步（真实剩余项）
+
+1. **登录态真机回归**：本轮未用真实账号做 Phase 6 式 17 路由 Chrome 爬测；登录走一遍核心页面，并在浏览器授权通知后调用 `POST /api/push/test` 验证端到端推送（cron 0 9 * * * UTC 定时推送可用 `wrangler tail` 观察）
+2. **wc_user cookie 未签名**：任何人可伪造 cookie 冒充任意用户（HttpOnly 只防 JS 读取，防不住手工构造请求）。RPC 已把身份绑定收口到服务端，但"身份本身可伪造"仍在；下一步应换成签名 session（HMAC 签名 cookie 或带验签的 JWT）
+3. **email-worker 回归**：worldcredit-email-worker 本轮未回归，若 Gmail 解析仍在用需单独验证
+4. **数据迁移仍按产品决定跳过**（Phase 4 脚本就绪但未执行）

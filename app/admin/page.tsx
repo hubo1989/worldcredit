@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { Box, Grid, Typography, Skeleton, Stack } from '@mui/material'
+import { Box, Grid, Typography, Skeleton } from '@mui/material'
 import {
   People as PeopleIcon,
   CreditCard as CardIcon,

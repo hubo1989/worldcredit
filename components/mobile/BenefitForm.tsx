@@ -5,7 +5,6 @@ import { useState, useEffect } from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, Button, FormControl, InputLabel, Select, MenuItem,
-  Typography,
 } from '@mui/material'
 import { format } from 'date-fns'
 import type { Benefit } from '@/lib/types'

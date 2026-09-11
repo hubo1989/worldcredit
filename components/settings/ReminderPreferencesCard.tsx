@@ -76,8 +76,8 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
           severity: 'info'
         })
       }
-    } catch (err: any) {
-      setTestNotice({ open: true, message: '测试发送失败: ' + err?.message, severity: 'error' })
+    } catch (err) {
+      setTestNotice({ open: true, message: '测试发送失败: ' + (err instanceof Error ? err.message : String(err)), severity: 'error' })
     } finally {
       setTesting(false)
     }

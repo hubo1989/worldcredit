@@ -18,7 +18,6 @@ import {
   MenuItem,
   Chip,
   Paper,
-  Divider,
   Alert,
   CircularProgress,
 } from '@mui/material'
@@ -135,8 +134,8 @@ export function MergeHoldersDialog({
       await mergeHolders(primaryId, sourceIds)
       onSuccess()
       onClose()
-    } catch (err: any) {
-      setError(err?.message || '合并持卡人失败，请重试')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '合并持卡人失败，请重试')
     } finally {
       setLoading(false)
     }

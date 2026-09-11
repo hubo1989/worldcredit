@@ -2,21 +2,23 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
 import {
   Box, Typography, Card, CardContent, Stack, Select, MenuItem,
-  FormControl, InputLabel, Button, Alert, Skeleton, Chip, IconButton,
+  FormControl, InputLabel, Button, Alert, Skeleton, IconButton,
 } from '@mui/material'
-import { TrendingUp, TrendingDown, AccountBalance, Warning, FileDownload } from '@mui/icons-material'
+import { Warning, FileDownload } from '@mui/icons-material'
 import {
   LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
+import type { PieLabelRenderProps } from 'recharts'
 import { getAnalyticsSummary, getMonthlyDebtTrend, getCategoryBreakdown } from '@/lib/api/analytics'
 import { getHolders } from '@/lib/api/holders'
 import { getCardsByHolder } from '@/lib/api/cards'
+import type { CreditCardWithProduct } from '@/lib/api/cards'
 import { useAuth } from '@/lib/auth'
 import { ExportDialog } from '@/components/mobile/ExportDialog'
+import type { AnalyticsSummary, MonthlyDebtPoint, CategoryBreakdown } from '@/lib/api/analytics'
 import type { CardHolder } from '@/lib/types'
 
 interface Filters {
@@ -27,18 +29,17 @@ interface Filters {
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D']
 
 export default function AnalyticsPage() {
-  const router = useRouter()
   const { user } = useAuth()
   const [filters, setFilters] = useState<Filters>({ months: 6 })
   const [holderOptions, setHolderOptions] = useState<Array<{ id: string; name: string }>>([])
-  const [summary, setSummary] = useState<any>(null)
-  const [trend, setTrend] = useState<any[]>([])
-  const [categoryBreakdown, setCategoryBreakdown] = useState<any[]>([])
+  const [summary, setSummary] = useState<AnalyticsSummary | null>(null)
+  const [trend, setTrend] = useState<MonthlyDebtPoint[]>([])
+  const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryBreakdown[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
   const [holders, setHolders] = useState<CardHolder[]>([])
-  const [cardOptions, setCardOptions] = useState<Array<{ id: string; label: string; card: any }>>([])
+  const [cardOptions, setCardOptions] = useState<Array<{ id: string; label: string; card: CreditCardWithProduct }>>([])
 
   const loadHolders = useCallback(async () => {
     if (!user) return
@@ -48,7 +49,7 @@ export default function AnalyticsPage() {
       setHolderOptions(holdersData.map(h => ({ id: h.id, name: h.name })))
 
       // Load card options for export
-      const allCards: Array<{ id: string; label: string; card: any }> = []
+      const allCards: Array<{ id: string; label: string; card: CreditCardWithProduct }> = []
       await Promise.all(
         holdersData.map(async (h) => {
           const cards = await getCardsByHolder(h.id)
@@ -106,12 +107,14 @@ export default function AnalyticsPage() {
   const getRiskAlerts = () => {
     const alerts = []
 
-    if (summary?.utilization_rate > 70) {
-      alerts.push(`额度使用率过高 (${summary.utilization_rate.toFixed(1)}%)`)
+    const utilization = summary?.utilization_rate
+    if (utilization != null && utilization > 70) {
+      alerts.push(`额度使用率过高 (${utilization.toFixed(1)}%)`)
     }
 
-    if (summary?.overdue_count > 0) {
-      alerts.push(`有 ${summary.overdue_count} 笔逾期账单`)
+    const overdueCount = summary?.overdue_count
+    if (overdueCount != null && overdueCount > 0) {
+      alerts.push(`有 ${overdueCount} 笔逾期账单`)
     }
 
     if (trend.length > 1) {
@@ -283,7 +286,10 @@ export default function AnalyticsPage() {
                       cx="50%"
                       cy="50%"
                       labelLine={false}
-                      label={(props: any) => `${props.category ?? ''} ${Number(props.percentage || 0).toFixed(1)}%`}
+                      label={(props: PieLabelRenderProps) => {
+                        const p = props as unknown as { category?: string; percentage?: number }
+                        return `${p.category ?? ''} ${Number(p.percentage || 0).toFixed(1)}%`
+                      }}
                       outerRadius={80}
                       fill="#8884d8"
                       dataKey="amount"

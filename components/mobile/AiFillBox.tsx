@@ -14,7 +14,7 @@ import { getSystemSettings } from '@/lib/api/admin'
  */
 interface Props {
   /** 解析成功后回调，父表单预填字段并标记 AI 来源 */
-  onFill: (data: Record<string, any>) => void
+  onFill: (data: Record<string, unknown>) => void
   /** 解析模式：bill 提取账单字段，card 提取卡产品字段 */
   mode: 'bill' | 'card'
 }
@@ -45,8 +45,8 @@ const CARD_SYSTEM_PROMPT = `你是信用卡产品信息解析助手。从用户�
 无法确定的字段返回 null。`
 
 /** 本地正则兜底解析（无 AI key 时使用） */
-function localExtract(text: string, mode: Props['mode']): Record<string, any> {
-  const data: Record<string, any> = {}
+function localExtract(text: string, mode: Props['mode']): Record<string, unknown> {
+  const data: Record<string, unknown> = {}
   const amounts = [...text.matchAll(/(\d[\d,]*\.?\d*)\s*[元¥]|¥\s*(\d[\d,]*\.?\d*)/g)]
     .map(m => (m[1] || m[2]).replace(/,/g, ''))
     .map(Number)
@@ -69,13 +69,13 @@ function localExtract(text: string, mode: Props['mode']): Record<string, any> {
     if (mode === 'bill') data.statement_date = `${year}-${mm}-${dd}`
   }
   if (mode === 'card') {
-    const last4 = text.match(/[\*×\s](\d{4})\b/) || text.match(/\b(\d{4})\b/)
+    const last4 = text.match(/[*×\s](\d{4})\b/) || text.match(/\b(\d{4})\b/)
     if (last4) data.card_number_last4 = last4[1]
   }
   return data
 }
 
-function safeJsonParse(content: string): Record<string, any> | null {
+function safeJsonParse(content: string): Record<string, unknown> | null {
   try {
     return JSON.parse(content)
   } catch {
@@ -107,7 +107,7 @@ export function AiFillBox({ onFill, mode }: Props) {
     // 规范要求 1s loading 视觉，与 AI 实际耗时取较大者
     const minDelay = new Promise<void>(res => setTimeout(res, 1000))
 
-    let result: Record<string, any> | null = null
+    let result: Record<string, unknown> | null = null
     let usedFallback = false
 
     try {
@@ -152,7 +152,7 @@ export function AiFillBox({ onFill, mode }: Props) {
     await minDelay
     setLoading(false)
 
-    const cleaned: Record<string, any> = {}
+    const cleaned: Record<string, unknown> = {}
     if (result) {
       for (const [k, v] of Object.entries(result)) {
         if (v !== null && v !== undefined && v !== '') cleaned[k] = v

@@ -103,9 +103,9 @@ export function EmailBillSyncModal({ open, onClose, onSuccess, log }: Props) {
 
       onSuccess()
       onClose()
-    } catch (err: any) {
+    } catch (err) {
       console.error(err)
-      setErrorMsg(err.message || '同步失败，请稍后重试')
+      setErrorMsg(err instanceof Error ? err.message : '同步失败，请稍后重试')
     } finally {
       setSubmitting(false)
     }

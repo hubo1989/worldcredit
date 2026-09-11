@@ -69,7 +69,7 @@ export default function RegisterPage() {
       } else {
         router.push('/dashboard')
       }
-    } catch (err: any) {
+    } catch (err) {
       setError(getFriendlyAuthErrorMessage(err, '注册失败，请检查填写信息后重试'))
     } finally {
       setLoading(false)
@@ -83,7 +83,7 @@ export default function RegisterPage() {
     try {
       await verifyEmail(email, otp)
       router.push('/dashboard')
-    } catch (err: any) {
+    } catch (err) {
       setError(getFriendlyAuthErrorMessage(err, '验证码错误或已过期，请重试'))
     } finally {
       setLoading(false)
@@ -96,8 +96,8 @@ export default function RegisterPage() {
     try {
       await resendVerificationEmail(email)
       setNotice('验证码已重新发送，请查收邮件')
-    } catch (err: any) {
-      setError(err.message || '重新发送失败')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '重新发送失败')
     }
   }
 
@@ -105,8 +105,8 @@ export default function RegisterPage() {
     setError('')
     try {
       await signInWithGoogle()
-    } catch (err: any) {
-      setError(err.message || 'Google 登录失败')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Google 登录失败')
     }
   }
 

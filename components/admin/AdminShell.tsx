@@ -5,7 +5,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import {
   Box, Drawer, List, ListItemButton, ListItemIcon, ListItemText,
   AppBar, Toolbar, Typography, IconButton, Avatar, Menu, MenuItem,
-  Divider, Button, useTheme
+  Divider, Button
 } from '@mui/material'
 import {
   Dashboard as DashboardIcon,

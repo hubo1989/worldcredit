@@ -48,9 +48,9 @@ export default function CardProductsPage() {
       ])
       setProducts(productsData || [])
       setBanks(banksData || [])
-    } catch (error: any) {
+    } catch (error) {
       console.error('Failed to fetch data:', error)
-      setFetchError(error?.message || 'Unknown fetching error')
+      setFetchError(error instanceof Error ? error.message : 'Unknown fetching error')
     } finally {
       setLoading(false)
     }
@@ -58,7 +58,6 @@ export default function CardProductsPage() {
 
   useEffect(() => {
     fetchData()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -130,7 +129,7 @@ export default function CardProductsPage() {
         const updated = await updateCardProduct(currentProduct.id, currentProduct)
         setProducts(products.map(p => p.id === currentProduct.id ? { ...p, ...updated } : p))
       } else {
-        const created = await createCardProduct(currentProduct) as any
+        const created = await createCardProduct(currentProduct) as unknown as CardProduct & { is_active: boolean }
         setProducts([created, ...products])
       }
       setDialogOpen(false)

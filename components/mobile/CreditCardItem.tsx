@@ -1,6 +1,6 @@
 'use client'
 
-import { Card, CardContent, Typography, Box, Stack, Chip, Divider } from '@mui/material'
+import { Card, CardContent, Typography, Box, Stack, Divider } from '@mui/material'
 import CardIcon from '@mui/icons-material/CreditCard'
 import BillIcon from '@mui/icons-material/Event'
 import type { CreditCard, CardProduct } from '@/lib/types'

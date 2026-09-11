@@ -70,8 +70,8 @@ export function BenefitEditDialog({
       })
       onSaved()
       onClose()
-    } catch (err: any) {
-      alert('保存权益失败: ' + err?.message)
+    } catch (err) {
+      alert('保存权益失败: ' + (err instanceof Error ? err.message : String(err)))
     } finally {
       setSubmitting(false)
     }
@@ -114,7 +114,7 @@ export function BenefitEditDialog({
               <Select
                 value={period}
                 label="周期类型"
-                onChange={e => setPeriod(e.target.value as any)}
+                onChange={e => setPeriod(e.target.value as 'yearly' | 'monthly' | 'one_time')}
               >
                 <MenuItem value="yearly">每年 (Yearly)</MenuItem>
                 <MenuItem value="monthly">每月 (Monthly)</MenuItem>
