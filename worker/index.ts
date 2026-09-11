@@ -1,9 +1,13 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { handleScheduled } from "./cron";
+import { setDb } from "../lib/db/client";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // Inject D1 binding into our client on every request
+    setDb(env.DB);
+
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {
@@ -21,6 +25,7 @@ export default {
   },
 
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    setDb(env.DB);
     ctx.waitUntil(handleScheduled(event, env, ctx));
   },
 };

@@ -3,7 +3,7 @@
 
 const ITERATIONS = 100_000
 const HASH_ALG = 'SHA-256'
-const KEY_LEN = 32
+const KEY_LEN_BYTES = 32 // 256 bits
 
 function toB64(buf: ArrayBuffer | Uint8Array): string {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
@@ -21,11 +21,17 @@ function fromB64(s: string): Uint8Array {
 
 export async function pbkdf2Hash(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16))
-  const keyMaterial = await crypto.subtle.importKey('raw', new TextEncoder().encode(password) as unknown as ArrayBuffer, 'PBKDF2', false, ['deriveBits'])
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password) as unknown as ArrayBuffer,
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  )
   const bits = await crypto.subtle.deriveBits(
     { name: 'PBKDF2', salt: salt as unknown as ArrayBuffer, iterations: ITERATIONS, hash: HASH_ALG },
     keyMaterial,
-    KEY_LEN * 8
+    KEY_LEN_BYTES * 8
   )
   return `pbkdf2$${ITERATIONS}$${toB64(salt)}$${toB64(bits)}`
 }
@@ -36,11 +42,18 @@ export async function pbkdf2Verify(password: string, stored: string): Promise<bo
   const iterations = parseInt(iterStr, 10)
   if (!iterations || !saltB64 || !hashB64) return false
   const salt = fromB64(saltB64)
-  const keyMaterial = await crypto.subtle.importKey('raw', new TextEncoder().encode(password) as unknown as ArrayBuffer, 'PBKDF2', false, ['deriveBits'])
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password) as unknown as ArrayBuffer,
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  )
+  // Always derive exactly 256 bits (32 bytes) — matches pbkdf2Hash
   const bits = await crypto.subtle.deriveBits(
     { name: 'PBKDF2', salt: salt as unknown as ArrayBuffer, iterations, hash: HASH_ALG },
     keyMaterial,
-    (hashB64.length * 6 / 8) | 0
+    KEY_LEN_BYTES * 8
   )
   const expected = fromB64(hashB64)
   const actual = new Uint8Array(bits)
