@@ -23,6 +23,15 @@ const ALLOWED_TABLES = new Set([
   'system_settings',
 ])
 
+// 表名走 ALLOWED_TABLES 白名单；其余标识符（列名等）统一校验，
+// 拒绝任何非 [A-Za-z0-9_] 字符，杜绝标识符拼接注入。
+function assertIdentifier(name: string, label: string): string {
+  if (!/^[A-Za-z0-9_]+$/.test(name)) {
+    throw new Error('不支持的' + label + ': ' + name)
+  }
+  return name
+}
+
 export async function POST(request: Request) {
   const body = await request.json() as ProxyRequest
   const { table, operation, data } = body
@@ -61,6 +70,7 @@ export async function POST(request: Request) {
         if (conditions.length > 0) sql += ` WHERE ${conditions.join(' AND ')}`
       }
       if (body.orderBy) {
+        assertIdentifier(body.orderBy.column, '排序列')
         sql += ` ORDER BY ${body.orderBy.column} ${body.orderBy.ascending ? 'ASC' : 'DESC'}`
       }
       if (body.limit) sql += ` LIMIT ?`
@@ -71,7 +81,7 @@ export async function POST(request: Request) {
     }
 
     if (operation === 'insert' && data) {
-      const cols = Object.keys(data)
+      const cols = Object.keys(data).map(c => assertIdentifier(c, '插入列'))
       const placeholders = cols.map(() => '?').join(',')
       const sql = `INSERT INTO ${table} (${cols.join(',')}) VALUES (${placeholders})`
       await db.prepare(sql).bind(...Object.values(data)).run()
@@ -79,15 +89,15 @@ export async function POST(request: Request) {
     }
 
     if (operation === 'update' && data && body.filters) {
-      const sets = Object.keys(data).map(k => `${k} = ?`)
-      const conditions = Object.keys(body.filters).map(k => `${k} = ?`)
+      const sets = Object.keys(data).map(k => assertIdentifier(k, '更新列') + ' = ?')
+      const conditions = Object.keys(body.filters).map(k => assertIdentifier(k, '过滤列') + ' = ?')
       const sql = `UPDATE ${table} SET ${sets.join(', ')} WHERE ${conditions.join(' AND ')}`
       await db.prepare(sql).bind(...Object.values(data), ...Object.values(body.filters)).run()
       return Response.json({ data, error: null })
     }
 
     if (operation === 'delete' && body.filters) {
-      const conditions = Object.keys(body.filters).map(k => `${k} = ?`)
+      const conditions = Object.keys(body.filters).map(k => assertIdentifier(k, '过滤列') + ' = ?')
       const sql = `DELETE FROM ${table} WHERE ${conditions.join(' AND ')}`
       await db.prepare(sql).bind(...Object.values(body.filters)).run()
       return Response.json({ data: null, error: null })

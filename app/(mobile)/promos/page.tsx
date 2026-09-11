@@ -144,7 +144,7 @@ export default function PromosPage() {
       // 2. 获取用户卡包银行
       if (user?.id) {
         const { data: cards } = await clientDb
-          .from('credit_cards')
+          .from('card_products')
           .select('bank_name, card_name')
         
         const banks = new Set<string>()

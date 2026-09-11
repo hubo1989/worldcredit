@@ -35,27 +35,48 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       setError(null)
 
       // 1. 卡 + 卡产品 + 持卡人
-      const { data: rawCard, error: e1 } = await clientDb
+      // PostgREST 嵌套查询在 SQLite 桥上不可用，拆成三段普通查询后组装
+      const { data: cardRow, error: e1 } = await clientDb
         .from('credit_cards')
-        .select('*, card_product:card_products(*), card_holders(*)')
+        .select('*')
         .eq('id', id)
         .single()
       if (e1) throw e1
-      if (!rawCard) throw new Error('卡片不存在')
+      if (!cardRow) throw new Error('卡片不存在')
+      const cardBase = cardRow as any
+      const [{ data: productRow }, { data: holderRow }] = await Promise.all([
+        cardBase.card_product_id
+          ? clientDb.from('card_products').select('*').eq('id', cardBase.card_product_id).single()
+          : Promise.resolve({ data: null } as any),
+        cardBase.holder_id
+          ? clientDb.from('card_holders').select('*').eq('id', cardBase.holder_id).single()
+          : Promise.resolve({ data: null } as any),
+      ])
 
-      const cardData = rawCard as unknown as CardDetail
+      const cardData = {
+        ...cardBase,
+        card_product: productRow || undefined,
+        card_holders: holderRow || undefined,
+      } as unknown as CardDetail
 
       // 2. 该卡账单（按 due_date desc，limit 3）+ 还款聚合
       const { data: rawBills, error: e2 } = await clientDb
         .from('bills')
-        .select('*, payments(amount)')
+        .select('*')
         .eq('card_id', id)
         .order('due_date', { ascending: false })
         .limit(3)
       if (e2) throw e2
+      const billRows = (rawBills || []) as any[]
+      const billIds = billRows.map(b => b.id)
+      const { data: paymentRows } = billIds.length > 0
+        ? await clientDb.from('payments').select('bill_id, amount').in('bill_id', billIds)
+        : { data: [] as any[] }
 
-      const billList: BillWithPaid[] = ((rawBills || []) as any).map((b: any) => {
-        const paid = (b.payments || []).reduce((s: number, p: any) => s + Number(p.amount || 0), 0)
+      const billList: BillWithPaid[] = billRows.map((b: any) => {
+        const paid = (paymentRows || [])
+          .filter((p: any) => p.bill_id === b.id)
+          .reduce((s: number, p: any) => s + Number(p.amount || 0), 0)
         const amount = Number(b.bill_amount) || 0
         let status: Bill['status'] = 'unpaid'
         if (amount <= 0 || paid >= amount) status = 'paid'

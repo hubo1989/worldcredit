@@ -51,13 +51,38 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     try {
       setLoading(true)
       setError(null)
-      const { data, error: e } = await clientDb
+      // PostgREST 嵌套查询在 SQLite 桥上不可用，拆成普通查询后组装
+      const { data: billRow, error: e } = await clientDb
         .from('bills')
-        .select('*, card:credit_cards(*, card_holders(*), card_product:card_products(*)), payments(*)')
+        .select('*')
         .eq('id', id)
         .single()
       if (e) throw e
-      if (!data) throw new Error('账单不存在')
+      if (!billRow) throw new Error('账单不存在')
+      const billData = billRow as any
+      const { data: cardRow } = await clientDb
+        .from('credit_cards')
+        .select('*')
+        .eq('id', billData.card_id)
+        .single()
+      const cardRowData = (cardRow || null) as any
+      const { data: holderRow } = cardRowData
+        ? await clientDb.from('card_holders').select('*').eq('id', cardRowData.holder_id).single()
+        : { data: null }
+      const { data: productRow } = cardRowData?.card_product_id
+        ? await clientDb.from('card_products').select('*').eq('id', cardRowData.card_product_id).single()
+        : { data: null }
+      const { data: paymentRows } = await clientDb
+        .from('payments')
+        .select('*')
+        .eq('bill_id', id)
+      const data = {
+        ...billData,
+        card: cardRowData
+          ? { ...cardRowData, card_holders: holderRow || undefined, card_product: productRow || undefined }
+          : undefined,
+        payments: paymentRows || [],
+      }
       // payments 排序：paid_at 降序
       const sorted: BillDetail = {
         ...(data as any),
