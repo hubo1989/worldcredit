@@ -3,10 +3,13 @@
  *
  * Client-side reminder scheduler.
  * Called once when the App opens (from MobileShell).
+ * All database access goes through the dedicated RPC API
+ * (lib/api/reminders.server.ts); this module only computes, displays
+ * notifications, and records what was shown.
  */
 
-import { query, queryOne, execute, uuid } from './db'
-import type { CreditCard } from './types'
+import { callRpc } from './api/rpc-client'
+import type * as RemindersServer from './api/reminders.server'
 import { getLoanNextDueDate } from './utils'
 
 type RemindType = '3days' | '1day' | 'due_day' | 'loan_3days' | 'loan_1day' | 'loan_due_day'
@@ -41,16 +44,6 @@ async function showNotification(title: string, body: string): Promise<void> {
   }
 }
 
-interface DueBillRow {
-  id: string
-  due_date: string
-  bill_amount: number
-  card_id: string
-  card_product_id: string
-  bank_name: string
-  card_name: string
-}
-
 export async function checkAndSendReminders(userId: string): Promise<void> {
   if (typeof window === 'undefined') return
   if (!('Notification' in window) || Notification.permission !== 'granted') return
@@ -65,25 +58,18 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
     const todayStr = today.toISOString().slice(0, 10)
     const maxStr = threeDaysLater.toISOString().slice(0, 10)
 
-    const { data: bills, error } = await query<DueBillRow>(
-      `SELECT b.id, b.due_date, b.bill_amount, b.card_id,
-              cc.card_product_id, cp.bank_name, cp.card_name
-       FROM bills b
-       JOIN credit_cards cc ON b.card_id = cc.id
-       JOIN card_holders ch ON cc.holder_id = ch.id
-       LEFT JOIN card_products cp ON cc.card_product_id = cp.id
-       WHERE ch.created_by = ? AND b.status IN ('unpaid', 'partial', 'overdue')
-         AND b.due_date >= ? AND b.due_date <= ?`,
-      [userId, todayStr, maxStr]
+    const bills = await callRpc<typeof RemindersServer.getDueBillsForReminders>(
+      'reminders', 'getDueBillsForReminders', userId, todayStr, maxStr
     )
-    if (error || !bills || bills.length === 0) return
+    if (!bills || bills.length === 0) return
 
     // Check already-sent reminders
     const billIds = bills.map(b => b.id)
-    const { data: logs } = await query<{ bill_id: string; remind_type: string }>(
-      `SELECT bill_id, remind_type FROM reminder_logs WHERE bill_id IN (${billIds.map(() => '?').join(',')})`, billIds
+    const sentKeys = new Set(
+      await callRpc<typeof RemindersServer.getSentReminderKeys>(
+        'reminders', 'getSentReminderKeys', billIds
+      )
     )
-    const sentSet = new Set((logs || []).map(l => `${l.bill_id}:${l.remind_type}`))
 
     for (const bill of bills) {
       const days = daysUntilDue(bill.due_date)
@@ -91,7 +77,7 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
       if (!remindType) continue
 
       const key = `${bill.id}:${remindType}`
-      if (sentSet.has(key)) continue
+      if (sentKeys.has(key)) continue
 
       const cardName = bill.bank_name ? `${bill.bank_name} ${bill.card_name}` : '信用卡'
       const amount = Number(bill.bill_amount).toLocaleString('zh-CN', { style: 'currency', currency: 'CNY' })
@@ -110,9 +96,8 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
       }
 
       await showNotification(title, body)
-      await execute(
-        'INSERT INTO reminder_logs (id, bill_id, remind_type) VALUES (?, ?, ?)',
-        [uuid(), bill.id, remindType]
+      await callRpc<typeof RemindersServer.recordBillReminder>(
+        'reminders', 'recordBillReminder', bill.id, remindType
       )
     }
   } catch (err) {
@@ -121,14 +106,10 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
 }
 
 async function checkLoanReminders(): Promise<void> {
-  const { data: rawLoanCards, error } = await query<{
-    id: string; card_product_id: string; loan_due_day: number; bank_name: string; card_name: string
-  }>(
-    `SELECT cc.id, cc.card_product_id, cc.loan_due_day, cp.bank_name, cp.card_name
-     FROM credit_cards cc LEFT JOIN card_products cp ON cc.card_product_id = cp.id
-     WHERE cc.card_type = 'loan' AND cc.status = 'active'`
+  const rawLoanCards = await callRpc<typeof RemindersServer.getActiveLoanCards>(
+    'reminders', 'getActiveLoanCards'
   )
-  if (error || !rawLoanCards || rawLoanCards.length === 0) return
+  if (!rawLoanCards || rawLoanCards.length === 0) return
 
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -145,18 +126,16 @@ async function checkLoanReminders(): Promise<void> {
     if (!remindType) continue
 
     const remindDateStr = nextDue.toISOString().slice(0, 10)
-    const { data: existingLog } = await queryOne(
-      'SELECT id FROM reminder_logs WHERE card_id = ? AND remind_type = ? AND remind_date = ?',
-      [card.id, remindType, remindDateStr]
+    const alreadySent = await callRpc<typeof RemindersServer.hasLoanReminderLog>(
+      'reminders', 'hasLoanReminderLog', card.id, remindType, remindDateStr
     )
-    if (existingLog) continue
+    if (alreadySent) continue
 
     const cardName = card.bank_name ? `${card.bank_name} ${card.card_name}` : '贷款'
     const dateLabel = `${nextDue.getMonth() + 1}月${nextDue.getDate()}日`
     await showNotification('贷款还款提醒', `${cardName} 还款日 ${dateLabel}，请及时还款`)
-    await execute(
-      'INSERT INTO reminder_logs (id, card_id, remind_type, remind_date) VALUES (?, ?, ?, ?)',
-      [uuid(), card.id, remindType, remindDateStr]
+    await callRpc<typeof RemindersServer.recordLoanReminder>(
+      'reminders', 'recordLoanReminder', card.id, remindType, remindDateStr
     )
   }
 }

@@ -7,9 +7,9 @@ import { BillForm } from './BillForm'
 import { PaymentForm } from './PaymentForm'
 import { CardForm } from './CardForm'
 import { getHolders } from '@/lib/api/holders'
-import { createPayment, updateBillStatus } from '@/lib/api/bills'
-import { clientDb } from '@/lib/client-db'
-import type { CardHolder } from '@/lib/types'
+import { createPayment, updateBillStatus, getUnpaidBills, getPaymentTotal } from '@/lib/api/bills'
+import { createCard } from '@/lib/api/cards'
+import type { CardHolder, CreditCard } from '@/lib/types'
 
 /**
  * 记一笔 ActionSheet（§5.2）。
@@ -60,17 +60,10 @@ export function QuickActionSheet({ open, onClose, onChanged }: Props) {
   const handlePickBill = async () => {
     // 拉取未还账单供选择
     try {
-      const { data, error } = await clientDb
-        .from('bills')
-        .select('id, bill_month, bill_amount, status')
-        .neq('status', 'paid')
-        .order('due_date', { ascending: true })
-        .limit(50)
-      if (error) throw error
-      setUnpaidBills((data || []) as any)
+      setUnpaidBills(await getUnpaidBills())
       setBillPickerOpen(true)
-    } catch (err: any) {
-      setNotice('加载账单失败：' + (err?.message || '未知错误'))
+    } catch (err) {
+      setNotice('加载账单失败：' + (err instanceof Error ? err.message : '未知错误'))
     }
   }
 
@@ -84,11 +77,7 @@ export function QuickActionSheet({ open, onClose, onChanged }: Props) {
       note: data.note,
     })
     // 重算状态
-    const { data: allPayments } = await clientDb
-      .from('payments')
-      .select('amount')
-      .eq('bill_id', pickedBill.id)
-    const totalPaid = (allPayments || []).reduce((s: number, p: any) => s + Number(p.amount), 0)
+    const totalPaid = await getPaymentTotal(pickedBill.id)
     const billAmount = Number(pickedBill.bill_amount)
     let status: 'unpaid' | 'partial' | 'paid' | 'overdue' = 'unpaid'
     if (totalPaid >= billAmount && billAmount > 0) status = 'paid'
@@ -97,21 +86,19 @@ export function QuickActionSheet({ open, onClose, onChanged }: Props) {
     onChanged?.()
   }
 
-  const handleCardSubmit = async (data: any) => {
+  const handleCardSubmit = async (data: Omit<CreditCard, 'id' | 'created_at'>) => {
     if (!pickedHolder) return
-    const { data: created, error } = await clientDb
-      .from('credit_cards')
-      .insert({
-        holder_id: pickedHolder.id,
-        card_product_id: data.card_product_id,
-        card_number_last4: data.card_number_last4 || null,
-        credit_limit: Number(data.credit_limit) || 0,
-        billing_day: Number(data.billing_day) || 1,
-        status: 'active',
-      })
-    if (error) throw error
+    const created = await createCard({
+      holder_id: pickedHolder.id,
+      card_product_id: data.card_product_id,
+      card_number_last4: data.card_number_last4 || undefined,
+      credit_limit: Number(data.credit_limit) || 0,
+      billing_day: Number(data.billing_day) || 1,
+      card_type: 'credit',
+      status: 'active',
+    })
     onChanged?.()
-    return created
+    void created
   }
 
   const options = [

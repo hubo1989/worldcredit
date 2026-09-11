@@ -5,7 +5,7 @@ import type { ReactNode } from 'react'
 import {
   Container, Typography, Box, Stack, IconButton,
   Fab, Snackbar, Alert, Button, Dialog, DialogTitle,
-  DialogContent, DialogActions, Collapse, Divider, Paper,
+  DialogContent, DialogActions, Collapse, Paper,
 } from '@mui/material'
 import {
   Add as AddIcon,
@@ -13,7 +13,6 @@ import {
   WarningAmber as WarningIcon,
   KeyboardArrowDown as ArrowDownIcon,
   KeyboardArrowUp as ArrowUpIcon,
-  CreditCard as CardIcon,
   History as HistoryIcon,
 } from '@mui/icons-material'
 import {
@@ -21,12 +20,12 @@ import {
   createPayment,
   updateBillStatus,
   markAllOverdueBillsAsPaid,
+  getPaymentTotal,
   type CardWithBillsSummary,
   type BillDashboardItem,
 } from '@/lib/api/bills'
 import { syncGmailLedgerToCardsAndBills } from '@/lib/api/sync-gmail'
 import { getHolders } from '@/lib/api/holders'
-import { clientDb } from '@/lib/client-db'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
 import { format } from 'date-fns'
@@ -97,9 +96,9 @@ function CardSummaryRow({
   const isOverdue = item.status === 'overdue'
 
   // 状态徽章渲染
-  let badgeBg = 'rgba(22, 163, 74, 0.12)'
-  let badgeColor = 'var(--success)'
-  let badgeText = '未出账单'
+  let badgeBg: string
+  let badgeColor: string
+  let badgeText: string
 
   if (isOverdue) {
     badgeBg = 'rgba(207, 46, 46, 0.12)'
@@ -374,9 +373,9 @@ export default function BillsPage() {
       const map: Record<string, string> = {}
       for (const h of holders) map[h.id] = h.name
       setHolderMap(map)
-    } catch (err: any) {
+    } catch (err) {
       console.error(err)
-      setLoadError(err?.message || '加载账单与卡片失败')
+      setLoadError(err instanceof Error ? err.message : '加载账单与卡片失败')
     } finally {
       setLoading(false)
     }
@@ -401,8 +400,8 @@ export default function BillsPage() {
       } else {
         setCelebrationNotice({ open: true, message: '所有邮件账单与卡包已是最新状态。' })
       }
-    } catch (err: any) {
-      setLoadError('同步失败：' + (err?.message || '未知错误'))
+    } catch (err) {
+      setLoadError('同步失败：' + (err instanceof Error ? err.message : '未知错误'))
     } finally {
       setSyncing(false)
     }
@@ -424,14 +423,7 @@ export default function BillsPage() {
         note: data.note,
       })
 
-      const { data: allPayments } = await clientDb
-        .from('payments')
-        .select('amount')
-        .eq('bill_id', selectedBill.id)
-
-      const totalPaid = (allPayments || []).reduce(
-        (sum, p) => sum + Number(p.amount), 0
-      )
+      const totalPaid = await getPaymentTotal(selectedBill.id)
       const billAmount = Number(selectedBill.bill_amount)
 
       let isFullPaid = false
@@ -449,8 +441,8 @@ export default function BillsPage() {
           ? '恭喜！本期账单已全额结清，当前卡片已转为未出账单。'
           : '登记还款成功，已更新账单结余。',
       })
-    } catch (err: any) {
-      alert('登记还款失败: ' + err.message)
+    } catch (err) {
+      alert('登记还款失败: ' + (err instanceof Error ? err.message : String(err)))
     }
   }
 
@@ -482,8 +474,8 @@ export default function BillsPage() {
         message: `🎉 恭喜！已一键全额结清 ${res.count} 笔逾期账单（合计 ¥${res.totalAmount.toLocaleString()}）！`,
       })
       await loadData()
-    } catch (err: any) {
-      alert('一键还款失败: ' + err.message)
+    } catch (err) {
+      alert('一键还款失败: ' + (err instanceof Error ? err.message : String(err)))
     } finally {
       setPaying(false)
     }

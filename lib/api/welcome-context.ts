@@ -1,5 +1,5 @@
 import { query, queryOne } from '../db'
-import { getBillDashboardItems } from './bills'
+import { getBillDashboardItems } from './bills.server'
 import type { AiWelcomeContext } from '../types'
 
 /**

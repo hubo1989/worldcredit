@@ -1,55 +1,18 @@
-import { query, queryOne, execute, uuid, now } from '../db'
+// lib/api/bill-emails.ts — client-side RPC wrappers (server: bill-emails.server.ts).
+import type * as Server from './bill-emails.server'
+import { callRpc } from './rpc-client'
 
-export interface BillEmailSource {
-  id: string
-  user_id: string
-  email: string
-  label?: string
-  is_active: boolean
-  created_at: string
+export type { BillEmailSource } from './bill-emails.server'
+
+export function getBillEmailSources(...args: Parameters<typeof Server.getBillEmailSources>) {
+  return callRpc<typeof Server.getBillEmailSources>('bill-emails', 'getBillEmailSources', ...args)
 }
-
-function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase()
+export function addBillEmailSource(...args: Parameters<typeof Server.addBillEmailSource>) {
+  return callRpc<typeof Server.addBillEmailSource>('bill-emails', 'addBillEmailSource', ...args)
 }
-
-export async function getBillEmailSources(userId: string): Promise<BillEmailSource[]> {
-  const { data, error } = await query<BillEmailSource>(
-    'SELECT * FROM bill_email_sources WHERE user_id = ? ORDER BY created_at DESC', [userId]
-  )
-  if (error) throw new Error(error.message)
-  return (data || []).map(s => ({ ...(s as unknown as BillEmailSource), is_active: (s as unknown as Record<string, unknown>).is_active === 1 }))
+export function setBillEmailSourceActive(...args: Parameters<typeof Server.setBillEmailSourceActive>) {
+  return callRpc<typeof Server.setBillEmailSourceActive>('bill-emails', 'setBillEmailSourceActive', ...args)
 }
-
-export async function addBillEmailSource(userId: string, email: string, label?: string): Promise<BillEmailSource> {
-  const normalized = normalizeEmail(email)
-  const existing = await queryOne<BillEmailSource>(
-    'SELECT * FROM bill_email_sources WHERE user_id = ? AND email = ?', [userId, normalized]
-  )
-  if (existing.data) {
-    await execute(
-      'UPDATE bill_email_sources SET label = ?, is_active = 1 WHERE id = ?',
-      [label?.trim() || null, existing.data.id]
-    )
-    const updated = await queryOne<BillEmailSource>('SELECT * FROM bill_email_sources WHERE id = ?', [existing.data.id])
-    return updated.data as unknown as BillEmailSource
-  }
-  const id = uuid()
-  await execute(
-    'INSERT INTO bill_email_sources (id, user_id, email, label, is_active, created_at) VALUES (?, ?, ?, ?, 1, ?)',
-    [id, userId, normalized, label?.trim() || null, now()]
-  )
-  const created = await queryOne<BillEmailSource>('SELECT * FROM bill_email_sources WHERE id = ?', [id])
-  return created.data as unknown as BillEmailSource
-}
-
-export async function setBillEmailSourceActive(id: string, isActive: boolean): Promise<BillEmailSource> {
-  await execute('UPDATE bill_email_sources SET is_active = ? WHERE id = ?', [isActive ? 1 : 0, id])
-  const updated = await queryOne<BillEmailSource>('SELECT * FROM bill_email_sources WHERE id = ?', [id])
-  return updated.data as unknown as BillEmailSource
-}
-
-export async function deleteBillEmailSource(id: string): Promise<void> {
-  const { error } = await execute('DELETE FROM bill_email_sources WHERE id = ?', [id])
-  if (error) throw new Error(error.message)
+export function deleteBillEmailSource(...args: Parameters<typeof Server.deleteBillEmailSource>) {
+  return callRpc<typeof Server.deleteBillEmailSource>('bill-emails', 'deleteBillEmailSource', ...args)
 }

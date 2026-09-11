@@ -1,7 +1,7 @@
 // lib/api/payments.ts
-import { query, queryOne, execute, uuid, now } from '../db'
+import { query, queryOne, execute, uuid } from '../db'
 import type { Payment } from '../types'
-import type { PaymentWithBill } from './bills'
+import type { PaymentWithBill } from './bills.server'
 import { generateIdempotencyKey } from '../utils'
 
 export async function getPaymentsByBill(billId: string): Promise<Payment[]> {

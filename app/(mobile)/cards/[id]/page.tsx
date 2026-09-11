@@ -5,12 +5,12 @@ import { useRouter } from 'next/navigation'
 import { Container, Box, Typography, Stack, IconButton, Paper } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import { format } from 'date-fns'
-import { clientDb } from '@/lib/client-db'
+import { getCardDetail } from '@/lib/api/cards'
 import { StatusBadge } from '@/components/mobile/WcBadge'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import { ChevronRightIcon, ClockIcon } from '@/components/icons/WcIcon'
 import { getEffectiveBillingDay, getEffectiveDueConfig } from '@/lib/utils'
-import type { CreditCard, CardProduct, CardHolder, Bill, Benefit, BenefitUsage } from '@/lib/types'
+import type { CreditCard, CardProduct, CardHolder, Bill, Benefit } from '@/lib/types'
 
 type CardDetail = CreditCard & {
   card_product: CardProduct
@@ -34,102 +34,16 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       setLoading(true)
       setError(null)
 
-      // 1. 卡 + 卡产品 + 持卡人
-      // PostgREST 嵌套查询在 SQLite 桥上不可用，拆成三段普通查询后组装
-      const { data: cardRow, error: e1 } = await clientDb
-        .from('credit_cards')
-        .select('*')
-        .eq('id', id)
-        .single()
-      if (e1) throw e1
-      if (!cardRow) throw new Error('卡片不存在')
-      const cardBase = cardRow as unknown as { card_product_id?: string; holder_id?: string }
-      const [{ data: productRow }, { data: holderRow }] = await Promise.all([
-        cardBase.card_product_id
-          ? clientDb.from('card_products').select('*').eq('id', cardBase.card_product_id).single()
-          : Promise.resolve({ data: null } as any),
-        cardBase.holder_id
-          ? clientDb.from('card_holders').select('*').eq('id', cardBase.holder_id).single()
-          : Promise.resolve({ data: null } as any),
-      ])
-
-      const cardData = {
-        ...cardBase,
-        card_product: productRow || undefined,
-        card_holders: holderRow || undefined,
-      } as unknown as CardDetail
-
-      // 2. 该卡账单（按 due_date desc，limit 3）+ 还款聚合
-      const { data: rawBills, error: e2 } = await clientDb
-        .from('bills')
-        .select('*')
-        .eq('card_id', id)
-        .order('due_date', { ascending: false })
-        .limit(3)
-      if (e2) throw e2
-      const billRows = (rawBills || []) as unknown as Array<{ id: string; bill_amount: number; due_date: string }>
-      const billIds = billRows.map(b => b.id)
-      const { data: paymentRows } = billIds.length > 0
-        ? await clientDb.from('payments').select('bill_id, amount').in('bill_id', billIds)
-        : { data: [] as Array<{ bill_id: string; amount: number }> }
-
-      const billList: BillWithPaid[] = billRows.map((b: any) => {
-        const paid = (paymentRows || [])
-          .filter((p: any) => p.bill_id === b.id)
-          .reduce((s: number, p: any) => s + Number(p.amount || 0), 0)
-        const amount = Number(b.bill_amount) || 0
-        let status: Bill['status'] = 'unpaid'
-        if (amount <= 0 || paid >= amount) status = 'paid'
-        else if (paid > 0) status = 'partial'
-        else {
-          const today = new Date(); today.setHours(0, 0, 0, 0)
-          const due = new Date(b.due_date); due.setHours(0, 0, 0, 0)
-          if (due.getTime() < today.getTime()) status = 'overdue'
-        }
-        return { ...b, paid_amount: paid, computed_status: status }
-      })
-      setBills(billList)
-
-      // 3. 权益 + 使用记录
-      let benefitList: Array<Benefit & { used: number }> = []
-      if (cardData.card_product_id) {
-        const { data: rawBenefits } = await clientDb
-          .from('benefits')
-          .select('*')
-          .eq('card_product_id', cardData.card_product_id)
-        const bs = (rawBenefits || []) as unknown as Benefit[]
-        if (bs.length > 0) {
-          const ids = bs.map(b => b.id)
-          const { data: usages } = await clientDb
-            .from('benefit_usages')
-            .select('benefit_id, used_at')
-            .in('benefit_id', ids)
-          const allUsages = (usages || []) as unknown as BenefitUsage[]
-          const now = new Date()
-         benefitList = bs.map(b => {
-           const periodUsages = allUsages.filter(u => {
-             if (u.benefit_id !== b.id) return false
-             if (!u.used_at) return false
-             if (b.period === 'one_time') return true
-             const d = new Date(u.used_at)
-             if (b.period === 'monthly') {
-               return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
-             }
-             // yearly
-             const resetMonth = b.reset_month || 1
-             const startY = now.getMonth() + 1 >= resetMonth ? now.getFullYear() : now.getFullYear() - 1
-             const start = new Date(startY, resetMonth - 1, 1)
-             return d >= start
-           })
-           return { ...b, used: periodUsages.length }
-         })
-        }
-      }
-      setBenefits(benefitList)
-
-      setCard(cardData)
-    } catch (err: any) {
-      setError(err?.message || '加载卡片失败')
+      // 卡 + 卡产品 + 持卡人 + 最近账单（含已还聚合）+ 权益使用进度，一次 RPC 返回
+      const detail = await getCardDetail(id)
+      setCard({
+        ...detail.card,
+        card_holders: detail.card.card_holder,
+      } as unknown as CardDetail)
+      setBills(detail.bills as unknown as BillWithPaid[])
+      setBenefits(detail.benefits)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载卡片失败')
     } finally {
       setLoading(false)
     }

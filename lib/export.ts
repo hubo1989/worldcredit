@@ -6,7 +6,6 @@ import { getPaymentsByHolder } from './api/payments'
 import { getBenefitUsagesByHolder } from './api/benefitUsages'
 import { getPromoUsagesByHolder } from './api/promoUsages'
 import { getAnalyticsByHolder } from './api/analytics'
-import type { CardHolder } from './types'
 
 export type ExportType = 'bills' | 'payments' | 'benefit_usages' | 'promo_usages'
 
@@ -328,7 +327,7 @@ export interface MonthlyReport {
   total_paid: number
   outstanding: number
   overdue_count: number
-  summary: any // AnalyticsSummary from analytics API
+  summary: unknown // AnalyticsSummary shape from analytics API, passed through
 }
 
 export interface AnnualReport {

@@ -9,8 +9,9 @@ import {
 } from '@mui/material'
 import CheckIcon from '@mui/icons-material/CheckCircleOutline'
 import { useRouter } from 'next/navigation'
-import { clientDb } from '@/lib/client-db'
 import { getBillDashboardItems, markBillAsPaid, markAllOverdueBillsAsPaid, type BillDashboardItem } from '@/lib/api/bills'
+import { getHolders } from '@/lib/api/holders'
+import { getCardsBasicByHolders } from '@/lib/api/cards'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
 import { useAuth } from '@/lib/auth'
 import { WcSkeleton } from '@/components/mobile/WcStates'
@@ -121,30 +122,21 @@ export default function DashboardPage() {
     setLoading(true)
     setError(null)
     try {
-      // 并行：持卡人 / 账单；卡片依赖持卡人 id，随后用 in 查询
-      const [holdersRes, allBills] = await Promise.all([
-        clientDb
-          .from('card_holders')
-          .select('*')
-          .eq('created_by', user.id)
-          .order('created_at', { ascending: true }),
+      // 并行：持卡人 / 账单；卡片依赖持卡人 id，随后批量查询
+      const [holderList, allBills] = await Promise.all([
+        getHolders(user.id),
         getBillDashboardItems(200, user.id),
       ])
-      if (holdersRes.error) throw holdersRes.error
-      const holderList = (holdersRes.data as unknown as CardHolder[]) || []
+      holderList.sort((a, b) => a.created_at.localeCompare(b.created_at))
       const holderIds = holderList.map(h => h.id)
-      // PostgREST 风格的 card_holders!inner 在 SQLite 不可用，改为两段查询
-      const cardsRes = holderIds.length > 0
-        ? await clientDb.from('credit_cards').select('id, holder_id').in('holder_id', holderIds)
-        : { data: [] as Array<{ id: string; holder_id: string }>, error: null }
-      if (cardsRes.error) throw cardsRes.error
+      const cardsRes = holderIds.length > 0 ? await getCardsBasicByHolders(holderIds) : []
 
       setHolders(holderList)
-      setCards((cardsRes.data || []).map((c: any) => ({ id: c.id, holder_id: c.holder_id })))
+      setCards(cardsRes)
       setBills(allBills)
-    } catch (err: any) {
+    } catch (err) {
       console.error('Dashboard load failed:', err)
-      setError(err?.message || '加载失败，请下拉重试')
+      setError(err instanceof Error ? err.message : '加载失败，请下拉重试')
     } finally {
       setLoading(false)
     }
@@ -165,8 +157,8 @@ export default function DashboardPage() {
         severity: 'success'
       })
       loadData()
-    } catch (err: any) {
-      setToast({ open: true, message: '还款失败: ' + err.message, severity: 'error' })
+    } catch (err) {
+      setToast({ open: true, message: '还款失败: ' + (err instanceof Error ? err.message : String(err)), severity: 'error' })
     }
   }
 
@@ -182,8 +174,8 @@ export default function DashboardPage() {
         severity: 'success'
       })
       await loadData()
-    } catch (err: any) {
-      setToast({ open: true, message: '一键还款失败: ' + err.message, severity: 'error' })
+    } catch (err) {
+      setToast({ open: true, message: '一键还款失败: ' + (err instanceof Error ? err.message : String(err)), severity: 'error' })
     } finally {
       setPaying(false)
     }

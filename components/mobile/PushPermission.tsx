@@ -3,10 +3,20 @@
 import { useEffect, useState } from 'react'
 import { Snackbar, Alert, Button } from '@mui/material'
 import BellIcon from '@mui/icons-material/NotificationsActive'
-import { clientDb } from '@/lib/client-db'
+import { subscribePush } from '@/lib/api/push'
 import { useAuth } from '@/lib/auth'
 
-const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string
+/** Fetch the VAPID public key at runtime so production works without a rebuild. */
+async function fetchVapidPublicKey(): Promise<string | null> {
+  try {
+    const res = await fetch('/api/push/public-key')
+    if (!res.ok) return null
+    const data = (await res.json()) as { publicKey?: string }
+    return data.publicKey || null
+  } catch {
+    return null
+  }
+}
 
 /** Convert base64url string to Uint8Array for PushManager.subscribe */
 function urlBase64ToUint8Array(base64String: string): ArrayBuffer {
@@ -19,41 +29,22 @@ function urlBase64ToUint8Array(base64String: string): ArrayBuffer {
 }
 
 /**
- * Saves a PushSubscription to the push_subscriptions table.
- * Uses upsert on endpoint to avoid duplicates.
+ * Saves a PushSubscription through the dedicated RPC API (upsert on endpoint).
  */
 async function savePushSubscription(
-  userId: string,
   sub: globalThis.PushSubscription
 ): Promise<void> {
-  const json = sub.toJSON()
-  const existing = await clientDb.from('push_subscriptions').select('id').eq('endpoint', sub.endpoint).maybeSingle()
-  let error: { message: string } | null = null
-  if (existing?.data) {
-    const result = await clientDb.from('push_subscriptions')
-      .eq('endpoint', sub.endpoint)
-      .update({
-        user_id: userId,
-        p256dh: json.keys?.p256dh ?? '',
-        auth: json.keys?.auth ?? '',
-      })
-    error = result.error
-  } else {
-    const result = await clientDb.from('push_subscriptions').insert({
-      user_id: userId,
-      endpoint: sub.endpoint,
-      p256dh: json.keys?.p256dh ?? '',
-      auth: json.keys?.auth ?? '',
-    })
-    error = result.error
+  const json = sub.toJSON() as { endpoint?: string; keys?: { p256dh?: string; auth?: string } }
+  if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+    throw new Error('推送订阅缺少必要的密钥')
   }
-  if (error) throw error
+  await subscribePush({ endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth })
 }
 
 /**
  * PushPermission:
- * - Shown once per session when Push is supported but not yet granted.
- * - Requests permission → subscribes → saves to DB.
+ * - Shown once per session when Push is supported and configured but not yet granted.
+ * - Requests permission → subscribes → saves via RPC.
  */
 export function PushPermission() {
   const { user } = useAuth()
@@ -64,26 +55,33 @@ export function PushPermission() {
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
-    if (!VAPID_PUBLIC_KEY) return
 
-    setSupported(true)
+    let cancelled = false
+    fetchVapidPublicKey().then(publicKey => {
+      if (cancelled || !publicKey) return
 
-    // Already granted → subscribe silently
-    if (Notification.permission === 'granted') {
-      subscribeSilently()
-      return
+      setSupported(true)
+
+      // Already granted → subscribe silently
+      if (Notification.permission === 'granted') {
+        subscribeSilently(publicKey)
+        return
+      }
+
+      // Dismissed or denied → don't prompt again this session
+      if (Notification.permission === 'denied') return
+
+      // default → show banner after short delay
+      const timer = setTimeout(() => setShow(true), 3000)
+      return () => clearTimeout(timer)
+    })
+    return () => {
+      cancelled = true
     }
-
-    // Dismissed or denied → don't prompt again this session
-    if (Notification.permission === 'denied') return
-
-    // default → show banner after short delay
-    const timer = setTimeout(() => setShow(true), 3000)
-    return () => clearTimeout(timer)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
-  const subscribeSilently = async () => {
+  const subscribeSilently = async (publicKey: string) => {
     if (!user || subscribed) return
     try {
       const reg = await navigator.serviceWorker.ready
@@ -91,10 +89,10 @@ export function PushPermission() {
       if (!sub) {
         sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+          applicationServerKey: urlBase64ToUint8Array(publicKey),
         })
       }
-      await savePushSubscription(user.id, sub)
+      await savePushSubscription(sub)
       setSubscribed(true)
     } catch (err) {
       console.warn('[PushPermission] silent subscribe failed', err)
@@ -105,15 +103,17 @@ export function PushPermission() {
     setShow(false)
     if (!user) return
     try {
+      const publicKey = await fetchVapidPublicKey()
+      if (!publicKey) return
       const permission = await Notification.requestPermission()
       if (permission !== 'granted') return
 
       const reg = await navigator.serviceWorker.ready
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
       })
-      await savePushSubscription(user.id, sub)
+      await savePushSubscription(sub)
       setSubscribed(true)
     } catch (err) {
       console.warn('[PushPermission] subscribe failed', err)

@@ -2,10 +2,18 @@
  * 认证相关的错误信息本地化与友好提示转换工具
  */
 
-export function getFriendlyAuthErrorMessage(err: any, fallbackMessage = '操作失败，请重试'): string {
+export function getFriendlyAuthErrorMessage(
+  err: unknown,
+  fallbackMessage = '操作失败，请重试'
+): string {
   if (!err) return fallbackMessage
 
-  const raw = String(err?.message || err?.error_description || err?.error || err || '').trim()
+  const e = (typeof err === 'object' && err !== null ? err : {}) as {
+    message?: string
+    error_description?: string
+    error?: string
+  }
+  const raw = String(e.message || e.error_description || e.error || err || '').trim()
   const lower = raw.toLowerCase()
 
   // 1. 登录凭证错误

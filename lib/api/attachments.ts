@@ -1,102 +1,41 @@
-import { getDb } from '../db'
-import { query, queryOne, execute, uuid, now } from '../db'
+// lib/api/attachments.ts — client-side attachment helpers. Binary upload and
+// download go through the dedicated /api/attachments routes (FormData / R2
+// streaming); metadata goes through the RPC API.
+import type * as Server from './attachments.server'
+import { callRpc } from './rpc-client'
 
-export const ATTACHMENT_BUCKET = 'record-attachments'
+export type { RecordAttachment } from './attachments.server'
 
-export interface RecordAttachment {
-  id: string
-  record_type: 'bill' | string
-  record_id: string
-  bucket: string
-  storage_path: string
-  file_name: string
-  file_type?: string
-  file_size?: number
-  public_url?: string
-  uploaded_by?: string
-  created_at: string
+export function getAttachments(...args: Parameters<typeof Server.getAttachments>) {
+  return callRpc<typeof Server.getAttachments>('attachments', 'getAttachments', ...args)
 }
 
-function sanitizeFileName(name: string): string {
-  const fallback = 'upload'
-  const cleaned = name
-    .trim()
-    .replace(/[/\\?%*:|"<>]/g, '-')
-    .replace(/\s+/g, '-')
-    .slice(0, 160)
-  return cleaned || fallback
-}
-
-function randomId(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return crypto.randomUUID()
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-function buildStoragePath(recordType: string, recordId: string, fileName: string): string {
-  const safeName = sanitizeFileName(fileName)
-  return `${recordType}/${recordId}/${Date.now()}-${randomId()}-${safeName}`
-}
-
-export async function getAttachments(recordType: string, recordId: string): Promise<RecordAttachment[]> {
-  const { data, error } = await query<RecordAttachment>(
-    'SELECT * FROM record_attachments WHERE record_type = ? AND record_id = ? ORDER BY created_at DESC',
-    [recordType, recordId]
-  )
-  if (error) throw new Error(error.message)
-  return (data || []).map(a => ({ ...a, public_url: `/api/attachments/${a.id}` }))
+export function deleteRecordAttachment(...args: Parameters<typeof Server.deleteRecordAttachment>) {
+  return callRpc<typeof Server.deleteRecordAttachment>('attachments', 'deleteRecordAttachment', ...args)
 }
 
 export async function uploadRecordAttachment(
   recordType: string,
   recordId: string,
   file: File,
-  uploadedBy?: string
-): Promise<RecordAttachment> {
-  const storagePath = buildStoragePath(recordType, recordId, file.name)
-  const r2 = getDb // not db — need R2 binding, but this runs in Worker so we use cloudflare:workers
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { env } = require('cloudflare:workers') as { env: { ATTACHMENTS?: R2Bucket } }
-  const bucket = env.ATTACHMENTS
-  if (!bucket) throw new Error('R2 binding "ATTACHMENTS" not found')
-
-  const buffer = await file.arrayBuffer()
-  await bucket.put(storagePath, buffer, {
-    httpMetadata: { contentType: file.type || 'application/octet-stream' },
+  _uploadedBy?: string
+): Promise<Server.RecordAttachment> {
+  const form = new FormData()
+  form.set('record_type', recordType)
+  form.set('record_id', recordId)
+  form.set('file', file)
+  const res = await fetch('/api/attachments/upload', {
+    method: 'POST',
+    body: form,
+    credentials: 'same-origin',
   })
-
-  const id = uuid()
-  const { error } = await execute(
-    `INSERT INTO record_attachments (id, record_type, record_id, bucket, storage_path, file_name, file_type, file_size, uploaded_by, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, recordType, recordId, ATTACHMENT_BUCKET, storagePath, file.name,
-     file.type || null, file.size, uploadedBy || null, now()]
-  )
-  if (error) throw new Error(error.message)
-
-  const created = await getAttachmentById(id)
-  if (!created) throw new Error('附件记录创建失败')
-  return created
-}
-
-async function getAttachmentById(id: string): Promise<RecordAttachment | null> {
-  const { data } = await queryOne<RecordAttachment>(
-    'SELECT * FROM record_attachments WHERE id = ?', [id]
-  )
-  return data ? { ...data, public_url: `/api/attachments/${data.id}` } : null
-}
-
-export async function deleteRecordAttachment(attachment: RecordAttachment): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { env } = require('cloudflare:workers') as { env: { ATTACHMENTS?: R2Bucket } }
-  const bucket = env.ATTACHMENTS
-  if (bucket) {
-    await bucket.delete(attachment.storage_path)
+  const payload = (await res.json().catch(() => null)) as { data?: Server.RecordAttachment; error?: string } | null
+  if (!res.ok || !payload || payload.error || !payload.data) {
+    throw new Error(payload?.error || `附件上传失败 (${res.status})`)
   }
-  await execute('DELETE FROM record_attachments WHERE id = ?', [attachment.id])
+  return payload.data
 }
 
-export function getAttachmentUrl(attachment: RecordAttachment): string {
+export function getAttachmentUrl(attachment: Server.RecordAttachment): string {
   return attachment.public_url || `/api/attachments/${attachment.id}`
 }

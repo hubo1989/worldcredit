@@ -5,8 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Container, Box, Typography, Stack, IconButton, Button, Paper } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import { format } from 'date-fns'
-import { clientDb } from '@/lib/client-db'
-import { createPayment, updateBillStatus } from '@/lib/api/bills'
+import { createPayment, updateBillStatus, getBillDetail, getPaymentTotal } from '@/lib/api/bills'
 import { StatusBadge, SourceBadge } from '@/components/mobile/WcBadge'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
@@ -51,48 +50,14 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     try {
       setLoading(true)
       setError(null)
-      // PostgREST 嵌套查询在 SQLite 桥上不可用，拆成普通查询后组装
-      const { data: billRow, error: e } = await clientDb
-        .from('bills')
-        .select('*')
-        .eq('id', id)
-        .single()
-      if (e) throw e
-      if (!billRow) throw new Error('账单不存在')
-      const billData = billRow as unknown as { card_id: string }
-      const { data: cardRow } = await clientDb
-        .from('credit_cards')
-        .select('*')
-        .eq('id', billData.card_id)
-        .single()
-      const cardRowData = (cardRow || null) as unknown as { holder_id: string; card_product_id?: string } | null
-      const { data: holderRow } = cardRowData
-        ? await clientDb.from('card_holders').select('*').eq('id', cardRowData.holder_id).single()
-        : { data: null }
-      const { data: productRow } = cardRowData?.card_product_id
-        ? await clientDb.from('card_products').select('*').eq('id', cardRowData.card_product_id).single()
-        : { data: null }
-      const { data: paymentRows } = await clientDb
-        .from('payments')
-        .select('*')
-        .eq('bill_id', id)
-      const data = {
-        ...billData,
-        card: cardRowData
-          ? { ...cardRowData, card_holders: holderRow || undefined, card_product: productRow || undefined }
-          : undefined,
-        payments: paymentRows || [],
-      }
-      // payments 排序：paid_at 降序
-      const sorted: BillDetail = {
-        ...(data as any),
-        payments: ((data as any).payments || []).slice().sort(
-          (a: Payment, b: Payment) => new Date(b.paid_at).getTime() - new Date(a.paid_at).getTime()
-        ),
-      }
-      setBill(sorted)
-    } catch (err: any) {
-      setError(err?.message || '加载账单失败')
+      // 账单 + 卡 + 卡产品 + 持卡人 + 还款记录，一次 RPC 返回
+      const detail = await getBillDetail(id)
+      const card = detail.bill.card
+        ? { ...detail.bill.card, card_holders: detail.bill.card.card_holder }
+        : undefined
+      setBill({ ...(detail.bill as Bill), card, payments: detail.payments } as unknown as BillDetail)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载账单失败')
     } finally {
       setLoading(false)
     }
@@ -110,11 +75,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
       note: data.note,
     })
     // 重算状态
-    const { data: allPayments } = await clientDb
-      .from('payments')
-      .select('amount')
-      .eq('bill_id', bill.id)
-    const totalPaid = (allPayments || []).reduce((s: number, p: any) => s + Number(p.amount), 0)
+    const totalPaid = await getPaymentTotal(bill.id)
     const amount = Number(bill.bill_amount)
     let status: Bill['status'] = 'unpaid'
     if (amount <= 0 || totalPaid >= amount) status = 'paid'
@@ -233,7 +194,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
 
       {/* 来源徽章 */}
       <Section title="数据来源">
-        <SourceBadge source={(bill as any).source || 'manual'} size="md" />
+        <SourceBadge source={(bill as { source?: string }).source || 'manual'} size="md" />
       </Section>
 
       {/* 还款记录 */}

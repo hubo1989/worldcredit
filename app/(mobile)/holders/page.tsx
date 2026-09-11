@@ -5,12 +5,11 @@ import { useRouter } from 'next/navigation'
 import { Box, Typography, Fab, Skeleton, Stack, Container, Button, Snackbar, Alert } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import MergeTypeIcon from '@mui/icons-material/MergeType'
-import { getHolders, createHolder } from '@/lib/api/holders'
+import { getHolders, createHolder, getHolderCardCounts } from '@/lib/api/holders'
 import { HolderCard } from '@/components/mobile/HolderCard'
 import { HolderForm } from '@/components/mobile/HolderForm'
 import { MergeHoldersDialog } from '@/components/mobile/MergeHoldersDialog'
 import { useAuth } from '@/lib/auth'
-import { clientDb as db } from '@/lib/client-db'
 import type { CardHolder } from '@/lib/types'
 
 export default function HoldersPage() {
@@ -31,15 +30,7 @@ export default function HoldersPage() {
       // 联查每个持卡人的信用卡数量
       if (data.length > 0) {
         const holderIds = data.map(h => h.id)
-        const { data: cards } = await db
-          .from('credit_cards')
-          .select('holder_id')
-          .in('holder_id', holderIds)
-        const counts: Record<string, number> = {}
-        cards?.forEach((c: { holder_id: string }) => {
-          counts[c.holder_id] = (counts[c.holder_id] || 0) + 1
-        })
-        setCardCounts(counts)
+        setCardCounts(await getHolderCardCounts(holderIds))
       }
     } catch (err) {
       console.error('Failed to load holders:', err)
@@ -147,4 +138,3 @@ export default function HoldersPage() {
     </Container>
   )
 }
-

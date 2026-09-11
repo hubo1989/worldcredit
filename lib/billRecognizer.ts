@@ -1,6 +1,5 @@
 // lib/billRecognizer.ts
 import { parse, format } from 'date-fns'
-import type { BillItemInput } from './api/bills'
 
 export interface BillDraftPayload {
   card_id?: string

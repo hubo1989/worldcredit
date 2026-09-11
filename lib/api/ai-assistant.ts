@@ -1,5 +1,5 @@
-import { getBillDashboardItems } from './bills'
-import { getSystemSettings } from './admin'
+import { getBillDashboardItems } from './bills.server'
+import { getSystemSettings } from './admin.server'
 
 export interface AiAssistantRequest {
   prompt: string

@@ -5,8 +5,7 @@ import {
   Container, Typography, Box, Stack, Paper,
   Card, CardContent, Chip, Button, Skeleton,
   Tabs, Tab, TextField, Dialog, DialogTitle,
-  DialogContent, DialogActions, FormControl,
-  InputLabel, Select, MenuItem, IconButton, Tooltip,
+  DialogContent, DialogActions,
   Snackbar, Alert
 } from '@mui/material'
 import PromoIcon from '@mui/icons-material/LocalOffer'
@@ -16,12 +15,9 @@ import DrinkIcon from '@mui/icons-material/Coffee'
 import TravelIcon from '@mui/icons-material/FlightTakeoff'
 import CinemaIcon from '@mui/icons-material/Movie'
 import AddIcon from '@mui/icons-material/Add'
-import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import CreditCardIcon from '@mui/icons-material/CreditCard'
-import FilterListIcon from '@mui/icons-material/FilterList'
-import { clientDb } from '@/lib/client-db'
-import { useAuth } from '@/lib/auth'
+import { getPromosWithBanks, createUserPromo } from '@/lib/api/promos'
 import type { Promo } from '@/lib/types'
 
 // 热门活动初始数据源 (若云端数据库活动较少时自动合并展现)
@@ -92,7 +88,6 @@ const POPULAR_PROMOS: Array<Omit<Promo, 'id' | 'created_at' | 'updated_at'>> = [
 ]
 
 export default function PromosPage() {
-  const { user } = useAuth()
   const [promos, setPromos] = useState<Promo[]>([])
   const [userBanks, setUserBanks] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -119,14 +114,11 @@ export default function PromosPage() {
     try {
       setLoading(true)
       
-      // 1. 获取 DB 中的优惠列表
-      const { data: dbPromos } = await clientDb
-        .from('promos')
-        .select('*')
-        .order('end_date', { ascending: true })
+      // 1. 获取 DB 中的优惠列表与用户卡包银行
+      const { promos: dbPromos, userBanks: banks } = await getPromosWithBanks()
 
       // 合并热门精选与 DB 优惠
-      const existingTitles = new Set((dbPromos || []).map((p: any) => p.title))
+      const existingTitles = new Set((dbPromos || []).map(p => p.title))
       const combined: Promo[] = [...(dbPromos || [])]
       
       POPULAR_PROMOS.forEach((p, idx) => {
@@ -140,25 +132,13 @@ export default function PromosPage() {
         }
       })
       setPromos(combined)
-
-      // 2. 获取用户卡包银行
-      if (user?.id) {
-        const { data: cards } = await clientDb
-          .from('card_products')
-          .select('bank_name, card_name')
-        
-        const banks = new Set<string>()
-        ;(cards || []).forEach((c: any) => {
-          if (c.bank_name) banks.add(c.bank_name.trim())
-        })
-        setUserBanks(Array.from(banks))
-      }
+      setUserBanks(banks)
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
-  }, [user?.id])
+  }, [])
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -196,7 +176,7 @@ export default function PromosPage() {
   }, [promos])
 
   const handleRegister = (promo: Promo) => {
-    const channel = (promo.rules as any)?.channel || `${promo.bank_name}手机银行 App`
+    const channel = promo.rules?.channel || `${promo.bank_name}手机银行 App`
     setToast({
       open: true,
       message: `✨ 已为您记录关注！请在 ${channel} 报名或使用对应银行卡支付享优惠。`,
@@ -211,25 +191,22 @@ export default function PromosPage() {
     }
     setSubmitting(true)
     try {
-      await clientDb
-        .from('promos')
-        .insert([{
-          bank_name: newBank,
-          title: newTitle.trim(),
-          discount_type: newType,
-          description: newDesc.trim() || '用户自定义记录的银行优惠活动',
-          start_date: new Date().toISOString().split('T')[0],
-          end_date: newEndDate,
-          rules: { channel: '银行官方渠道' }
-        }])
+      await createUserPromo({
+        bank_name: newBank,
+        title: newTitle.trim(),
+        discount_type: newType,
+        description: newDesc.trim() || '用户自定义记录的银行优惠活动',
+        start_date: new Date().toISOString().split('T')[0],
+        end_date: newEndDate,
+      })
       
       setAddOpen(false)
       setNewTitle('')
       setNewDesc('')
       setToast({ open: true, message: '优惠活动添加成功！', severity: 'success' })
       loadData()
-    } catch (err: any) {
-      setToast({ open: true, message: '添加失败: ' + err.message, severity: 'error' })
+    } catch (err) {
+      setToast({ open: true, message: '添加失败: ' + (err instanceof Error ? err.message : String(err)), severity: 'error' })
     } finally {
       setSubmitting(false)
     }
@@ -352,7 +329,6 @@ export default function PromosPage() {
         <Stack spacing={2}>
           {filteredPromos.map(p => {
             const hasCard = userBanks.some(b => p.bank_name.includes(b))
-            const channel = (p.rules as any)?.channel || `${p.bank_name} App`
 
             return (
               <Card
