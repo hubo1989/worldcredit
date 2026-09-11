@@ -59,13 +59,13 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         .single()
       if (e) throw e
       if (!billRow) throw new Error('账单不存在')
-      const billData = billRow as any
+      const billData = billRow as unknown as { card_id: string }
       const { data: cardRow } = await clientDb
         .from('credit_cards')
         .select('*')
         .eq('id', billData.card_id)
         .single()
-      const cardRowData = (cardRow || null) as any
+      const cardRowData = (cardRow || null) as unknown as { holder_id: string; card_product_id?: string } | null
       const { data: holderRow } = cardRowData
         ? await clientDb.from('card_holders').select('*').eq('id', cardRowData.holder_id).single()
         : { data: null }

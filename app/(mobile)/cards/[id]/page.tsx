@@ -43,7 +43,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
         .single()
       if (e1) throw e1
       if (!cardRow) throw new Error('卡片不存在')
-      const cardBase = cardRow as any
+      const cardBase = cardRow as unknown as { card_product_id?: string; holder_id?: string }
       const [{ data: productRow }, { data: holderRow }] = await Promise.all([
         cardBase.card_product_id
           ? clientDb.from('card_products').select('*').eq('id', cardBase.card_product_id).single()
@@ -67,11 +67,11 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
         .order('due_date', { ascending: false })
         .limit(3)
       if (e2) throw e2
-      const billRows = (rawBills || []) as any[]
+      const billRows = (rawBills || []) as unknown as Array<{ id: string; bill_amount: number; due_date: string }>
       const billIds = billRows.map(b => b.id)
       const { data: paymentRows } = billIds.length > 0
         ? await clientDb.from('payments').select('bill_id, amount').in('bill_id', billIds)
-        : { data: [] as any[] }
+        : { data: [] as Array<{ bill_id: string; amount: number }> }
 
       const billList: BillWithPaid[] = billRows.map((b: any) => {
         const paid = (paymentRows || [])
