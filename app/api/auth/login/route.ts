@@ -22,14 +22,17 @@ export async function POST(request: Request) {
       return Response.json({ error: '密码错误' }, { status: 401 })
     }
 
-    return Response.json({
-      user: { id: result.id, email: result.email, name: result.name, role: result.role, created_at: result.created_at },
-    })
+    const user = { id: result.id, email: result.email, name: result.name, role: result.role, created_at: result.created_at }
+    return Response.json(
+      { user },
+      {
+        headers: {
+          'Set-Cookie': `wc_user=${encodeURIComponent(JSON.stringify(user))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`,
+        },
+      }
+    )
   } catch (err) {
     console.error('[login] Error:', err)
-    return Response.json({
-      error: '登录失败',
-      detail: err instanceof Error ? err.message : String(err)
-    }, { status: 500 })
+    return Response.json({ error: '登录失败' }, { status: 500 })
   }
 }

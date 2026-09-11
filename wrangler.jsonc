@@ -31,5 +31,8 @@
     "crons": [
       "0 9 * * *"
     ]
+  },
+  "vars": {
+    "GOOGLE_CLIENT_ID": "490117963106-31ss52gua36fa8i231ss074ed61rn330.apps.googleusercontent.com"
   }
 }

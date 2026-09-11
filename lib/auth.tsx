@@ -86,7 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signInWithGoogle = async () => {
-    throw new Error('Google OAuth 暂不支持，请使用邮箱登录');
+    window.location.href = '/api/auth/google/start';
   };
 
   return (

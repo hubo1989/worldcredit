@@ -3,10 +3,20 @@ import handler from "vinext/server/app-router-entry";
 import { handleScheduled } from "./cron";
 import { setDb } from "../lib/db/client";
 
+interface WorkerEnv {
+  DB: D1Database;
+  ATTACHMENTS: R2Bucket;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  ASSETS: { fetch(request: Request): Promise<Response> };
+  IMAGES: { input(stream: ReadableStream): { transform(options: Record<string, unknown>): { output(options: { format: string; quality: number }): Promise<{ response(): Response }> } } };
+}
+
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    // Inject D1 binding into our client on every request
+  async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
+    // Inject D1 binding and env vars into globalThis for API routes
     setDb(env.DB);
+    (globalThis as any).__cloudflare_env__ = env;
 
     const url = new URL(request.url);
 
@@ -24,8 +34,9 @@ export default {
     return handler.fetch(request, env, ctx);
   },
 
-  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+  async scheduled(event: ScheduledEvent, env: WorkerEnv, ctx: ExecutionContext) {
     setDb(env.DB);
+    (globalThis as any).__cloudflare_env__ = env;
     ctx.waitUntil(handleScheduled(event, env, ctx));
   },
 };
