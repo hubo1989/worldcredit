@@ -2,7 +2,7 @@
 
 > 日期：2026-09-10 → 2026-09-11
 > 分支：`feat/cloudflare-d1-migration`
-> 状态：**Phase 1-5 已完成**
+> 状态：**Phase 1-3、5-6 已完成；Phase 4（数据迁移）按产品决定跳过**
 
 ## 架构
 
@@ -43,7 +43,7 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 - `wrangler.jsonc` 添加 Cron Trigger `0 9 * * *`（UTC 9:00 = 北京时间 17:00）
 - `worker/index.ts` 导出 fetch + scheduled
 
-### Phase 4：数据迁移脚本 ✅
+### Phase 4：数据迁移脚本 ⏭️ 跳过（2026-09-11 产品决定不迁移历史数据）
 - `scripts/export-insforge.mjs`：从 InsForge Postgres REST 导出全部 22 张表为 JSON
 - `scripts/import-to-d1.mjs`：读取 JSON，生成 SQLite INSERT，写入 `data/import.sql`
 - `npm run db:export` / `npm run db:import`
@@ -55,12 +55,21 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 - `vite.config.mjs` 移除 InsForge 环境变量
 - `npm test` 改为 `vitest run`，`npm run typecheck` 新增
 - `tsc --noEmit` 0 错误，`vitest run` 21 tests passed，`vite build` 成功
-- ⚠️ 尚未部署到 Cloudflare（需要跑 `npx wrangler deploy`）
+- 已部署到 Cloudflare Workers（`npx wrangler deploy --config dist/server/wrangler.json`）
+
+### Phase 6：运行时修复 & 全站验证 ✅（2026-09-11）
+
+线上登录/首屏暴露的三层问题，均已修复并部署验证：
+
+- 服务端绑定丢失：worker 入口与 SSR bundle 各内联一份 `lib/db/client`，`setDb` 写的模块状态 API 路由读不到 → 改存 `globalThis`（b226a3f）
+- 客户端桥缺失：16 个 `use client` 页面直接 import 服务端 `lib/api/*`，浏览器里 `getDb` 必抛 → `lib/db/helpers` 双模式，浏览器侧语句转发到新增 `/api/sql-proxy`（需 wc_user cookie，禁 users/sqlite_ 表）（a37ce4d）
+- PostgREST 残留语法：`card_holders!inner`、嵌套 `card:credit_cards(...)`、`payments(amount)` 等 SQLite 无法表达 → 拆成普通查询客户端组装；promos 错表查询修正（3a06c6e）
+- `/api/db-proxy` 加固：`__in/__neq/__gte/__lte` 过滤算子，insert/update/delete 列名与 order-by 标识符校验（3a06c6e、c320eb0）
+- 验证方式：真实 Chrome 登录后爬测全部 17 个路由，控制台 0 错误；还款登记端到端走通（INSERT/UPDATE/重查）后清理种子数据
 
 ## 下一步
 
-1. 运行 `npm run db:export` 从 InsForge 导出真实数据
-2. 运行 `npm run db:import && npx wrangler d1 execute worldcredit --remote --file=data/import.sql`
-3. 设置 Worker Secrets：`npx wrangler secret put VAPID_PRIVATE_KEY`
-4. 部署：`npx vite build && npx wrangler deploy`
-5. 冒烟测试：登录、添加卡片、创建账单、还款、权益核销
+1. 拆专用 API 路由替换迁移期桥（`/api/sql-proxy`、`/api/db-proxy`、`lib/client-db.ts`），撤掉任意-SQL 桥的暴露面
+2. 设置 Worker Secrets：`npx wrangler secret put VAPID_PRIVATE_KEY`（Web Push 目前是 stub）
+3. PWA Service Worker 每次部署后首载可能命中旧一代预缓存，刷新一次恢复
+4. 基线 lint 债：dashboard 等页面存在改造前遗留的 unused imports（9 errors），与本迁移无关，择期清理
