@@ -92,6 +92,7 @@ export interface User {
 export interface CardHolder {
   id: string
   created_by: string
+  auth_user_id?: string | null
   managed_by?: string
   name: string
   phone?: string
@@ -334,4 +335,3 @@ export interface ScenarioGroup {
   /** 该分组下的快捷问题列表 */
   questions: string[]
 }
-

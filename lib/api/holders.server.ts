@@ -96,8 +96,9 @@ export async function getHolders(userId?: string): Promise<CardHolder[]> {
   const conditions: string[] = []
   const params: unknown[] = []
   if (userId) {
-    conditions.push('created_by = ?')
-    params.push(userId)
+    // Admin sees holders they created; a member sees holders bound to their account.
+    conditions.push('(created_by = ? OR auth_user_id = ?)')
+    params.push(userId, userId)
   }
   const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''
   const { data, error } = await query<CardHolder>(
@@ -159,6 +160,16 @@ export async function getHolderDetailStats(holderId: string): Promise<{ cards: C
   return { cards, stats }
 }
 
+/** Bind/unbind a holder to the user account matching the given email. */
+async function syncHolderAuthUser(holderId: string, email?: string | null): Promise<void> {
+  if (!email) {
+    await execute('UPDATE card_holders SET auth_user_id = NULL WHERE id = ?', [holderId])
+    return
+  }
+  const { data } = await queryOne<{ id: string }>('SELECT id FROM users WHERE lower(email) = lower(?)', [email])
+  await execute('UPDATE card_holders SET auth_user_id = ? WHERE id = ?', [data?.id ?? null, holderId])
+}
+
 export async function createHolder(holder: Omit<CardHolder, 'id' | 'created_at'>): Promise<CardHolder> {
   const id = uuid()
   const ts = now()
@@ -167,6 +178,7 @@ export async function createHolder(holder: Omit<CardHolder, 'id' | 'created_at'>
     [id, holder.created_by, holder.created_by, holder.name, holder.phone || null, holder.email || null, holder.avatar_color || '#1976d2', ts]
   )
   if (error) throw new Error(error.message)
+  await syncHolderAuthUser(id, holder.email)
   return getHolder(id)
 }
 
@@ -189,6 +201,7 @@ export async function updateHolder(id: string, updates: Partial<CardHolder>): Pr
   params.push(id)
   const { error } = await execute(`UPDATE card_holders SET ${fields.join(', ')} WHERE id = ?`, params)
   if (error) throw new Error(error.message)
+  if (updates.email !== undefined) await syncHolderAuthUser(id, updates.email)
   return getHolder(id)
 }
 

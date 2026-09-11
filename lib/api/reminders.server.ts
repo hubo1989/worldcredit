@@ -28,9 +28,9 @@ export async function getDueBillsForReminders(
      JOIN credit_cards cc ON b.card_id = cc.id
      JOIN card_holders ch ON cc.holder_id = ch.id
      LEFT JOIN card_products cp ON cc.card_product_id = cp.id
-     WHERE ch.created_by = ? AND b.status IN ('unpaid', 'partial', 'overdue')
+     WHERE (ch.created_by = ? OR ch.auth_user_id = ?) AND b.status IN ('unpaid', 'partial', 'overdue')
        AND b.due_date >= ? AND b.due_date <= ?`,
-    [userId, todayStr, maxStr]
+    [userId, userId, todayStr, maxStr]
   )
   if (error) throw new Error(error.message)
   return data || []
@@ -57,6 +57,7 @@ export async function recordBillReminder(billId: string, remindType: string): Pr
 
 export interface ActiveLoanCard {
   id: string
+  holder_id: string
   card_product_id: string | null
   loan_due_day: number
   bank_name: string | null
@@ -65,7 +66,7 @@ export interface ActiveLoanCard {
 
 export async function getActiveLoanCards(): Promise<ActiveLoanCard[]> {
   const { data, error } = await query<ActiveLoanCard>(
-    `SELECT cc.id, cc.card_product_id, cc.loan_due_day, cp.bank_name, cp.card_name
+    `SELECT cc.id, cc.holder_id, cc.card_product_id, cc.loan_due_day, cp.bank_name, cp.card_name
      FROM credit_cards cc LEFT JOIN card_products cp ON cc.card_product_id = cp.id
      WHERE cc.card_type = 'loan' AND cc.status = 'active'`
   )

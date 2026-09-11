@@ -1,18 +1,20 @@
 // components/mobile/HolderCard.tsx
 'use client'
 
-import { Avatar, Card, CardActionArea, CardContent, Typography, Box, Chip } from '@mui/material'
+import { Avatar, Card, CardActionArea, CardContent, Typography, Box, Chip, IconButton } from '@mui/material'
+import EditIcon from '@mui/icons-material/Edit'
 import type { CardHolder } from '@/lib/types'
 
 interface Props {
   holder: CardHolder
   cardCount: number
   onClick: () => void
+  onEdit?: () => void
 }
 
-export function HolderCard({ holder, cardCount, onClick }: Props) {
+export function HolderCard({ holder, cardCount, onClick, onEdit }: Props) {
   return (
-    <Card sx={{ mb: 1.5, borderRadius: 3 }}>
+    <Card sx={{ mb: 1.5, borderRadius: 3, position: 'relative' }}>
       <CardActionArea onClick={onClick}>
         <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Avatar sx={{ bgcolor: holder.avatar_color, width: 48, height: 48, fontSize: 20 }}>
@@ -38,8 +40,24 @@ export function HolderCard({ holder, cardCount, onClick }: Props) {
             size="small"
             sx={{ bgcolor: 'primary.light', color: 'primary.dark', fontWeight: 600 }}
           />
+          {onEdit && (
+            <IconButton
+              aria-label="编辑持卡人"
+              size="small"
+              onClick={(e) => { e.stopPropagation(); onEdit() }}
+            >
+              <EditIcon fontSize="small" />
+            </IconButton>
+          )}
         </CardContent>
       </CardActionArea>
+        {holder.auth_user_id && (
+          <Chip
+            label="已绑定成员账号"
+            size="small"
+            sx={{ position: 'absolute', top: 8, left: 8, bgcolor: 'success.light', color: 'success.dark' }}
+          />
+        )}
     </Card>
   )
 }

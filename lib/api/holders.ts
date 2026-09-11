@@ -19,6 +19,9 @@ export function getHolderCardCounts(...args: Parameters<typeof Server.getHolderC
 export function createHolder(...args: Parameters<typeof Server.createHolder>) {
   return callRpc<typeof Server.createHolder>('holders', 'createHolder', ...args)
 }
+export function updateHolder(...args: Parameters<typeof Server.updateHolder>) {
+  return callRpc<typeof Server.updateHolder>('holders', 'updateHolder', ...args)
+}
 export function mergeHolders(...args: Parameters<typeof Server.mergeHolders>) {
   return callRpc<typeof Server.mergeHolders>('holders', 'mergeHolders', ...args)
 }

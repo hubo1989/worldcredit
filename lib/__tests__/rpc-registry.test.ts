@@ -77,5 +77,30 @@ describe('RPC registry contract', () => {
       }
     }
   })
-})
 
+  it('keeps base-data mutations admin-only (plan.md D2)', () => {
+    const adminOnlyFns: Array<[string, string]> = [
+      ['cards', 'createCard'],
+      ['cards', 'updateCard'],
+      ['bills', 'createBill'],
+      ['bills', 'updateBill'],
+      ['bills', 'updateBillStatus'],
+      ['billDrafts', 'confirmBillImportDraft'],
+      ['holders', 'createHolder'],
+      ['holders', 'updateHolder'],
+      ['holders', 'mergeHolders'],
+      ['promos', 'createUserPromo'],
+      ['emailBills', 'syncEmailBillToAccount'],
+      ['sync-gmail', 'syncGmailLedgerToCardsAndBills'],
+    ];
+    for (const [moduleName, fn] of adminOnlyFns) {
+      expect(RPC_REGISTRY[moduleName]?.[fn]?.admin, `${moduleName}.${fn} must require admin`).toBe(true);
+    }
+  });
+
+  it('lets members record their own repayments and benefit usage via guards (plan.md D2)', () => {
+    expect(RPC_REGISTRY.bills.createPayment.memberGuard).toBeDefined();
+    expect(RPC_REGISTRY.bills.markBillAsPaid.memberGuard).toBeDefined();
+    expect(RPC_REGISTRY.benefits.recordBenefitUsage.memberGuard).toBeDefined();
+  });
+})

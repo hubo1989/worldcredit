@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Box, Typography, Fab, Skeleton, Stack, Container, Button, Snackbar, Alert } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import MergeTypeIcon from '@mui/icons-material/MergeType'
-import { getHolders, createHolder, getHolderCardCounts } from '@/lib/api/holders'
+import { getHolders, createHolder, updateHolder, getHolderCardCounts } from '@/lib/api/holders'
 import { HolderCard } from '@/components/mobile/HolderCard'
 import { HolderForm } from '@/components/mobile/HolderForm'
 import { MergeHoldersDialog } from '@/components/mobile/MergeHoldersDialog'
@@ -17,6 +17,7 @@ export default function HoldersPage() {
   const [cardCounts, setCardCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState<CardHolder | undefined>(undefined)
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false)
   const [toast, setToast] = useState<{ open: boolean; message: string }>({ open: false, message: '' })
   const { user } = useAuth()
@@ -43,9 +44,18 @@ export default function HoldersPage() {
     loadHolders()
   }, [loadHolders])
 
-  const handleCreate = async (data: { name: string; phone?: string; avatar_color: string }) => {
+  const handleCreate = async (data: { name: string; phone?: string; email?: string; avatar_color: string }) => {
     if (!user) return
     await createHolder({ ...data, created_by: user.id })
+    setFormOpen(false)
+    loadHolders()
+  }
+
+  const handleUpdate = async (data: { name: string; phone?: string; email?: string; avatar_color: string }) => {
+    if (!editing) return
+    await updateHolder(editing.id, data)
+    setEditing(undefined)
+    setFormOpen(false)
     loadHolders()
   }
 
@@ -98,8 +108,9 @@ export default function HoldersPage() {
               key={h.id}
               holder={h}
               cardCount={cardCounts[h.id] || 0}
-              onClick={() => router.push(`/holders/${h.id}`)}
-            />
+            onClick={() => router.push(`/holders/${h.id}`)}
+            onEdit={() => { setEditing(h); setFormOpen(true) }}
+          />
           ))}
         </Stack>
       )}
@@ -114,8 +125,9 @@ export default function HoldersPage() {
 
       <HolderForm
         open={formOpen}
-        onClose={() => setFormOpen(false)}
-        onSubmit={handleCreate}
+        onClose={() => { setFormOpen(false); setEditing(undefined) }}
+        onSubmit={editing ? handleUpdate : handleCreate}
+        initial={editing}
       />
 
       <MergeHoldersDialog

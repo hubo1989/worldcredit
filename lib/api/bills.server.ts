@@ -194,8 +194,9 @@ export async function getBillDashboardItems(limit = 100, userId?: string): Promi
   const conditions: string[] = []
   const params: unknown[] = []
   if (userId) {
-    conditions.push('ch.created_by = ?')
-    params.push(userId)
+    // Admin sees holders they created; a member sees holders bound to their account.
+    conditions.push('(ch.created_by = ? OR ch.auth_user_id = ?)')
+    params.push(userId, userId)
   }
   const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''
 
@@ -316,8 +317,8 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
   const conditions: string[] = []
   const params: unknown[] = []
   if (userId) {
-    conditions.push('ch.created_by = ?')
-    params.push(userId)
+    conditions.push('(ch.created_by = ? OR ch.auth_user_id = ?)')
+    params.push(userId, userId)
   }
   const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''
   const { data: rawCards, error: cardError } = await query<Record<string, unknown>>(
@@ -500,13 +501,23 @@ export interface UnpaidBillLite {
   due_date: string
 }
 
-/** Quick "record a payment" picker: unpaid bills ordered by due date. */
-export async function getUnpaidBills(limit = 50): Promise<UnpaidBillLite[]> {
-  const { data, error } = await query<UnpaidBillLite>(
-    `SELECT id, bill_month, bill_amount, status, due_date FROM bills
-     WHERE status != 'paid' ORDER BY due_date ASC LIMIT ?`,
-    [limit]
-  )
+/** Quick "record a payment" picker: unpaid bills ordered by due date.
+ * holderIds scopes the result to the RPC member context. */
+export async function getUnpaidBills(limit = 50, holderIds?: string[]): Promise<UnpaidBillLite[]> {
+  let sql: string
+  let params: unknown[]
+  if (holderIds && holderIds.length > 0) {
+    const placeholders = holderIds.map(() => "?").join(",")
+    sql =
+      'SELECT b.id, b.bill_month, b.bill_amount, b.status, b.due_date FROM bills b ' +
+      'JOIN credit_cards cc ON b.card_id = cc.id ' +
+      `WHERE b.status != 'paid' AND cc.holder_id IN (` + placeholders + `) ORDER BY b.due_date ASC LIMIT ?`
+    params = [...holderIds, limit]
+  } else {
+    sql = `SELECT id, bill_month, bill_amount, status, due_date FROM bills WHERE status != 'paid' ORDER BY due_date ASC LIMIT ?`
+    params = [limit]
+  }
+  const { data, error } = await query<UnpaidBillLite>(sql, params)
   if (error) throw new Error(error.message)
   return data || []
 }

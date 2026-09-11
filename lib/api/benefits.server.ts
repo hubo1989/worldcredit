@@ -34,7 +34,7 @@ export async function getAllMyBenefits(userId?: string): Promise<(Benefit & {
 
   if (userId) {
     const { data: holders } = await query<{ id: string }>(
-      'SELECT id FROM card_holders WHERE created_by = ?', [userId]
+      'SELECT id FROM card_holders WHERE created_by = ? OR auth_user_id = ?', [userId, userId]
     )
     const holderIds = (holders || []).map(h => h.id)
     if (holderIds.length === 0) return []

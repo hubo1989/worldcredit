@@ -13,26 +13,28 @@ const COLORS = ['#1976d2', '#d32f2f', '#388e3c', '#f57c00', '#7b1fa2', '#00796b'
 interface Props {
   open: boolean
   onClose: () => void
-  onSubmit: (data: { name: string; phone?: string; avatar_color: string }) => void
+  onSubmit: (data: { name: string; phone?: string; email?: string; avatar_color: string }) => void
   initial?: CardHolder
 }
 
 export function HolderForm({ open, onClose, onSubmit, initial }: Props) {
   const [name, setName] = useState(initial?.name ?? '')
   const [phone, setPhone] = useState(initial?.phone ?? '')
+  const [email, setEmail] = useState(initial?.email ?? '')
   const [color, setColor] = useState(initial?.avatar_color ?? COLORS[0])
 
   useEffect(() => {
     if (open) {
       setName(initial?.name ?? '')
       setPhone(initial?.phone ?? '')
+      setEmail(initial?.email ?? '')
       setColor(initial?.avatar_color ?? COLORS[0])
     }
   }, [open, initial])
 
   const handleSubmit = () => {
     if (!name.trim()) return
-    onSubmit({ name: name.trim(), phone: phone.trim() || undefined, avatar_color: color })
+    onSubmit({ name: name.trim(), phone: phone.trim() || undefined, email: email.trim() || undefined, avatar_color: color })
     onClose()
   }
 
@@ -48,6 +50,10 @@ export function HolderForm({ open, onClose, onSubmit, initial }: Props) {
         <TextField
           fullWidth label="手机号" margin="normal"
           value={phone} onChange={e => setPhone(e.target.value)}
+        />
+        <TextField
+          fullWidth label="成员账号邮箱（匹配已注册用户后自动绑定）" margin="normal"
+          type="email" value={email} onChange={e => setEmail(e.target.value)}
         />
         <Box sx={{ display: 'flex', gap: 1, mt: 2, flexWrap: 'wrap' }}>
           {COLORS.map(c => (
