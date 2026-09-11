@@ -23,3 +23,16 @@ export function getDb(): D1Database {
 export function setDb(db: D1Database | null) {
   globalRef.__worldcreditD1 = db
 }
+
+// Some runtime bindings (R2 buckets, plain vars like VAPID keys) are needed
+// outside the D1 helpers. The worker entry stores the whole env here, mirroring
+// setDb(), so API routes can read bindings without importing cloudflare:workers.
+const envRef = globalThis as unknown as { __worldcreditEnv?: Record<string, unknown> }
+
+export function setWorkerEnv(env: Record<string, unknown>) {
+  envRef.__worldcreditEnv = env
+}
+
+export function getWorkerEnv(): Record<string, unknown> {
+  return envRef.__worldcreditEnv ?? {}
+}
