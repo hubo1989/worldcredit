@@ -1,10 +1,13 @@
 // worker/cron.ts — Scheduled handler for daily bill reminders + notification scan
 // Deployed as part of the main Worker (cron trigger in wrangler.jsonc)
 
+import webpush from 'web-push'
+
 interface CronEnv {
   DB: D1Database
   VAPID_PUBLIC_KEY?: string
   VAPID_PRIVATE_KEY?: string
+  VAPID_SUBJECT?: string
 }
 
 interface BillWithCard {
@@ -104,7 +107,11 @@ export async function handleScheduled(_event: ScheduledEvent, env: CronEnv, _ctx
 
       // 6. Send push notification
       try {
-        await sendPushToSubscriptions(userSubs, title, body)
+        const { staleIds } = await sendPushToSubscriptions(env, userSubs, title, body)
+        // Drop subscriptions the push service reports as gone (404/410).
+        for (const id of staleIds) {
+          await db.prepare('DELETE FROM push_subscriptions WHERE id = ?').bind(id).run()
+        }
         await db.prepare(
           'INSERT INTO notification_history (id, user_id, notification_key, title, body, status) VALUES (?, ?, ?, ?, ?, ?)'
         ).bind(crypto.randomUUID(), userId, notificationKey, title, body, 'sent').run()
@@ -122,12 +129,38 @@ export async function handleScheduled(_event: ScheduledEvent, env: CronEnv, _ctx
 }
 
 async function sendPushToSubscriptions(
-  subs: { endpoint: string; p256dh: string; auth: string }[],
+  env: CronEnv,
+  subs: { id: string; endpoint: string; p256dh: string; auth: string }[],
   title: string,
   body: string
-): Promise<void> {
-  const payload = JSON.stringify({ title, body })
-  // Web Push requires VAPID keys and web-push library.
-  // For now, log and mark as sent. TODO(Phase-4): integrate web-push with VAPID.
-  console.log(`[cron] Would send push to ${subs.length} subscription(s): ${title}`)
+): Promise<{ sent: number; staleIds: string[] }> {
+  const publicKey = env.VAPID_PUBLIC_KEY
+  const privateKey = env.VAPID_PRIVATE_KEY
+  if (!publicKey || !privateKey) {
+    throw new Error('VAPID keys not configured (npx wrangler secret put VAPID_PRIVATE_KEY)')
+  }
+  webpush.setVapidDetails(env.VAPID_SUBJECT || 'mailto:admin@worldcredit.app', publicKey, privateKey)
+
+  const payload = JSON.stringify({ title, body, url: '/bills' })
+  let sent = 0
+  const staleIds: string[] = []
+  for (const sub of subs) {
+    try {
+      await webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+        payload,
+        { TTL: 86400 }
+      )
+      sent++
+    } catch (err) {
+      const status = (err as { statusCode?: number }).statusCode
+      if (status === 404 || status === 410) {
+        // Subscription expired or removed — let the caller clean it up.
+        staleIds.push(sub.id)
+      } else {
+        throw err
+      }
+    }
+  }
+  return { sent, staleIds }
 }

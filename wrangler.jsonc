@@ -33,6 +33,8 @@
     ]
   },
   "vars": {
-    "GOOGLE_CLIENT_ID": "490117963106-31ss52gua36fa8i231ss074ed61rn330.apps.googleusercontent.com"
+    "GOOGLE_CLIENT_ID": "490117963106-31ss52gua36fa8i231ss074ed61rn330.apps.googleusercontent.com",
+    "VAPID_SUBJECT": "mailto:hubo@worldcredit.app",
+    "VAPID_PUBLIC_KEY": "BBtXBsGVcB6xC80wd33dTZmCtSDVesZZvI-X4kbMNL_Bdt-dsjY15Xxld-1WJ97nxvUzKjGq6EsGHB2vSRIrP7M"
   }
 }
