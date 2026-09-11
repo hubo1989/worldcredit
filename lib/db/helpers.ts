@@ -5,6 +5,26 @@
 
 import { getDb } from './client'
 
+// D1 is only reachable from the Worker runtime. Client components import the
+// same lib/api modules that were written for the server, so when this module
+// executes in the browser we transparently forward each statement to the
+// sql-proxy API route instead of touching D1 directly.
+// TODO(replace): retire the browser bridge once client pages use dedicated API routes.
+const isBrowser = typeof window !== 'undefined'
+
+async function proxySql<T>(body: Record<string, unknown>): Promise<DbResult<T>> {
+  try {
+    const res = await fetch('/api/sql-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    return (await res.json()) as DbResult<T>
+  } catch (err) {
+    return { data: null, error: { message: err instanceof Error ? err.message : String(err) } }
+  }
+}
+
 export interface DbResult<T> {
   data: T | null
   error: { message: string; code?: string } | null
@@ -14,6 +34,7 @@ export async function query<T = Record<string, unknown>>(
   sql: string,
   params: unknown[] = []
 ): Promise<DbResult<T[]>> {
+  if (isBrowser) return proxySql<T[]>({ sql, params })
   try {
     const db = getDb()
     const stmt = db.prepare(sql).bind(...params)
@@ -34,6 +55,7 @@ export async function queryOne<T = Record<string, unknown>>(
 }
 
 export async function execute(sql: string, params: unknown[] = []): Promise<DbResult<{ changes: number }>> {
+  if (isBrowser) return proxySql<{ changes: number }>({ sql, params })
   try {
     const db = getDb()
     const result = await db.prepare(sql).bind(...params).run()
@@ -47,6 +69,7 @@ export async function execute(sql: string, params: unknown[] = []): Promise<DbRe
 export async function batch(
   statements: { sql: string; params?: unknown[] }[]
 ): Promise<DbResult<D1Result[]>> {
+  if (isBrowser) return proxySql<D1Result[]>({ batch: statements })
   try {
     const db = getDb()
     const stmts = statements.map(s => (s.params ? db.prepare(s.sql).bind(...s.params) : db.prepare(s.sql)))

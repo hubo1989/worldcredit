@@ -39,7 +39,8 @@ class ClientQuery {
   }
 
   in(column: string, values: unknown[]): ClientQuery {
-    if (values.length > 0) this.filters[column] = values[0]
+    // db-proxy 会把 __in 后缀翻译成 IN 查询，空数组按恒假处理
+    this.filters[column + '__in'] = values
     return this
   }
 

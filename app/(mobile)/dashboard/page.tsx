@@ -121,23 +121,25 @@ export default function DashboardPage() {
     setLoading(true)
     setError(null)
     try {
-      // 并行：持卡人 / 卡片 / 账单
-      const [holdersRes, cardsRes, allBills] = await Promise.all([
+      // 并行：持卡人 / 账单；卡片依赖持卡人 id，随后用 in 查询
+      const [holdersRes, allBills] = await Promise.all([
         clientDb
           .from('card_holders')
           .select('*')
           .eq('created_by', user.id)
           .order('created_at', { ascending: true }),
-        clientDb
-          .from('credit_cards')
-          .select('id, holder_id, card_holders!inner(created_by)')
-          .eq('card_holders.created_by', user.id),
         getBillDashboardItems(200, user.id),
       ])
       if (holdersRes.error) throw holdersRes.error
+      const holderList = (holdersRes.data as unknown as CardHolder[]) || []
+      const holderIds = holderList.map(h => h.id)
+      // PostgREST 风格的 card_holders!inner 在 SQLite 不可用，改为两段查询
+      const cardsRes = holderIds.length > 0
+        ? await clientDb.from('credit_cards').select('id, holder_id').in('holder_id', holderIds)
+        : { data: [] as Array<{ id: string; holder_id: string }>, error: null }
       if (cardsRes.error) throw cardsRes.error
 
-      setHolders((holdersRes.data as unknown as CardHolder[]) || [])
+      setHolders(holderList)
       setCards((cardsRes.data || []).map((c: any) => ({ id: c.id, holder_id: c.holder_id })))
       setBills(allBills)
     } catch (err: any) {

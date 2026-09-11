@@ -36,12 +36,27 @@ export async function POST(request: Request) {
   try {
     if (operation === 'select') {
       const cols = body.columns || '*'
+      if (cols.includes('!') || cols.includes('(')) {
+        return Response.json({ error: 'columns 仅支持普通列名' }, { status: 400 })
+      }
       let sql = `SELECT ${cols} FROM ${table}`
       const params: unknown[] = []
       if (body.filters) {
-        const conditions = Object.entries(body.filters).map(([k]) => {
-          params.push(k)
-          return `${k} = ?`
+        const conditions = Object.entries(body.filters).map(([k, v]) => {
+          const op = k.endsWith('__in') ? 'in' : k.endsWith('__neq') ? 'neq' : k.endsWith('__gte') ? 'gte' : k.endsWith('__lte') ? 'lte' : 'eq'
+          const col = op === 'eq' ? k : k.slice(0, -(op.length + 2))
+          if (!/^[A-Za-z0-9_.]+$/.test(col)) {
+            throw new Error('不支持的过滤列: ' + col)
+          }
+          if (op === 'in') {
+            if (!Array.isArray(v)) throw new Error('__in 过滤值必须是数组')
+            if (v.length === 0) return '1=0'
+            params.push(...v)
+            return `${col} IN (${v.map(() => '?').join(',')})`
+          }
+          const sqlOp = op === 'neq' ? '!=' : op === 'gte' ? '>=' : op === 'lte' ? '<=' : '='
+          params.push(v)
+          return `${col} ${sqlOp} ?`
         })
         if (conditions.length > 0) sql += ` WHERE ${conditions.join(' AND ')}`
       }
@@ -50,10 +65,7 @@ export async function POST(request: Request) {
       }
       if (body.limit) sql += ` LIMIT ?`
       const stmt = db.prepare(sql)
-      const allParams = [
-        ...Object.values(body.filters || {}),
-        ...(body.limit ? [body.limit] : []),
-      ]
+      const allParams = [...params, ...(body.limit ? [body.limit] : [])]
       const result = await stmt.bind(...allParams).all()
       return Response.json({ data: result.results, error: null })
     }
