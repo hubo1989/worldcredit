@@ -28,6 +28,14 @@ export function MobileShell({ children }: { children: ReactNode }) {
 
     // Register SW
     if ('serviceWorker' in navigator) {
+      // One-shot auto reload when a newly installed service worker takes
+      // control: fixes the stale-precache first load after each deploy.
+      let refreshing = false
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (refreshing) return
+        refreshing = true
+        window.location.reload()
+      })
       navigator.serviceWorker
         .register('/sw.js', { scope: '/' })
         .catch(err => console.warn('[SW] registration failed:', err))
