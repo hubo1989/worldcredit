@@ -14,9 +14,8 @@ interface WorkerEnv {
 
 export default {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
-    // Inject D1 binding and env vars into globalThis for API routes
+    // Inject D1 binding for API routes
     setDb(env.DB);
-    (globalThis as any).__cloudflare_env__ = env;
 
     const url = new URL(request.url);
 
@@ -36,7 +35,6 @@ export default {
 
   async scheduled(event: ScheduledEvent, env: WorkerEnv, ctx: ExecutionContext) {
     setDb(env.DB);
-    (globalThis as any).__cloudflare_env__ = env;
     ctx.waitUntil(handleScheduled(event, env, ctx));
   },
 };
