@@ -1,5 +1,6 @@
 import { getDb, uuid } from '@/lib/db'
 import { pbkdf2Hash } from '@/lib/auth-crypto'
+import { createSessionValue, sessionCookieHeader, type SessionUser } from '@/lib/session'
 
 export async function POST(request: Request) {
   try {
@@ -12,19 +13,24 @@ export async function POST(request: Request) {
     if (existing) {
       return Response.json({ error: '该邮箱已注册' }, { status: 409 })
     }
+    // Bootstrap: the first registered user becomes admin; everyone after is a
+    // family member. Existing deployments already have their admin user.
+    const count = await db.prepare('SELECT COUNT(*) AS n FROM users').first<{ n: number }>()
+    const role = (count?.n ?? 0) === 0 ? 'admin' : 'member'
     const hash = await pbkdf2Hash(password)
     const id = uuid()
     await db
       .prepare('INSERT INTO users (id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)')
-      .bind(id, email, hash, name || null, 'admin')
+      .bind(id, email, hash, name || null, role)
       .run()
 
-    const user = { id, email, name: name || null, role: 'admin', created_at: new Date().toISOString() }
+    const user: SessionUser = { id, email, name: name || null, role, created_at: new Date().toISOString() }
+    const cookieValue = await createSessionValue(user)
     return Response.json(
       { user },
       {
         headers: {
-          'Set-Cookie': `wc_user=${encodeURIComponent(JSON.stringify(user))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`,
+          'Set-Cookie': sessionCookieHeader(cookieValue),
         },
       }
     )

@@ -5,18 +5,10 @@ import {
   deleteRecordAttachment,
 } from '@/lib/api/attachments.server'
 import { getWorkerEnv } from '@/lib/db/client'
+import { readSession } from '@/lib/session'
 
-function sessionFrom(request: Request): { id: string; role: string } | null {
-  const cookie = request.headers.get('Cookie') ?? ''
-  const match = cookie.match(/wc_user=([^;]+)/)
-  if (!match) return null
-  try {
-    const parsed = JSON.parse(decodeURIComponent(match[1])) as { id?: string; role?: string }
-    if (!parsed.id) return null
-    return { id: parsed.id, role: parsed.role || 'member' }
-  } catch {
-    return null
-  }
+async function sessionFrom(request: Request) {
+  return readSession(request)
 }
 
 function r2Bucket(): R2Bucket | undefined {
@@ -28,7 +20,7 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = sessionFrom(request)
+  const session = await sessionFrom(request)
   if (!session) return Response.json({ error: '未登录' }, { status: 401 })
   const { id } = await params
   const record = await getAttachmentById(id)
@@ -51,7 +43,7 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = sessionFrom(request)
+  const session = await sessionFrom(request)
   if (!session) return Response.json({ error: '未登录' }, { status: 401 })
   const { id } = await params
   const record = await getAttachmentById(id)

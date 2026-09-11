@@ -1,5 +1,6 @@
 import { getDb } from '@/lib/db'
 import { pbkdf2Verify } from '@/lib/auth-crypto'
+import { createSessionValue, sessionCookieHeader, type SessionUser } from '@/lib/session'
 
 export async function POST(request: Request) {
   try {
@@ -22,12 +23,13 @@ export async function POST(request: Request) {
       return Response.json({ error: '密码错误' }, { status: 401 })
     }
 
-    const user = { id: result.id, email: result.email, name: result.name, role: result.role, created_at: result.created_at }
+    const user: SessionUser = { id: result.id, email: result.email, name: result.name, role: result.role === 'admin' ? 'admin' : 'member', created_at: result.created_at }
+    const cookieValue = await createSessionValue(user)
     return Response.json(
       { user },
       {
         headers: {
-          'Set-Cookie': `wc_user=${encodeURIComponent(JSON.stringify(user))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`,
+          'Set-Cookie': sessionCookieHeader(cookieValue),
         },
       }
     )

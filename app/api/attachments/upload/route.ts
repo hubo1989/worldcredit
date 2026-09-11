@@ -2,21 +2,15 @@
 // attachments (replaces browser-side R2 access from the migration bridge).
 
 import { uploadRecordAttachment } from '@/lib/api/attachments.server'
+import { readSession } from '@/lib/session'
 
-function sessionUserId(request: Request): string | null {
-  const cookie = request.headers.get('Cookie') ?? ''
-  const match = cookie.match(/wc_user=([^;]+)/)
-  if (!match) return null
-  try {
-    const parsed = JSON.parse(decodeURIComponent(match[1])) as { id?: string }
-    return typeof parsed.id === 'string' ? parsed.id : null
-  } catch {
-    return null
-  }
+async function sessionUserId(request: Request): Promise<string | null> {
+  const session = await readSession(request)
+  return session?.id ?? null
 }
 
 export async function POST(request: Request) {
-  const userId = sessionUserId(request)
+  const userId = await sessionUserId(request)
   if (!userId) {
     return Response.json({ error: '未登录' }, { status: 401 })
   }

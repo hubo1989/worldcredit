@@ -1,4 +1,5 @@
 import { getDb } from '@/lib/db'
+import { createSessionValue, sessionCookieHeader, type SessionUser } from '@/lib/session'
 
 export async function GET(request: Request) {
   const url = new URL(request.url)
@@ -58,10 +59,11 @@ export async function GET(request: Request) {
       user = { id, email, name: name || null, role: 'admin', created_at: new Date().toISOString() }
     }
 
-    const userJson = JSON.stringify({ id: user.id, email: user.email, name: user.name, role: user.role, created_at: user.created_at })
+    const sessionUser: SessionUser = { id: user.id, email: user.email, name: user.name, role: user.role === 'admin' ? 'admin' : 'member', created_at: user.created_at }
+    const cookieValue = await createSessionValue(sessionUser)
     const headers = new Headers()
     headers.set('Location', `${url.origin}/dashboard`)
-    headers.set('Set-Cookie', `wc_user=${encodeURIComponent(userJson)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`)
+    headers.set('Set-Cookie', sessionCookieHeader(cookieValue))
     return new Response(null, { status: 302, headers })
   } catch (err) {
     console.error('[google-callback] Error:', err)
