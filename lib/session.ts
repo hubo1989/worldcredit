@@ -69,13 +69,18 @@ export async function verifySessionValue(value: string | undefined | null): Prom
     const payloadBytes = fromB64Url(value.slice(0, dot))
     const signature = fromB64Url(value.slice(dot + 1))
     const key = await getSessionKey()
+    const rawSecret = getWorkerEnv().SESSION_SECRET
+    const secretLen = typeof rawSecret === 'string' ? rawSecret.length : -1
     const valid = await crypto.subtle.verify(
       'HMAC',
       key,
       signature as unknown as ArrayBuffer,
       payloadBytes as unknown as ArrayBuffer
     )
-    if (!valid) return null
+    if (!valid) {
+      console.log(`[session-verify] reject=bad-signature payloadBytes=${payloadBytes.length} sigBytes=${signature.length} secretLen=${secretLen}`)
+      return null
+    }
     const payload = JSON.parse(new TextDecoder().decode(payloadBytes)) as Partial<SessionPayload>
     if (
       !payload ||
@@ -84,6 +89,7 @@ export async function verifySessionValue(value: string | undefined | null): Prom
       typeof payload.exp !== 'number' ||
       payload.exp < Math.floor(Date.now() / 1000)
     ) {
+      console.log(`[session-verify] reject=payload-fields exp=${String(payload.exp)} idType=${typeof payload.id}`)
       return null
     }
     return {
@@ -93,15 +99,22 @@ export async function verifySessionValue(value: string | undefined | null): Prom
       role: payload.role === 'admin' ? 'admin' : 'member',
       created_at: typeof payload.created_at === 'string' ? payload.created_at : '',
     }
-  } catch {
+  } catch (err) {
+    console.log(`[session-verify] reject=exception ${err instanceof Error ? err.message : String(err)}`)
     return null
   }
 }
 
 function readCookie(header: string | null, name: string): string | undefined {
   if (!header) return undefined
-  const match = header.match(new RegExp('(?:^|;\\\\s*)' + name + '=([^;]*)'))
-  return match?.[1]
+  // Split-based parsing: a malformed dynamic RegExp here silently breaks every
+  // request whose wc_user cookie is not the first one in the header.
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=')
+    if (eq === -1) continue
+    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1)
+  }
+  return undefined
 }
 
 export async function readSession(request: Request): Promise<SessionUser | null> {
