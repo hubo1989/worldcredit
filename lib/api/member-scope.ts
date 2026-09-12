@@ -85,12 +85,6 @@ export async function assertRecordAccess(recordType: unknown, recordId: unknown,
   await guard(recordId, ctx)
 }
 
-export async function assertEmailSourceAccess(sourceId: unknown, userId: string): Promise<void> {
-  memberAssert(typeof sourceId === 'string', '参数必须是邮箱来源 ID')
-  const { data } = await queryOne<{ user_id: string }>('SELECT user_id FROM bill_email_sources WHERE id = ?', [sourceId])
-  memberAssert(!!data && data.user_id === userId, '无权操作其他用户的邮箱来源')
-}
-
 export async function assertBillListAccess(targetBills: unknown, ctx: MemberContext): Promise<void> {
   if (!Array.isArray(targetBills)) return
   for (const bill of targetBills) {

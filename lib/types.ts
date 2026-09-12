@@ -220,19 +220,6 @@ export interface EmailParseLog {
 }
 
 /**
- * 用户登记的账单来源邮箱。
- * 用于 Cloudflare Email Worker 在收到账单邮件后按 From/Reply-To 归属到登录用户。
- */
-export interface BillEmailSource {
-  id: string
-  user_id: string
-  email: string
-  label?: string
-  is_active: boolean
-  created_at: string
-}
-
-/**
  * 通用记录附件 metadata。文件保存在 InsForge Storage。
  */
 export interface RecordAttachment {

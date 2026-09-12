@@ -1,9 +1,12 @@
 /**
  * WorldCredit Email Worker
  *
- * Triggered by Cloudflare Email Routing for mail delivered to:
+ * Triggered by Cloudflare Email Routing for mail delivered to the per-user
+ * dedicated address only:
  *   - bills+{userId}@20160325.xyz
- *   - bills@20160325.xyz, with From/Reply-To matched against bill_email_sources
+ *
+ * The shared public inbox (bills@20160325.xyz) is intentionally not supported:
+ * attribution is derived exclusively from the recipient address.
  *
  * Uses D1 binding directly (no InsForge REST client).
  */
@@ -22,10 +25,9 @@ export default {
     const fromEmail = normalizeEmail(message.from ?? null)
     const toHeader = message.to ?? getHeader(message, 'to') ?? ''
     const subject = extractSubject(message)
-    const senderCandidates = extractSenderCandidates(message, fromEmail)
 
-    // 1. Resolve userId
-    const userId = parseUserId(toHeader) ?? await findUserIdBySourceEmail(db, senderCandidates)
+    // 1. Resolve userId from the dedicated address (bills+{userId}@domain)
+    const userId = parseUserId(toHeader)
     if (!userId) {
       console.warn(`[email-worker] Cannot resolve userId from To="${toHeader}" From="${fromEmail ?? ''}"`)
       return
@@ -47,14 +49,11 @@ export default {
         return
       }
 
-      // 3. Fetch ai_config
-      const setting = await db.prepare(
-        "SELECT value FROM system_settings WHERE key = 'ai_config'"
-      ).first<{ value: string | AiConfig }>()
-      if (!setting) throw new Error('ai_config not found in system_settings')
-      const raw = typeof setting.value === 'string' ? JSON.parse(setting.value) : setting.value
-      const aiConfig = raw as AiConfig
-      if (!aiConfig.apiKey) throw new Error('ai_config missing apiKey')
+      // 3. Fetch AI config
+      const aiConfig = await loadAiConfig(db)
+      if (!aiConfig.apiKey) {
+        throw new Error('AI API Key 未配置（system_settings.ai_api_key）')
+      }
 
       // 4. Parse bill with AI
       const aiResult = await parseBillWithAI(aiConfig, emailBody)
@@ -135,33 +134,48 @@ function parseUserId(to: string): string | null {
   return match ? match[1] : null
 }
 
-function extractSenderCandidates(message: ForwardableEmailMessage, primaryFrom: string | null): string[] {
-  const candidates = new Set<string>()
-  if (primaryFrom) candidates.add(primaryFrom)
-  for (const headerName of ['reply-to', 'x-sender', 'return-path', 'sender']) {
-    const normalized = normalizeEmail(getHeader(message, headerName))
-    if (normalized) candidates.add(normalized)
-  }
-  return Array.from(candidates)
-}
-
-async function findUserIdBySourceEmail(db: D1Database, emails: string[]): Promise<string | null> {
-  for (const email of emails) {
-    const rows = await db.prepare(
-      'SELECT user_id FROM bill_email_sources WHERE email = ? AND is_active = 1 LIMIT 2'
-    ).bind(email).all<{ user_id: string }>()
-    const results = rows.results || []
-    if (results.length === 1) return results[0].user_id
-    if (results.length > 1) {
-      console.warn(`[email-worker] Ambiguous source email for ${email}`)
-      return null
-    }
-  }
-  return null
-}
-
 function extractSubject(message: ForwardableEmailMessage): string | null {
   return getHeader(message, 'subject')
+}
+
+/**
+ * Read the LLM endpoint from system_settings.
+ *
+ * The admin console writes three independent keys (ai_api_key / ai_base_url /
+ * ai_model) via updateSystemSettings, which is the same shape the app's AI
+ * features read. Older builds of this worker read a single 'ai_config' blob
+ * that nothing ever wrote, so bill parsing could never authenticate. We read
+ * the product's keys first and keep 'ai_config' as a fallback for any
+ * deployment that still stores that shape.
+ */
+async function loadAiConfig(db: D1Database): Promise<AiConfig> {
+  const rows = await db.prepare(
+    "SELECT key, value FROM system_settings WHERE key IN ('ai_api_key', 'ai_base_url', 'ai_model', 'ai_config')"
+  ).all<{ key: string; value: string }>()
+
+  const settings = new Map<string, unknown>()
+  for (const row of rows.results || []) {
+    try {
+      settings.set(row.key, JSON.parse(row.value))
+    } catch {
+      settings.set(row.key, row.value)
+    }
+  }
+
+  const legacy = settings.get('ai_config')
+  const legacyConfig =
+    legacy && typeof legacy === 'object' ? (legacy as Partial<AiConfig>) : undefined
+
+  const pick = (key: string, legacyValue?: string): string => {
+    const value = settings.get(key)
+    return (typeof value === 'string' && value) || legacyValue || ''
+  }
+
+  return {
+    apiKey: pick('ai_api_key', legacyConfig?.apiKey),
+    baseURL: pick('ai_base_url', legacyConfig?.baseURL) || 'https://api.openai.com/v1',
+    model: pick('ai_model', legacyConfig?.model) || 'gpt-4o',
+  }
 }
 
 // ─── OpenAI bill parser ───────────────────────────────────────────────────────

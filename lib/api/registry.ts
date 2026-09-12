@@ -14,7 +14,6 @@ import * as aiServer from './ai.server'
 import * as analyticsServer from './analytics.server'
 import * as attachmentsServer from './attachments.server'
 import * as benefitsServer from './benefits.server'
-import * as billEmailsServer from './bill-emails.server'
 import * as billDraftsServer from './billDrafts.server'
 import * as billsServer from './bills.server'
 import * as cardsServer from './cards.server'
@@ -34,7 +33,6 @@ import {
   assertBillListAccess,
   assertCardAccess,
   assertDraftAccess,
-  assertEmailSourceAccess,
   assertHolderAccess,
   assertHolderIdsAccess,
   assertRecordAccess,
@@ -118,12 +116,6 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     createBenefit: { impl: benefitsServer.createBenefit, admin: true },
     updateBenefit: { impl: benefitsServer.updateBenefit, admin: true },
     deleteBenefit: { impl: benefitsServer.deleteBenefit, admin: true },
-  },
-  'bill-emails': {
-    getBillEmailSources: { impl: billEmailsServer.getBillEmailSources, bindUser: 0 },
-    addBillEmailSource: { impl: billEmailsServer.addBillEmailSource, bindUser: 0 },
-    setBillEmailSourceActive: { impl: billEmailsServer.setBillEmailSourceActive, memberGuard: (args, ctx) => assertEmailSourceAccess(args[0], ctx.userId) },
-    deleteBillEmailSource: { impl: billEmailsServer.deleteBillEmailSource, memberGuard: (args, ctx) => assertEmailSourceAccess(args[0], ctx.userId) },
   },
   billDrafts: {
     createBillImportDraft: { impl: billDraftsServer.createBillImportDraft, bindField: { arg: 0, field: "created_by" }, memberGuard: guardObjField(0, "card_id", async (cardId, ctx) => { if (cardId) await assertCardAccess(cardId, ctx) }) },

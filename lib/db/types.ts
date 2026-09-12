@@ -161,15 +161,6 @@ export interface ReminderLogRow {
   sent_at: string
 }
 
-export interface BillEmailSourceRow {
-  id: string
-  user_id: string
-  email: string
-  label: string | null
-  is_active: number
-  created_at: string
-}
-
 export interface RecordAttachmentRow {
   id: string
   record_type: string

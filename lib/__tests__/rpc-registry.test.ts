@@ -71,7 +71,7 @@ describe('RPC registry contract', () => {
     // User-scoped list/read functions must never trust a client-provided userId.
     for (const [moduleName, mod] of Object.entries(RPC_REGISTRY)) {
       for (const [fn, entry] of Object.entries(mod)) {
-        if (/^(getHolders|getUserPreferences|updateUserPreferences|getBillEmailSources|addBillEmailSource|getAllMyBenefits|getCardsWithBillsSummary|getBillDashboardItems|markAllOverdueBillsAsPaid|syncGmailLedgerToCardsAndBills|getDueBillsForReminders|subscribePush)$/.test(fn)) {
+        if (/^(getHolders|getUserPreferences|updateUserPreferences|getAllMyBenefits|getCardsWithBillsSummary|getBillDashboardItems|markAllOverdueBillsAsPaid|syncGmailLedgerToCardsAndBills|getDueBillsForReminders|subscribePush)$/.test(fn)) {
           expect(entry.bindUser !== undefined || entry.bindField !== undefined, `${moduleName}.${fn} must bind the session user`).toBe(true)
         }
       }
