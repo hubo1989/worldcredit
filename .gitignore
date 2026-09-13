@@ -51,6 +51,7 @@ dist
 .vinext
 .next
 .workbuddy
+.wrangler
 tsconfig.tsbuildinfo
 .vscode
 .idea
