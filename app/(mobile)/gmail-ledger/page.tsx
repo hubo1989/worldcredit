@@ -20,8 +20,9 @@ import DateIcon from '@mui/icons-material/CalendarMonth'
 import AmountIcon from '@mui/icons-material/Payments'
 import ReceiptIcon from '@mui/icons-material/ReceiptLong'
 import DoneAllIcon from '@mui/icons-material/DoneAll'
-import { getGmailLedgerEntries, getGmailLedgerSummary, markPayment, getGmailLedgerBanks } from '@/lib/api/gmail-ledger'
+import { getGmailLedgerEntries, getGmailLedgerSummary, markPayment, updateLedgerAmount, getGmailLedgerBanks } from '@/lib/api/gmail-ledger'
 import type { GmailLedgerEntry } from '@/lib/api/gmail-ledger'
+import { formatCardTail } from '@/lib/utils'
 
 // ─── Bank Logo ─────────────────────────────────────────
 // 所有 logo 已缓存在 /public/banks/，无需每次请求外部服务
@@ -71,11 +72,13 @@ function BankLogo({ bank, size = 24 }: { bank: string; size?: number }) {
   )
 }
 
-type TabValue = 'all' | 'unpaid' | 'partial' | 'paid'
+type TabValue = 'all' | 'unpaid' | 'partial' | 'paid' | 'needsAmount'
 
 export default function GmailLedgerPage() {
   const [entries, setEntries] = useState<GmailLedgerEntry[]>([])
-  const [summary, setSummary] = useState({ total: 0, unpaid: 0, partial: 0, paid: 0, totalAmount: 0, unpaidAmount: 0 })
+  // 邮件正文里没有金额的条目（多为"账单已就绪/AutoPay 提醒"），单独放，供人工补录。
+  const [pendingEntries, setPendingEntries] = useState<GmailLedgerEntry[]>([])
+  const [summary, setSummary] = useState({ total: 0, unpaid: 0, partial: 0, paid: 0, totalAmount: 0, unpaidAmount: 0, needsAmount: 0 })
   const [tab, setTab] = useState<TabValue>('unpaid')
   const [loading, setLoading] = useState(true)
   const [selectedEntry, setSelectedEntry] = useState<GmailLedgerEntry | null>(null)
@@ -87,18 +90,25 @@ export default function GmailLedgerPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [batchLoading, setBatchLoading] = useState(false)
   const [payForm, setPayForm] = useState({ amount: '', note: '' })
+  // 补录金额弹窗
+  const [amountDialogOpen, setAmountDialogOpen] = useState(false)
+  const [amountSaving, setAmountSaving] = useState(false)
+  const [amountForm, setAmountForm] = useState({ amount: '', minimum: '', dueDate: '' })
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true)
-      const [entriesData, summaryData, banksData] = await Promise.all([
+      const [entriesData, pendingData, summaryData, banksData] = await Promise.all([
         getGmailLedgerEntries(),
+        getGmailLedgerEntries({ needsAmount: true }),
         getGmailLedgerSummary(),
         getGmailLedgerBanks(),
       ])
       setEntries(entriesData)
+      setPendingEntries(pendingData)
       setSummary(summaryData)
-      setBanks(banksData)
+      // 银行筛选项要覆盖待补条目，否则它们的所属银行在下拉里会缺失。
+      setBanks(Array.from(new Set([...banksData, ...pendingData.map(e => e.bank)])).sort())
     } catch (e) {
       setSnack({ open: true, message: `加载失败: ${e instanceof Error ? e.message : String(e)}`, severity: 'error' })
     } finally {
@@ -108,13 +118,48 @@ export default function GmailLedgerPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  const filtered = entries.filter(e => {
+  // "待补金额" 走单独的集合；其余标签页只看有金额的条目。
+  const activeEntries = tab === 'needsAmount' ? pendingEntries : entries
+
+  const filtered = activeEntries.filter(e => {
+    if (tab === 'needsAmount') return true
     if (tab === 'all') return true
     if (tab === 'unpaid') return e.payment_status === '未还款'
     if (tab === 'partial') return e.payment_status === '部分还款'
     if (tab === 'paid') return e.payment_status === '已还清'
     return true
   }).filter(e => bankFilter ? e.bank.includes(bankFilter) : true)
+
+  const openAmountDialog = (entry: GmailLedgerEntry) => {
+    setSelectedEntry(entry)
+    setAmountForm({ amount: '', minimum: '', dueDate: entry.due_date || '' })
+    setAmountDialogOpen(true)
+  }
+
+  const handleSaveAmount = async () => {
+    if (!selectedEntry) return
+    const amount = parseFloat(amountForm.amount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setSnack({ open: true, message: '请输入大于 0 的金额', severity: 'warning' })
+      return
+    }
+    setAmountSaving(true)
+    try {
+      await updateLedgerAmount(selectedEntry.ledger_id, {
+        statement_amount: amount,
+        minimum_payment: amountForm.minimum ? parseFloat(amountForm.minimum) : null,
+        due_date: amountForm.dueDate || null,
+      })
+      setSnack({ open: true, message: '金额已补录', severity: 'success' })
+      setAmountDialogOpen(false)
+      setSelectedEntry(null)
+      fetchData()
+    } catch (e) {
+      setSnack({ open: true, message: '补录失败: ' + (e instanceof Error ? e.message : String(e)), severity: 'error' })
+    } finally {
+      setAmountSaving(false)
+    }
+  }
 
   const handleMarkPaid = async () => {
     if (!selectedEntry) return
@@ -295,6 +340,11 @@ export default function GmailLedgerPage() {
         <Tab label={`未还(${summary.unpaid})`} value="unpaid" />
         <Tab label={`部分(${summary.partial})`} value="partial" />
         <Tab label={`已清(${summary.paid})`} value="paid" />
+        <Tab
+          label={`待补金额(${summary.needsAmount})`}
+          value="needsAmount"
+          sx={summary.needsAmount > 0 ? { color: 'warning.main', fontWeight: 700 } : undefined}
+        />
       </Tabs>
 
       {banks.length > 1 && (
@@ -380,9 +430,9 @@ export default function GmailLedgerPage() {
                         <Typography variant="body2" fontWeight={600} noWrap>
                           {entry.bank.split('/')[0]}
                         </Typography>
-                        {entry.account_tail && (
+                        {formatCardTail(entry.account_tail) && (
                           <Typography variant="caption" color="text.secondary">
-                            ****{entry.account_tail}
+                            ****{formatCardTail(entry.account_tail)}
                           </Typography>
                         )}
                       </Stack>
@@ -400,9 +450,15 @@ export default function GmailLedgerPage() {
                     <Stack direction="row" justifyContent="space-between" alignItems="center">
                       <Stack direction="row" spacing={1} alignItems="center">
                         <AmountIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                        <Typography variant="body2" fontWeight={700} color={isOverdue(entry.due_date) && !entry.completed ? 'error.main' : 'text.primary'}>
-                          {entry.currency_symbol || '¥'}{Number(entry.statement_amount || 0).toLocaleString()}
-                        </Typography>
+                        {Number(entry.statement_amount || 0) > 0 ? (
+                          <Typography variant="body2" fontWeight={700} color={isOverdue(entry.due_date) && !entry.completed ? 'error.main' : 'text.primary'}>
+                            {entry.currency_symbol || '¥'}{Number(entry.statement_amount || 0).toLocaleString()}
+                          </Typography>
+                        ) : (
+                          <Typography variant="body2" fontWeight={700} color="warning.main">
+                            金额待补录
+                          </Typography>
+                        )}
                         {entry.paid_amount > 0 && (
                           <Typography variant="caption" color="success.main">
                             (已还{entry.currency_symbol || '¥'}{Number(entry.paid_amount).toLocaleString()})
@@ -423,7 +479,7 @@ export default function GmailLedgerPage() {
                     </Stack>
 
                     {/* Quick actions */}
-                    {!entry.completed && (
+                    {!entry.completed && Number(entry.statement_amount || 0) > 0 && (
                       <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }}>
                         <Button
                           size="small"
@@ -474,6 +530,33 @@ export default function GmailLedgerPage() {
                         查看详情 →
                       </Button>
                     )}
+
+                    {/* 无金额条目：邮件正文本身没写金额，提供一个补录入口 */}
+                    {!entry.completed && Number(entry.statement_amount || 0) === 0 && (
+                      <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }} alignItems="center">
+                        <Button
+                          size="small"
+                          variant="contained"
+                          color="warning"
+                          startIcon={<AmountIcon />}
+                          onClick={() => openAmountDialog(entry)}
+                          sx={{ fontSize: '0.7rem', py: 0.25 }}
+                        >
+                          补录金额
+                        </Button>
+                        <Typography variant="caption" color="text.secondary">
+                          邮件里没有金额，补录后即可标记还款
+                        </Typography>
+                        <Button
+                          size="small"
+                          variant="text"
+                          onClick={() => { setSelectedEntry(entry); setDetailOpen(true) }}
+                          sx={{ fontSize: '0.7rem', py: 0.25, ml: 'auto' }}
+                        >
+                          详情
+                        </Button>
+                      </Stack>
+                    )}
                   </Stack>
                 }
                 sx={{ px: 2, py: 1.5 }}
@@ -482,6 +565,61 @@ export default function GmailLedgerPage() {
           ))}
         </List>
       )}
+
+      {/* 补录金额 Dialog：邮件正文没有金额时使用 */}
+      <Dialog open={amountDialogOpen} onClose={() => setAmountDialogOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>补录金额 - {selectedEntry?.bank?.split('/')[0]}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Alert severity="info" sx={{ borderRadius: 2 }}>
+              该邮件正文没有金额，请按实际账单填写。
+            </Alert>
+            {selectedEntry?.subject && (
+              <Typography variant="caption" color="text.secondary">
+                邮件主题：{selectedEntry.subject}
+              </Typography>
+            )}
+            <TextField
+              label="账单金额"
+              type="number"
+              fullWidth
+              size="small"
+              value={amountForm.amount}
+              onChange={e => setAmountForm(f => ({ ...f, amount: e.target.value }))}
+              InputProps={{ startAdornment: <span style={{ marginRight: 4 }}>{selectedEntry?.currency_symbol || '¥'}</span> }}
+            />
+            <TextField
+              label="最低还款（选填）"
+              type="number"
+              fullWidth
+              size="small"
+              value={amountForm.minimum}
+              onChange={e => setAmountForm(f => ({ ...f, minimum: e.target.value }))}
+              InputProps={{ startAdornment: <span style={{ marginRight: 4 }}>{selectedEntry?.currency_symbol || '¥'}</span> }}
+            />
+            <TextField
+              label="到期还款日（选填）"
+              type="date"
+              fullWidth
+              size="small"
+              value={amountForm.dueDate}
+              onChange={e => setAmountForm(f => ({ ...f, dueDate: e.target.value }))}
+              InputLabelProps={{ shrink: true }}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, pt: 0 }}>
+          <Button onClick={() => setAmountDialogOpen(false)} color="inherit">取消</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={handleSaveAmount}
+            disabled={amountSaving || !amountForm.amount}
+          >
+            {amountSaving ? '保存中...' : '保存金额'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Payment Dialog */}
       <Dialog open={payDialogOpen} onClose={() => setPayDialogOpen(false)} fullWidth maxWidth="xs">
@@ -535,7 +673,7 @@ export default function GmailLedgerPage() {
                   <Typography fontWeight={600}>{selectedEntry.bank}</Typography>
                 </Stack>
               </Stack>
-              <Stack direction="row" justifyContent="space-between"><Typography color="text.secondary">卡尾号</Typography><Typography>{selectedEntry.account_tail || '-'}</Typography></Stack>
+              <Stack direction="row" justifyContent="space-between"><Typography color="text.secondary">卡尾号</Typography><Typography>{formatCardTail(selectedEntry.account_tail) || '-'}</Typography></Stack>
               <Stack direction="row" justifyContent="space-between"><Typography color="text.secondary">类型</Typography><Typography>{selectedEntry.kind}</Typography></Stack>
               {selectedEntry.cardholder_name && (
                 <Stack direction="row" justifyContent="space-between"><Typography color="text.secondary">持卡人</Typography><Typography fontWeight={600}>{selectedEntry.cardholder_name}</Typography></Stack>

@@ -161,6 +161,7 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     getGmailLedgerEntries: { impl: gmailLedgerServer.getGmailLedgerEntries, admin: true },
     getGmailLedgerSummary: { impl: gmailLedgerServer.getGmailLedgerSummary, admin: true },
     markPayment: { impl: gmailLedgerServer.markPayment, admin: true },
+    updateLedgerAmount: { impl: gmailLedgerServer.updateLedgerAmount, admin: true },
     getGmailLedgerBanks: { impl: gmailLedgerServer.getGmailLedgerBanks, admin: true },
   },
   holders: {

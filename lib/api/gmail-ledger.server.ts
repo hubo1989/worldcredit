@@ -17,6 +17,8 @@ export interface GmailLedgerEntry {
   statement_date: string | null
   subject: string | null
   source: string | null
+  /** Amount was entered by hand (no-amount statement mail), not parsed. */
+  manually_priced?: number
   message_id: string | null
   thread_id: string | null
   evidence: string | null
@@ -53,6 +55,8 @@ export interface GmailLedgerSummary {
   paid: number
   totalAmount: number
   unpaidAmount: number
+  /** Entries whose mail carried no amount yet, awaiting manual entry. */
+  needsAmount: number
 }
 
 // ─── Currency ──────────────────────────────────────────────
@@ -245,12 +249,21 @@ function dedupEntries(entries: GmailLedgerEntry[]): GmailLedgerEntry[] {
 
 // ─── Public API ───────────────────────────────────────────
 
-/** 获取所有 Gmail 账单记录（自动过滤金额=0、去重、加持卡人、货币符号） */
+/**
+ * 获取 Gmail 账单记录（去重、加持卡人、货币符号）。
+ *
+ * 默认只返回有金额的条目；无金额的（邮件正文本身没有金额，多是"账单已就绪 /
+ * AutoPay 提醒"）用 needsAmount 单独取出来补录，避免混进常规账单列表。
+ */
 export async function getGmailLedgerEntries(options?: {
   status?: GmailLedgerEntry['payment_status']
   bank?: string
   limit?: number
   offset?: number
+  /** Return only entries with no amount yet (the "待补金额" view). */
+  needsAmount?: boolean
+  /** Also return no-amount entries alongside priced ones. */
+  includeUnpriced?: boolean
 }): Promise<GmailLedgerEntry[]> {
   const conditions: string[] = []
   const params: unknown[] = []
@@ -273,27 +286,41 @@ export async function getGmailLedgerEntries(options?: {
 
   let entries = (data || []) as GmailLedgerEntry[]
 
-  // 1. 过滤金额为 0 的
-  entries = entries.filter(e => Number(e.statement_amount) !== 0)
+  // 1. 金额为 0 的条目 = 邮件正文里没有金额（多为"账单已就绪/AutoPay 提醒"），
+  //    它们仍然入库并保留，供人工补录金额，但不混进常规账单列表：
+  //    needsAmount 只看待补的，includeUnpriced 两者都要，默认只给有金额的。
+  const isUnpriced = (e: GmailLedgerEntry) => Number(e.statement_amount || 0) === 0
+  if (options?.needsAmount) {
+    entries = entries.filter(isUnpriced)
+  } else if (!options?.includeUnpriced) {
+    entries = entries.filter(e => !isUnpriced(e))
+  }
 
-  // 1b. 过滤溢缴款 — 优先用 LLM 判断，fallback 到正则
-  entries = entries.filter(e => {
-    if (e.is_overpayment) return false
-    if (e.amount_direction === 'credit') return false
-    // Fallback regex
-    const ev = e.evidence || ''
-    if (/no payment is due/i.test(ev) && /-\s*\$[\d,]+/.test(ev)) return false
-    if (/(?:credit balance|overpayment|no payment required)/i.test(ev)) return false
-    return true
-  })
+  // 1b/1c 都是按金额判定的噪音过滤，只对已定价的条目有意义；
+  // 待补金额的条目本来就是"金额缺失"，套用只会把它们滤空。
+  if (!options?.needsAmount) {
+    // 过滤溢缴款 — 优先用 LLM 判断，fallback 到正则
+    entries = entries.filter(e => {
+      if (e.is_overpayment) return false
+      if (e.amount_direction === 'credit') return false
+      // Fallback regex
+      const ev = e.evidence || ''
+      if (/no payment is due/i.test(ev) && /-\s*\$[\d,]+/.test(ev)) return false
+      if (/(?:credit balance|overpayment|no payment required)/i.test(ev)) return false
+      return true
+    })
 
-  // 1c. 过滤多卡合一账单的附属卡明细条目
-  // 某些银行（民生、北京、农行等）一封对账单包含多张卡，主卡金额已含附属卡费用。
-  // 附属卡条目有金额但无账单周期（due_date=null, statement_date=null），不是独立账单。
-  entries = entries.filter(e => {
-    if (Number(e.statement_amount) > 0 && !e.due_date && !e.statement_date) return false
-    return true
-  })
+    // 过滤多卡合一账单的附属卡明细条目
+    // 某些银行（民生、北京、农行等）一封对账单包含多张卡，主卡金额已含附属卡费用。
+    // 附属卡条目有金额但无账单周期（due_date=null, statement_date=null），不是独立账单。
+    entries = entries.filter(e => {
+      // 手工补录的账单即使没有账期也要保留：这一条是人工确认过的独立账单，
+      // 1c 规则针对的是多卡合一对账单里的附属卡明细行，不是这种情况。
+      if (e.manually_priced) return true
+      if (Number(e.statement_amount) > 0 && !e.due_date && !e.statement_date) return false
+      return true
+    })
+  }
 
   // 2. 去重（三级）
   entries = dedupEntries(entries)
@@ -321,6 +348,8 @@ export async function getGmailLedgerEntries(options?: {
 /** 获取汇总统计 */
 export async function getGmailLedgerSummary(): Promise<GmailLedgerSummary> {
   const entries = await getGmailLedgerEntries()
+  // Counted separately: unpriced rows are excluded from the default list above.
+  const pendingAmount = await getGmailLedgerEntries({ needsAmount: true })
   return {
     total: entries.length,
     unpaid: entries.filter(e => e.payment_status === '未还款').length,
@@ -330,7 +359,58 @@ export async function getGmailLedgerSummary(): Promise<GmailLedgerSummary> {
     unpaidAmount: entries
       .filter(e => !e.completed)
       .reduce((s, e) => s + Math.max(0, Number(e.statement_amount || 0) - Number(e.paid_amount || 0)), 0),
+    needsAmount: pendingAmount.length,
   }
+}
+
+/**
+ * 补录账单金额。
+ *
+ * 有些银行邮件（尤其 Amex 的 "statement is ready" / AutoPay 提醒）正文里根本没有
+ * 金额和到期日，解析出来就是 0。这类条目不能靠 markPayment 修——那只改还款字段，
+ * 金额仍为 0，UI 依旧当作"未定价"。这里单独提供补录金额的写入口，
+ * 金额与到期日一起写，补完即进入常规账单列表。
+ */
+export async function updateLedgerAmount(ledgerId: string, updates: {
+  statement_amount: number
+  minimum_payment?: number | null
+  due_date?: string | null
+  statement_date?: string | null
+}): Promise<GmailLedgerEntry> {
+  const amount = Number(updates.statement_amount)
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('金额必须是大于 0 的数字')
+  }
+  const ts = new Date().toISOString()
+  const fields = ['statement_amount = ?']
+  const params: unknown[] = [amount]
+  if (updates.minimum_payment !== undefined) {
+    fields.push('minimum_payment = ?')
+    params.push(updates.minimum_payment)
+  }
+  if (updates.due_date !== undefined) {
+    fields.push('due_date = ?')
+    params.push(updates.due_date || null)
+  }
+  if (updates.statement_date !== undefined) {
+    fields.push('statement_date = ?')
+    params.push(updates.statement_date || null)
+  }
+  // 补录前金额缺失，还款状态重新按"未还款"起算，避免带着 0 元的旧状态。
+  // manually_priced 标记这条金额来自人工补录，读取时免于被"附属卡明细"规则过滤。
+  fields.push('remaining_amount = ?', 'payment_status = ?', 'completed = 0',
+              'manually_priced = 1',
+              'last_payment_update = ?', 'updated_at = ?')
+  params.push(amount, '未还款', ts, ts, ledgerId)
+
+  const { error } = await execute('UPDATE gmail_ledger_entries SET ' + fields.join(', ') + ' WHERE ledger_id = ?', params)
+  if (error) throw new Error(error.message)
+
+  const { data: updated } = await queryOne<GmailLedgerEntry>(
+    'SELECT * FROM gmail_ledger_entries WHERE ledger_id = ?', [ledgerId]
+  )
+  if (!updated) throw new Error('记录不存在')
+  return updated
 }
 
 /** 标记还款 */
