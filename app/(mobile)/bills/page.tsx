@@ -29,6 +29,7 @@ import { getHolders } from '@/lib/api/holders'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
 import { format } from 'date-fns'
+import { formatCardTail } from '@/lib/utils'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import {
   SyncIcon, BankIcon, UserIcon,
@@ -90,7 +91,8 @@ function CardSummaryRow({
   const product = item.card.card_product
   const bankName = product?.bank_name || '银行卡'
   const cardName = product?.card_name || '信用卡'
-  const tail = item.card.card_number_last4 ? ` (${item.card.card_number_last4})` : ''
+  const tailDigits = formatCardTail(item.card.card_number_last4)
+  const tail = tailDigits ? ` (${tailDigits})` : ''
 
   const isCleared = item.status === 'unissued' || item.unpaidAmount <= 0
   const isOverdue = item.status === 'overdue'

@@ -112,3 +112,18 @@ export function formatAmount(amount: number, currency: string = 'CNY'): string {
 export function generateIdempotencyKey(): string {
   return crypto.randomUUID()
 }
+
+/**
+ * 卡片尾号展示：只显示末 4 位。
+ *
+ * 存储层保留完整尾号原值（大陆/香港卡 4 位、American Express 5 位如 `93001`、
+ * 个别 6 位如 `671006`），因为压缩成 4 位会撞车——`71006` 与 `671006` 的末四位
+ * 都是 `1006`，截断后两张卡无法区分。因此展示层单独收敛到末 4 位。
+ *
+ * 仅供展示使用：不要把这个返回值写回数据库，也不要用于匹配/比较。
+ * 输入为空或无数字时返回 `''`；不足 4 位时原样返回。
+ */
+export function formatCardTail(value: string | null | undefined): string {
+  const digits = String(value ?? '').replace(/\D/g, '')
+  return digits.length >= 4 ? digits.slice(-4) : digits
+}

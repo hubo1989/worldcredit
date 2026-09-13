@@ -157,7 +157,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
         <Stack spacing={2} sx={{ mt: 1 }}>
           <AiFillBox mode="card" onFill={(data) => {
             if (data.bank_name) setSelectedBank(String(data.bank_name))
-            if (data.card_number_last4) setLast4(String(data.card_number_last4).slice(-4))
+            if (data.card_number_last4) setLast4(String(data.card_number_last4))
             if (data.billing_day) {
               const d = String(data.billing_day).replace(/\D/g, '')
               if (d) setBillingDay(d)
@@ -358,7 +358,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
             placeholder="选填"
             value={last4}
             onChange={e => setLast4(e.target.value)}
-            inputProps={{ maxLength: 4 }}
+            inputProps={{ maxLength: 6 }}
           />
 
         </Stack>

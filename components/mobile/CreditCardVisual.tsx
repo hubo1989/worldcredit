@@ -3,7 +3,7 @@
 
 import { Card, CardActionArea, CardContent, Typography, Box, LinearProgress } from '@mui/material'
 import { CreditCard as CreditCardIcon } from '@mui/icons-material'
-import { formatAmount } from '@/lib/utils'
+import { formatAmount, formatCardTail } from '@/lib/utils'
 import type { CreditCard, CardProduct } from '@/lib/types'
 
 interface Props {
@@ -54,7 +54,7 @@ export function CreditCardVisual({ card, usedAmount = 0, onClick }: Props) {
             </Typography>
           </Box>
           <Typography variant="caption" sx={{ opacity: 0.8 }}>
-            {cardName} {card.card_number_last4 ? `•••• ${card.card_number_last4}` : ''}
+            {cardName} {formatCardTail(card.card_number_last4) ? `•••• ${formatCardTail(card.card_number_last4)}` : ''}
           </Typography>
         </Box>
 

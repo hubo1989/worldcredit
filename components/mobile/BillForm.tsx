@@ -9,6 +9,7 @@ import {
 import { format } from 'date-fns'
 import { createBill, updateBill, getBillByCardMonth } from '@/lib/api/bills'
 import { getAllCardsWithProduct } from '@/lib/api/cards'
+import { formatCardTail } from '@/lib/utils'
 import type { CreditCard, CardProduct, Bill } from '@/lib/types'
 import { AiFillBox } from '@/components/mobile/AiFillBox'
 
@@ -153,8 +154,10 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
     }
   }
 
-  const cardLabel = (c: CardWithProduct) =>
-    `${c.card_product.bank_name} ${c.card_product.card_name}${c.card_number_last4 ? ` (${c.card_number_last4})` : ''}`
+  const cardLabel = (c: CardWithProduct) => {
+    const tail = formatCardTail(c.card_number_last4)
+    return `${c.card_product.bank_name} ${c.card_product.card_name}${tail ? ` (${tail})` : ''}`
+  }
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">

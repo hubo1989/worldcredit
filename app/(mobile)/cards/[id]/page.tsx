@@ -9,7 +9,7 @@ import { getCardDetail } from '@/lib/api/cards'
 import { StatusBadge } from '@/components/mobile/WcBadge'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import { ChevronRightIcon, ClockIcon } from '@/components/icons/WcIcon'
-import { getEffectiveBillingDay, getEffectiveDueConfig } from '@/lib/utils'
+import { getEffectiveBillingDay, getEffectiveDueConfig, formatCardTail } from '@/lib/utils'
 import type { CreditCard, CardProduct, CardHolder, Bill, Benefit } from '@/lib/types'
 
 type CardDetail = CreditCard & {
@@ -74,7 +74,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
   const bankName = product?.bank_name || '银行卡'
   const cardName = product?.card_name || '信用卡'
   const holderName = card.card_holders?.name
-  const last4 = card.card_number_last4
+  const last4 = formatCardTail(card.card_number_last4)
 
   // 已用额度：SUM(bill_amount - paid) WHERE status != paid
   const used = bills

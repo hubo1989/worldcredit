@@ -4,6 +4,7 @@ import { Card, CardContent, Typography, Box, Stack, Divider } from '@mui/materia
 import CardIcon from '@mui/icons-material/CreditCard'
 import BillIcon from '@mui/icons-material/Event'
 import type { CreditCard, CardProduct } from '@/lib/types'
+import { formatCardTail } from '@/lib/utils'
 
 interface Props {
   card: CreditCard & { card_product: CardProduct }
@@ -42,7 +43,7 @@ export function CreditCardItem({ card, onClick }: Props) {
 
         <Box sx={{ mb: 3 }}>
           <Typography variant="h5" sx={{ letterSpacing: 4, fontFamily: 'monospace' }}>
-             **** **** **** {card.card_number_last4 || '****'}
+             **** **** **** {formatCardTail(card.card_number_last4) || '****'}
           </Typography>
         </Box>
 

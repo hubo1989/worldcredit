@@ -6,6 +6,7 @@ import { getPaymentsByHolder } from './api/payments'
 import { getBenefitUsagesByHolder } from './api/benefitUsages'
 import { getPromoUsagesByHolder } from './api/promoUsages'
 import { getAnalyticsByHolder } from './api/analytics'
+import { formatCardTail } from './utils'
 
 export type ExportType = 'bills' | 'payments' | 'benefit_usages' | 'promo_usages'
 
@@ -141,7 +142,7 @@ async function exportBills(
       '账单月份': bill.bill_month,
       '银行': bill.credit_cards.bank_name,
       '卡片': bill.credit_cards.card_name,
-      '卡号末四位': bill.credit_cards.card_number_last4 || '',
+      '卡号末四位': formatCardTail(bill.credit_cards.card_number_last4),
       '账单金额': bill.bill_amount.toFixed(2),
       '最低还款': bill.min_payment?.toFixed(2) ?? '',
       '还款截止日': bill.due_date,
@@ -173,7 +174,7 @@ async function exportPayments(
       '还款日期': payment.paid_at,
       '银行': payment.bill.credit_cards.bank_name,
       '卡片': payment.bill.credit_cards.card_name,
-      '卡号末四位': payment.bill.credit_cards.card_number_last4 || '',
+      '卡号末四位': formatCardTail(payment.bill.credit_cards.card_number_last4),
       '还款金额': payment.amount.toFixed(2),
       '还款渠道': payment.channel,
       '备注': payment.note || '',

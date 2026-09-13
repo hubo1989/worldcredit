@@ -11,6 +11,7 @@ export interface AiConfig {
 export interface BillParseResult {
   is_bill: boolean
   bank_name?: string
+  /** Card/account ending as printed in the mail: 4 digits, or 5-6 for Amex. */
   card_last4?: string | null
   bill_amount?: number
   min_payment?: number | null

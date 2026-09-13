@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation'
 import { getBillDashboardItems, markBillAsPaid, markAllOverdueBillsAsPaid, type BillDashboardItem } from '@/lib/api/bills'
 import { getHolders } from '@/lib/api/holders'
 import { getCardsBasicByHolders } from '@/lib/api/cards'
+import { formatCardTail } from '@/lib/utils'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
 import { useAuth } from '@/lib/auth'
 import { WcSkeleton } from '@/components/mobile/WcStates'
@@ -838,9 +839,8 @@ export default function DashboardPage() {
             .sort((a, b) => a.days_until_due - b.days_until_due)
             .map(bill => {
               const product = bill.card?.card_product
-              const tail = bill.card?.card_number_last4
-                ? `尾号 ${bill.card.card_number_last4}`
-                : '未记录尾号'
+              const tailDigits = formatCardTail(bill.card?.card_number_last4)
+              const tail = tailDigits ? `尾号 ${tailDigits}` : '未记录尾号'
               const overdueDays = Math.abs(bill.days_until_due)
               const remaining = bill.remaining_amount > 0 ? bill.remaining_amount : Number(bill.bill_amount)
 

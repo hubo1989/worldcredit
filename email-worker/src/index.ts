@@ -182,6 +182,11 @@ async function loadAiConfig(db: D1Database): Promise<AiConfig> {
 
 const SYSTEM_PROMPT = `你是银行账单解析助手。从邮件内容中提取信用卡账单信息，以 JSON 格式返回：
 {"is_bill":true,"bank_name":"","card_last4":"","bill_amount":0,"min_payment":null,"due_date":"YYYY-MM-DD","bill_month":"YYYY-MM","statement_date":null,"currency":"CNY","confidence":0.9}
+字段 card_last4 请填邮件中出现的"卡号/账户结尾"完整数字，不要截断：
+- 大陆/香港卡通常是末 4 位，如 "1234"
+- American Express 的账户结尾是 5 位，如 "93001"，请原样填 5 位
+- 如邮件明确给出更长结尾（如 6 位 "671006"），也请原样填写
+不要把它补零或改写。若邮件中没有出现任何卡号/账户结尾，填 null。
 如果不是账单邮件，返回 {"is_bill": false}
 只返回 JSON。`
 
@@ -209,7 +214,19 @@ async function parseBillWithAI(config: AiConfig, emailBody: string): Promise<Bil
 
 // ─── Card lookup ──────────────────────────────────────────────────────────────
 
-async function findCardId(db: D1Database, userId: string, cardLast4: string | null): Promise<string | null> {
+/**
+ * Match a parsed bill to one of the user's cards.
+ *
+ * Card tails are compared on the full stored value (4 digits for CN/HK cards,
+ * 5-6 for American Express), so an Amex account matches on its real ending
+ * (93001) instead of a value truncated to 9300.
+ *
+ * Deliberately no last-4 fallback: 671006 and 71006 are different Amex
+ * accounts that share the suffix 1006, so falling back to four digits would
+ * silently attach one account's bill to the other. An unmatched tail is worth
+ * more than a wrong one, so this returns null and the caller logs the miss.
+ */
+async function findCardId(db: D1Database, userId: string, cardTail: string | null): Promise<string | null> {
   const holders = await db.prepare(
     'SELECT id FROM card_holders WHERE created_by = ?'
   ).bind(userId).all<{ id: string }>()
@@ -223,12 +240,18 @@ async function findCardId(db: D1Database, userId: string, cardLast4: string | nu
   const results = cards.results || []
   if (!results.length) return null
 
-  if (cardLast4) {
-    const match = results.find(c => c.card_number_last4 === cardLast4)
+  const wanted = normalizeCardTail(cardTail)
+  if (wanted) {
+    const match = results.find(c => normalizeCardTail(c.card_number_last4) === wanted)
     if (match) return match.id
   }
   if (results.length === 1) return results[0].id
   return null
+}
+
+/** Card tails are digits only; keep leading zeros (Amex accounts like 01004). */
+function normalizeCardTail(value: string | null | undefined): string {
+  return (value ?? '').replace(/\D/g, '')
 }
 
 // ─── Log writer ───────────────────────────────────────────────────────────────
