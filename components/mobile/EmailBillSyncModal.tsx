@@ -113,11 +113,11 @@ export function EmailBillSyncModal({ open, onClose, onSuccess, log }: Props) {
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle fontWeight={700}>
+      <DialogTitle className="type-title">
         同步账单到本账户
       </DialogTitle>
       <DialogContent>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        <Typography className="type-body" sx={{ color: 'var(--muted)', mb: 2 }}>
           根据邮件解析结果，自动建立对应的持卡账户（发卡行、卡片尾号、账单日、还款日），并将此笔账单导入您的账户中。
         </Typography>
 

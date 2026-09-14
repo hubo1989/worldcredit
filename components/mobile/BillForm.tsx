@@ -161,7 +161,7 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle fontWeight={700}>
+      <DialogTitle className="type-title">
         {existingBillId ? '更新账单' : '录入账单'}
       </DialogTitle>
 

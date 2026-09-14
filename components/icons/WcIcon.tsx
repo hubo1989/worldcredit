@@ -302,3 +302,32 @@ export function RetryIcon(props: IconProps) {
     </Base>
   )
 }
+
+/** 筛选 · 滑杆 */
+export function FilterIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M4 7h9" />
+      <path d="M19 7h1" />
+      <circle cx="16" cy="7" r="2" />
+      <path d="M4 12h3" />
+      <path d="M13 12h7" />
+      <circle cx="10" cy="12" r="2" />
+      <path d="M4 17h9" />
+      <path d="M19 17h1" />
+      <circle cx="16" cy="17" r="2" />
+    </Base>
+  )
+}
+
+/** 排序 · 双向箭头 */
+export function SortIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M7 20V4" />
+      <path d="M3.5 16.5 7 20l3.5-3.5" />
+      <path d="M17 4v16" />
+      <path d="M13.5 7.5 17 4l3.5 3.5" />
+    </Base>
+  )
+}

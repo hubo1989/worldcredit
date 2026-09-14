@@ -10,7 +10,7 @@ import type { ReactNode } from 'react'
  */
 
 /** 骨架卡片（shimmer） */
-export function WcSkeleton({ height = 96, count = 3, radius = 12 }: { height?: number; count?: number; radius?: number }) {
+export function WcSkeleton({ height = 96, count = 3, radius = 'var(--radius-depth-1)' }: { height?: number; count?: number; radius?: number | string }) {
   return (
     <>
       {Array.from({ length: count }).map((_, i) => (
@@ -55,12 +55,14 @@ export function WcEmptyState({
           width: 72,
           height: 72,
           borderRadius: '50%',
-          background: 'linear-gradient(135deg, rgba(10,31,68,0.06), rgba(122,173,255,0.12))',
+          // 空态色块走令牌即可，不做第二套色阶
+          background: 'linear-gradient(135deg, var(--track), var(--border))',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           mb: 2,
-          color: '#1E3A8A',
+          color: 'var(--strong)',
+          boxShadow: 'var(--shadow-e1)',
         }}
       >
         {icon ?? (
@@ -70,22 +72,21 @@ export function WcEmptyState({
           </svg>
         )}
       </Box>
-      <Typography sx={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', mb: 0.5 }}>
+      <Typography className="type-title" sx={{ mb: 0.5 }}>
         {title}
       </Typography>
       {description && (
-        <Typography sx={{ fontSize: 13, color: 'var(--text-secondary)', mb: 2, maxWidth: 280 }}>
+        <Typography className="type-label" sx={{ mb: 2, maxWidth: 280 }}>
           {description}
         </Typography>
       )}
       {actionLabel && onAction && (
         <Button
-          variant="outlined"
+          variant="contained"
+          disableElevation
           onClick={onAction}
           sx={{
             borderRadius: 'var(--radius-pill)',
-            borderColor: 'var(--navy-600)',
-            color: 'var(--navy-600)',
             fontWeight: 600,
             textTransform: 'none',
             px: 3,
@@ -111,14 +112,15 @@ export function WcErrorState({
   return (
     <Box
       sx={{
+        // 语义错误态：保留 danger 语义色底与 1px 语义描边（非分层边框）
         background: 'rgba(207, 46, 46, 0.06)',
         border: '1px solid rgba(207, 46, 46, 0.20)',
-        borderRadius: 'var(--radius-card)',
+        borderRadius: 'var(--radius-depth-2)',
         p: 3,
         textAlign: 'center',
       }}
     >
-      <Typography sx={{ fontSize: 13.5, color: 'var(--danger)', mb: 1.5 }}>
+      <Typography className="type-body" sx={{ color: 'var(--danger)', mb: 1.5 }}>
         {message}
       </Typography>
       {onRetry && (

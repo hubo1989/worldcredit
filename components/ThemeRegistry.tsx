@@ -2,6 +2,8 @@
 
 // 真实加载中文网页字体：按 unicode-range 子集按需下载，未覆盖的汉字由系统 CJK 字体兜底
 import '@fontsource-variable/noto-sans-sc'
+// Phone 版本的标题/数字用 Inter Tight（Latin + tabular 数字），CJK 仍由栈内系统字体接管
+import '@fontsource-variable/inter-tight'
 import { ThemeProvider, CssBaseline, GlobalStyles } from '@mui/material'
 import { ReactNode } from 'react'
 import { lightTheme } from '@/lib/theme'

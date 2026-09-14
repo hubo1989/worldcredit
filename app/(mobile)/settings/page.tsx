@@ -58,14 +58,15 @@ function MineEntry({ icon, title, subtitle, onClick, expanded, rightSlot }: Mine
       onClick={onClick}
       elevation={0}
       sx={{
-        // 每个入口行：白底 + 12px 圆角 + 左右 16 / 上下 14
+        // 每个入口行：无边框，层级由分层阴影表达（列表深度 12px）
         backgroundColor: 'var(--paper)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-card)',
+        border: 0,
+        borderRadius: 'var(--radius-depth-1)',
+        boxShadow: 'var(--shadow-e1)',
         px: 2,
         py: 1.75,
         cursor: 'pointer',
-        transition: 'background-color 150ms ease, border-color 150ms ease',
+        transition: 'box-shadow 150ms var(--ease-out), background-color 150ms var(--ease-out)',
         '&:active': { backgroundColor: 'rgba(10, 31, 68, 0.03)' },
       }}
     >
@@ -80,7 +81,7 @@ function MineEntry({ icon, title, subtitle, onClick, expanded, rightSlot }: Mine
             alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: 'rgba(30, 58, 138, 0.08)',
-            color: 'var(--navy-600)',
+            color: 'var(--strong)',
             flexShrink: 0,
             '& svg': { fontSize: 22 },
           }}
@@ -89,15 +90,22 @@ function MineEntry({ icon, title, subtitle, onClick, expanded, rightSlot }: Mine
         </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography
-            sx={{ fontSize: 15, fontWeight: 600, color: 'var(--navy-800)', lineHeight: 1.3 }}
+            sx={{
+              fontSize: 'var(--type-section-size)',
+              lineHeight: 'var(--type-section-line)',
+              fontWeight: 'var(--type-section-weight)',
+              letterSpacing: 'var(--type-section-tracking)',
+              color: 'var(--text)',
+            }}
           >
             {title}
           </Typography>
           <Typography
             sx={{
-              fontSize: 12.5,
-              color: 'text.secondary',
-              lineHeight: 1.3,
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
               mt: 0.25,
             }}
           >
@@ -106,7 +114,7 @@ function MineEntry({ icon, title, subtitle, onClick, expanded, rightSlot }: Mine
         </Box>
         {rightSlot}
         {/* 右箭头：跳转项用 ChevronRightIcon；可折叠项展开后用 ChevronDownIcon */}
-        <Box sx={{ color: '#9AA3B2', display: 'flex', alignItems: 'center', '& svg': { fontSize: 20 } }}>
+        <Box sx={{ color: 'var(--text-disabled)', display: 'flex', alignItems: 'center', '& svg': { fontSize: 20 } }}>
           {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
         </Box>
       </Stack>
@@ -161,10 +169,28 @@ export default function SettingsPage() {
   return (
     <Container sx={{ py: 3, pb: 12 }}>
       {/* 顶部标题「我的」+ 用户标识 */}
-      <Typography variant="h5" fontWeight={800} sx={{ mb: 0.5, color: 'var(--navy-800)' }}>
+      <Typography
+        variant="h5"
+        sx={{
+          fontSize: 'var(--type-title-size)',
+          lineHeight: 'var(--type-title-line)',
+          fontWeight: 'var(--type-title-weight)',
+          letterSpacing: 'var(--type-title-tracking)',
+          color: 'var(--text)',
+          mb: 0.5,
+        }}
+      >
         我的
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
+      <Typography
+        sx={{
+          fontSize: 'var(--type-body-size)',
+          lineHeight: 'var(--type-body-line)',
+          letterSpacing: 'var(--type-body-tracking)',
+          color: 'var(--muted)',
+          mb: 2.5,
+        }}
+      >
         {user?.email || '已登录用户'}
       </Typography>
 
@@ -176,7 +202,9 @@ export default function SettingsPage() {
               // 管理端靛蓝：取 Design.md admin-indigo 色阶最深两档
               background: 'linear-gradient(135deg, #312e81 0%, #3730a3 100%)',
               color: '#ffffff',
-              borderRadius: 4,
+              border: 0,
+              borderRadius: 'var(--radius-depth-3)',
+              // 管理端品牌浮层：靛蓝光晕而非中性分层
               boxShadow: '0 8px 32px rgba(49, 46, 129, 0.25)',
             }}
           >
@@ -185,11 +213,11 @@ export default function SettingsPage() {
                 <Box>
                   <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
                     <AdminIcon color="warning" fontSize="small" />
-                    <Typography variant="subtitle1" fontWeight={800}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                       系统管理员权限
                     </Typography>
                   </Stack>
-                  <Typography variant="caption" sx={{ opacity: 0.85, display: 'block' }}>
+                  <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'rgba(255,255,255,0.85)', display: 'block' }}>
                     管理全平台银行、卡产品、公共权益与 AI 配置
                   </Typography>
                 </Box>
@@ -198,7 +226,7 @@ export default function SettingsPage() {
                   color="warning"
                   size="small"
                   onClick={() => router.push('/admin')}
-                  sx={{ fontWeight: 800, whiteSpace: 'nowrap', borderRadius: 2.5 }}
+                  sx={{ fontWeight: 700, whiteSpace: 'nowrap', borderRadius: 'var(--radius-pill)' }}
                 >
                   进入后台
                 </Button>
@@ -255,13 +283,13 @@ export default function SettingsPage() {
                 size="small"
                 startIcon={<ImportIcon />}
                 onClick={() => router.push('/gmail-ledger')}
-                sx={{ borderRadius: 2.5, fontWeight: 600 }}
+                sx={{ borderRadius: 'var(--radius-pill)', fontWeight: 600 }}
               >
                 查看邮箱账单明细流水
               </Button>
             </Box>
             {/* 账单自动录入地址 */}
-            <Card variant="outlined" sx={{ borderRadius: 'var(--radius-card)' }}>
+            <Card elevation={0} sx={{ border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e2)' }}>
               <CardContent sx={{ p: 2.5 }}>
                 <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
                   <Box
@@ -272,46 +300,76 @@ export default function SettingsPage() {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      bgcolor: 'info.light',
-                      color: 'info.main',
+                      bgcolor: 'rgba(37,99,235,0.10)',
+                      color: 'var(--strong)',
                     }}
                   >
                     <ForwardIcon fontSize="small" />
                   </Box>
                   <Box sx={{ flex: 1 }}>
-                    <Typography variant="subtitle1" fontWeight={700}>
+                    <Typography
+                      variant="h6"
+                      sx={{
+                        fontSize: 'var(--type-section-size)',
+                        lineHeight: 'var(--type-section-line)',
+                        fontWeight: 'var(--type-section-weight)',
+                        letterSpacing: 'var(--type-section-tracking)',
+                        color: 'var(--text)',
+                      }}
+                    >
                       收账单邮箱
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography
+                      sx={{
+                        fontSize: 'var(--type-body-size)',
+                        lineHeight: 'var(--type-body-line)',
+                        letterSpacing: 'var(--type-body-tracking)',
+                        color: 'var(--muted)',
+                      }}
+                    >
                       转发银行账单至以下地址，系统将自动解析入库
                     </Typography>
                   </Box>
                 </Stack>
 
-                <Divider sx={{ my: 2, borderStyle: 'dashed' }} />
+                <Divider sx={{ my: 2, borderStyle: 'dashed', borderColor: 'var(--track)' }} />
 
                 <Stack spacing={1.5}>
                   {forwardAddress && (
                     <Box
                       sx={{
                         bgcolor: 'background.default',
-                        borderRadius: 3,
+                        borderRadius: 'var(--radius-depth-1)',
                         p: 1.75,
-                        border: '1px solid',
-                        borderColor: 'divider',
+                        border: 0,
+                        boxShadow: 'var(--shadow-e1)',
                       }}
                     >
                       <Stack direction="row" alignItems="center" spacing={1}>
                         <Box sx={{ flex: 1, minWidth: 0 }}>
-                          <Typography variant="caption" color="text.secondary" fontWeight={700}>
+                          <Typography
+                            sx={{
+                              fontSize: 'var(--type-body-size)',
+                              lineHeight: 'var(--type-body-line)',
+                              letterSpacing: 'var(--type-body-tracking)',
+                              color: 'var(--muted)',
+                              fontWeight: 600,
+                            }}
+                          >
                             专属地址
                           </Typography>
                           <Typography
                             variant="body2"
                             className="num-tabular"
-                            fontFamily="monospace"
-                            fontWeight={600}
-                            sx={{ wordBreak: 'break-all', mt: 0.25 }}
+                            sx={{
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: 'var(--type-body-size)',
+                              lineHeight: 'var(--type-body-line)',
+                              fontWeight: 600,
+                              color: 'var(--text)',
+                              wordBreak: 'break-all',
+                              mt: 0.25,
+                            }}
                           >
                             {forwardAddress}
                           </Typography>
@@ -326,7 +384,7 @@ export default function SettingsPage() {
                   )}
                 </Stack>
 
-                <Alert severity="info" sx={{ mt: 2, borderRadius: 3 }}>
+                <Alert severity="info" sx={{ mt: 2, borderRadius: 'var(--radius-depth-1)' }}>
                   该地址包含你的用户 ID，系统按收件地址即可归属到你的账号，无需登记来源邮箱。请用自动转发规则把银行账单转到此地址。
                 </Alert>
               </CardContent>
@@ -377,8 +435,9 @@ export default function SettingsPage() {
           elevation={0}
           sx={{
             backgroundColor: 'var(--paper)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-card)',
+            border: 0,
+            borderRadius: 'var(--radius-depth-1)',
+            boxShadow: 'var(--shadow-e1)',
             px: 2,
             py: 1.75,
             mt: 1,
@@ -390,7 +449,7 @@ export default function SettingsPage() {
             color="error"
             startIcon={<LogoutIcon />}
             onClick={handleSignOut}
-            sx={{ fontWeight: 700, borderRadius: 2.5, textTransform: 'none' }}
+            sx={{ fontWeight: 700, borderRadius: 'var(--radius-pill)', textTransform: 'none' }}
           >
             退出登录
           </Button>

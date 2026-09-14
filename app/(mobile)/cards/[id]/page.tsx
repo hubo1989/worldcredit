@@ -100,16 +100,17 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       <Box
         sx={{
           position: 'relative',
-          background: 'linear-gradient(135deg, #0A1F44, #1E3A8A)',
-          borderRadius: 'var(--radius-card)',
+          background: 'linear-gradient(135deg, var(--navy-800), var(--navy-600))',
+          borderRadius: 'var(--radius-depth-3)',
           p: 2.25,
           mb: 1.5,
-          color: '#fff',
+          color: 'var(--text-on-dark)',
           overflow: 'hidden',
           minHeight: 150,
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'space-between',
+          // 深蓝渐变主卡：品牌暗影，不走中性分层
           boxShadow: 'var(--shadow-dark)',
         }}
       >
@@ -119,7 +120,8 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
           sx={{
             position: 'absolute', right: -36, top: -36,
             width: 140, height: 140, borderRadius: '50%',
-            background: 'radial-gradient(circle, rgba(201,162,39,0.45), rgba(201,162,39,0))',
+            // 品牌金装饰：用 color-mix 从 --gold-500 派生透明度，不散落字面色值
+            background: 'radial-gradient(circle, color-mix(in srgb, var(--gold-500) 45%, transparent), transparent)',
           }}
         />
         <Box
@@ -127,16 +129,47 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
           sx={{
             position: 'absolute', right: 18, bottom: -50,
             width: 110, height: 110, borderRadius: '50%',
-            border: '1px solid rgba(201,162,39,0.35)',
+            border: '1px solid color-mix(in srgb, var(--gold-500) 35%, transparent)',
           }}
         />
         <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ position: 'relative', zIndex: 1 }}>
           <Box>
-            <Typography sx={{ fontSize: 12.5, opacity: 0.78, letterSpacing: '0.02em' }}>{bankName}</Typography>
-            <Typography sx={{ fontSize: 19, fontWeight: 700, mt: 0.25 }}>{cardName}</Typography>
+            <Typography
+              sx={{
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                color: 'rgba(255,255,255,0.78)',
+              }}
+            >
+              {bankName}
+            </Typography>
+            <Typography
+              sx={{
+                fontSize: 'var(--type-section-size)',
+                lineHeight: 'var(--type-section-line)',
+                fontWeight: 'var(--type-section-weight)',
+                letterSpacing: 'var(--type-section-tracking)',
+                color: 'var(--text-on-dark)',
+                mt: 0.25,
+              }}
+            >
+              {cardName}
+            </Typography>
           </Box>
           {card.status !== 'active' && (
-            <Box sx={{ bgcolor: 'rgba(255,255,255,0.16)', px: 1, py: 0.25, borderRadius: 'var(--radius-pill)', fontSize: 11, fontWeight: 600 }}>
+            <Box
+              sx={{
+                bgcolor: 'rgba(255,255,255,0.16)',
+                px: 1,
+                py: 0.25,
+                borderRadius: 'var(--radius-pill)',
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                fontWeight: 600,
+              }}
+            >
               {card.status === 'frozen' ? '已冻结' : '已注销'}
             </Box>
           )}
@@ -145,7 +178,14 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
           <Typography className="num-tabular" sx={{ fontSize: 17, letterSpacing: '0.08em', mb: 0.5 }}>
             ****&nbsp;****&nbsp;****&nbsp;{last4 || '----'}
           </Typography>
-          <Typography sx={{ fontSize: 12.5, opacity: 0.85 }}>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'rgba(255,255,255,0.82)',
+            }}
+          >
             {holderName || '—'} · {card.card_type === 'loan' ? '贷款类' : '信用卡'}
           </Typography>
         </Box>
@@ -155,11 +195,13 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       <Box
         sx={{
           display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0.5,
-          bgcolor: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 'var(--radius-card)',
+          // 无边框：分层阴影表达层级
+          bgcolor: 'var(--paper)', border: 0, borderRadius: 'var(--radius-depth-2)',
+          boxShadow: 'var(--shadow-e1)',
           p: 1.5, mb: 1.5,
         }}
       >
-        <Quota label="总额度" value={limit} color="var(--navy-800)" />
+        <Quota label="总额度" value={limit} color="var(--strong)" />
         <Quota label="已用" value={used} color="var(--gold-700)" />
         <Quota label="可用" value={available} color="var(--success)" />
       </Box>
@@ -197,21 +239,37 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
                 onClick={() => router.push(`/bills/${b.id}`)}
                 sx={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  width: '100%', border: '1px solid var(--border)', bgcolor: 'var(--paper)',
-                  cursor: 'pointer', p: 1.25, borderRadius: 'var(--radius-card)', textAlign: 'left',
+                  width: '100%', border: 0, bgcolor: 'var(--paper)',
+                  cursor: 'pointer', p: 1.25, borderRadius: 'var(--radius-depth-1)', textAlign: 'left',
+                  boxShadow: 'var(--shadow-e1)',
                   transition: 'box-shadow var(--dur-fast) ease',
-                  '&:hover': { boxShadow: 'var(--shadow-card)' },
+                  '&:hover': { boxShadow: 'var(--shadow-e2)' },
                   '&:focus-visible': { outline: '2px solid var(--navy-600)', outlineOffset: -2 },
                 }}
               >
                 <Box>
-                  <Typography sx={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  <Typography
+                    sx={{
+                      fontSize: 'var(--type-body-size)',
+                      lineHeight: 'var(--type-body-line)',
+                      letterSpacing: 'var(--type-body-tracking)',
+                      color: 'var(--muted)',
+                    }}
+                  >
                     {b.bill_month} 账单
                   </Typography>
-                  <Typography className="num-tabular" sx={{ fontSize: 16, fontWeight: 700, color: 'var(--navy-800)', mt: 0.25 }}>
+                  <Typography className="num-tabular" sx={{ fontSize: 16, fontWeight: 700, color: 'var(--strong)', mt: 0.25 }}>
                     ¥{Number(b.bill_amount).toLocaleString()}
                   </Typography>
-                  <Typography sx={{ fontSize: 11, color: 'var(--text-secondary)', mt: 0.25 }}>
+                  <Typography
+                    sx={{
+                      fontSize: 'var(--type-body-size)',
+                      lineHeight: 'var(--type-body-line)',
+                      letterSpacing: 'var(--type-body-tracking)',
+                      color: 'var(--muted)',
+                      mt: 0.25,
+                    }}
+                  >
                     到期 {format(new Date(b.due_date), 'yyyy-MM-dd')}
                   </Typography>
                 </Box>
@@ -235,16 +293,47 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
               return (
                 <Box key={b.id}>
                   <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
-                    <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'var(--navy-800)' }}>{b.name}</Typography>
-                    <Typography className="num-tabular" sx={{ fontSize: 12, color: over ? 'var(--danger)' : 'var(--text-secondary)', fontWeight: 600 }}>
+                    <Typography
+                      sx={{
+                        fontSize: 'var(--type-body-size)',
+                        lineHeight: 'var(--type-body-line)',
+                        letterSpacing: 'var(--type-body-tracking)',
+                        fontWeight: 600,
+                        color: 'var(--text)',
+                      }}
+                    >
+                      {b.name}
+                    </Typography>
+                    <Typography className="num-tabular" sx={{ fontSize: 'var(--type-body-size)', letterSpacing: 'var(--type-body-tracking)', color: over ? 'var(--danger)' : 'var(--muted)', fontWeight: 600 }}>
                       {b.used}/{b.quota}
                     </Typography>
                   </Stack>
-                  <Box sx={{ height: 6, borderRadius: 3, bgcolor: 'rgba(10,31,68,0.08)', overflow: 'hidden' }}>
-                    <Box sx={{ height: '100%', width: `${pct}%`, bgcolor: over ? 'var(--danger)' : 'var(--gold-500)', borderRadius: 3, transition: 'width var(--dur-fast) ease' }} />
+                  <Box sx={{ height: 6, borderRadius: 'var(--radius-pill)', bgcolor: 'rgba(10,31,68,0.08)', overflow: 'hidden' }}>
+                    {/* 进度填充用 transform 而非 width，避免布局抖动 */}
+                    <Box
+                      sx={{
+                        height: '100%',
+                        width: '100%',
+                        transform: `scaleX(${Math.min(1, pct / 100)})`,
+                        transformOrigin: 'left center',
+                        bgcolor: over ? 'var(--danger)' : 'var(--gold-500)',
+                        borderRadius: 'var(--radius-pill)',
+                        transition: 'transform var(--dur-fast) ease',
+                      }}
+                    />
                   </Box>
                   {b.description && (
-                    <Typography sx={{ fontSize: 11, color: 'var(--text-secondary)', mt: 0.25 }}>{b.description}</Typography>
+                    <Typography
+                      sx={{
+                        fontSize: 'var(--type-body-size)',
+                        lineHeight: 'var(--type-body-line)',
+                        letterSpacing: 'var(--type-body-tracking)',
+                        color: 'var(--muted)',
+                        mt: 0.25,
+                      }}
+                    >
+                      {b.description}
+                    </Typography>
                   )}
                 </Box>
               )
@@ -259,10 +348,33 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
 function HeaderBack({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
-      <IconButton onClick={onBack} size="small" aria-label="返回">
-        <ArrowBackIcon fontSize="small" />
+      <IconButton
+        onClick={onBack}
+        aria-label="返回"
+        sx={{
+          width: 'var(--button-size)',
+          height: 'var(--button-size)',
+          background: 'var(--button-face)',
+          color: 'var(--text-on-dark)',
+          boxShadow: 'var(--button-shadow)',
+          '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
+          '&:active': { boxShadow: 'var(--button-shadow-press)' },
+        }}
+      >
+        <ArrowBackIcon />
       </IconButton>
-      <Typography sx={{ fontSize: 16, fontWeight: 700, color: 'var(--navy-800)' }}>{title}</Typography>
+      <Typography
+        variant="h6"
+        sx={{
+          fontSize: 'var(--type-section-size)',
+          lineHeight: 'var(--type-section-line)',
+          fontWeight: 'var(--type-section-weight)',
+          letterSpacing: 'var(--type-section-tracking)',
+          color: 'var(--text)',
+        }}
+      >
+        {title}
+      </Typography>
     </Stack>
   )
 }
@@ -270,10 +382,22 @@ function HeaderBack({ title, onBack }: { title: string; onBack: () => void }) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <Box sx={{ mb: 1.5 }}>
-      <Typography sx={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', mb: 0.5, letterSpacing: '0.02em' }}>
+      <Typography
+        sx={{
+          fontSize: 'var(--type-section-size)',
+          lineHeight: 'var(--type-section-line)',
+          fontWeight: 'var(--type-section-weight)',
+          letterSpacing: 'var(--type-section-tracking)',
+          color: 'var(--text)',
+          mb: 0.75,
+        }}
+      >
         {title}
       </Typography>
-      <Paper elevation={0} sx={{ p: 1.5, border: '1px solid var(--border)', borderRadius: 'var(--radius-card)' }}>
+      <Paper
+        elevation={0}
+        sx={{ p: 1.5, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e2)' }}
+      >
         {children}
       </Paper>
     </Box>
@@ -283,8 +407,17 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <Stack direction="row" justifyContent="space-between" alignItems="center">
-      <Typography sx={{ fontSize: 13, color: 'var(--text-secondary)' }}>{label}</Typography>
-      <Typography className="num-tabular" sx={{ fontSize: 13, fontWeight: 600, color: 'var(--navy-800)' }}>
+      <Typography
+        sx={{
+          fontSize: 'var(--type-body-size)',
+          lineHeight: 'var(--type-body-line)',
+          letterSpacing: 'var(--type-body-tracking)',
+          color: 'var(--muted)',
+        }}
+      >
+        {label}
+      </Typography>
+      <Typography className="num-tabular" sx={{ fontSize: 'var(--type-body-size)', letterSpacing: 'var(--type-body-tracking)', fontWeight: 600, color: 'var(--text)' }}>
         {value}
       </Typography>
     </Stack>
@@ -294,7 +427,17 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 function Quota({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <Box sx={{ textAlign: 'center' }}>
-      <Typography sx={{ fontSize: 11, color: 'var(--text-secondary)', mb: 0.25 }}>{label}</Typography>
+      <Typography
+        sx={{
+          fontSize: 'var(--type-body-size)',
+          lineHeight: 'var(--type-body-line)',
+          letterSpacing: 'var(--type-body-tracking)',
+          color: 'var(--muted)',
+          mb: 0.25,
+        }}
+      >
+        {label}
+      </Typography>
       <Typography className="num-tabular" sx={{ fontSize: 15, fontWeight: 700, color }}>
         ¥{Number(value).toLocaleString()}
       </Typography>

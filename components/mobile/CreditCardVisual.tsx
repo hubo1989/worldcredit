@@ -12,6 +12,7 @@ interface Props {
   onClick?: () => void
 }
 
+// 银行品牌色表：数据性用色（每个银行一个可识别色），不进设计体系色板
 const BANK_COLORS: Record<string, string> = {
   '招商银行': '#e53935',
   '工商银行': '#c62828',
@@ -31,6 +32,21 @@ const BANK_COLORS: Record<string, string> = {
   '花旗银行': '#0d47a1',
 }
 
+// MUI Typography 自带样式注入在 globals.css 之后，同特异性下角色 class 会被覆盖，
+// 因此排版令牌直接写进 sx。
+const BODY = {
+  fontSize: 'var(--type-body-size)',
+  lineHeight: 'var(--type-body-line)',
+  fontWeight: 'var(--type-body-weight)',
+  letterSpacing: 'var(--type-body-tracking)',
+}
+const SECTION = {
+  fontSize: 'var(--type-section-size)',
+  lineHeight: 'var(--type-section-line)',
+  fontWeight: 'var(--type-section-weight)',
+  letterSpacing: 'var(--type-section-tracking)',
+}
+
 export function CreditCardVisual({ card, usedAmount = 0, onClick }: Props) {
   const available = card.credit_limit - usedAmount
   const usagePercent = card.credit_limit > 0 ? (usedAmount / card.credit_limit) * 100 : 0
@@ -40,31 +56,40 @@ export function CreditCardVisual({ card, usedAmount = 0, onClick }: Props) {
   const currency = card.card_product?.currency ?? 'CNY'
 
   return (
-    <Card sx={{ mb: 1.5, borderRadius: 3, overflow: 'hidden' }}>
+    <Card
+      sx={{
+        mb: 1.5,
+        // 无边框 + 分层阴影，浮层/大卡走 18px 档
+        border: 0,
+        borderRadius: 'var(--radius-depth-3)',
+        boxShadow: 'var(--shadow-e2)',
+        overflow: 'hidden',
+      }}
+    >
       <CardActionArea onClick={onClick}>
-        {/* Card Header with bank color */}
+        {/* 卡面头部：保留银行品牌色渐变识别度 */}
         <Box sx={{
           background: `linear-gradient(135deg, ${bankColor} 0%, ${bankColor}dd 100%)`,
-          color: 'white', p: 2, pb: 1.5
+          color: 'var(--text-on-dark)', p: 2, pb: 1.5
         }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <CreditCardIcon fontSize="small" />
-            <Typography variant="subtitle2" fontWeight={600}>
+            <CreditCardIcon sx={{ fontSize: 20, color: 'var(--text-on-dark)' }} />
+            <Typography sx={{ ...SECTION, color: 'var(--text-on-dark)' }}>
               {bankName}
             </Typography>
           </Box>
-          <Typography variant="caption" sx={{ opacity: 0.8 }}>
+          <Typography sx={{ ...BODY, color: 'var(--text-on-dark)', opacity: 0.8 }}>
             {cardName} {formatCardTail(card.card_number_last4) ? `•••• ${formatCardTail(card.card_number_last4)}` : ''}
           </Typography>
         </Box>
 
-        {/* Usage info */}
+        {/* 额度使用情况 */}
         <CardContent sx={{ pt: 1.5, '&:last-child': { pb: 1.5 } }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-            <Typography variant="body2" color="text.secondary">
+            <Typography sx={{ ...BODY, color: 'var(--muted)' }}>
               已用 {formatAmount(usedAmount, currency)}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography sx={{ ...BODY, color: 'var(--muted)' }}>
               额度 {formatAmount(card.credit_limit, currency)}
             </Typography>
           </Box>
@@ -73,10 +98,10 @@ export function CreditCardVisual({ card, usedAmount = 0, onClick }: Props) {
             variant="determinate"
             value={Math.min(usagePercent, 100)}
             color={usagePercent > 80 ? 'error' : usagePercent > 50 ? 'warning' : 'primary'}
-            sx={{ height: 6, borderRadius: 3 }}
+            sx={{ height: 6, borderRadius: 'var(--radius-pill)' }}
           />
 
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          <Typography sx={{ ...BODY, color: 'var(--muted)', mt: 0.5 }}>
             可用 {formatAmount(available, currency)}
           </Typography>
         </CardContent>

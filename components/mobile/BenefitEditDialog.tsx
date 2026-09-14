@@ -78,8 +78,34 @@ export function BenefitEditDialog({
   }
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle>{benefit ? '编辑卡片权益' : '新增专属权益'}</DialogTitle>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth="xs"
+      // 弹窗浮层：18px 圆角 + float 阴影 + 无边框
+      slotProps={{
+        paper: {
+          sx: {
+            border: 0,
+            borderRadius: 'var(--radius-depth-3)',
+            boxShadow: 'var(--shadow-float)',
+          },
+        },
+      }}
+    >
+      {/* 弹窗标题：22/28 · 600 · -0.7px */}
+      <DialogTitle
+        sx={{
+          fontSize: 'var(--type-title-size)',
+          lineHeight: 'var(--type-title-line)',
+          fontWeight: 'var(--type-title-weight)',
+          letterSpacing: 'var(--type-title-tracking)',
+          color: 'var(--text)',
+        }}
+      >
+        {benefit ? '编辑卡片权益' : '新增专属权益'}
+      </DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <TextField
@@ -140,8 +166,13 @@ export function BenefitEditDialog({
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>取消</Button>
-        <Button variant="contained" onClick={handleSubmit} disabled={submitting || !name.trim()}>
+        <Button onClick={onClose} sx={{ borderRadius: 'var(--radius-pill)' }}>取消</Button>
+        <Button
+          variant="contained"
+          onClick={handleSubmit}
+          disabled={submitting || !name.trim()}
+          sx={{ borderRadius: 'var(--radius-pill)' }}
+        >
           {submitting ? '保存中...' : '保存权益'}
         </Button>
       </DialogActions>

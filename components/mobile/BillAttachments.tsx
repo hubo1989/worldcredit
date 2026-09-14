@@ -37,6 +37,21 @@ function formatFileSize(size?: number): string {
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
+// MUI Typography/Link 自带样式注入在 globals.css 之后，同特异性下角色 class 会被覆盖，
+// 因此排版令牌直接写进 sx。
+const BODY = {
+  fontSize: 'var(--type-body-size)',
+  lineHeight: 'var(--type-body-line)',
+  fontWeight: 'var(--type-body-weight)',
+  letterSpacing: 'var(--type-body-tracking)',
+}
+const SECTION = {
+  fontSize: 'var(--type-section-size)',
+  lineHeight: 'var(--type-section-line)',
+  fontWeight: 'var(--type-section-weight)',
+  letterSpacing: 'var(--type-section-tracking)',
+}
+
 export function BillAttachments({ billId, onChanged }: Props) {
   const { user } = useAuth()
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -95,8 +110,8 @@ export function BillAttachments({ billId, onChanged }: Props) {
     <Box>
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
         <Stack direction="row" spacing={0.75} alignItems="center">
-          <AttachFileIcon fontSize="small" color="action" />
-          <Typography variant="subtitle2" fontWeight={700}>
+          <AttachFileIcon sx={{ fontSize: 20, color: 'var(--strong)' }} />
+          <Typography sx={{ ...SECTION, color: 'var(--text)' }}>
             附件
           </Typography>
         </Stack>
@@ -106,6 +121,14 @@ export function BillAttachments({ billId, onChanged }: Props) {
           startIcon={uploading ? <CircularProgress size={14} /> : <UploadIcon />}
           disabled={uploading}
           onClick={() => inputRef.current?.click()}
+          sx={{
+            // 无可见边框：层级由分层阴影表达
+            border: 0,
+            bgcolor: 'var(--paper)',
+            boxShadow: 'var(--shadow-e1)',
+            borderRadius: 'var(--radius-pill)',
+            '&:hover': { border: 0, boxShadow: 'var(--shadow-e2)' },
+          }}
         >
           {uploading ? '上传中' : '上传文件'}
         </Button>
@@ -113,12 +136,13 @@ export function BillAttachments({ billId, onChanged }: Props) {
 
       <input ref={inputRef} type="file" hidden onChange={handleFileChange} />
 
+      {/* 错误提示条：语义状态容器，保留 1px 语义色描边 */}
       {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
 
       {loading ? (
-        <Typography variant="body2" color="text.secondary">正在加载附件...</Typography>
+        <Typography sx={{ ...BODY, color: 'var(--muted)' }}>正在加载附件...</Typography>
       ) : attachments.length === 0 ? (
-        <Typography variant="body2" color="text.secondary">
+        <Typography sx={{ ...BODY, color: 'var(--muted)' }}>
           暂无附件，可上传账单 PDF、截图或邮件原文。
         </Typography>
       ) : (
@@ -133,22 +157,37 @@ export function BillAttachments({ billId, onChanged }: Props) {
                   alignItems: 'center',
                   gap: 1,
                   p: 1,
-                  borderRadius: 2,
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  bgcolor: 'grey.50',
+                  // 列表行：无边框 + 分层阴影，圆角走 12px 档
+                  border: 0,
+                  borderRadius: 'var(--radius-depth-1)',
+                  bgcolor: 'var(--paper)',
+                  boxShadow: 'var(--shadow-e1)',
                 }}
               >
-                <FileIcon color="action" fontSize="small" />
+                <FileIcon sx={{ fontSize: 20, color: 'var(--strong)' }} />
                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Link href={url} target="_blank" rel="noreferrer" underline="hover" variant="body2" fontWeight={700} sx={{ wordBreak: 'break-all' }}>
+                  <Link
+                    href={url}
+                    target="_blank"
+                    rel="noreferrer"
+                    underline="hover"
+                    sx={{ ...BODY, fontWeight: 600, wordBreak: 'break-all' }}
+                  >
                     {attachment.file_name}
                   </Link>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                  <Typography sx={{ ...BODY, color: 'var(--muted)', display: 'block' }}>
                     {[attachment.file_type, formatFileSize(attachment.file_size)].filter(Boolean).join(' · ')}
                   </Typography>
                 </Box>
-                <IconButton size="small" component="a" href={url} target="_blank" rel="noreferrer" aria-label="打开附件">
+                <IconButton
+                  size="small"
+                  component="a"
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="打开附件"
+                  sx={{ color: 'var(--strong)' }}
+                >
                   <OpenIcon fontSize="small" />
                 </IconButton>
                 <IconButton size="small" color="error" onClick={() => handleDelete(attachment)} aria-label="删除附件">

@@ -1,4 +1,3 @@
-// components/mobile/BenefitUsageDialog.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -35,8 +34,34 @@ export function BenefitUsageDialog({ open, onClose, onSubmit }: Props) {
   }
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle>记录权益使用</DialogTitle>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth="xs"
+      // 弹窗浮层：18px 圆角 + float 阴影 + 无边框
+      slotProps={{
+        paper: {
+          sx: {
+            border: 0,
+            borderRadius: 'var(--radius-depth-3)',
+            boxShadow: 'var(--shadow-float)',
+          },
+        },
+      }}
+    >
+      {/* 弹窗标题：22/28 · 600 · -0.7px */}
+      <DialogTitle
+        sx={{
+          fontSize: 'var(--type-title-size)',
+          lineHeight: 'var(--type-title-line)',
+          fontWeight: 'var(--type-title-weight)',
+          letterSpacing: 'var(--type-title-tracking)',
+          color: 'var(--text)',
+        }}
+      >
+        记录权益使用
+      </DialogTitle>
       <DialogContent>
         <TextField
           fullWidth label="使用日期" margin="normal"
@@ -55,8 +80,15 @@ export function BenefitUsageDialog({ open, onClose, onSubmit }: Props) {
         />
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>取消</Button>
-        <Button variant="contained" onClick={handleSubmit} disabled={!usedAt}>记录</Button>
+        <Button onClick={onClose} sx={{ borderRadius: 'var(--radius-pill)' }}>取消</Button>
+        <Button
+          variant="contained"
+          onClick={handleSubmit}
+          disabled={!usedAt}
+          sx={{ borderRadius: 'var(--radius-pill)' }}
+        >
+          记录
+        </Button>
       </DialogActions>
     </Dialog>
   )

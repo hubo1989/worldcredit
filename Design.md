@@ -30,6 +30,9 @@ colors:
   sky-on-navy: "#A2C6FF"
   ink-slate: "#1F2937"
   card-gradient-deep: "#004f78"
+  warning-deep: "#ed6c02"
+  button-face-top: "#2E4A8F"
+  button-face-accent-top: "#2F7FE0"
 typography:
   display:
     fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, HarmonyOS Sans SC, MiSans, Noto Sans SC Variable, Noto Sans SC, Microsoft YaHei, sans-serif"
@@ -50,12 +53,34 @@ typography:
     fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, HarmonyOS Sans SC, MiSans, Noto Sans SC Variable, Noto Sans SC, Microsoft YaHei, sans-serif"
     fontSize: "0.75rem"
     fontWeight: 700
+  phone-title:
+    fontFamily: "Inter Tight, Noto Sans SC, PingFang SC, Microsoft YaHei, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+    fontSize: "22px"
+    fontWeight: 600
+    lineHeight: "28px"
+    letterSpacing: "-0.7px"
+  phone-section:
+    fontFamily: "Inter Tight, Noto Sans SC, PingFang SC, Microsoft YaHei, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+    fontSize: "19px"
+    fontWeight: 600
+    lineHeight: "24px"
+    letterSpacing: "-0.6px"
+  phone-body:
+    fontFamily: "Inter Tight, Noto Sans SC, PingFang SC, Microsoft YaHei, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+    fontSize: "14.5px"
+    fontWeight: 400
+    lineHeight: "18px"
+    letterSpacing: "0.3px"
 rounded:
   xs: "3px"
   sm: "5px"
   md: "8px"
   lg: "10px"
   pill: "12px"
+  depth-1: "12px"
+  depth-2: "14px"
+  depth-3: "18px"
+  circle: "50%"
 spacing:
   xs: "8px"
   sm: "12px"
@@ -157,6 +182,71 @@ WorldCredit 是家庭自用的信用卡管理工具：一个管理员在手机 P
 
 **The Loaded-Font Rule.** 字体必须「声明 + 真实加载」成对出现；`fontFamily` 里出现的名字要么有 @font-face/包来源，要么从栈里删掉。
 
+## Phone 视觉规范（紧凑令牌）
+
+**适用范围：仅 phone 版本。** 由 `MobileShell` 携带的 `.phone` 作用域承载，只作用于 `app/(mobile)`；落地页、登录注册页与管理后台不在其内（管理后台另有 `adminDarkTheme`）。
+
+设计意图：**紧凑的令牌、分层阴影而非边框、每个标题都用负向字间距。** 这套规范是「可信、清晰、不焦虑地看钱」在手机上的具体化——手机屏小，靠层级（阴影/字重/字号差）而不是靠线条划分信息，视线才能连续地扫下来。
+
+### 三条基础令牌
+
+| 令牌 | 值 | 用途 |
+|---|---|---|
+| `--text` | `--text-primary` | 主要文本 |
+| `--muted` | `--text-secondary` | 次要文本、日期与元信息 |
+| `--strong` | `--navy-800` | 图标、强调与选中态 |
+| `--track` | `--divider` | **唯一允许的分隔线颜色**，1px，绝不使用可见边框色 |
+
+### 排版阶梯（Inter Tight）
+
+Inter Tight 只承担 **Latin 与数字**（金额、日期、卡尾号），汉字继续由栈内系统 CJK 字体渲染——中英混排时两套字形共享同一 baseline 与字号阶梯，不会出现汉字被拉瘦。
+
+| 角色 | 字号/行高 | 字重 | 字间距 | 落地 class |
+|---|---|---|---|---|
+| 标题 | 22 / 28px | 600 | **-0.7px** | `.type-title` |
+| 章节标题 | 19 / 24px | 600 | **-0.6px** | `.type-section` |
+| 正文 / 日期标签 | 14.5 / 18px | 400 | **0.3px** | `.type-body` / `.type-label` |
+
+字号同样以变量暴露：`--type-title-size/-line/-weight/-tracking`、`--type-section-*`、`--type-body-*`。**不要**在页面里硬编码 11/12/13/15px 这类中间档——除了计数徽章（17px 高圆形里放 11px 数字）这类有明确尺寸约束的场合。
+
+**负向字间距的作用**：标题与章节标题在紧凑字号下收紧，字团更紧实、更像一个整体；正文与日期反而放宽 0.3px，小字号下保证可读。一收一放，层级靠这个差异被眼睛直接感知。
+
+### 形状与深度
+
+圆角按**深度**递进，而不是按控件类型：列表项/内嵌块 `--radius-depth-1` (12px)、卡片 `--radius-depth-2` (14px)、大卡与浮层 `--radius-depth-3` (18px)、按钮/头像 `--radius-button` (50%)。对应 class：`.surface-1` `.surface-2` `.surface-3`（自带分层阴影且 **border: 0**）。
+
+**用分层 box-shadow 表达层级，不用边框。** 每层阴影都带 y 偏移和柔和模糊，两层叠加制造「悬浮感」，而不是一条 1px 灰线：
+
+- `--shadow-e1`：静置的列表项与内嵌块
+- `--shadow-e2`：标准卡片、选中态 pill
+- `--shadow-e3`：卡片 hover、需要浮起的元素
+- `--shadow-float`：底栏、菜单、抽屉等浮层
+
+**例外：语义状态色描边可以保留 1px。** 逾期红警示条、错误态容器上的 1px 语义色描边表达的是状态判断，不是分层，因此不受「去边框」约束。
+
+### 圆形按钮
+
+phone 版本的主操作是 **38–46px 圆形**（`--button-size` = 42px），由 **6px 内嵌高光 + 柔和投影阴影**成对构成，**不用平面填充**：
+
+- 面：`--button-face`（藏青渐变）／`--button-face-accent`（蓝渐变，用于同步等次要主动作）
+- 影：`--button-shadow`（`inset 0 1px 6px rgba(255,255,255,0.45)` + 两层外阴影）
+- 按下：`--button-shadow-press` + `translateY(1px)`
+- 落地 class：`.btn-round` / `.btn-round--accent`
+
+内嵌高光让圆面读成「一片有厚度的实体」，投影负责把它从背景上抬起；两者缺一，按钮就退回成 Microsoft Word 的圆角矩形。**≤32px 的行内小图标按钮不放大成 42px**，只吸收「阴影代替边框」。
+
+### Phone 版本的浏览器原生表面
+
+选中底色、光标、滚动条与焦点环也属于设计的一部分，一律在 `.phone` 内从调色板取色：`::selection` 用 `rgba(30,58,138,0.18)`、`caret-color: var(--strong)`、滚动条拇指用 `--border-strong`、`:focus-visible` 为 2px `--navy-600` + 2px offset。
+
+### Named Rules
+
+**The Shadow-Not-Border Rule.** phone 版本的层级由分层阴影和表面明度差表达，1px 可见边框一律不承担分层职责；只有 `--track` 的分隔线和语义状态色描边可以出现 1px 线。
+
+**The Tight-Headline Rule.** 每个标题都是负向字间距（标题 -0.7px、章节 -0.6px），正文与日期标签保持正向 0.3px。任何新增标题都沿用这套字距，不得各自发挥。
+
+**The Phone-Scope Rule.** 这套规范只活在 `.phone` 作用域内。落地页、登录注册与管理后台不继承，也不得为了「统一」把手机规范推给它们。
+
 ## Layout
 
 双外壳：移动端单列 + 底部 TabBar（首页/持卡人/账单/优惠），页面纵向滚动；管理端 260px 藏青侧边栏（可折叠，paper 以 transform 平移动画，内容区瞬时重排）+ 顶栏 + 内容区。断点以 MUI `sx` 的 xs/md 粒度响应；管理端面向桌面属设计意图。间距走 MUI 8px 网格，卡片内边距 16–24px。
@@ -165,9 +255,13 @@ WorldCredit 是家庭自用的信用卡管理工具：一个管理员在手机 P
 
 低浮雕：亮色世界白卡 + 1px #DDDDDD 边 + `0 2px 4px rgba(0,0,0,0.08)` 微影；暗色世界以表面明度差（#181a24 → #1e2028）+ 1px `rgba(255,255,255,0.08)` 分隔表达层级，几乎不用阴影。阴影只在浮层（菜单、对话框）出现。
 
+> phone 版本不遵守「1px 边 + 微影」，改用 --shadow-e1/-e2/-e3 分层阴影，见下文「Phone 视觉规范」。
+
 ## Shapes
 
 圆角五档：按钮 3px、卡片/输入 5px、管理端面板 8px、对话框/英雄卡 10px、Chip 12px。小圆角工具感。边框语言：亮色 1px #DDDDDD，暗色 1px rgba(255,255,255,0.08)。禁止 >1px 的单侧彩色边条（side-tab）。
+
+> phone 版本改用按深度递进的 --radius-depth-1/-2/-3（12/14/18px）与圆形按钮 50%，见下文「Phone 视觉规范」。
 
 ## Components
 
@@ -206,6 +300,8 @@ WorldCredit 是家庭自用的信用卡管理工具：一个管理员在手机 P
 - **Do** 账单状态走语义 token：unpaid→warning、paid→success、overdue→error、partial→info，且附文字标签
 - **Do** 金额、日期用 tabular-nums；金额界面提供 privacy-blur
 - **Do** 动画只用 transform/opacity（如侧边栏 paper 平移），200–300ms ease-out
+- **Do** phone 版本用 `.type-title` / `.type-section` / `.type-body` / `.type-label` 四个角色，配合 `.surface-1/-2/-3` 与 `.btn-round`
+- **Do** phone 版本的分隔线只走 `1px var(--track)`；次要文本 `--muted`、图标 `--strong`
 
 ### Don't:
 
@@ -214,3 +310,6 @@ WorldCredit 是家庭自用的信用卡管理工具：一个管理员在手机 P
 - **Don't** CJK 用 300 字重或斜体（合成渲染发虚）
 - **Don't** 用 width/height/margin 做动画
 - **Don't** 给管理端页面内联覆盖暗色配色——它已经属于 adminDarkTheme
+- **Don't** 在 phone 版本用 1px 可见边框承担卡片分层（改用 `--shadow-e1/-e2/-e3`）
+- **Don't** 给 phone 版本的标题写正字距或 0 字距，也不要用 `--border`/`divider` 当分隔线
+- **Don't** 把 phone 视觉规范外溢到落地页、登录注册或管理后台

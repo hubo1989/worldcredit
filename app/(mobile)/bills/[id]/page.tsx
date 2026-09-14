@@ -140,10 +140,20 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
       <HeaderBack title="账单详情" onBack={() => router.back()} />
 
       {/* 头部：卡名 + 持卡人/银行 + 金额 + 状态徽章 */}
-      <Paper elevation={0} sx={{ p: 2, mb: 1.5, border: '1px solid var(--border)', borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-card)' }}>
+      <Paper elevation={0} sx={{ p: 2, mb: 1.5, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e2)' }}>
         <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={1} sx={{ mb: 0.5 }}>
           <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography sx={{ fontSize: 17, fontWeight: 700, color: 'var(--navy-800)' }} noWrap>
+            <Typography
+              variant="h6"
+              sx={{
+                fontSize: 'var(--type-section-size)',
+                lineHeight: 'var(--type-section-line)',
+                fontWeight: 'var(--type-section-weight)',
+                letterSpacing: 'var(--type-section-tracking)',
+                color: 'var(--text)',
+              }}
+              noWrap
+            >
               {cardName}
             </Typography>
             <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 0.5, flexWrap: 'wrap', rowGap: 0.5 }}>
@@ -156,7 +166,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
           </Box>
           <StatusBadge status={status} size="md" />
         </Stack>
-        <Typography className="num-tabular" sx={{ fontSize: 28, fontWeight: 700, color: 'var(--navy-800)', mt: 1 }}>
+        <Typography className="num-tabular" sx={{ fontSize: 28, fontWeight: 700, color: 'var(--strong)', mt: 1 }}>
           ¥{billAmount.toLocaleString()}
         </Typography>
       </Paper>
@@ -173,7 +183,14 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
 
       {/* 账单周期 */}
       <Section title="账单周期">
-        <Typography sx={{ fontSize: 13.5, color: 'var(--text-primary)' }}>
+        <Typography
+          sx={{
+            fontSize: 'var(--type-body-size)',
+            lineHeight: 'var(--type-body-line)',
+            letterSpacing: 'var(--type-body-tracking)',
+            color: 'var(--text)',
+          }}
+        >
           {periodStart && periodEnd ? `账单周期 ${periodStart} – ${periodEnd}` : '账单周期 —'}
           {last4 ? ` · 尾号 ${last4}` : ''}
         </Typography>
@@ -181,7 +198,19 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
 
       {/* 日期信息 */}
       <Section title="日期信息">
-        <Stack direction="row" spacing={1.25} alignItems="center" sx={{ fontSize: 13, color: 'var(--text-secondary)', flexWrap: 'wrap', rowGap: 0.5 }}>
+        <Stack
+          direction="row"
+          spacing={1.25}
+          alignItems="center"
+          sx={{
+            fontSize: 'var(--type-body-size)',
+            lineHeight: 'var(--type-body-line)',
+            letterSpacing: 'var(--type-body-tracking)',
+            color: 'var(--muted)',
+            flexWrap: 'wrap',
+            rowGap: 0.5,
+          }}
+        >
           <Box component="span">账单日 {billingDay ? `每月 ${billingDay} 日` : '—'}</Box>
           <Dot />
           <Box component="span">还款日 {dueDayOfMonth ? `每月 ${dueDayOfMonth} 日` : format(new Date(bill.due_date), 'MM-dd')}</Box>
@@ -208,20 +237,38 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                 key={p.id}
                 sx={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  py: 1, borderBottom: '1px solid var(--divider)',
+                  py: 1, borderBottom: '1px solid var(--track)',
                 }}
               >
                 <Box>
                   <Typography className="num-tabular" sx={{ fontSize: 15, fontWeight: 700, color: 'var(--success)' }}>
                     +¥{Number(p.amount).toLocaleString()}
                   </Typography>
-                  <Typography sx={{ fontSize: 11.5, color: 'var(--text-secondary)', mt: 0.25 }}>
+                  <Typography
+                    sx={{
+                      fontSize: 'var(--type-body-size)',
+                      lineHeight: 'var(--type-body-line)',
+                      letterSpacing: 'var(--type-body-tracking)',
+                      color: 'var(--muted)',
+                      mt: 0.25,
+                    }}
+                  >
                     {format(new Date(p.paid_at), 'yyyy-MM-dd')}
                     {p.channel ? ` · ${p.channel}` : ''}
                   </Typography>
                 </Box>
                 {p.note && (
-                  <Typography sx={{ fontSize: 11.5, color: 'var(--text-secondary)', maxWidth: 140, textAlign: 'right' }} noWrap>
+                  <Typography
+                    sx={{
+                      fontSize: 'var(--type-body-size)',
+                      lineHeight: 'var(--type-body-line)',
+                      letterSpacing: 'var(--type-body-tracking)',
+                      color: 'var(--muted)',
+                      maxWidth: 140,
+                      textAlign: 'right',
+                    }}
+                    noWrap
+                  >
                     {p.note}
                   </Typography>
                 )}
@@ -267,10 +314,33 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
 function HeaderBack({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
-      <IconButton onClick={onBack} size="small" aria-label="返回">
-        <ArrowBackIcon fontSize="small" />
+      <IconButton
+        onClick={onBack}
+        aria-label="返回"
+        sx={{
+          width: 'var(--button-size)',
+          height: 'var(--button-size)',
+          background: 'var(--button-face)',
+          color: 'var(--text-on-dark)',
+          boxShadow: 'var(--button-shadow)',
+          '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
+          '&:active': { boxShadow: 'var(--button-shadow-press)' },
+        }}
+      >
+        <ArrowBackIcon />
       </IconButton>
-      <Typography sx={{ fontSize: 16, fontWeight: 700, color: 'var(--navy-800)' }}>{title}</Typography>
+      <Typography
+        variant="h6"
+        sx={{
+          fontSize: 'var(--type-section-size)',
+          lineHeight: 'var(--type-section-line)',
+          fontWeight: 'var(--type-section-weight)',
+          letterSpacing: 'var(--type-section-tracking)',
+          color: 'var(--text)',
+        }}
+      >
+        {title}
+      </Typography>
     </Stack>
   )
 }
@@ -278,10 +348,22 @@ function HeaderBack({ title, onBack }: { title: string; onBack: () => void }) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <Box sx={{ mb: 1.5 }}>
-      <Typography sx={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', mb: 0.5, letterSpacing: '0.02em' }}>
+      <Typography
+        sx={{
+          fontSize: 'var(--type-section-size)',
+          lineHeight: 'var(--type-section-line)',
+          fontWeight: 'var(--type-section-weight)',
+          letterSpacing: 'var(--type-section-tracking)',
+          color: 'var(--text)',
+          mb: 0.75,
+        }}
+      >
         {title}
       </Typography>
-      <Paper elevation={0} sx={{ p: 1.5, border: '1px solid var(--border)', borderRadius: 'var(--radius-card)' }}>
+      <Paper
+        elevation={0}
+        sx={{ p: 1.5, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e2)' }}
+      >
         {children}
       </Paper>
     </Box>
@@ -289,21 +371,23 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function Dot() {
-  return <Box component="span" sx={{ color: 'var(--border-strong)' }}>·</Box>
+  return <Box component="span" sx={{ color: 'var(--track)' }}>·</Box>
 }
 
 function Badge({ chip, color }: { chip: React.ReactNode; color: 'navy' | 'blue' | 'muted' }) {
   const map = {
     navy: { bg: 'rgba(30,58,138,0.08)', fg: 'var(--navy-600)' },
     blue: { bg: 'rgba(122,173,255,0.14)', fg: 'var(--navy-600)' },
-    muted: { bg: 'rgba(91,100,120,0.10)', fg: 'var(--text-secondary)' },
+    muted: { bg: 'rgba(91,100,120,0.10)', fg: 'var(--muted)' },
   }[color]
   return (
     <Box
       component="span"
       sx={{
         display: 'inline-flex', alignItems: 'center',
-        fontSize: 11, fontWeight: 600, color: map.fg, bgcolor: map.bg,
+        fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)',
+        letterSpacing: 'var(--type-body-tracking)',
+        fontWeight: 600, color: map.fg, bgcolor: map.bg,
         borderRadius: 'var(--radius-pill)', px: 0.75, py: 0.15,
       }}
     >
@@ -317,14 +401,25 @@ function Grid4({ items }: { items: { label: string; value: number | null; color?
     <Box
       sx={{
         display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 0.5,
-        bgcolor: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 'var(--radius-card)',
+        bgcolor: 'var(--paper)', border: 0, borderRadius: 'var(--radius-depth-2)',
+        boxShadow: 'var(--shadow-e1)',
         p: 1.5, mb: 1.5,
       }}
     >
       {items.map(it => (
         <Box key={it.label} sx={{ textAlign: 'center' }}>
-          <Typography sx={{ fontSize: 11, color: 'var(--text-secondary)', mb: 0.25 }}>{it.label}</Typography>
-          <Typography className="num-tabular" sx={{ fontSize: 15, fontWeight: 700, color: it.color || 'var(--navy-800)' }}>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mb: 0.25,
+            }}
+          >
+            {it.label}
+          </Typography>
+          <Typography className="num-tabular" sx={{ fontSize: 15, fontWeight: 700, color: it.color || 'var(--strong)' }}>
             {it.value != null ? `¥${Number(it.value).toLocaleString()}` : '—'}
           </Typography>
         </Box>

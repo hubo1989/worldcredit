@@ -234,7 +234,7 @@ export function ExportDialog({ open, onClose, holderId, holders, cards }: Props)
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>导出数据</DialogTitle>
+      <DialogTitle className="type-title">导出数据</DialogTitle>
 
       <DialogContent>
         {error && (

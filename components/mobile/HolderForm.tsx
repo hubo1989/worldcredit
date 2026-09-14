@@ -39,8 +39,34 @@ export function HolderForm({ open, onClose, onSubmit, initial }: Props) {
   }
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle>{initial ? '编辑持卡人' : '添加持卡人'}</DialogTitle>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth="xs"
+      // 弹窗浮层：18px 圆角 + float 阴影 + 无边框
+      slotProps={{
+        paper: {
+          sx: {
+            border: 0,
+            borderRadius: 'var(--radius-depth-3)',
+            boxShadow: 'var(--shadow-float)',
+          },
+        },
+      }}
+    >
+      {/* 弹窗标题：22/28 · 600 · -0.7px */}
+      <DialogTitle
+        sx={{
+          fontSize: 'var(--type-title-size)',
+          lineHeight: 'var(--type-title-line)',
+          fontWeight: 'var(--type-title-weight)',
+          letterSpacing: 'var(--type-title-tracking)',
+          color: 'var(--text)',
+        }}
+      >
+        {initial ? '编辑持卡人' : '添加持卡人'}
+      </DialogTitle>
       <DialogContent>
         <TextField
           fullWidth label="姓名" margin="normal" required
@@ -61,18 +87,21 @@ export function HolderForm({ open, onClose, onSubmit, initial }: Props) {
               key={c}
               onClick={() => setColor(c)}
               sx={{
+                // 色块选择器不是图标按钮，保持 36px 原尺寸
                 width: 36, height: 36, borderRadius: '50%', bgcolor: c, cursor: 'pointer',
                 border: '3px solid',
                 borderColor: c === color ? 'primary.main' : 'transparent',
-                transition: 'border 0.2s',
+                transition: 'border-color 200ms var(--ease-out)',
               }}
             />
           ))}
         </Box>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>取消</Button>
-        <Button variant="contained" onClick={handleSubmit}>保存</Button>
+        <Button onClick={onClose} sx={{ borderRadius: 'var(--radius-pill)' }}>取消</Button>
+        <Button variant="contained" onClick={handleSubmit} sx={{ borderRadius: 'var(--radius-pill)' }}>
+          保存
+        </Button>
       </DialogActions>
     </Dialog>
   )

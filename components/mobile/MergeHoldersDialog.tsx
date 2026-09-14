@@ -143,12 +143,12 @@ export function MergeHoldersDialog({
 
   return (
     <Dialog open={open} onClose={() => !loading && onClose()} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, fontWeight: 800 }}>
-        <MergeTypeIcon color="primary" />
+      <DialogTitle className="type-title" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <MergeTypeIcon sx={{ color: 'var(--strong)' }} />
         持卡人归拢合并
       </DialogTitle>
-      <DialogContent dividers>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
+      <DialogContent dividers sx={{ borderColor: 'var(--track)' }}>
+        <Typography className="type-body" sx={{ color: 'var(--muted)', mb: 2.5 }}>
           由于邮件账单中常出现脱敏姓名（如 <strong>张*</strong>、<strong>张先生</strong>、<strong>ZHANG SAN</strong>），您可以将这些重复身份一键归拢合并到真实主持卡人名下。其名下卡片将自动转移，同时沉淀为别名库。
         </Typography>
 
@@ -159,7 +159,7 @@ export function MergeHoldersDialog({
         )}
 
         {/* 1. 选择保留的主身份 */}
-        <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
+        <Typography className="type-section" sx={{ mb: 1 }}>
           1. 选择保留的主持卡人 (目标主身份)
         </Typography>
         <FormControl fullWidth size="small" sx={{ mb: 3 }}>
@@ -196,7 +196,7 @@ export function MergeHoldersDialog({
 
         {/* 2. 选择被归拢的重复持卡人 */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-          <Typography variant="subtitle2" fontWeight={700}>
+          <Typography className="type-section">
             2. 选择需要归拢合并进来的重复身份 ({sourceIds.length}/{candidateHolders.length})
           </Typography>
           {autoSuggestedIds.length > 0 && (
@@ -213,18 +213,20 @@ export function MergeHoldersDialog({
         </Box>
 
         {candidateHolders.length === 0 ? (
-          <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>
+          <Typography className="type-label" sx={{ py: 2, textAlign: 'center' }}>
             没有其他可合并的持卡人
           </Typography>
         ) : (
           <Paper
-            variant="outlined"
+            elevation={0}
             sx={{
               maxHeight: 220,
               overflowY: 'auto',
-              borderRadius: 2,
+              // 分层阴影代替边框
+              borderRadius: 'var(--radius-depth-2)',
+              boxShadow: 'var(--shadow-e1)',
               p: 0.5,
-              bgcolor: 'var(--bg-subtle, #fafafa)',
+              bgcolor: 'var(--bg)',
               mb: 2.5,
             }}
           >
@@ -242,14 +244,18 @@ export function MergeHoldersDialog({
                     sx={{
                       p: 1,
                       px: 1.5,
-                      borderRadius: 1.5,
+                      borderRadius: 'var(--radius-depth-1)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       cursor: 'pointer',
-                      bgcolor: isSelected ? 'rgba(30, 58, 138, 0.08)' : '#fff',
+                      bgcolor: isSelected
+                        ? 'color-mix(in srgb, var(--navy-600) 10%, var(--paper))'
+                        : 'var(--paper)',
+                      // 选中态是语义强调（不是分层），未选中态用阴影表达层级
                       border: '1px solid',
-                      borderColor: isSelected ? 'primary.main' : 'rgba(0,0,0,0.06)',
+                      borderColor: isSelected ? 'var(--navy-600)' : 'transparent',
+                      boxShadow: isSelected ? 'none' : 'var(--shadow-e1)',
                       transition: 'all 120ms ease',
                     }}
                   >
@@ -280,7 +286,7 @@ export function MergeHoldersDialog({
                           )}
                         </Stack>
                         {c.aliases && c.aliases.length > 0 && (
-                          <Typography variant="caption" color="text.secondary" noWrap>
+                          <Typography className="type-label" sx={{ display: 'block' }} noWrap>
                             已有别名: {c.aliases.join('、')}
                           </Typography>
                         )}
@@ -307,15 +313,17 @@ export function MergeHoldersDialog({
             elevation={0}
             sx={{
               p: 2,
-              borderRadius: 2,
-              bgcolor: 'rgba(22, 163, 74, 0.06)',
-              border: '1px solid rgba(22, 163, 74, 0.25)',
+              borderRadius: 'var(--radius-depth-2)',
+              // 语义成功态：保留 1px 语义绿描边与淡绿底（非分层边框）
+              bgcolor: 'color-mix(in srgb, var(--success) 8%, var(--paper))',
+              border: '1px solid',
+              borderColor: 'color-mix(in srgb, var(--success) 28%, transparent)',
             }}
           >
-            <Typography variant="subtitle2" fontWeight={800} color="success.dark" sx={{ mb: 1 }}>
+            <Typography className="type-section" sx={{ color: 'var(--success)', mb: 1 }}>
               🎯 合并生效预览
             </Typography>
-            <Stack spacing={0.5} sx={{ fontSize: 13 }}>
+            <Stack className="type-body" spacing={0.5}>
               <Box>
                 • 目标主持卡人：<strong>{primaryHolder.name}</strong>
               </Box>
@@ -334,7 +342,7 @@ export function MergeHoldersDialog({
                       key={a}
                       label={a}
                       size="small"
-                      sx={{ height: 20, fontSize: 11, mr: 0.5, mb: 0.5, bgcolor: '#fff' }}
+                      sx={{ height: 20, fontSize: 11, mr: 0.5, mb: 0.5, bgcolor: 'var(--paper)' }}
                     />
                   ))}
                 </Box>
@@ -353,7 +361,7 @@ export function MergeHoldersDialog({
           onClick={handleMerge}
           disabled={loading || sourceIds.length === 0}
           startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <MergeTypeIcon />}
-          sx={{ fontWeight: 700, borderRadius: 2 }}
+          sx={{ fontWeight: 700, borderRadius: 'var(--radius-depth-1)', boxShadow: 'var(--shadow-e2)' }}
         >
           {sourceIds.length > 0 ? `确认归拢合并 (${sourceIds.length} 个身份)` : '请选择合并项'}
         </Button>

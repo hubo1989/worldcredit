@@ -169,9 +169,11 @@ export function AiFillBox({ onFill, mode }: Props) {
   return (
     <Box
       sx={{
+        // AI 区语义：金色虚线框（非分层边框），圆角走令牌
         border: '1.5px dashed var(--gold-500)',
         bgcolor: 'rgba(201,162,39,0.04)',
-        borderRadius: 'var(--radius-card)',
+        borderRadius: 'var(--radius-depth-2)',
+        boxShadow: 'var(--shadow-e1)',
         p: 1.5,
       }}
     >
@@ -188,7 +190,7 @@ export function AiFillBox({ onFill, mode }: Props) {
           sx={{
             '& .MuiOutlinedInput-root': {
               bgcolor: 'var(--paper)',
-              fontSize: 13.5,
+              fontSize: 'var(--type-control-size)',
             },
           }}
         />
@@ -223,7 +225,20 @@ export function AiFillBox({ onFill, mode }: Props) {
         </Stack>
 
         {error && (
-          <Alert severity="warning" sx={{ py: 0.5, fontSize: 12.5 }}>
+          <Alert
+            severity="warning"
+            sx={{
+              py: 0.5,
+              fontSize: 'var(--type-body-size)',
+              letterSpacing: 'var(--type-body-tracking)',
+              lineHeight: 'var(--type-body-line)',
+              '& .MuiAlert-message': {
+                fontSize: 'var(--type-body-size)',
+                letterSpacing: 'var(--type-body-tracking)',
+                lineHeight: 'var(--type-body-line)',
+              },
+            }}
+          >
             {error}
           </Alert>
         )}

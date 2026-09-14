@@ -1,4 +1,3 @@
-// components/mobile/BenefitForm.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -65,8 +64,34 @@ export function BenefitForm({ open, onClose, onSubmit, initial }: Props) {
   }
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle>{initial ? '编辑权益' : '添加权益'}</DialogTitle>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth="xs"
+      // 弹窗浮层：18px 圆角 + float 阴影 + 无边框
+      slotProps={{
+        paper: {
+          sx: {
+            border: 0,
+            borderRadius: 'var(--radius-depth-3)',
+            boxShadow: 'var(--shadow-float)',
+          },
+        },
+      }}
+    >
+      {/* 弹窗标题：22/28 · 600 · -0.7px */}
+      <DialogTitle
+        sx={{
+          fontSize: 'var(--type-title-size)',
+          lineHeight: 'var(--type-title-line)',
+          fontWeight: 'var(--type-title-weight)',
+          letterSpacing: 'var(--type-title-tracking)',
+          color: 'var(--text)',
+        }}
+      >
+        {initial ? '编辑权益' : '添加权益'}
+      </DialogTitle>
       <DialogContent>
         <TextField
           fullWidth label="权益名称" margin="normal"
@@ -123,8 +148,15 @@ export function BenefitForm({ open, onClose, onSubmit, initial }: Props) {
         />
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>取消</Button>
-        <Button variant="contained" onClick={handleSubmit} disabled={!isValid()}>保存</Button>
+        <Button onClick={onClose} sx={{ borderRadius: 'var(--radius-pill)' }}>取消</Button>
+        <Button
+          variant="contained"
+          onClick={handleSubmit}
+          disabled={!isValid()}
+          sx={{ borderRadius: 'var(--radius-pill)' }}
+        >
+          保存
+        </Button>
       </DialogActions>
     </Dialog>
   )

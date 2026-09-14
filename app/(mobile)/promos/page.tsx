@@ -227,10 +227,26 @@ export default function PromosPage() {
       {/* 顶部标题栏 */}
       <Box sx={{ mb: 2.5, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <Box>
-          <Typography variant="h5" fontWeight={800} sx={{ color: 'var(--navy-800)' }}>
+          <Typography
+            variant="h5"
+            sx={{
+              fontSize: 'var(--type-title-size)',
+              lineHeight: 'var(--type-title-line)',
+              fontWeight: 'var(--type-title-weight)',
+              letterSpacing: 'var(--type-title-tracking)',
+              color: 'var(--text)',
+            }}
+          >
             优惠活动
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+            }}
+          >
             精选各行当期热门活动与信用卡专属羊毛
           </Typography>
         </Box>
@@ -239,14 +255,14 @@ export default function PromosPage() {
           size="small"
           startIcon={<AddIcon />}
           onClick={() => setAddOpen(true)}
-          sx={{ borderRadius: 2.5, fontWeight: 700, whiteSpace: 'nowrap' }}
+          sx={{ borderRadius: 'var(--radius-pill)', fontWeight: 700, whiteSpace: 'nowrap' }}
         >
           添加活动
         </Button>
       </Box>
 
       {/* 分类 Tabs */}
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+      <Box sx={{ borderBottom: '1px solid var(--track)', mb: 2 }}>
         <Tabs
           value={categoryTab}
           onChange={(_, v) => setCategoryTab(v)}
@@ -256,7 +272,8 @@ export default function PromosPage() {
             minHeight: 40,
             '& .MuiTab-root': {
               minHeight: 40,
-              fontSize: 13,
+              fontSize: 'var(--type-body-size)',
+              letterSpacing: 'var(--type-body-tracking)',
               fontWeight: 700,
               px: 1.5,
               textTransform: 'none'
@@ -281,7 +298,14 @@ export default function PromosPage() {
           color={selectedBank === 'all' ? 'primary' : 'default'}
           variant={selectedBank === 'all' ? 'filled' : 'outlined'}
           onClick={() => setSelectedBank('all')}
-          sx={{ fontWeight: 600 }}
+          sx={{
+            // 无边框：层级由分层阴影表达；选中态走品牌色填充
+            border: selectedBank === 'all' ? 0 : '1px solid transparent',
+            fontSize: 'var(--type-body-size)',
+            letterSpacing: 'var(--type-body-tracking)',
+            fontWeight: 600,
+            boxShadow: selectedBank === 'all' ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
+          }}
         />
         {userBanks.length > 0 && (
           <Chip
@@ -292,7 +316,13 @@ export default function PromosPage() {
             color={selectedBank === 'my_cards' ? 'primary' : 'default'}
             variant={selectedBank === 'my_cards' ? 'filled' : 'outlined'}
             onClick={() => setSelectedBank('my_cards')}
-            sx={{ fontWeight: 600 }}
+            sx={{
+              border: selectedBank === 'my_cards' ? 0 : '1px solid transparent',
+              fontSize: 'var(--type-body-size)',
+              letterSpacing: 'var(--type-body-tracking)',
+              fontWeight: 600,
+              boxShadow: selectedBank === 'my_cards' ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
+            }}
           />
         )}
         {allBanks.map(b => (
@@ -304,7 +334,13 @@ export default function PromosPage() {
             color={selectedBank === b ? 'primary' : 'default'}
             variant={selectedBank === b ? 'filled' : 'outlined'}
             onClick={() => setSelectedBank(b)}
-            sx={{ fontWeight: 600 }}
+            sx={{
+              border: selectedBank === b ? 0 : '1px solid transparent',
+              fontSize: 'var(--type-body-size)',
+              letterSpacing: 'var(--type-body-tracking)',
+              fontWeight: 600,
+              boxShadow: selectedBank === b ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
+            }}
           />
         ))}
       </Box>
@@ -312,13 +348,39 @@ export default function PromosPage() {
       {/* 列表渲染 */}
       {loading ? (
         <Stack spacing={2}>
-          {[1, 2, 3].map(i => <Skeleton key={i} variant="rounded" height={140} sx={{ borderRadius: 4 }} />)}
+          {[1, 2, 3].map(i => <Skeleton key={i} variant="rounded" height={140} sx={{ borderRadius: 'var(--radius-depth-3)' }} />)}
         </Stack>
       ) : filteredPromos.length === 0 ? (
-        <Paper sx={{ p: 5, textAlign: 'center', borderRadius: 4, bgcolor: 'grey.50', border: '1px dashed', borderColor: 'divider' }}>
-          <PromoIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 2 }} />
-          <Typography color="text.secondary" fontWeight={700}>该分类下暂无活动</Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, mb: 2 }}>
+        <Paper
+          elevation={0}
+          sx={{
+            p: 5, textAlign: 'center', borderRadius: 'var(--radius-depth-3)',
+            bgcolor: 'var(--bg)', border: '1px dashed', borderColor: 'var(--track)',
+          }}
+        >
+          <PromoIcon sx={{ fontSize: 48, color: 'var(--text-disabled)', mb: 2 }} />
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              fontWeight: 600,
+              color: 'var(--text)',
+            }}
+          >
+            该分类下暂无活动
+          </Typography>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              display: 'block',
+              mt: 0.5,
+              mb: 2,
+            }}
+          >
             您可以切换银行分类或手动添加您关注的信用卡优惠
           </Typography>
           <Button variant="outlined" size="small" onClick={() => { setCategoryTab('all'); setSelectedBank('all') }}>
@@ -333,10 +395,12 @@ export default function PromosPage() {
             return (
               <Card
                 key={p.id}
+                elevation={0}
                 sx={{
-                  borderRadius: 4,
-                  border: hasCard ? '1.5px solid #93c5fd' : '1px solid #e2e8f0',
-                  boxShadow: hasCard ? '0 4px 16px rgba(59,130,246,0.08)' : '0 1px 3px rgba(0,0,0,0.04)',
+                  // 无边框：层级由分层阴影表达；持卡可享的强调走品牌蓝描边语义
+                  borderRadius: 'var(--radius-depth-3)',
+                  border: hasCard ? '1px solid var(--navy-600)' : 0,
+                  boxShadow: hasCard ? 'var(--shadow-e3)' : 'var(--shadow-e1)',
                   position: 'relative',
                   overflow: 'hidden',
                   transition: 'transform 0.15s ease',
@@ -350,13 +414,15 @@ export default function PromosPage() {
                       position: 'absolute',
                       top: 0,
                       right: 0,
-                      bgcolor: '#2563eb',
-                      color: '#ffffff',
-                      fontSize: 10,
-                      fontWeight: 700,
+                      bgcolor: 'var(--navy-600)',
+                      color: 'var(--text-on-dark)',
+                      fontSize: 'var(--type-body-size)',
+                      lineHeight: 1.4,
+                      letterSpacing: 'var(--type-body-tracking)',
+                      fontWeight: 600,
                       px: 1.5,
                       py: 0.25,
-                      borderBottomLeftRadius: 10,
+                      borderBottomLeftRadius: 'var(--radius-depth-1)',
                     }}
                   >
                     💳 我已持卡可享
@@ -369,12 +435,12 @@ export default function PromosPage() {
                       sx={{
                         width: 52,
                         height: 52,
-                        borderRadius: 3,
+                        borderRadius: 'var(--radius-depth-1)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        bgcolor: 'rgba(37,99,235,0.08)',
-                        color: '#2563eb',
+                        bgcolor: 'rgba(30,58,138,0.08)',
+                        color: 'var(--strong)',
                         flexShrink: 0
                       }}
                     >
@@ -383,24 +449,50 @@ export default function PromosPage() {
 
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
-                        <Typography variant="caption" fontWeight={800} color="primary" sx={{ letterSpacing: '0.02em' }}>
+                        <Typography
+                          sx={{
+                            fontSize: 'var(--type-body-size)',
+                            lineHeight: 'var(--type-body-line)',
+                            letterSpacing: 'var(--type-body-tracking)',
+                            fontWeight: 600,
+                            color: 'var(--strong)',
+                          }}
+                        >
                           {p.bank_name}
                         </Typography>
                         <Chip
                           label={p.discount_type || '优惠'}
                           size="small"
                           color="error"
-                          sx={{ height: 20, fontSize: 11, fontWeight: 700, mr: hasCard ? 10 : 0 }}
+                          sx={{
+                            height: 20, fontSize: 'var(--type-body-size)',
+                            letterSpacing: 'var(--type-body-tracking)', fontWeight: 600,
+                            mr: hasCard ? 10 : 0,
+                          }}
                         />
                       </Stack>
 
-                      <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 0.75, lineHeight: 1.3 }}>
+                      <Typography
+                        variant="h6"
+                        sx={{
+                          fontSize: 'var(--type-section-size)',
+                          lineHeight: 'var(--type-section-line)',
+                          fontWeight: 'var(--type-section-weight)',
+                          letterSpacing: 'var(--type-section-tracking)',
+                          color: 'var(--text)',
+                          mb: 0.75,
+                        }}
+                      >
                         {p.title}
                       </Typography>
 
                       {p.description && (
-                        <Typography variant="body2" color="text.secondary" sx={{
-                          fontSize: 12.5, mb: 1.5, lineHeight: 1.4,
+                        <Typography sx={{
+                          fontSize: 'var(--type-body-size)',
+                          lineHeight: 'var(--type-body-line)',
+                          letterSpacing: 'var(--type-body-tracking)',
+                          color: 'var(--muted)',
+                          mb: 1.5,
                           overflow: 'hidden', textOverflow: 'ellipsis',
                           display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'
                         }}>
@@ -408,8 +500,18 @@ export default function PromosPage() {
                         </Typography>
                       )}
 
-                      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ pt: 1, borderTop: '1px dashed #f1f5f9' }}>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ pt: 1, borderTop: '1px dashed var(--track)' }}>
+                        <Typography
+                          sx={{
+                            fontSize: 'var(--type-body-size)',
+                            lineHeight: 'var(--type-body-line)',
+                            letterSpacing: 'var(--type-body-tracking)',
+                            color: 'var(--muted)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.5,
+                          }}
+                        >
                           <AccessTimeIcon sx={{ fontSize: 13 }} />
                           截止至 {p.end_date || '长期有效'}
                         </Typography>
@@ -418,8 +520,9 @@ export default function PromosPage() {
                           size="small"
                           onClick={() => handleRegister(p)}
                           sx={{
-                            borderRadius: 2,
-                            fontSize: 12,
+                            borderRadius: 'var(--radius-pill)',
+                            fontSize: 'var(--type-body-size)',
+                            letterSpacing: 'var(--type-body-tracking)',
                             fontWeight: 700,
                             py: 0.4,
                             px: 1.5,
@@ -440,7 +543,19 @@ export default function PromosPage() {
 
       {/* 新增活动 Dialog */}
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} fullWidth maxWidth="xs">
-        <DialogTitle sx={{ fontWeight: 800 }}>添加信用卡优惠活动</DialogTitle>
+        {/* Dialog 走 portal，在 .phone 作用域之外：显式声明角色令牌 */}
+        <DialogTitle
+          sx={{
+            fontSize: 'var(--type-section-size)',
+            lineHeight: 'var(--type-section-line)',
+            fontWeight: 'var(--type-section-weight)',
+            letterSpacing: 'var(--type-section-tracking)',
+            color: 'var(--text)',
+            fontFamily: 'var(--font-display)',
+          }}
+        >
+          添加信用卡优惠活动
+        </DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
@@ -494,7 +609,7 @@ export default function PromosPage() {
             variant="contained"
             onClick={handleAddPromo}
             disabled={submitting}
-            sx={{ borderRadius: 2, fontWeight: 700 }}
+            sx={{ borderRadius: 'var(--radius-pill)', fontWeight: 700 }}
           >
             {submitting ? '保存中...' : '确认添加'}
           </Button>
@@ -508,7 +623,7 @@ export default function PromosPage() {
         onClose={() => setToast(prev => ({ ...prev, open: false }))}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
-        <Alert severity={toast.severity} sx={{ borderRadius: 3, fontWeight: 600 }}>
+        <Alert severity={toast.severity} sx={{ borderRadius: 'var(--radius-depth-1)', fontWeight: 600 }}>
           {toast.message}
         </Alert>
       </Snackbar>

@@ -131,13 +131,30 @@ export default function AnalyticsPage() {
   return (
     <Box sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-        <Typography variant="h6" fontWeight={700}>
+        <Typography
+          variant="h6"
+          sx={{
+            fontSize: 'var(--type-title-size)',
+            lineHeight: 'var(--type-title-line)',
+            fontWeight: 'var(--type-title-weight)',
+            letterSpacing: 'var(--type-title-tracking)',
+            color: 'var(--text)',
+          }}
+        >
           消费与负债分析
         </Typography>
         <IconButton
-          size="small"
           onClick={() => setExportOpen(true)}
           aria-label="导出数据"
+          sx={{
+            width: 'var(--button-size)',
+            height: 'var(--button-size)',
+            background: 'var(--button-face)',
+            color: 'var(--text-on-dark)',
+            boxShadow: 'var(--button-shadow)',
+            '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
+            '&:active': { boxShadow: 'var(--button-shadow-press)' },
+          }}
         >
           <FileDownload />
         </IconButton>
@@ -190,47 +207,103 @@ export default function AnalyticsPage() {
         <Stack spacing={2}>
           {/* Risk Alerts */}
           {getRiskAlerts().length > 0 && (
-            <Alert severity="warning" icon={<Warning />}>
-              <Typography variant="subtitle2" fontWeight={700}>风险提示</Typography>
+          <Alert severity="warning" icon={<Warning />}>
+              <Typography
+                sx={{
+                  fontSize: 'var(--type-section-size)',
+                  lineHeight: 'var(--type-section-line)',
+                  fontWeight: 'var(--type-section-weight)',
+                  letterSpacing: 'var(--type-section-tracking)',
+                  color: 'var(--text)',
+                }}
+              >
+                风险提示
+              </Typography>
               {getRiskAlerts().map((alert, i) => (
-                <Typography key={i} variant="body2">• {alert}</Typography>
+                <Typography
+                  key={i}
+                  sx={{
+                    fontSize: 'var(--type-body-size)',
+                    lineHeight: 'var(--type-body-line)',
+                    letterSpacing: 'var(--type-body-tracking)',
+                    color: 'var(--text)',
+                  }}
+                >
+                  • {alert}
+                </Typography>
               ))}
             </Alert>
           )}
 
           {/* Summary Cards */}
           <Stack direction="row" spacing={1} sx={{ overflowX: 'auto', pb: 1 }}>
-            <Card sx={{ minWidth: 140, flex: 1 }}>
+            <Card elevation={0} sx={{ minWidth: 140, flex: 1, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
-                <Typography variant="caption" color="text.secondary">账单总额</Typography>
-                <Typography variant="h6" fontWeight={700}>
+                <Typography
+                  sx={{
+                    fontSize: 'var(--type-body-size)',
+                    lineHeight: 'var(--type-body-line)',
+                    letterSpacing: 'var(--type-body-tracking)',
+                    color: 'var(--muted)',
+                  }}
+                >
+                  账单总额
+                </Typography>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: 'var(--text)' }}>
                   {formatCurrency(summary.total_bill_amount)}
                 </Typography>
               </CardContent>
             </Card>
 
-            <Card sx={{ minWidth: 140, flex: 1 }}>
+            <Card elevation={0} sx={{ minWidth: 140, flex: 1, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
-                <Typography variant="caption" color="text.secondary">待还金额</Typography>
-                <Typography variant="h6" fontWeight={700} color="error.main">
+                <Typography
+                  sx={{
+                    fontSize: 'var(--type-body-size)',
+                    lineHeight: 'var(--type-body-line)',
+                    letterSpacing: 'var(--type-body-tracking)',
+                    color: 'var(--muted)',
+                  }}
+                >
+                  待还金额
+                </Typography>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: 'var(--danger)' }}>
                   {formatCurrency(summary.pending_amount)}
                 </Typography>
               </CardContent>
             </Card>
 
-            <Card sx={{ minWidth: 140, flex: 1 }}>
+            <Card elevation={0} sx={{ minWidth: 140, flex: 1, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
-                <Typography variant="caption" color="text.secondary">已还金额</Typography>
-                <Typography variant="h6" fontWeight={700} color="success.main">
+                <Typography
+                  sx={{
+                    fontSize: 'var(--type-body-size)',
+                    lineHeight: 'var(--type-body-line)',
+                    letterSpacing: 'var(--type-body-tracking)',
+                    color: 'var(--muted)',
+                  }}
+                >
+                  已还金额
+                </Typography>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: 'var(--success)' }}>
                   {formatCurrency(summary.paid_amount)}
                 </Typography>
               </CardContent>
             </Card>
 
-            <Card sx={{ minWidth: 140, flex: 1 }}>
+            <Card elevation={0} sx={{ minWidth: 140, flex: 1, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
-                <Typography variant="caption" color="text.secondary">额度使用率</Typography>
-                <Typography variant="h6" fontWeight={700} color={summary.utilization_rate > 70 ? 'error.main' : 'primary.main'}>
+                <Typography
+                  sx={{
+                    fontSize: 'var(--type-body-size)',
+                    lineHeight: 'var(--type-body-line)',
+                    letterSpacing: 'var(--type-body-tracking)',
+                    color: 'var(--muted)',
+                  }}
+                >
+                  额度使用率
+                </Typography>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: summary.utilization_rate > 70 ? 'var(--danger)' : 'var(--strong)' }}>
                   {summary.utilization_rate.toFixed(1)}%
                 </Typography>
               </CardContent>
@@ -238,9 +311,18 @@ export default function AnalyticsPage() {
           </Stack>
 
           {/* Monthly Trend Chart */}
-          <Card>
+          <Card elevation={0} sx={{ border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
             <CardContent>
-              <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 2 }}>
+              <Typography
+                sx={{
+                  fontSize: 'var(--type-section-size)',
+                  lineHeight: 'var(--type-section-line)',
+                  fontWeight: 'var(--type-section-weight)',
+                  letterSpacing: 'var(--type-section-tracking)',
+                  color: 'var(--text)',
+                  mb: 2,
+                }}
+              >
                 月度账单趋势
               </Typography>
               <ResponsiveContainer width="100%" height={250}>
@@ -250,7 +332,7 @@ export default function AnalyticsPage() {
                   <YAxis tick={{ fontSize: 12 }} />
                   <Tooltip
                     formatter={formatChartCurrency}
-                    labelStyle={{ color: '#666' }}
+                    labelStyle={{ color: 'var(--muted)' }}
                   />
                   <Legend />
                   <Line
@@ -274,9 +356,18 @@ export default function AnalyticsPage() {
 
           {/* Category Breakdown Chart */}
           {categoryBreakdown.length > 0 && (
-            <Card>
+            <Card elevation={0} sx={{ border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
-                <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 2 }}>
+                <Typography
+                  sx={{
+                    fontSize: 'var(--type-section-size)',
+                    lineHeight: 'var(--type-section-line)',
+                    fontWeight: 'var(--type-section-weight)',
+                    letterSpacing: 'var(--type-section-tracking)',
+                    color: 'var(--text)',
+                    mb: 2,
+                  }}
+                >
                   消费分类占比
                 </Typography>
                 <ResponsiveContainer width="100%" height={250}>
@@ -306,9 +397,18 @@ export default function AnalyticsPage() {
           )}
 
           {/* Category List */}
-          <Card>
+          <Card elevation={0} sx={{ border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
             <CardContent>
-              <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 2 }}>
+              <Typography
+                sx={{
+                  fontSize: 'var(--type-section-size)',
+                  lineHeight: 'var(--type-section-line)',
+                  fontWeight: 'var(--type-section-weight)',
+                  letterSpacing: 'var(--type-section-tracking)',
+                  color: 'var(--text)',
+                  mb: 2,
+                }}
+              >
                 分类详情
               </Typography>
               <Stack spacing={1}>
@@ -326,9 +426,27 @@ export default function AnalyticsPage() {
                           bgcolor: COLORS[i % COLORS.length],
                         }}
                       />
-                      <Typography variant="body2">{cat.category}</Typography>
+                      <Typography
+                        sx={{
+                          fontSize: 'var(--type-body-size)',
+                          lineHeight: 'var(--type-body-line)',
+                          letterSpacing: 'var(--type-body-tracking)',
+                          color: 'var(--text)',
+                        }}
+                      >
+                        {cat.category}
+                      </Typography>
                     </Box>
-                    <Typography variant="body2" fontWeight={600}>
+                    <Typography
+                      className="num-tabular"
+                      sx={{
+                        fontSize: 'var(--type-body-size)',
+                        lineHeight: 'var(--type-body-line)',
+                        letterSpacing: 'var(--type-body-tracking)',
+                        fontWeight: 600,
+                        color: 'var(--text)',
+                      }}
+                    >
                       {formatCurrency(cat.amount)}
                     </Typography>
                   </Box>

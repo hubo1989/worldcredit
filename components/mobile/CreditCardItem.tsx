@@ -11,56 +11,87 @@ interface Props {
   onClick?: () => void
 }
 
+// MUI Typography 自带样式注入在 globals.css 之后，同特异性下角色 class 会被覆盖，
+// 因此把 phone 排版令牌直接写进 sx，确保 22/28 与 14.5/18 真正生效。
+const TITLE = {
+  fontSize: 'var(--type-title-size)',
+  lineHeight: 'var(--type-title-line)',
+  fontWeight: 'var(--type-title-weight)',
+  letterSpacing: 'var(--type-title-tracking)',
+}
+const BODY = {
+  fontSize: 'var(--type-body-size)',
+  lineHeight: 'var(--type-body-line)',
+  fontWeight: 'var(--type-body-weight)',
+  letterSpacing: 'var(--type-body-tracking)',
+}
+const SECTION = {
+  fontSize: 'var(--type-section-size)',
+  lineHeight: 'var(--type-section-line)',
+  fontWeight: 'var(--type-section-weight)',
+  letterSpacing: 'var(--type-section-tracking)',
+}
+
 export function CreditCardItem({ card, onClick }: Props) {
   const product = card.card_product
 
   return (
-    <Card 
+    <Card
       onClick={onClick}
-      sx={{ 
-        mb: 2, 
-        borderRadius: '10px', 
+      sx={{
+        mb: 2,
+        // 卡面保留藏青→深青渐变识别度，只统一到 14px 圆角档与分层阴影
+        border: 0,
+        borderRadius: 'var(--radius-depth-2)',
         background: 'linear-gradient(135deg, #030059 0%, #004f78 100%)',
-        color: '#FFFFFF',
-        boxShadow: '0px 4px 8px rgba(0, 0, 0, 0.12)',
+        color: 'var(--text-on-dark)',
+        boxShadow: 'var(--shadow-e2)',
         cursor: onClick ? 'pointer' : 'default',
-        transition: 'transform 0.2s, box-shadow 0.2s',
-        '&:hover': onClick ? { transform: 'translateY(-2px)', boxShadow: '0px 8px 16px rgba(0, 0, 0, 0.15)' } : {}
+        transition: 'transform 200ms var(--ease-out), box-shadow 200ms var(--ease-out)',
+        '&:hover': onClick
+          ? { transform: 'translateY(-2px)', boxShadow: 'var(--shadow-e3)' }
+          : {},
       }}
     >
       <CardContent sx={{ p: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3 }}>
           <Box>
-            <Typography variant="h6" fontWeight={700} sx={{ lineHeight: 1.2 }}>
+            {/* 卡片标题：22/28 · 600 · -0.7px */}
+            <Typography sx={{ ...TITLE, color: 'var(--text-on-dark)' }}>
               {product.bank_name}
             </Typography>
-            <Typography variant="caption" sx={{ opacity: 0.8 }}>
+            <Typography sx={{ ...BODY, color: 'var(--text-on-dark)', opacity: 0.8 }}>
               {product.card_name}
             </Typography>
           </Box>
-          <CardIcon sx={{ fontSize: 32, opacity: 0.5 }} />
+          <CardIcon sx={{ fontSize: 32, color: 'var(--text-on-dark)', opacity: 0.5 }} />
         </Box>
 
         <Box sx={{ mb: 3 }}>
-          <Typography variant="h5" sx={{ letterSpacing: 4, fontFamily: 'monospace' }}>
+          <Typography sx={{ ...TITLE, fontFamily: 'var(--font-mono)', color: 'var(--text-on-dark)', letterSpacing: '4px' }}>
              **** **** **** {formatCardTail(card.card_number_last4) || '****'}
           </Typography>
         </Box>
 
-        <Divider sx={{ bgcolor: 'rgba(255,255,255,0.1)', mb: 2 }} />
+        {/* 深色渐变卡面上的分隔线：--track 在深底不可见，沿用白色低透明语义 */}
+        <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.1)', mb: 2 }} />
 
         <Stack direction="row" justifyContent="space-between" alignItems="center">
           <Box>
-            <Typography variant="caption" sx={{ opacity: 0.7, display: 'block' }}>额度</Typography>
-            <Typography variant="subtitle1" fontWeight={700}>
+            <Typography sx={{ ...BODY, color: 'var(--text-on-dark)', opacity: 0.7, display: 'block' }}>
+              额度
+            </Typography>
+            <Typography sx={{ ...SECTION, color: 'var(--text-on-dark)' }}>
                ¥{Number(card.credit_limit).toLocaleString()}
             </Typography>
           </Box>
           <Box sx={{ textAlign: 'right' }}>
-            <Typography variant="caption" sx={{ opacity: 0.7, display: 'block' }}>账单日</Typography>
+            <Typography sx={{ ...BODY, color: 'var(--text-on-dark)', opacity: 0.7, display: 'block' }}>
+              账单日
+            </Typography>
             <Stack direction="row" alignItems="center" spacing={0.5}>
-              <BillIcon sx={{ fontSize: 14, opacity: 0.7 }} />
-              <Typography variant="subtitle2" fontWeight={700}>
+              <BillIcon sx={{ fontSize: 14, color: 'var(--text-on-dark)', opacity: 0.7 }} />
+              <Typography sx={{ ...SECTION, color: 'var(--text-on-dark)' }}>
                 {card.billing_day} 日
               </Typography>
             </Stack>

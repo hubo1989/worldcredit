@@ -294,16 +294,17 @@ export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId
       ) : (
         <Box
           sx={{
+            // 上传放置区语义：虚线提示（非分层边框），圆角走令牌
             border: '2px dashed',
-            borderColor: 'divider',
-            borderRadius: 1,
+            borderColor: 'var(--track)',
+            borderRadius: 'var(--radius-depth-2)',
             p: 4,
             textAlign: 'center',
-            color: 'text.secondary',
+            color: 'var(--muted)',
           }}
         >
-          <UploadFile sx={{ fontSize: 48, mb: 1 }} />
-          <Typography>文件上传功能即将推出</Typography>
+          <UploadFile sx={{ fontSize: 48, mb: 1, color: 'var(--strong)' }} />
+          <Typography className="type-body" sx={{ color: 'var(--muted)' }}>文件上传功能即将推出</Typography>
         </Box>
       )}
     </Box>
@@ -319,13 +320,13 @@ export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId
       <Box sx={{ pt: 2 }}>
         {/* Confidence indicator */}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-          <Typography variant="subtitle2">识别置信度:</Typography>
+          <Typography className="type-body" sx={{ fontWeight: 600 }}>识别置信度:</Typography>
           <Chip
             label={getConfidenceLabel()}
             color={getConfidenceColor()}
             size="small"
           />
-          <Typography variant="caption" color="text.secondary">
+          <Typography className="type-label">
             ({(confidence * 100).toFixed(0)}%)
           </Typography>
         </Box>
@@ -336,7 +337,7 @@ export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId
             {warnings.map((warn, i) => (
               <Box key={i} sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5 }}>
                 <WarningIcon fontSize="inherit" sx={{ mt: 0.25 }} />
-                <Typography variant="body2">{warn}</Typography>
+                <Typography className="type-body">{warn}</Typography>
               </Box>
             ))}
           </Alert>
@@ -381,8 +382,8 @@ export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId
         </Stack>
 
         {/* Items */}
-        <Divider sx={{ my: 2 }} />
-        <Typography variant="subtitle2" fontWeight={700} gutterBottom>
+        <Divider sx={{ my: 2, borderColor: 'var(--track)' }} />
+        <Typography className="type-section" gutterBottom>
           交易明细 (合计: ¥{itemsTotal.toFixed(2)})
         </Typography>
 
@@ -392,14 +393,14 @@ export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId
               <Box
                 key={index}
                 sx={{
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  borderRadius: 1,
+                  // 分层阴影代替边框
+                  borderRadius: 'var(--radius-depth-2)',
+                  boxShadow: 'var(--shadow-e1)',
                   p: 1.5,
                 }}
               >
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography className="type-label">
                     #{index + 1}
                   </Typography>
                   <IconButton
@@ -452,15 +453,15 @@ export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId
       {success ? (
         <>
           <Check sx={{ fontSize: 64, color: 'success.main', mb: 2 }} />
-          <Typography variant="h6" gutterBottom>导入成功</Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography className="type-title" gutterBottom>导入成功</Typography>
+          <Typography className="type-body" sx={{ color: 'var(--muted)' }}>
             账单已创建完成
           </Typography>
         </>
       ) : (
         <>
-          <Typography variant="h6" gutterBottom>确认导入</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          <Typography className="type-title" gutterBottom>确认导入</Typography>
+          <Typography className="type-body" sx={{ color: 'var(--muted)', mb: 2 }}>
             草稿已保存，确认后将创建正式账单
           </Typography>
           <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
@@ -495,7 +496,7 @@ export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId
 
   return (
     <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
-      <DialogTitle>智能导入账单</DialogTitle>
+      <DialogTitle className="type-title">智能导入账单</DialogTitle>
 
       <Stepper activeStep={activeStep} sx={{ px: 2, pt: 1 }}>
         {steps.map((label) => (

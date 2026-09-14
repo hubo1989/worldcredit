@@ -23,6 +23,9 @@ interface Props {
   onChanged?: () => void
 }
 
+/** Drawer 遮罩：由强调色令牌派生的半透明中性遮罩，不引入新的字面色值。 */
+const SCRIM = 'color-mix(in srgb, var(--strong) 34%, transparent)'
+
 export function QuickActionSheet({ open, onClose, onChanged }: Props) {
   const [billFormOpen, setBillFormOpen] = useState(false)
   const [paymentOpen, setPaymentOpen] = useState(false)
@@ -146,20 +149,22 @@ export function QuickActionSheet({ open, onClose, onChanged }: Props) {
         onClose={closeAll}
         PaperProps={{
           sx: {
-            borderTopLeftRadius: 16,
-            borderTopRightRadius: 16,
+            borderTopLeftRadius: 'var(--radius-depth-3)',
+            borderTopRightRadius: 'var(--radius-depth-3)',
             maxWidth: 480,
             mx: 'auto',
+            boxShadow: 'var(--shadow-float)',
+            backgroundColor: 'var(--paper)',
           },
         }}
-        slotProps={{ backdrop: { sx: { background: 'rgba(0,0,0,0.4)' } } }}
+        slotProps={{ backdrop: { sx: { background: SCRIM } } }}
       >
         {/* 顶部拉动条 */}
         <Box sx={{ display: 'flex', justifyContent: 'center', pt: 1.25, pb: 0.5 }}>
-          <Box sx={{ width: 40, height: 4, borderRadius: 2, bgcolor: 'rgba(10,31,68,0.18)' }} />
+          <Box sx={{ width: 40, height: 4, borderRadius: 2, bgcolor: 'var(--border-strong)' }} />
         </Box>
 
-        <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', textAlign: 'center', mb: 1 }}>
+        <Typography className="type-section" sx={{ textAlign: 'center', mb: 1 }}>
           记一笔
         </Typography>
 
@@ -178,7 +183,7 @@ export function QuickActionSheet({ open, onClose, onChanged }: Props) {
                 bgcolor: 'transparent',
                 cursor: 'pointer',
                 p: 1.25,
-                borderRadius: 'var(--radius-card)',
+                borderRadius: 'var(--radius-depth-1)',
                 textAlign: 'left',
                 transition: 'background-color var(--dur-fast) ease',
                 '&:hover': { bgcolor: 'rgba(10,31,68,0.04)' },
@@ -201,10 +206,10 @@ export function QuickActionSheet({ open, onClose, onChanged }: Props) {
                 {opt.icon}
               </Box>
               <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography sx={{ fontSize: 15, fontWeight: 600, color: 'var(--navy-800)', lineHeight: 1.3 }}>
+                <Typography className="type-body" sx={{ fontWeight: 600, color: 'var(--text)' }}>
                   {opt.title}
                 </Typography>
-                <Typography sx={{ fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                <Typography className="type-label">
                   {opt.desc}
                 </Typography>
               </Box>
@@ -220,13 +225,22 @@ export function QuickActionSheet({ open, onClose, onChanged }: Props) {
         anchor="bottom"
         open={holderPickerOpen}
         onClose={() => setHolderPickerOpen(false)}
-        PaperProps={{ sx: { borderTopLeftRadius: 16, borderTopRightRadius: 16, maxWidth: 480, mx: 'auto' } }}
-        slotProps={{ backdrop: { sx: { background: 'rgba(0,0,0,0.4)' } } }}
+        PaperProps={{
+          sx: {
+            borderTopLeftRadius: 'var(--radius-depth-3)',
+            borderTopRightRadius: 'var(--radius-depth-3)',
+            maxWidth: 480,
+            mx: 'auto',
+            boxShadow: 'var(--shadow-float)',
+            backgroundColor: 'var(--paper)',
+          },
+        }}
+        slotProps={{ backdrop: { sx: { background: SCRIM } } }}
       >
         <Box sx={{ display: 'flex', justifyContent: 'center', pt: 1.25, pb: 0.5 }}>
-          <Box sx={{ width: 40, height: 4, borderRadius: 2, bgcolor: 'rgba(10,31,68,0.18)' }} />
+          <Box sx={{ width: 40, height: 4, borderRadius: 2, bgcolor: 'var(--border-strong)' }} />
         </Box>
-        <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', textAlign: 'center', mb: 1 }}>
+        <Typography className="type-section" sx={{ textAlign: 'center', mb: 1 }}>
           选择持卡人
         </Typography>
         <Stack sx={{ p: 1.5, pt: 0.5, gap: 0.5 }}>
@@ -242,14 +256,14 @@ export function QuickActionSheet({ open, onClose, onChanged }: Props) {
               sx={{
                 display: 'flex', alignItems: 'center', gap: 1.5, width: '100%',
                 border: 'none', bgcolor: 'transparent', cursor: 'pointer',
-                p: 1.25, borderRadius: 'var(--radius-card)', textAlign: 'left',
+                p: 1.25, borderRadius: 'var(--radius-depth-1)', textAlign: 'left',
                 '&:hover': { bgcolor: 'rgba(10,31,68,0.04)' },
               }}
             >
               <Box sx={{ width: 36, height: 36, borderRadius: '50%', bgcolor: 'rgba(30,58,138,0.10)', color: 'var(--navy-600)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <UserIcon size={20} />
               </Box>
-              <Typography sx={{ flex: 1, fontSize: 15, fontWeight: 600, color: 'var(--navy-800)' }}>{h.name}</Typography>
+              <Typography className="type-body" sx={{ flex: 1, fontWeight: 600, color: 'var(--text)' }}>{h.name}</Typography>
               <ChevronRightIcon size={18} />
             </Box>
           ))}
@@ -262,18 +276,28 @@ export function QuickActionSheet({ open, onClose, onChanged }: Props) {
         anchor="bottom"
         open={billPickerOpen}
         onClose={() => setBillPickerOpen(false)}
-        PaperProps={{ sx: { borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '70vh', maxWidth: 480, mx: 'auto' } }}
-        slotProps={{ backdrop: { sx: { background: 'rgba(0,0,0,0.4)' } } }}
+        PaperProps={{
+          sx: {
+            borderTopLeftRadius: 'var(--radius-depth-3)',
+            borderTopRightRadius: 'var(--radius-depth-3)',
+            maxHeight: '70vh',
+            maxWidth: 480,
+            mx: 'auto',
+            boxShadow: 'var(--shadow-float)',
+            backgroundColor: 'var(--paper)',
+          },
+        }}
+        slotProps={{ backdrop: { sx: { background: SCRIM } } }}
       >
         <Box sx={{ display: 'flex', justifyContent: 'center', pt: 1.25, pb: 0.5 }}>
-          <Box sx={{ width: 40, height: 4, borderRadius: 2, bgcolor: 'rgba(10,31,68,0.18)' }} />
+          <Box sx={{ width: 40, height: 4, borderRadius: 2, bgcolor: 'var(--border-strong)' }} />
         </Box>
-        <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', textAlign: 'center', mb: 1 }}>
+        <Typography className="type-section" sx={{ textAlign: 'center', mb: 1 }}>
           选择要还款的账单
         </Typography>
         <Stack sx={{ p: 1.5, pt: 0.5, gap: 0.5, overflowY: 'auto' }}>
           {unpaidBills.length === 0 && (
-            <Typography sx={{ fontSize: 13, color: 'var(--text-secondary)', textAlign: 'center', py: 2 }}>
+            <Typography className="type-label" sx={{ textAlign: 'center', py: 2 }}>
               暂无未还账单
             </Typography>
           )}
@@ -288,14 +312,15 @@ export function QuickActionSheet({ open, onClose, onChanged }: Props) {
               }}
               sx={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                width: '100%', border: '1px solid var(--border)', bgcolor: 'var(--paper)',
-                cursor: 'pointer', p: 1.25, borderRadius: 'var(--radius-card)', textAlign: 'left',
-                '&:hover': { boxShadow: 'var(--shadow-card)' },
+                width: '100%', border: 0, bgcolor: 'var(--paper)',
+                boxShadow: 'var(--shadow-e1)',
+                cursor: 'pointer', p: 1.25, borderRadius: 'var(--radius-depth-1)', textAlign: 'left',
+                '&:hover': { boxShadow: 'var(--shadow-e2)' },
               }}
             >
               <Box>
-                <Typography sx={{ fontSize: 13, color: 'var(--text-secondary)' }}>{b.bill_month} 账单</Typography>
-                <Typography className="num-tabular" sx={{ fontSize: 16, fontWeight: 700, color: 'var(--navy-800)', mt: 0.25 }}>
+                <Typography className="type-label">{b.bill_month} 账单</Typography>
+                <Typography className="num-tabular type-body" sx={{ fontWeight: 700, color: 'var(--strong)', mt: 0.25, display: 'block' }}>
                   ¥{Number(b.bill_amount).toLocaleString()}
                 </Typography>
               </Box>
