@@ -174,3 +174,50 @@ export function cardUrgencyRank(status: CardUrgencyStatus): number {
   if (status === 'unpaid' || status === 'partial') return 1
   return 2
 }
+
+/**
+ * 账单距到期日的自然天数差：负数 = 已逾期天数，0 = 今天到期，正数 = 还剩几天。
+ *
+ * 为什么不用毫秒差：'2026-09-16' 这种无时区的日期串按 UTC 解析，在东八区会
+ * 落回本地当天 08:00。直接用 (target - now) / 86400000 再取整，在跨日边界会
+ * 差一天——用户看到「距离还款日 2 日」而徽章写着「逾期」。所以先把两侧都归一到
+ * 本地零点再相减。
+ */
+export function diffInCalendarDays(target: string | Date, today: Date = new Date()): number {
+  const t = typeof target === 'string' ? new Date(target) : target
+  const localMidnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  return Math.round((localMidnight(t) - localMidnight(today)) / 86_400_000)
+}
+
+/**
+ * 从多张未结清账单里挑出最该关注的一张：已逾期就挑逾期最久的，否则挑最近到期的。
+ *
+ * 为什么不能直接用第一张：一张卡可能同时挂着早期漏还的账单和刚出的新账单。
+ * 只取第一张会让「本期还款日 2027-01-01」旁边写着「逾期 62 日」——日期和天数
+ * 指向两张不同的账单，用户无法判断该还哪笔。
+ */
+export function pickDueReference<T extends { due_date: string }>(
+  bills: T[],
+  today: Date = new Date()
+): { bill: T; days: number } | null {
+  let best: { bill: T; days: number } | null = null
+  for (const bill of bills) {
+    const days = diffInCalendarDays(bill.due_date, today)
+    if (best === null || days < best.days) {
+      best = { bill, days }
+    }
+  }
+  return best
+}
+
+/**
+ * 到期距离的展示文案：逾期 X 日 / 今天还款日 / 距离还款日 X 日。
+ *
+ * 与 bills.server 的 computeStatus 保持同一口径：到期日当天不算逾期
+ * （days = 0 是「今天还款日」），只有 days < 0 才进入逾期分支。
+ */
+export function dueDistanceLabel(days: number): string {
+  if (days < 0) return `逾期 ${-days} 日`
+  if (days === 0) return '今天还款日'
+  return `距离还款日 ${days} 日`
+}

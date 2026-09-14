@@ -29,7 +29,7 @@ import { getHolders } from '@/lib/api/holders'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
 import { format } from 'date-fns'
-import { formatCardTail, cardUrgencyRank } from '@/lib/utils'
+import { formatCardTail, cardUrgencyRank, pickDueReference, dueDistanceLabel } from '@/lib/utils'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import {
   SyncIcon, BankIcon, UserIcon,
@@ -105,6 +105,16 @@ function CardSummaryRow({
 
   const isCleared = item.status === 'unissued' || item.unpaidAmount <= 0
   const isOverdue = item.status === 'overdue'
+
+  // 未结清时挑出最该关注的一张：已逾期取逾期最久的，否则取最近到期的。
+  // 不能直接用 activeBill——它按到期日倒序排，一张卡挂着早期漏还的账单时
+  // 会让「本期还款日」和「逾期 N 日」指向两张不同的账单。
+  const unpaidBills = item.historyBills.filter(b => b.computed_status !== 'paid')
+  const dueRef = isCleared ? null : pickDueReference(unpaidBills)
+  const dueLabel = dueRef ? dueDistanceLabel(dueRef.days) : null
+  // 「登记还款」也指向同一张账单：activeBill 是最新一期，dueRef 是最紧急一期，
+  // 两者不一致时按钮会打开跟屏幕上日期/天数不同的那笔，用户无法判断该还哪个。
+  const payTarget = dueRef?.bill ?? item.activeBill
 
   // 状态徽章渲染
   let badgeBg: string
@@ -254,12 +264,12 @@ function CardSummaryRow({
           </Typography>
         </Box>
 
-        {!isCleared && item.activeBill && (
+        {!isCleared && payTarget && (
           <Button
             variant="contained"
             color="primary"
             size="small"
-            onClick={() => onOpenPayment(item.activeBill!)}
+            onClick={() => onOpenPayment(payTarget)}
             sx={{
               borderRadius: 'var(--radius-pill)',
               fontSize: 14.5,
@@ -325,7 +335,7 @@ function CardSummaryRow({
           <Box component="span" sx={{ whiteSpace: 'nowrap' }}>
             {isCleared
               ? `下期还款约 ${format(item.nextDueDate, 'MM-dd')}`
-              : `本期还款日 ${item.activeBill?.due_date ? format(new Date(item.activeBill.due_date), 'MM-dd') : '—'}`}
+              : `本期还款日 ${dueRef ? format(new Date(dueRef.bill.due_date), 'MM-dd') : '—'}`}
           </Box>
         </Box>
         <Box
@@ -335,14 +345,14 @@ function CardSummaryRow({
             alignItems: 'center',
             gap: 0.5,
             whiteSpace: 'nowrap',
-            color: 'var(--gold-700)',
+            color: isOverdue ? 'var(--danger)' : dueRef?.days === 0 ? 'var(--warning)' : 'var(--gold-700)',
             fontWeight: 600,
             letterSpacing: '-0.6px',
           }}
         >
           {/* 图标库自带「禁用 emoji」约定，用绘制的时钟替代 ✨／📅 这类字符 */}
           <ClockIcon size={14} />
-          {isCleared ? `今日刷卡免息 ${item.graceDays} 天` : '待结清'}
+          {isCleared ? `今日刷卡免息 ${item.graceDays} 天` : (dueLabel ?? '待结清')}
         </Box>
       </Box>
 
