@@ -29,7 +29,7 @@ import { getHolders } from '@/lib/api/holders'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
 import { format } from 'date-fns'
-import { formatCardTail } from '@/lib/utils'
+import { formatCardTail, cardUrgencyRank } from '@/lib/utils'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import {
   SyncIcon, BankIcon, UserIcon,
@@ -648,19 +648,19 @@ export default function BillsPage() {
     })
   }, [cardsSummary, viewFilter, selectedTag, dimension])
 
-  // 排序：免息期最长（优先推荐用卡） / 还款日近→远（优先待还）
+  // 排序：先按状态固定分组（逾期 → 待还款 → 未出账单/已结清），
+  // 再在组内按所选方式排（免息期最长 / 还款日近→远）。
+  // 分组不受 sortMode 影响：一笔刚到期的账单不该被埋进一堆未出账单的卡里。
   const sortedCards = useMemo(() => {
     const arr = [...filteredCards]
-    if (sortMode === 'grace') {
-      arr.sort((a, b) => b.graceDays - a.graceDays)
-    } else {
-      arr.sort((a, b) => {
-        const ao = a.status === 'overdue' ? 0 : a.status === 'unpaid' ? 1 : 2
-        const bo = b.status === 'overdue' ? 0 : b.status === 'unpaid' ? 1 : 2
-        if (ao !== bo) return ao - bo
-        return a.nextDueDate.getTime() - b.nextDueDate.getTime()
-      })
-    }
+    arr.sort((a, b) => {
+      const rankDiff = cardUrgencyRank(a.status) - cardUrgencyRank(b.status)
+      if (rankDiff !== 0) return rankDiff
+      if (sortMode === 'grace') {
+        return b.graceDays - a.graceDays
+      }
+      return a.nextDueDate.getTime() - b.nextDueDate.getTime()
+    })
     return arr
   }, [filteredCards, sortMode])
 
@@ -698,7 +698,7 @@ export default function BillsPage() {
         : dimension === 'holder'
           ? holderTags.find(t => t.id === selectedTag)?.name || '未知持卡人'
           : selectedTag
-    const sortText = sortMode === 'grace' ? '免息期最长' : '还款日近→远'
+    const sortText = sortMode === 'grace' ? '组内免息期最长' : '组内还款日近→远'
     const dimText = dimension === 'holder' ? '持卡人' : '银行'
     return statusText + ' · 按' + dimText + ' · ' + tagText + ' · ' + sortText
   }, [viewFilter, dimension, selectedTag, sortMode, holderTags])
@@ -966,13 +966,13 @@ export default function BillsPage() {
               className="type-label"
               sx={{ display: 'block', mb: 0.75, fontWeight: 600, color: 'var(--muted)' }}
             >
-              排序
+              组内排序（逾期、待还款始终排在前面）
             </Typography>
             <Stack direction="row" spacing={1}>
               <Pill selected={sortMode === 'grace'} onClick={() => setSortMode('grace')}>
                 <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
                   <SortIcon size={13} />
-                  免息期最长 (刷卡推荐)
+                  免息期最长（刷卡推荐）
                 </Box>
               </Pill>
               <Pill selected={sortMode === 'due'} onClick={() => setSortMode('due')}>

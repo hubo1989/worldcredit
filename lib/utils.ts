@@ -157,3 +157,20 @@ export function formatCardTail(value: string | null | undefined): string {
   const digits = String(value ?? '').replace(/\D/g, '')
   return digits.length >= 4 ? digits.slice(-4) : digits
 }
+
+/**
+ * 账单页卡片排序分组：逾期(0) → 待还款(1) → 其他(2)。
+ *
+ * 分组优先级是固定的，与用户选择的排序方式无关——排序方式只决定组内顺序。
+ * 「部分还款」仍欠着钱，因此与「待还款」同组；只有未出账单/已结清落到最后一组。
+ *
+ * 之所以要固定分组：只按免息期或还款日排序时，一笔刚到期的账单会和一堆
+ * 未出账单的卡混在一起，用户得逐张翻才能看出哪张该还。
+ */
+export type CardUrgencyStatus = 'overdue' | 'unpaid' | 'partial' | 'unissued'
+
+export function cardUrgencyRank(status: CardUrgencyStatus): number {
+  if (status === 'overdue') return 0
+  if (status === 'unpaid' || status === 'partial') return 1
+  return 2
+}
