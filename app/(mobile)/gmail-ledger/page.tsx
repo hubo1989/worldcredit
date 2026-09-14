@@ -481,7 +481,9 @@ export default function GmailLedgerPage() {
                           {entry.bank.split('/')[0]}
                         </Typography>
                         {formatCardTail(entry.account_tail) && (
-                          <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>
+                          // 尾号是同行唯一能区分「同银行多张卡」的识别信息，
+                          // 宽度不够时让银行名省略，尾号始终完整保留。
+                          <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)', flexShrink: 0, whiteSpace: 'nowrap' }}>
                             ****{formatCardTail(entry.account_tail)}
                           </Typography>
                         )}

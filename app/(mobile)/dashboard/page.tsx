@@ -547,6 +547,11 @@ export default function DashboardPage() {
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
+              // 2 列指标卡在 360 下内宽仅 126px：标签与 7/14/30 天胶囊放不下同一行，
+              // 允许换行，避免两者被同时压成两行
+              flexWrap: 'wrap',
+              columnGap: 1,
+              rowGap: 0.5,
               mb: 0.5,
             }}
           >
@@ -556,11 +561,12 @@ export default function DashboardPage() {
                 lineHeight: 'var(--type-body-line)',
                 letterSpacing: 'var(--type-body-tracking)',
                 color: 'var(--muted)',
+                whiteSpace: 'nowrap',
               }}
             >
               未来待还
             </Typography>
-            <Box sx={{ display: 'flex', gap: 0.25 }}>
+            <Box sx={{ display: 'flex', gap: 0.25, flexShrink: 0 }}>
               {FUTURE_RANGES.map(r => {
                 const active = futureRange === r
                 return (
@@ -584,6 +590,8 @@ export default function DashboardPage() {
                       fontWeight: 600,
                       borderRadius: 'var(--radius-pill)',
                       cursor: 'pointer',
+                      // 「7 天」是原子语义单元，不允许在数字与单位之间折行
+                      whiteSpace: 'nowrap',
                       bgcolor: active ? 'rgba(201,162,39,0.15)' : 'transparent',
                       color: active ? 'var(--gold-700)' : 'var(--text-disabled)',
                       transition: 'background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)',

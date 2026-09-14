@@ -138,8 +138,23 @@ export default function BenefitsPage() {
   return (
     <Container sx={{ py: 3, pb: 10 }}>
       {/* 页头与 AI 搜集/手动新增按钮 */}
-      <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <Box>
+      {/* 标题块与两个操作按钮同排：360 下按钮要占 243px，标题块只剩 85px，
+          而「我的权益」单行需要 85.9px——差不到 1px 就被折成「我的权 / 益」。
+          标题是语义单元，用 nowrap 固定住，标题块的 flex 收缩下限因此抬到
+          标题自身宽度：390 下与按钮相加仍能同排（视觉不变），360 下按钮
+          整颗换行到下一行，两个单元都不再互相抢宽度。 */}
+      <Box
+        sx={{
+          mb: 3,
+          display: 'flex',
+          flexWrap: 'wrap',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          columnGap: 1,
+          rowGap: 1.5,
+        }}
+      >
+        <Box sx={{ flex: 1 }}>
           <Typography
             variant="h5"
             sx={{
@@ -148,6 +163,7 @@ export default function BenefitsPage() {
               fontWeight: 'var(--type-title-weight)',
               letterSpacing: 'var(--type-title-tracking)',
               color: 'var(--text)',
+              whiteSpace: 'nowrap',
             }}
           >
             我的权益
@@ -163,7 +179,7 @@ export default function BenefitsPage() {
             智能追踪与享用您的信用卡专属权益
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" spacing={1} sx={{ flexShrink: 0, ml: 'auto' }}>
           <Button
             variant="contained"
             color="secondary"

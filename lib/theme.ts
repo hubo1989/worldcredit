@@ -105,7 +105,10 @@ export const lightTheme = createTheme({
           borderRadius: 5,
           border: '1px solid #DDDDDD',
           boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.08)',
-          padding: 24,
+          // 不要在 Card 根上设 padding：MUI 的 <CardContent> 自带内距，
+          // 两者叠加会让每张卡左右各多出 24px（实测 40–44px），窄屏下
+          // 直接把 140px 的小卡内容压到 ~60px，金额与标签被裁。
+          // 内距交由 CardContent（16/24px）或各页面显式控制。
           color: '#333333',
         },
       },

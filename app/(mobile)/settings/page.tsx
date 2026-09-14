@@ -70,7 +70,13 @@ function MineEntry({ icon, title, subtitle, onClick, expanded, rightSlot }: Mine
         '&:active': { backgroundColor: 'rgba(10, 31, 68, 0.03)' },
       }}
     >
-      <Stack direction="row" spacing={1.5} alignItems="center">
+      {/*
+        360 下「带状态 chip」的行可用宽度 = 296 − 图标 48 − chip 88 − 右箭头 24
+        − 3×12px 间距 = 100px，比「邮箱账单导入」自身需要的 110px 窄，标题于是被
+        折成「邮箱账单导 / 入」。标题与 chip 都是不可拆的语义单元，所以只对这一行
+        把行间距从 12px 收到 8px 腾出 12px；其余入口行保持原 12px 节奏不变。
+      */}
+      <Stack direction="row" spacing={rightSlot ? 1 : 1.5} alignItems="center">
         {/* 左侧 48x48 圆形浅底 + navy-600 图标 */}
         <Box
           sx={{
@@ -96,6 +102,9 @@ function MineEntry({ icon, title, subtitle, onClick, expanded, rightSlot }: Mine
               fontWeight: 'var(--type-section-weight)',
               letterSpacing: 'var(--type-section-tracking)',
               color: 'var(--text)',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
             }}
           >
             {title}
@@ -107,6 +116,10 @@ function MineEntry({ icon, title, subtitle, onClick, expanded, rightSlot }: Mine
               letterSpacing: 'var(--type-body-tracking)',
               color: 'var(--muted)',
               mt: 0.25,
+              // 带 rightSlot（如「专属就绪」Chip）的行会窄约 88px。这里不截断：
+              // 「专属地址直传，免登记来源邮箱」被省略号吃掉半句就丢了功能说明，
+              // 实测折到 2 行只让该行高 76→90px（+14px），信息完整更值。
+              // 标题本身仍是 nowrap + ellipsis，保证列表首行对齐。
             }}
           >
             {subtitle}

@@ -95,8 +95,13 @@ function CardSummaryRow({
   const product = item.card.card_product
   const bankName = product?.bank_name || '银行卡'
   const cardName = product?.card_name || '信用卡'
+  // 卡名常自带银行名前缀（如「中国银行 普卡」），再拼一次 bankName 会渲染成
+  // 「中国银行 中国银行 普卡」。只在确实是前缀时去掉，避免误伤正常卡名。
+  // 标题里也不再重复 bankName：下一行已有带银行图标的 chip 显示银行，
+  // 长卡名因此能少占 ~115px，把「卡名 + 尾号」的识别信息留给标题。
+  const redundantPrefix = cardName.startsWith(bankName) ? bankName : ''
+  const displayName = redundantPrefix ? cardName.slice(redundantPrefix.length).trim() : cardName
   const tailDigits = formatCardTail(item.card.card_number_last4)
-  const tail = tailDigits ? ` (${tailDigits})` : ''
 
   const isCleared = item.status === 'unissued' || item.unpaidAmount <= 0
   const isOverdue = item.status === 'overdue'
@@ -141,18 +146,45 @@ function CardSummaryRow({
       <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} sx={{ mb: 1.25 }}>
         <Box sx={{ minWidth: 0, flex: 1 }}>
           {/* 卡片标题：章节档 19/24 · 半粗体 · -0.6px */}
-          <Typography
-            sx={{
-              fontSize: 'var(--type-section-size)',
-              lineHeight: 'var(--type-section-line)',
-              letterSpacing: 'var(--type-section-tracking)',
-              fontWeight: 'var(--type-section-weight)',
-              color: 'var(--text)',
-            }}
-            noWrap
-          >
-            {bankName} {cardName}{tail}
-          </Typography>
+          {/*
+            卡尾号必须留在标题行且永不被截断：同一款卡办了两张时
+            （如「尊然白金信用卡（精粹版）」尾号 2016 与 8909），
+            卡名完全相同，尾号是唯一能区分它们的识别信息。
+            因此卡名负责省略，尾号单独一个 flexShrink:0 元素。
+          */}
+          <Stack direction="row" alignItems="baseline" spacing={0.5} sx={{ minWidth: 0 }}>
+            <Typography
+              sx={{
+                fontSize: 'var(--type-section-size)',
+                lineHeight: 'var(--type-section-line)',
+                letterSpacing: 'var(--type-section-tracking)',
+                fontWeight: 'var(--type-section-weight)',
+                color: 'var(--text)',
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+              noWrap
+            >
+              {displayName}
+            </Typography>
+            {tailDigits && (
+              <Typography
+                component="span"
+                sx={{
+                  flexShrink: 0,
+                  whiteSpace: 'nowrap',
+                  fontSize: 'var(--type-body-size)',
+                  lineHeight: 'var(--type-body-line)',
+                  letterSpacing: 'var(--type-body-tracking)',
+                  fontWeight: 400,
+                  color: 'var(--muted)',
+                }}
+              >
+                ····{tailDigits}
+              </Typography>
+            )}
+          </Stack>
           <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mt: 0.5, flexWrap: 'wrap', rowGap: 0.5 }}>
             <Box
               component="span"
@@ -193,6 +225,7 @@ function CardSummaryRow({
             lineHeight: '18px',
             letterSpacing: '0.3px',
             fontWeight: 600,
+            whiteSpace: 'nowrap',
           }}
         >
           {badgeText}
@@ -201,7 +234,7 @@ function CardSummaryRow({
 
       {/* 金额与主要操作 */}
       <Stack direction="row" alignItems="flex-end" justifyContent="space-between" sx={{ mb: 1.5 }}>
-        <Box>
+        <Box sx={{ minWidth: 0 }}>
           <Typography className="type-label">
             {isCleared ? '本期待还' : '当前待还金额'}
           </Typography>
@@ -214,6 +247,7 @@ function CardSummaryRow({
               fontWeight: 'var(--type-title-weight)',
               color: isCleared ? 'var(--success)' : 'var(--danger)',
               mt: 0.25,
+              whiteSpace: 'nowrap',
             }}
           >
             ¥{item.unpaidAmount.toLocaleString()}
@@ -235,6 +269,8 @@ function CardSummaryRow({
               py: 0.4,
               px: 1.75,
               textTransform: 'none',
+              flexShrink: 0,
+              whiteSpace: 'nowrap',
             }}
           >
             登记还款
@@ -257,21 +293,56 @@ function CardSummaryRow({
           fontFamily: 'var(--font-display)',
           color: 'var(--text)',
           display: 'flex',
+          // 「账单日 + 下期还款约」约需 250px，「今日刷卡免息 N 天」约需 140px，
+          // 390px 下一行装不下两者（会各自折行、短语从中间断开）。
+          // 因此窄屏纵向堆叠，每个语义单元独占一行；宽屏再并排。
+          flexDirection: { xs: 'column', sm: 'row' },
           justifyContent: 'space-between',
-          alignItems: 'center',
+          alignItems: { xs: 'flex-start', sm: 'center' },
+          gap: 1,
         }}
       >
-        <Box>
-          <span>账单日 每月 <strong>{item.billingDay}</strong> 日</span>
-          <span style={{ margin: '0 6px', color: 'var(--muted)' }}>·</span>
-          <span>
+        {/*
+          这一行曾被压坏：左右两个子项都没有收缩约束，flexbox 于是按内容比例
+          压缩，双方都折成两行，右侧「今日刷卡免息」与「46 天」从短语中间断开。
+          现在左侧允许在「·」处折行（语义单元内部 nowrap，不会从短语中间断），
+          右侧免息天数 flexShrink:0 + nowrap，永远保持一行。
+        */}
+        <Box
+          sx={{
+            minWidth: 0,
+            display: 'flex',
+            flexWrap: 'nowrap',
+            alignItems: 'center',
+            columnGap: '6px',
+            rowGap: 0,
+          }}
+        >
+          <Box component="span" sx={{ whiteSpace: 'nowrap' }}>
+            账单日 每月 <strong>{item.billingDay}</strong> 日
+          </Box>
+          <Box component="span" sx={{ color: 'var(--muted)' }}>·</Box>
+          <Box component="span" sx={{ whiteSpace: 'nowrap' }}>
             {isCleared
               ? `下期还款约 ${format(item.nextDueDate, 'MM-dd')}`
               : `本期还款日 ${item.activeBill?.due_date ? format(new Date(item.activeBill.due_date), 'MM-dd') : '—'}`}
-          </span>
+          </Box>
         </Box>
-        <Box sx={{ color: 'var(--gold-700)', fontWeight: 600, letterSpacing: '-0.6px' }}>
-          {isCleared ? `✨ 今日刷卡免息 ${item.graceDays} 天` : `待结清`}
+        <Box
+          sx={{
+            flexShrink: 0,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 0.5,
+            whiteSpace: 'nowrap',
+            color: 'var(--gold-700)',
+            fontWeight: 600,
+            letterSpacing: '-0.6px',
+          }}
+        >
+          {/* 图标库自带「禁用 emoji」约定，用绘制的时钟替代 ✨／📅 这类字符 */}
+          <ClockIcon size={14} />
+          {isCleared ? `今日刷卡免息 ${item.graceDays} 天` : '待结清'}
         </Box>
       </Box>
 
@@ -351,6 +422,7 @@ function CardSummaryRow({
                           lineHeight: '18px',
                           letterSpacing: '0.3px',
                           fontWeight: 600,
+                          whiteSpace: 'nowrap',
                           px: 0.75,
                           py: 0.15,
                           borderRadius: 'var(--radius-pill)',
@@ -654,7 +726,9 @@ export default function BillsPage() {
       {/* 顶部标题与同步按钮 */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         {/* 标题：22/28 · 半粗体 · -0.7px（.phone h5 角色） */}
-        <Typography variant="h5">卡片与账单</Typography>
+        <Typography variant="h5" sx={{ minWidth: 0, whiteSpace: 'nowrap' }}>
+          卡片与账单
+        </Typography>
         <IconButton
           id="sync-bills-btn"
           aria-label="同步账单"
@@ -696,11 +770,11 @@ export default function BillsPage() {
         >
           <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
             <WarningIcon sx={{ color: 'var(--danger)', fontSize: 20, flexShrink: 0 }} />
-            <Box sx={{ minWidth: 0 }}>
+            <Box sx={{ minWidth: 0, flex: 1 }}>
               <Typography sx={{ fontSize: 14.5, lineHeight: '18px', letterSpacing: '0.3px', fontWeight: 600, color: 'var(--danger)' }} noWrap>
                 存在 {allOverdueBills.length} 笔历史逾期账单未结清
               </Typography>
-              <Typography className="type-label" noWrap>
+              <Typography className="type-label" sx={{ whiteSpace: 'nowrap' }}>
                 待还合计：¥{totalOverdueAmount.toLocaleString()}
               </Typography>
             </Box>

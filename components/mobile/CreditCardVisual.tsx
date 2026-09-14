@@ -78,9 +78,34 @@ export function CreditCardVisual({ card, usedAmount = 0, onClick }: Props) {
               {bankName}
             </Typography>
           </Box>
-          <Typography sx={{ ...BODY, color: 'var(--text-on-dark)', opacity: 0.8 }}>
-            {cardName} {formatCardTail(card.card_number_last4) ? `•••• ${formatCardTail(card.card_number_last4)}` : ''}
-          </Typography>
+          {/*
+            卡名与卡尾号拆成两个 element：合在一个文本节点里时，长卡名折行会把
+            「•••• 0444」孤立成第二行（实测 2 行）。卡尾号是识别同一款卡不同张的
+            关键信息，必须整段留在同一行，因此 flexShrink: 0 + nowrap，卡名负责省略。
+          */}
+          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.5, minWidth: 0 }}>
+            <Typography
+              sx={{
+                ...BODY,
+                color: 'var(--text-on-dark)',
+                opacity: 0.8,
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {cardName}
+            </Typography>
+            {formatCardTail(card.card_number_last4) && (
+              <Typography
+                component="span"
+                sx={{ ...BODY, color: 'var(--text-on-dark)', opacity: 0.8, flexShrink: 0, whiteSpace: 'nowrap' }}
+              >
+                •••• {formatCardTail(card.card_number_last4)}
+              </Typography>
+            )}
+          </Box>
         </Box>
 
         {/* 额度使用情况 */}

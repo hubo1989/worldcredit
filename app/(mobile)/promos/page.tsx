@@ -429,7 +429,10 @@ export default function PromosPage() {
                   </Box>
                 )}
 
-                <CardContent sx={{ p: 2.5 }}>
+                {/* 持卡角标「我已持卡可享」绝对定位在卡片右上角，会盖住内容顶部；
+                    卡片根 padding 收敛后首行上移，必须给角标留出高度，否则
+                    银行名与优惠标签会被角标压住。 */}
+                <CardContent sx={{ p: 2.5, pt: hasCard ? 4 : 2.5 }}>
                   <Stack direction="row" spacing={2}>
                     <Box
                       sx={{
@@ -456,6 +459,10 @@ export default function PromosPage() {
                             letterSpacing: 'var(--type-body-tracking)',
                             fontWeight: 600,
                             color: 'var(--strong)',
+                            minWidth: 0,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
                           }}
                         >
                           {p.bank_name}
@@ -467,7 +474,9 @@ export default function PromosPage() {
                           sx={{
                             height: 20, fontSize: 'var(--type-body-size)',
                             letterSpacing: 'var(--type-body-tracking)', fontWeight: 600,
-                            mr: hasCard ? 10 : 0,
+                            // 角标「我已持卡可享」是绝对定位在卡片右上角、盖在本行之上的，
+                            // 不需要用 80px 右边距给它让位（那会把「招商银行」压成竖排）。
+                            flexShrink: 0,
                           }}
                         />
                       </Stack>
@@ -500,7 +509,20 @@ export default function PromosPage() {
                         </Typography>
                       )}
 
-                      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ pt: 1, borderTop: '1px dashed var(--track)' }}>
+                      {/* 截止日期（约 105px）与操作按钮（约 82px）都是不可拆的语义
+                          单元：宽度够时并排、两端对齐，装不下时按钮整颗换行，
+                          而不是把「截止至 2026-12-31」从中间断开。 */}
+                      <Stack
+                        direction="row"
+                        justifyContent="space-between"
+                        sx={{
+                          pt: 1,
+                          borderTop: '1px dashed var(--track)',
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                          gap: 1,
+                        }}
+                      >
                         <Typography
                           sx={{
                             fontSize: 'var(--type-body-size)',
@@ -510,6 +532,7 @@ export default function PromosPage() {
                             display: 'flex',
                             alignItems: 'center',
                             gap: 0.5,
+                            whiteSpace: 'nowrap',
                           }}
                         >
                           <AccessTimeIcon sx={{ fontSize: 13 }} />
@@ -526,7 +549,9 @@ export default function PromosPage() {
                             fontWeight: 700,
                             py: 0.4,
                             px: 1.5,
-                            textTransform: 'none'
+                            textTransform: 'none',
+                            flexShrink: 0,
+                            whiteSpace: 'nowrap',
                           }}
                         >
                           {hasCard ? '一键享用' : '关注活动'}

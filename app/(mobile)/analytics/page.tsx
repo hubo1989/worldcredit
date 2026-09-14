@@ -237,7 +237,9 @@ export default function AnalyticsPage() {
 
           {/* Summary Cards */}
           <Stack direction="row" spacing={1} sx={{ overflowX: 'auto', pb: 1 }}>
-            <Card elevation={0} sx={{ minWidth: 140, flex: 1, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
+            {/* 横向滚动条里的卡片：flexShrink:0 让每个语义单元保持完整宽度，
+                不让 flex 把「额度使用率」这类标签压到折行。 */}
+            <Card elevation={0} sx={{ minWidth: 140, flex: 1, flexShrink: 0, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
                 <Typography
                   sx={{
@@ -245,17 +247,18 @@ export default function AnalyticsPage() {
                     lineHeight: 'var(--type-body-line)',
                     letterSpacing: 'var(--type-body-tracking)',
                     color: 'var(--muted)',
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   账单总额
                 </Typography>
-                <Typography variant="h6" sx={{ fontWeight: 700, color: 'var(--text)' }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap' }}>
                   {formatCurrency(summary.total_bill_amount)}
                 </Typography>
               </CardContent>
             </Card>
 
-            <Card elevation={0} sx={{ minWidth: 140, flex: 1, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
+            <Card elevation={0} sx={{ minWidth: 140, flex: 1, flexShrink: 0, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
                 <Typography
                   sx={{
@@ -263,17 +266,18 @@ export default function AnalyticsPage() {
                     lineHeight: 'var(--type-body-line)',
                     letterSpacing: 'var(--type-body-tracking)',
                     color: 'var(--muted)',
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   待还金额
                 </Typography>
-                <Typography variant="h6" sx={{ fontWeight: 700, color: 'var(--danger)' }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: 'var(--danger)', whiteSpace: 'nowrap' }}>
                   {formatCurrency(summary.pending_amount)}
                 </Typography>
               </CardContent>
             </Card>
 
-            <Card elevation={0} sx={{ minWidth: 140, flex: 1, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
+            <Card elevation={0} sx={{ minWidth: 140, flex: 1, flexShrink: 0, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
                 <Typography
                   sx={{
@@ -281,17 +285,18 @@ export default function AnalyticsPage() {
                     lineHeight: 'var(--type-body-line)',
                     letterSpacing: 'var(--type-body-tracking)',
                     color: 'var(--muted)',
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   已还金额
                 </Typography>
-                <Typography variant="h6" sx={{ fontWeight: 700, color: 'var(--success)' }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: 'var(--success)', whiteSpace: 'nowrap' }}>
                   {formatCurrency(summary.paid_amount)}
                 </Typography>
               </CardContent>
             </Card>
 
-            <Card elevation={0} sx={{ minWidth: 140, flex: 1, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
+            <Card elevation={0} sx={{ minWidth: 140, flex: 1, flexShrink: 0, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
                 <Typography
                   sx={{
@@ -299,11 +304,12 @@ export default function AnalyticsPage() {
                     lineHeight: 'var(--type-body-line)',
                     letterSpacing: 'var(--type-body-tracking)',
                     color: 'var(--muted)',
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   额度使用率
                 </Typography>
-                <Typography variant="h6" sx={{ fontWeight: 700, color: summary.utilization_rate > 70 ? 'var(--danger)' : 'var(--strong)' }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: summary.utilization_rate > 70 ? 'var(--danger)' : 'var(--strong)', whiteSpace: 'nowrap' }}>
                   {summary.utilization_rate.toFixed(1)}%
                 </Typography>
               </CardContent>

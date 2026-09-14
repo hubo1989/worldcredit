@@ -195,8 +195,9 @@ export function MergeHoldersDialog({
         </FormControl>
 
         {/* 2. 选择被归拢的重复持卡人 */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-          <Typography className="type-section">
+        {/* 长标题 + 操作按钮同行：标题可换行(minWidth:0)，按钮文案不可拆且不收缩 */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1, mb: 1 }}>
+          <Typography className="type-section" sx={{ minWidth: 0 }}>
             2. 选择需要归拢合并进来的重复身份 ({sourceIds.length}/{candidateHolders.length})
           </Typography>
           {autoSuggestedIds.length > 0 && (
@@ -205,7 +206,13 @@ export function MergeHoldersDialog({
               variant="text"
               startIcon={<AutoFixHighIcon fontSize="small" />}
               onClick={handleSelectSuggested}
-              sx={{ fontSize: 11.5, fontWeight: 700, textTransform: 'none' }}
+              sx={{
+                flexShrink: 0,
+                whiteSpace: 'nowrap',
+                fontSize: 11.5,
+                fontWeight: 700,
+                textTransform: 'none',
+              }}
             >
               智能全选相似 ({autoSuggestedIds.length})
             </Button>

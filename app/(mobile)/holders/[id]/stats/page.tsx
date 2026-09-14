@@ -152,13 +152,16 @@ export default function HolderStatsPage() {
               {formatAmount(summary.totalLimit)}
             </Typography>
           <Box sx={{ mt: 3 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+            {/* 两个语义单元（使用率 / 已用·可用）在 358px hero 卡内天然都需较宽空间：
+                允许换行让各自独占一行，避免双方同时被压成两行 */}
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', columnGap: 2, rowGap: 0.5, mb: 1 }}>
               <Typography
                 sx={{
                   fontSize: 'var(--type-body-size)',
                   lineHeight: 'var(--type-body-line)',
                   letterSpacing: 'var(--type-body-tracking)',
                   color: 'rgba(255,255,255,0.78)',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 额度使用率 {summary.utilizationRate}%
@@ -169,6 +172,7 @@ export default function HolderStatsPage() {
                   lineHeight: 'var(--type-body-line)',
                   letterSpacing: 'var(--type-body-tracking)',
                   color: 'rgba(255,255,255,0.78)',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 已用 {formatAmount(summary.totalUsed)} / 可用 {formatAmount(summary.availableLimit)}

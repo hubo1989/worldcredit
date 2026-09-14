@@ -85,13 +85,15 @@ export function NotificationPermissionGuide({ onPermissionGranted }: Props) {
               <Typography className="type-body" sx={{ mb: 1.5, color: 'var(--text)' }}>
                 开启浏览器通知后，我们将在账单到期前和逾期时及时提醒您，避免忘记还款。
               </Typography>
-              <Stack direction="row" spacing={1}>
+              {/* 两个按钮都是可点目标：文案 nowrap 且不收缩；窄屏放不下时整行下移而非折断文字 */}
+              <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
                 <Button
                   variant="contained"
                   size="small"
                   startIcon={<NotificationsIcon />}
                   onClick={handleRequestPermission}
                   disabled={loading}
+                  sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
                 >
                   {loading ? '请求中...' : '开启通知'}
                 </Button>
@@ -99,6 +101,7 @@ export function NotificationPermissionGuide({ onPermissionGranted }: Props) {
                   variant="outlined"
                   size="small"
                   onClick={() => setDismissed(true)}
+                  sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
                 >
                   暂不开启
                 </Button>

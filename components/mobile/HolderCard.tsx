@@ -64,6 +64,9 @@ export function HolderCard({ holder, cardCount, onClick, onEdit }: Props) {
             size="small"
             sx={{
               // 微型标签：保留 ≤12px 小字号，只统一圆角档与配色语义
+              // 计数标签是不可拆语义单元：不参与收缩，位数变多也不折行
+              flexShrink: 0,
+              whiteSpace: 'nowrap',
               borderRadius: 'var(--radius-pill)',
               bgcolor: 'primary.light',
               color: 'primary.dark',
@@ -75,7 +78,8 @@ export function HolderCard({ holder, cardCount, onClick, onEdit }: Props) {
               aria-label="编辑持卡人"
               size="small"
               onClick={(e) => { e.stopPropagation(); onEdit() }}
-              sx={{ color: 'var(--strong)' }}
+              // 图标按钮是固定触控目标，不参与被压缩
+              sx={{ color: 'var(--strong)', flexShrink: 0 }}
             >
               <EditIcon fontSize="small" />
             </IconButton>
