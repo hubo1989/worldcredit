@@ -221,3 +221,72 @@ export function dueDistanceLabel(days: number): string {
   if (days === 0) return '今天还款日'
   return `距离还款日 ${days} 日`
 }
+
+/**
+ * 下一次账单日：本月还没到账单日就用本月，否则用下月。
+ *
+ * 账单日大于当月天数时按当月最后一天算（2 月 30 日 → 2 月 28/29 日）。
+ * 与 bills.server 的 calculateCardGracePeriod 是同一口径，那边算的是
+ * 下期还款日，这里只取账单日本身。
+ */
+export function nextBillingDateOf(billingDay: number, today: Date = new Date()): Date {
+  const day = Number.isFinite(billingDay) && billingDay >= 1 ? Math.min(billingDay, 31) : 10
+  const thisMonthDay = Math.min(day, lastDayOfMonth(today).getDate())
+  if (today.getDate() <= thisMonthDay) {
+    return new Date(today.getFullYear(), today.getMonth(), thisMonthDay)
+  }
+  const nextMonth = addMonths(today, 1)
+  return new Date(nextMonth.getFullYear(), nextMonth.getMonth(), Math.min(day, lastDayOfMonth(nextMonth).getDate()))
+}
+
+/** 距下一次账单日还有几天（0 = 今天就是账单日）。 */
+export function daysUntilNextBilling(billingDay: number, today: Date = new Date()): number {
+  return diffInCalendarDays(nextBillingDateOf(billingDay, today), today)
+}
+
+/** 账单页排序所需的最小卡片形状（便于单测，不依赖完整 RPC 类型）。 */
+export interface BillsListCard {
+  status: CardUrgencyStatus
+  billingDay: number
+  historyBills: { due_date: string; computed_status: string }[]
+}
+
+/**
+ * 卡片在账单页里的排序键。
+ *
+ * tier 决定大分组，固定为：逾期(0) → 待还款/部分还款(1) → 未出账单/已结清(2)。
+ * distance 是组内的「还有多远」，三个组各自用不同轴，但方向一致——都按
+ * 距离升序，于是自然形成：
+ *
+ *   逾期组：days 为负，升序 = 逾期最长 → 逾期最短
+ *   待还款组：days 非负，升序 = 距还款日最近 → 最远
+ *   未出账单组：升序 = 距账单日最近 → 最远
+ *
+ * 逾期/待还款组用 pickDueReference 而不是 activeBill：卡片上显示的「逾期 X 日」
+ * 就是拿这张账单算的，排序和显示必须同源，否则可见数字会不单调、看起来像坏了。
+ */
+export function billsListSortKey(
+  card: BillsListCard,
+  today: Date = new Date()
+): { tier: number; distance: number } {
+  const tier = cardUrgencyRank(card.status)
+  if (tier === 2) {
+    return { tier, distance: daysUntilNextBilling(card.billingDay, today) }
+  }
+  const unpaid = card.historyBills.filter(b => b.computed_status !== 'paid')
+  const ref = pickDueReference(unpaid, today)
+  // 理论上 tier<2 时一定有未结清账单；真出现空集时给 0，不让它排到最前或最后。
+  return { tier, distance: ref ? ref.days : 0 }
+}
+
+/** 账单页卡片比较器：先比 tier，再比组内 distance，都按升序。 */
+export function compareBillsListCards(
+  a: BillsListCard,
+  b: BillsListCard,
+  today: Date = new Date()
+): number {
+  const ka = billsListSortKey(a, today)
+  const kb = billsListSortKey(b, today)
+  if (ka.tier !== kb.tier) return ka.tier - kb.tier
+  return ka.distance - kb.distance
+}

@@ -29,16 +29,15 @@ import { getHolders } from '@/lib/api/holders'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
 import { format } from 'date-fns'
-import { formatCardTail, cardUrgencyRank, pickDueReference, dueDistanceLabel } from '@/lib/utils'
+import { formatCardTail, compareBillsListCards, pickDueReference, dueDistanceLabel } from '@/lib/utils'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import {
   SyncIcon, BankIcon, UserIcon,
-  FilterIcon, SortIcon, ChevronDownIcon, CloseIcon, ClockIcon,
+  FilterIcon, ChevronDownIcon, CloseIcon, ClockIcon,
 } from '@/components/icons/WcIcon'
 import { useAuth } from '@/lib/auth'
 
 type Dimension = 'holder' | 'bank'
-type SortMode = 'grace' | 'due'
 type ViewFilter = 'all' | 'unpaid' | 'cleared'
 
 // 通用分段 / 标签 / 排序 pill
@@ -473,7 +472,6 @@ export default function BillsPage() {
   // 维度 / 标签 / 排序 / 状态过滤
   const [dimension, setDimension] = useState<Dimension>('holder')
   const [selectedTag, setSelectedTag] = useState<string>('all')
-  const [sortMode, setSortMode] = useState<SortMode>('grace')
   const [viewFilter, setViewFilter] = useState<ViewFilter>('all')
   // 筛选器默认收成一行摘要，逐步展开完整维度/标签/排序
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -658,21 +656,12 @@ export default function BillsPage() {
     })
   }, [cardsSummary, viewFilter, selectedTag, dimension])
 
-  // 排序：先按状态固定分组（逾期 → 待还款 → 未出账单/已结清），
-  // 再在组内按所选方式排（免息期最长 / 还款日近→远）。
-  // 分组不受 sortMode 影响：一笔刚到期的账单不该被埋进一堆未出账单的卡里。
-  const sortedCards = useMemo(() => {
-    const arr = [...filteredCards]
-    arr.sort((a, b) => {
-      const rankDiff = cardUrgencyRank(a.status) - cardUrgencyRank(b.status)
-      if (rankDiff !== 0) return rankDiff
-      if (sortMode === 'grace') {
-        return b.graceDays - a.graceDays
-      }
-      return a.nextDueDate.getTime() - b.nextDueDate.getTime()
-    })
-    return arr
-  }, [filteredCards, sortMode])
+  // 排序固定为三段，每段用各自的时间轴，方向都是「最紧要的在前」：
+  //   逾期      → 逾期最久 → 逾期最短
+  //   待还款    → 距还款日最近 → 最远
+  //   未出账单  → 距账单日最近 → 最远
+  // 三段顺序不随任何开关变化，所以页面上不再提供排序选项。
+  const sortedCards = useMemo(() => [...filteredCards].sort(compareBillsListCards), [filteredCards])
 
   // 按银行分组（保持 sortedCards 顺序）
   const bankGroups = useMemo(() => {
@@ -708,12 +697,11 @@ export default function BillsPage() {
         : dimension === 'holder'
           ? holderTags.find(t => t.id === selectedTag)?.name || '未知持卡人'
           : selectedTag
-    const sortText = sortMode === 'grace' ? '组内免息期最长' : '组内还款日近→远'
     const dimText = dimension === 'holder' ? '持卡人' : '银行'
-    return statusText + ' · 按' + dimText + ' · ' + tagText + ' · ' + sortText
-  }, [viewFilter, dimension, selectedTag, sortMode, holderTags])
+    return statusText + ' · 按' + dimText + ' · ' + tagText + ' · 逾期优先'
+  }, [viewFilter, dimension, selectedTag, holderTags])
 
-  // 计入摘要的非默认维度数量（排序默认 grace，不计入）
+  // 计入摘要的非默认维度数量（排序已固定，不计入）
   const activeFilterCount = useMemo(() => {
     let n = 0
     if (viewFilter !== 'all') n += 1
@@ -722,13 +710,12 @@ export default function BillsPage() {
     return n
   }, [viewFilter, dimension, selectedTag])
 
-  const hasActiveFilter = activeFilterCount > 0 || sortMode !== 'grace'
+  const hasActiveFilter = activeFilterCount > 0
 
   const resetFilters = useCallback(() => {
     setViewFilter('all')
     setDimension('holder')
     setSelectedTag('all')
-    setSortMode('grace')
   }, [])
 
   return (
@@ -976,21 +963,27 @@ export default function BillsPage() {
               className="type-label"
               sx={{ display: 'block', mb: 0.75, fontWeight: 600, color: 'var(--muted)' }}
             >
-              组内排序（逾期、待还款始终排在前面）
+              排序
             </Typography>
-            <Stack direction="row" spacing={1}>
-              <Pill selected={sortMode === 'grace'} onClick={() => setSortMode('grace')}>
-                <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-                  <SortIcon size={13} />
-                  免息期最长（刷卡推荐）
-                </Box>
-              </Pill>
-              <Pill selected={sortMode === 'due'} onClick={() => setSortMode('due')}>
-                <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-                  <ClockIcon size={13} />
-                  还款日近→远
-                </Box>
-              </Pill>
+            {/*
+              三段顺序是固定的，没有可选项，因此这里不放开关——留一组点了
+              也不改变顺序的 pill 只会让人以为排序坏了。改为直接说明规则。
+            */}
+            <Stack component="ol" spacing={0.5} sx={{ m: 0, pl: 2.25, listStyle: 'decimal' }}>
+              {[
+                '逾期：逾期最久 → 最短',
+                '待还款：距还款日最近 → 最远',
+                '未出账单/已结清：距账单日最近 → 最远',
+              ].map(text => (
+                <Typography
+                  component="li"
+                  key={text}
+                  className="type-label"
+                  sx={{ color: 'var(--text)' }}
+                >
+                  {text}
+                </Typography>
+              ))}
             </Stack>
           </Box>
         </Collapse>
