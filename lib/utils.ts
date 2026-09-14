@@ -114,6 +114,36 @@ export function generateIdempotencyKey(): string {
 }
 
 /**
+ * 归一化持卡人别名。
+ *
+ * D1 把 `card_holders.aliases` 声明为 TEXT，读回来是 JSON 字符串（如
+ * `'["呼金堂"]'`）而不是数组；旧 Postgres/InsForge 形态才是 `text[]`。
+ * 组件里存在 `aliases.join('、')`、`aliases.length`、`aliases.forEach` 这类
+ * 数组用法，直接吃字符串会抛 `aliases.join is not a function` 并让整页白屏。
+ *
+ * 在读取边界统一走这个函数，数组与 JSON 字符串两种历史形态都能安全通过；
+ * 非 JSON 的脏值按「无别名」处理，宁可少显示也不阻断页面。
+ */
+export function normalizeAliases(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string' && item.length > 0)
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return []
+    try {
+      const parsed: unknown = JSON.parse(trimmed)
+      return Array.isArray(parsed)
+        ? parsed.filter((item): item is string => typeof item === 'string' && item.length > 0)
+        : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+/**
  * 卡片尾号展示：只显示末 4 位。
  *
  * 存储层保留完整尾号原值（大陆/香港卡 4 位、American Express 5 位如 `93001`、

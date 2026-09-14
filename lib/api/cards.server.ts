@@ -1,5 +1,6 @@
 import { query, queryOne, execute, uuid } from '../db'
 import type { CardProduct, CreditCard, CardHolder, Bill, Benefit, BenefitUsage } from '@/lib/types'
+import { normalizeAliases } from '../utils'
 
 export type CreditCardWithProduct = CreditCard & {
   card_product?: CardProduct
@@ -95,7 +96,8 @@ export async function getCardHolders(): Promise<CardHolder[]> {
     'SELECT * FROM card_holders ORDER BY created_at ASC'
   )
   if (error) throw new Error(error.message)
-  return data || []
+  // D1 把 aliases 存成 TEXT，读回来是 JSON 字符串；与 holders.server.ts 同样在读取边界归一化
+  return (data || []).map(row => ({ ...row, aliases: normalizeAliases(row.aliases) }))
 }
 
 /** Light-weight card list (id + holder) used by the dashboard filter chips. */

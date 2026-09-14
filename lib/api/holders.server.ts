@@ -1,6 +1,7 @@
 // lib/api/holders.ts
 import { query, queryOne, execute, uuid, now, batch } from '../db'
 import type { CardHolder, CreditCard, Bill, CardProduct } from '../types'
+import { normalizeAliases } from '../utils'
 
 export interface HolderStats {
   cardCount: number
@@ -92,6 +93,18 @@ function computeStats(cards: CreditCardWithProduct[], billsByCard: Record<string
   }
 }
 
+/**
+ * D1 把 card_holders.aliases 声明为 TEXT，读回来是 JSON 字符串而不是数组。
+ * 组件里有 `aliases.join(...)` / `aliases.length` 这类数组用法，直接吃字符串
+ * 会抛 `c.aliases.join is not a function` 并让整页白屏。这里在读取边界统一归一化，
+ * 数组与 JSON 字符串两种历史形态都能安全通过。
+ */
+function normalizeHolderAliases<T extends { aliases?: unknown }>(row: T): T {
+  if (!row) return row
+  if (row.aliases === undefined) return row
+  return { ...row, aliases: normalizeAliases(row.aliases) }
+}
+
 export async function getHolders(userId?: string): Promise<CardHolder[]> {
   const conditions: string[] = []
   const params: unknown[] = []
@@ -106,7 +119,7 @@ export async function getHolders(userId?: string): Promise<CardHolder[]> {
     params
   )
   if (error) throw new Error(error.message)
-  return data || []
+  return (data || []).map(normalizeHolderAliases)
 }
 
 /** Card count per holder id, used by the holders management page. */
@@ -148,7 +161,7 @@ export async function getHolder(id: string): Promise<CardHolder> {
   )
   if (error) throw new Error(error.message)
   if (!data) throw new Error('持卡人不存在')
-  return data
+  return normalizeHolderAliases(data)
 }
 
 export async function getHolderDetailStats(holderId: string): Promise<{ cards: CreditCardWithProduct[]; stats: HolderStats }> {
