@@ -206,7 +206,26 @@ export async function deleteBenefit(id: string) {
 
 // --- 系统设置 ---
 
-export async function getSystemSettings() {
+/**
+ * 敏感设置键：任何角色（含 admin）都不得经由 RPC 拿到明文。
+ *
+ * getSystemSettings() 在服务端边界剥掉这些键，只留下 `<key>_set` 布尔标志，
+ * 让管理端能区分「从未配置」与「已配置但不回显」。需要真值的服务端内部代码
+ * 必须显式调用 getSystemSettingsWithSecrets()。
+ */
+const SECRET_SETTING_KEYS = ['ai_api_key'] as const
+
+function isSecretSettingKey(key: string): boolean {
+  return (SECRET_SETTING_KEYS as readonly string[]).includes(key)
+}
+
+/**
+ * 服务端内部使用：返回**包含密钥**的原始设置。
+ *
+ * 绝对不要注册进 lib/api/registry.ts——一旦注册，密钥就会随 RPC 响应体
+ * 回到浏览器（devtools / 内存 / 网络面板）。AI 调用只在服务端进行。
+ */
+export async function getSystemSettingsWithSecrets() {
   const { data, error } = await query<{ key: string; value: string }>(
     'SELECT key, value FROM system_settings'
   )
@@ -222,6 +241,21 @@ export async function getSystemSettings() {
   return settings
 }
 
+/**
+ * RPC / 客户端可见的设置：密钥已在服务端剥离。
+ *
+ * 密钥不在响应里，也不出现在任何字符串字段中；只暴露 `ai_api_key_set`。
+ */
+export async function getSystemSettings() {
+  const settings = await getSystemSettingsWithSecrets()
+  for (const key of SECRET_SETTING_KEYS) {
+    const value = settings[key]
+    delete settings[key]
+    settings[`${key}_set`] = typeof value === 'string' && value.length > 0
+  }
+  return settings
+}
+
 export async function updateSystemSettings(key: string, value: unknown) {
   const json = JSON.stringify(value)
   const { error } = await execute(
@@ -230,5 +264,9 @@ export async function updateSystemSettings(key: string, value: unknown) {
     [key, json, now()]
   )
   if (error) throw new Error(error.message)
+  // 写路径同样不得回显：管理员提交密钥后，响应里只回「是否已配置」，不回明文。
+  if (isSecretSettingKey(key)) {
+    return { key, value: null, [`${key}_set`]: typeof value === 'string' && value.length > 0 }
+  }
   return { key, value }
 }

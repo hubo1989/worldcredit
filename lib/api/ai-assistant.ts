@@ -1,5 +1,5 @@
 import { getBillDashboardItems } from './bills.server'
-import { getSystemSettings } from './admin.server'
+import { getSystemSettingsWithSecrets } from './admin.server'
 
 export interface AiAssistantRequest {
   prompt: string
@@ -60,7 +60,9 @@ export async function askAiAssistant({ prompt }: AiAssistantRequest): Promise<Ai
   if (!trimmed) throw new Error('请输入问题')
 
   const context = await buildFinancialContext()
-  const settings = await getSystemSettings()
+  // 服务端内部模块：需要真值密钥，故走 WithSecrets 变体（绝不注册进 RPC registry）。
+  // 注意：本模块目前全库无 import（死代码），保留以最小化改动范围。
+  const settings = await getSystemSettingsWithSecrets()
   const baseURL = ((typeof settings.ai_base_url === 'string' && settings.ai_base_url) || 'https://api.openai.com/v1').replace(/\/$/, '')
   const apiKey = typeof settings.ai_api_key === 'string' ? settings.ai_api_key : ''
   if (!apiKey) throw new Error('AI API 密钥未配置')
