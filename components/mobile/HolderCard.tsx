@@ -86,17 +86,6 @@ export function HolderCard({ holder, cardCount, onClick, onEdit }: Props) {
           )}
         </CardContent>
       </CardActionArea>
-        {holder.auth_user_id && (
-          <Chip
-            label="已绑定成员账号"
-            size="small"
-            sx={{
-              position: 'absolute', top: 8, left: 8,
-              borderRadius: 'var(--radius-pill)',
-              bgcolor: 'success.light', color: 'success.dark',
-            }}
-          />
-        )}
     </Card>
   )
 }
