@@ -64,8 +64,13 @@ export async function syncGmailLedgerToCardsAndBills(targetUserId?: string): Pro
     return { syncedCardsCount: 0, syncedBillsCount: 0 }
   }
 
+  // Admin sees holders they created; a member sees the holders bound to their
+  // account. Same dual predicate as getHolders()/getBillDashboardItems() —
+  // matching on created_by alone would miss every member binding and make the
+  // sync silently attach statements to a freshly minted placeholder holder.
   const { data: rawHolders, error: holderErr } = await query<CardHolder>(
-    'SELECT * FROM card_holders WHERE created_by = ? ORDER BY created_at ASC', [targetUserId]
+    'SELECT * FROM card_holders WHERE (created_by = ? OR auth_user_id = ?) ORDER BY created_at ASC',
+    [targetUserId, targetUserId]
   )
   if (holderErr) throw new Error(holderErr.message)
 
