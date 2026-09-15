@@ -6,7 +6,7 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TablePagination,
   IconButton, Switch, Dialog, DialogTitle, DialogContent,
   DialogActions, Grid, CircularProgress, Autocomplete,
-  Snackbar, Alert, Avatar
+  Snackbar, Alert, Avatar, Chip
 } from '@mui/material'
 import {
   Add as AddIcon,
@@ -19,6 +19,7 @@ import { getAdminBanks, createBank, updateBank, deleteBank } from '@/lib/api/adm
 import { Bank } from '@/lib/types'
 import { COUNTRIES } from '@/lib/constants'
 import AiCompleteButton from '@/components/admin/AiCompleteButton'
+import { enrichBankFromWeb, type BankEnrichment } from '@/lib/api/ai'
 
 export default function BanksPage() {
   const [loading, setLoading] = useState(true)
@@ -31,6 +32,80 @@ export default function BanksPage() {
   const [filterCountry, setFilterCountry] = useState<string>('all')
   const [page, setPage] = useState(0)
   const [rowsPerPage, setRowsPerPage] = useState(10)
+
+  // 「按真实内容补全」：抓官网页面为证，结果先在弹窗里审阅再决定写不写
+  const [enriching, setEnriching] = useState(false)
+  const [enrichProgress, setEnrichProgress] = useState({ done: 0, total: 0 })
+  const [enrichRows, setEnrichRows] = useState<BankEnrichment[]>([])
+  const [enrichOpen, setEnrichOpen] = useState(false)
+
+  /** 只补「缺字段」的银行；全部有值就没必要打外网。 */
+  const banksMissingFields = (list: Bank[]) =>
+    list.filter(b => !b.full_name || !b.customer_service_phone || !b.website_url)
+
+  const handleEnrich = async (targets: Bank[]) => {
+    if (enriching || targets.length === 0) return
+    setEnriching(true)
+    setEnrichProgress({ done: 0, total: targets.length })
+    const acc: BankEnrichment[] = []
+    try {
+      // 串行：每次都打外网 + 调模型，并发会把第三方站点打急眼，也更容易触发限流
+      for (const bank of targets) {
+        try {
+          acc.push(await enrichBankFromWeb({
+            id: bank.id,
+            name: bank.name,
+            country: bank.country,
+            website_url: bank.website_url,
+          }))
+        } catch (err) {
+          acc.push({
+            id: bank.id,
+            name: bank.name,
+            full_name: null,
+            customer_service_phone: null,
+            website_url: null,
+            fetched: [],
+            fetchErrors: [err instanceof Error ? err.message : '补全失败'],
+            provenance: { full_name: 'none', customer_service_phone: 'none', website_url: 'none' },
+            domainConsistent: false,
+          })
+        }
+        setEnrichProgress({ done: acc.length, total: targets.length })
+      }
+      setEnrichRows(acc)
+      setEnrichOpen(true)
+    } finally {
+      setEnriching(false)
+    }
+  }
+
+  /** 写入只有「官网页面上直接读到」的字段，模型凭记忆给的候选一律不自动写。 */
+  const handleApplyEnrichment = async () => {
+    setSubmitting(true)
+    try {
+      let applied = 0
+      for (const row of enrichRows) {
+        const patch: Partial<Bank> = {}
+        if (row.provenance.full_name === 'site' && row.full_name) patch.full_name = row.full_name
+        if (row.provenance.customer_service_phone === 'site' && row.customer_service_phone) {
+          patch.customer_service_phone = row.customer_service_phone
+        }
+        if (row.provenance.website_url === 'site' && row.website_url) patch.website_url = row.website_url
+        if (Object.keys(patch).length === 0) continue
+        await updateBank(row.id, patch)
+        applied++
+      }
+      setEnrichOpen(false)
+      setEnrichRows([])
+      await fetchData()
+      setNotice(`已写入 ${applied} 家银行（仅官网页面上直接读到的字段）`)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : '写入失败')
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const fetchData = async () => {
     setLoading(true)
@@ -104,6 +179,7 @@ export default function BanksPage() {
   }
 
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const handleSubmit = async () => {
     if (!currentBank?.name) {
@@ -202,6 +278,18 @@ export default function BanksPage() {
             />
           </Grid>
           <Grid size={{ xs: 12, md: 4 }} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={enriching ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon />}
+              disabled={enriching || banksMissingFields(filteredBanks).length === 0}
+              onClick={() => handleEnrich(banksMissingFields(filteredBanks))}
+              sx={{ mr: 1, color: '#a5b4fc', borderColor: 'rgba(165,180,252,0.4)', textTransform: 'none' }}
+            >
+              {enriching
+                ? `补全中 ${enrichProgress.done}/${enrichProgress.total}`
+                : `按真实内容补全 (${banksMissingFields(filteredBanks).length})`}
+            </Button>
             <IconButton aria-label="刷新" onClick={fetchData} sx={{ color: '#9ca3af' }}>
               <RefreshIcon />
             </IconButton>
@@ -399,6 +487,78 @@ export default function BanksPage() {
           {saveError}
         </Alert>
       </Snackbar>
+
+      <Snackbar
+        open={Boolean(notice)}
+        autoHideDuration={6000}
+        onClose={() => setNotice(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setNotice(null)} severity="success" variant="filled" sx={{ width: '100%' }}>
+          {notice}
+        </Alert>
+      </Snackbar>
+
+      {/* 审阅弹窗：只有官网页面上直接读到的字段会被写入，模型凭记忆给的候选只展示不落库 */}
+      <Dialog open={enrichOpen} onClose={() => !submitting && setEnrichOpen(false)} maxWidth="md" fullWidth PaperProps={{ sx: { bgcolor: '#1e2028', color: '#e4e6eb', borderRadius: 3 } }}>
+        <DialogTitle>按真实内容补全（以官网页面为证）</DialogTitle>
+        <DialogContent sx={{ bgcolor: '#1e2028' }}>
+          <Typography sx={{ color: '#9ca3af', fontSize: 13, mb: 2 }}>
+            每行的「官网」域名来自模型提名，电话与全称只在该行官网页面上直接读到时才标为「官网」并会被写入；
+            标为「待确认」的是模型记忆里的候选，需要你人工核对后手动填写。未抓到页面的行不会写入任何内容。
+          </Typography>
+          <TableContainer component={Paper} sx={{ bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ color: '#9ca3af' }}>银行</TableCell>
+                  <TableCell sx={{ color: '#9ca3af' }}>全称</TableCell>
+                  <TableCell sx={{ color: '#9ca3af' }}>客服电话</TableCell>
+                  <TableCell sx={{ color: '#9ca3af' }}>官网</TableCell>
+                  <TableCell sx={{ color: '#9ca3af' }}>依据</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {enrichRows.map(row => {
+                  const tag = (p: 'site' | 'model' | 'none') =>
+                    p === 'site' ? (
+                      <Chip size="small" label="官网" sx={{ height: 18, fontSize: 11, bgcolor: 'rgba(74,222,128,0.15)', color: '#4ade80' }} />
+                    ) : p === 'model' ? (
+                      <Chip size="small" label="待确认" sx={{ height: 18, fontSize: 11, bgcolor: 'rgba(251,191,36,0.15)', color: '#fbbf24' }} />
+                    ) : null
+                  return (
+                    <TableRow key={row.id}>
+                      <TableCell sx={{ color: '#e4e6eb' }}>{row.name}</TableCell>
+                      <TableCell sx={{ color: '#e4e6eb', fontSize: 12 }}>
+                        {row.full_name || '—'} {tag(row.provenance.full_name)}
+                      </TableCell>
+                      <TableCell sx={{ color: '#e4e6eb', fontSize: 12 }}>
+                        {row.customer_service_phone || '—'} {tag(row.provenance.customer_service_phone)}
+                      </TableCell>
+                      <TableCell sx={{ color: '#93c5fd', fontSize: 12 }}>
+                        {row.website_url || '—'} {tag(row.provenance.website_url)}
+                      </TableCell>
+                      <TableCell sx={{ color: '#9ca3af', fontSize: 11 }}>
+                        {row.fetched.length > 0
+                          ? `已抓 ${row.fetched.length} 页${row.domainConsistent ? '' : '（域名未能对上，请留意）'}`
+                          : row.fetchErrors.length > 0
+                            ? `未抓到：${row.fetchErrors[0]} `.slice(0, 60)
+                            : '无依据'}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </DialogContent>
+        <DialogActions sx={{ p: 3 }}>
+          <Button onClick={() => setEnrichOpen(false)} disabled={submitting} sx={{ color: '#9ca3af' }}>取消</Button>
+          <Button onClick={handleApplyEnrichment} variant="contained" disabled={submitting} sx={{ bgcolor: '#818cf8', px: 4 }}>
+            {submitting ? '写入中...' : '写入已确认字段'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

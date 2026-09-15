@@ -1,4 +1,5 @@
 import { getSystemSettingsWithSecrets } from './admin.server'
+import { fetchPage, rootDomain } from '../site-fetch'
 
 export interface AiCompleteRequest {
   type: 'bank' | 'card_product' | 'bill_text' | 'card_text'
@@ -63,19 +64,52 @@ async function chatCompletion({
 
 /** 宽松解析 LLM 返回的 JSON 对象（容忍前后缀文字）。 */
 function parseJsonObject(content: string): Record<string, unknown> {
-  try {
-    return JSON.parse(content)
-  } catch {
-    const match = content.match(/\{[\s\S]*\}/)
-    if (match) {
-      try {
-        return JSON.parse(match[0])
-      } catch {
-        // fallthrough to the error below
-      }
+  const attempt = (raw: string): Record<string, unknown> | null => {
+    try {
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null
+    } catch {
+      return null
     }
-    throw new Error(`AI 返回格式错误: ${content.slice(0, 200)}`)
   }
+
+  const direct = attempt(content)
+  if (direct) return unwrapAnswer(direct)
+
+  const match = content.match(/\{[\s\S]*\}/)
+  if (match) {
+    const nested = attempt(match[0])
+    if (nested) return unwrapAnswer(nested)
+  }
+  throw new Error(`AI 返回格式错误: ${content.slice(0, 200)}`)
+}
+
+/**
+ * 拆掉模型偶尔多包的一层。
+ *
+ * 实测遇到过返回 `{"answer": "{\"full_name\":...}"}`：目标字段一个都没有，
+ * 补全静默失败、界面显示「未识别」，但数据其实是好的。这里把常见的单键包装
+ * （answer/result/data/output/content/response）拆开；拆出来不是对象就原样返回。
+ */
+function unwrapAnswer(obj: Record<string, unknown>): Record<string, unknown> {
+  const keys = Object.keys(obj)
+  if (keys.length !== 1) return obj
+  const only = keys[0].toLowerCase()
+  if (!['answer', 'result', 'data', 'output', 'content', 'response'].includes(only)) return obj
+  const inner = obj[keys[0]]
+  if (typeof inner === 'string') {
+    try {
+      const v = JSON.parse(inner)
+      if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>
+    } catch {
+      return obj
+    }
+    return obj
+  }
+  if (inner && typeof inner === 'object' && !Array.isArray(inner)) return inner as Record<string, unknown>
+  return obj
 }
 
 // 智能填充（AiFillBox）的抽取 prompt。原先放在客户端组件里，现随密钥一起留在服务端。
@@ -295,6 +329,269 @@ export async function aiComplete(params: AiCompleteRequest) {
     return parsed
   } catch {
     throw new Error(`AI 返回格式错误: ${content.slice(0, 200)}`)
+  }
+}
+
+// ============================================
+// 以官网真实内容为准的银行补全
+// ============================================
+
+/**
+ * 为什么不能让模型直接给答案：模型给得出「招商银行 → 4008205555」，也给出过
+ * 一个已经停用的号码，两者在界面上长得一样。电话打错、官网指向别家，在财务
+ * 应用里是能造成实际损失的。所以这里的模型只负责一件事——**提名官网域名**；
+ * 电话与全称一律以真的抓回来的官网页面为证，抓不到就留空并标注，不猜。
+ */
+
+export interface BankEnrichment {
+  id: string
+  name: string
+  full_name: string | null
+  customer_service_phone: string | null
+  website_url: string | null
+  /** 实际抓过的 URL，按顺序。用于向用户交代依据。 */
+  fetched: string[]
+  /** 抓取失败/无内容的地址及原因。 */
+  fetchErrors: string[]
+  /**
+   * 字段来源：`site` = 在该行官网页面上直接读到；
+   * `model` = 模型凭记忆给出的、未能在官网页面上佐证的候选，需人工确认。
+   */
+  provenance: Record<'full_name' | 'customer_service_phone' | 'website_url', 'site' | 'model' | 'none'>
+  /** 官方域名是否与站点自身内容对得上（防止跳转到导流/聚合站）。 */
+  domainConsistent: boolean
+}
+
+/** 常见「联系/关于」子页；客服电话多数不在首页。 */
+const CONTACT_PATHS = ['', '/contact', '/contactus', '/contact-us', '/gywm', '/lianxiwomen', '/about/contact']
+
+/** 国内银行客服短号：95xxx / 96xxx。短号是**最稳定**的客服标识。 */
+const SHORT_PHONE_RE = /^(?:95\d{3}|96\d{3})$/
+/** 400/800 热线。 */
+const HOTLINE_RE = /^(?:400|800)-?\d{3}-?\d{4}$/
+/** 任意「像客服电话」的形态，用于判断页面上有没有可用号码。 */
+const SERVICE_PHONE_RE = /^(?:95\d{3}|96\d{3}|(?:400|800)-?\d{3}-?\d{4})/
+
+export function pickServicePhone(phones: string[]): string | null {
+  // 比较时去掉空白与连字符（页面里 400-820-5555 / 400 820 5555 混着写），
+  // 但返回原样字符串——不要把用户看得懂的写法改掉。
+  const candidates = phones.map(original => ({ original, normalized: original.replace(/[\s-]/g, '') }))
+  // 短号优先于 400 热线：同一家银行两者都会出现在页脚，短号更稳定、不会被营销
+  // 号码污染（实测招商银行首页同时含 4006095555 与 95555，直觉实现会先命中前者）。
+  const pick =
+    candidates.find(c => SHORT_PHONE_RE.test(c.normalized)) ??
+    candidates.find(c => HOTLINE_RE.test(c.normalized)) ??
+    candidates[0]
+  return pick?.original ?? null
+}
+
+/** 让模型提名官网域名（只提名，不采信它给的电话）。 */
+async function nominateWebsite(
+  cfg: { baseURL: string; model: string; apiKey: string },
+  name: string,
+  country: string
+): Promise<string | null> {
+  const content = await chatCompletion({
+    baseURL: cfg.baseURL,
+    model: cfg.model,
+    apiKey: cfg.apiKey,
+    systemPrompt:
+      '你只做一件事：给出该银行（或发卡机构）的官方网站域名。' +
+      '返回 JSON：{"website_url":"https://..."}。' +
+      '必须是该机构自己的域名，不要给维基百科、新闻站、聚合导航站或任何第三方页面。不确定就返回 {"website_url":null}。',
+    userPrompt: JSON.stringify({ name, country }),
+    jsonObject: true,
+  })
+  const parsed = parseJsonObject(content)
+  const url = parsed.website_url
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return null
+  try {
+    return new URL(url).origin
+  } catch {
+    return null
+  }
+}
+
+/** 抓官网（含常见联系页），返回可用证据。限制抓取次数，避免批量时过慢。 */
+async function gatherSiteEvidence(origin: string): Promise<{
+  fetched: string[]
+  errors: string[]
+  text: string
+  phones: string[]
+  domains: string[]
+  titleLike: string
+  /** 最终落地的域名是否仍属于提名的那家（重定向到别家要能被发现）。 */
+  stayedOnOrigin: boolean
+}> {
+  const fetched: string[] = []
+  const errors: string[] = []
+  let text = ''
+  const phones: string[] = []
+  const domains: string[] = []
+  const wantedRoot = rootDomain(origin)
+  let stayedOnOrigin = true
+
+  for (const path of CONTACT_PATHS) {
+    const url = origin + path
+    try {
+      const page = await fetchPage(url, { timeoutMs: 10000, maxChars: 20000 })
+      if (page.status >= 400) {
+        errors.push(`${url} → HTTP ${page.status}`)
+        continue
+      }
+      fetched.push(page.finalUrl)
+      if (rootDomain(page.finalUrl) !== wantedRoot) stayedOnOrigin = false
+      text += '\n' + page.text
+      phones.push(...page.phones)
+      domains.push(...page.domains)
+      // 首页通常已含页脚客服信息；拿到号码就不必把全部子页都抓一遍
+      if (phones.some(p => SERVICE_PHONE_RE.test(p.replace(/\s/g, '')))) break
+    } catch (err) {
+      errors.push(`${url} → ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  const snippet = text.slice(0, 3000)
+  return {
+    fetched,
+    errors,
+    text: text.slice(0, 12000),
+    phones: [...new Set(phones)],
+    domains: [...new Set(domains.map(d => d.toLowerCase()))],
+    titleLike: snippet,
+    stayedOnOrigin,
+  }
+}
+
+/** 用抓到的官网正文补官方全称（从正文里找「XX银行股份有限公司」这类表述）。 */
+export function fullNameFromSite(text: string, name: string): string | null {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const patterns = [
+    new RegExp(`${escaped}(?:股份)?有限公司`),
+    new RegExp(`${escaped}股份有限公司`),
+    new RegExp(`(${escaped}[\\u4e00-\\u9fa5]{0,12}?有限公司)`),
+  ]
+  for (const re of patterns) {
+    const hit = text.match(re)
+    if (hit) return hit[0].replace(/\s/g, '').slice(0, 40)
+  }
+  return null
+}
+
+/**
+ * 补全单家银行：先提名官网，再以官网内容为证。
+ * 不写库——返回值交给调用方审核后再落库，避免把未经确认的内容直接写进目录。
+ */
+export async function enrichBankFromWeb(bank: {
+  id: string
+  name: string
+  country?: string | null
+  website_url?: string | null
+}): Promise<BankEnrichment> {
+  const settings = await getSystemSettingsWithSecrets()
+  const baseURL = (typeof settings.ai_base_url === 'string' && settings.ai_base_url) || 'https://api.openai.com/v1'
+  const model = settings.ai_model || 'gpt-4o'
+  const apiKey = settings.ai_api_key
+  if (!apiKey) throw new Error('未配置 AI API Key，请在系统设置中配置')
+  const cfg = { baseURL, model: model as string, apiKey: apiKey as string }
+
+  const result: BankEnrichment = {
+    id: bank.id,
+    name: bank.name,
+    full_name: null,
+    customer_service_phone: null,
+    website_url: null,
+    fetched: [],
+    fetchErrors: [],
+    provenance: { full_name: 'none', customer_service_phone: 'none', website_url: 'none' },
+    domainConsistent: false,
+  }
+
+  // 1) 已填官网就先用它；否则让模型提名一个候选
+  let origin: string | null = null
+  const existing = typeof bank.website_url === 'string' ? bank.website_url : ''
+  if (existing) {
+    try { origin = new URL(existing).origin } catch { origin = null }
+  }
+  if (!origin) {
+    origin = await nominateWebsite(cfg, bank.name, bank.country || 'CN')
+    if (origin) result.provenance.website_url = 'model'
+  } else {
+    result.website_url = origin
+    result.provenance.website_url = 'site'
+  }
+
+  if (!origin) {
+    // 连候选域名都给不出来：如实返回空，交给人工
+    return result
+  }
+
+  // 2) 抓官网真实内容
+  const evidence = await gatherSiteEvidence(origin)
+  result.fetched = evidence.fetched
+  result.fetchErrors = evidence.errors
+
+  if (!evidence.fetched.length) {
+    // 提名了域名但抓不到：保留域名候选，但标注为未验证
+    result.website_url = origin
+    return result
+  }
+
+  result.website_url = origin
+  result.provenance.website_url = 'site'
+
+  // 3) 域名一致性：以「重定向后的最终域名是否仍是提名的那家」为准。
+  //    之前写成「页面里出现过该域名」，那条件恒真——页面自己就含自己的域名，
+  //    等于没检查。真正要防的是模型提名了一个导流站/聚合站，或站点把请求跳到别处。
+  const root = rootDomain(origin)
+  result.domainConsistent =
+    evidence.stayedOnOrigin && evidence.fetched.some(u => rootDomain(u) === root)
+
+  // 4) 电话以官网页面为准
+  const sitePhone = pickServicePhone(evidence.phones)
+  if (sitePhone) {
+    result.customer_service_phone = sitePhone
+    result.provenance.customer_service_phone = 'site'
+  } else {
+    // 官网没写号码：退回模型候选，但标为未验证，由界面提示人工确认
+    const spoken = await nominateWebsitePhone(cfg, bank.name)
+    if (spoken) {
+      result.customer_service_phone = spoken
+      result.provenance.customer_service_phone = 'model'
+    }
+  }
+
+  // 5) 全称以官网正文为准；取不到就留空（不猜）
+  const siteFull = fullNameFromSite(evidence.text, bank.name)
+  if (siteFull) {
+    result.full_name = siteFull
+    result.provenance.full_name = 'site'
+  }
+
+  return result
+}
+
+/** 仅取模型对客服电话的记忆作为「未验证候选」，供官网页面没写号码时兜底。 */
+async function nominateWebsitePhone(
+  cfg: { baseURL: string; model: string; apiKey: string },
+  name: string
+): Promise<string | null> {
+  try {
+    const content = await chatCompletion({
+      baseURL: cfg.baseURL,
+      model: cfg.model,
+      apiKey: cfg.apiKey,
+      systemPrompt:
+        '给出该银行**信用卡**客服热线。只返回 JSON：{"customer_service_phone":"95555"}。' +
+        '不确定就返回 null，不要编造。不要返回 400 营销电话。',
+      userPrompt: JSON.stringify({ name }),
+      jsonObject: true,
+    })
+    const parsed = parseJsonObject(content)
+    const phone = parsed.customer_service_phone
+    return typeof phone === 'string' && /[0-9]{4,}/.test(phone) ? phone.trim() : null
+  } catch {
+    return null
   }
 }
 
