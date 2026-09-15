@@ -106,7 +106,7 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 - 线上：`npx wrangler deploy` 版本 ca45a4c8（https://worldcredit.hubo1989.workers.dev）
 - 冒烟：/api/push/public-key 200 且公钥正确；/api/rpc 未登录 401；伪造 member cookie 访问 admin RPC 403；伪造用户 cookie 正常走通 getHolders 200（身份绑定生效）；/api/sql-proxy 与 /api/db-proxy 均 404；非 allowlist 函数 404；线上 sw.js 已含 cleanupOutdatedCaches
 
-## 下一步（真实剩余项）
+## 下一步（真实剩余项）⚠️ 已被 Phase 8 / Phase 9 取代，保留作历史记录
 
 1. **登录态真机回归**：本轮未用真实账号做 Phase 6 式 17 路由 Chrome 爬测；登录走一遍核心页面，并在浏览器授权通知后调用 `POST /api/push/test` 验证端到端推送（cron 0 9 * * * UTC 定时推送可用 `wrangler tail` 观察）
 2. **email-worker 回归**：worldcredit-email-worker 本轮未回归，若 Gmail 解析仍在用需单独验证
@@ -141,9 +141,64 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 - 本地 E2E（wrangler dev + curl）：注册首用户 admin / 次用户 member；admin 建持卡人并绑成员邮箱（伪造 created_by 被服务端覆盖）；成员 getHolders 只见自己的档案；成员读他人/不存在 holder 403；成员 getDashboardStats / createCard 403；成员 getUnpaidBills 只见自己的账单；成员对自己账单 createPayment 200、对他人账单 403；analytics 自动归一到成员 holder；改 payload 的伪造 cookie 与未签名旧 cookie 均 401
 - 线上：迁移 0002 已执行（23 表）；`SESSION_SECRET` 已配置；`wrangler deploy` 版本 `ea7dc2f4-4c5a-484f-a7e3-32a5c2bfdeb7`；冒烟 /api/push/public-key 200、未登录 RPC 401、旧格式 cookie session 返回 user:null（验签生效）、登录路由 401 正常
 
+## Phase 9：卡片详情可编辑、覆盖生效修复、D1 主线合入 main ✅（2026-09-15）
+
+### 卡片详情可编辑（PR #7） ✅
+
+- 迁移 `migrations/d1/0006_credit_cards_overrides.sql`：`credit_cards.name_override TEXT` + `annual_fee_override REAL`，沿用既有 `override_billing_day` / `override_due_*` 的卡级覆盖模式
+- `lib/utils.ts` 新增 `getEffectiveCardName` / `getEffectiveAnnualFee`；卡片详情页新增编辑弹窗（卡片名称/总额度/账单日/还款日/年费），被覆盖字段显示「已自定义」徽标
+- 优先级：名称 `name_override` > `card_products.card_name`；账单日 `billing_day`（编辑时清空 `override_billing_day`）；还款日 `override_due_*` > 产品默认；年费 `annual_fee_override` > 产品默认；额度本就是卡级 `credit_limit`
+- 权限：`updateCard` 维持 `admin: true`（`rpc-registry.test.ts` D2 契约锁定）
+
+### 覆盖生效范围修复（PR #7 第二个 commit） ✅
+
+初审发现 helper 接上了但部分读取路径的 SQL 没带 override 列，于是静默回落卡产品默认值：
+
+- `getBillDetail` 此前**一个 override 列都没 select**，账单详情页的卡名与还款日恒为产品默认；已补齐与其余四个 loader 相同的 5 列
+- `worker/cron.ts`（真正在跑的每日 Web Push）只读 `cp.card_name`，改过卡名仍推原名；改为优先 `cc.name_override`
+- `reminders.server.ts` 两条提醒查询（还款 + 贷款）漏 `name_override`；消费端改为优先取用
+- `payments.ts` 从未产出顶层 `card_name`，导致还款导出 CSV 的「卡片」列**恒为空**；已按同一优先级拼出
+- `lib/notifications.ts` 的 `runDailyNotificationScan` 从扁平结果读嵌套对象（D1 helper 不支持嵌套 select），该读取恒为 undefined；已改为扁平列（该模块当前无调用方，仅消除潜在崩溃）
+- analytics 卡片筛选、`BillForm` 选卡器改用生效卡名；卡片详情页年费输入补数值校验
+- 新增 `lib/__tests__/card-override-coverage.test.ts`：逐 loader 断言 override 列以 SELECT 别名被选中；已用修复前的 `getBillDetail` 验证该测试会失败
+
+### email-worker 归属与幂等修复 ✅
+
+- **归属不可信时不再覆盖既有账单**：`resolveHolder` 认不出人时回落默认持卡人，叠加按 `(card_id, bill_month)` 无条件 UPDATE，会让名册外的人以默认持卡人名义改写他同月账单。现在只有 To 头/正文称呼的显式命中算可信，回落且该月已有账单时保留原值并写明原因
+- **重复投递不再把已还清账单打回未还款**：UPDATE 不再无条件写 `status='unpaid'`，保留既有 `paid`/`partial`/`overdue`（直发路径同步修正）
+- **自动建卡按银行名匹配产品**：此前取 `card_products` 第一行且 `credit_limit` 硬编码 0，美国卡会被标成 CNY；改为按 AI 已解析出的银行名匹配（精确优先、币种一致优先），匹配不到就跳过并提示人工补卡
+- MIME/RFC 2047：解码失败改为原样保留；附件判定以 `Content-Disposition` 为主；缺收尾分隔符时保留已定位部件；`.eml` 后缀补内容校验、通用名附件走内容嗅探
+- 新增 `email-worker/__tests__/`（4 文件 65 用例，自包含无外部 fixture）。此前该目录完全在 CI 之外，而 `mime.ts` 是约 590 行纯函数解析器，原断言只跑在未入库的 `/tmp` harness 里
+
+### D1 主线合入 main 并部署 ✅
+
+合入顺序（`main` 此前停在 `a4b7418`，2026-09-07，仍是 InsForge 架构）：
+
+1. PR #7 `feat/card-detail-editing` → `feat/cloudflare-d1-migration`，merge commit `9bd6c3e`
+2. PR #8 `feat/cloudflare-d1-migration` → `main`，merge commit `30ede08`（66 commit / 171 文件 / +15923 −6341）
+3. 远端 D1 执行 0006
+4. `npx wrangler deploy --config dist/server/wrangler.json`
+
+合入后 `main` 重新具备可部署性：`app/api/`（allowlisted RPC）、`worker/`（cron + Web Push）与签名 session 均由本次进入 main。
+
+### 验证
+
+- 本地：typecheck 0 错误、`eslint --max-warnings=0` 通过、vitest **80 passed**（新增 card-override-coverage 13 例）、`vite build` 成功（PWA 18 precache entries）
+- email-worker：`tsc --noEmit`（src + tests）通过、`eslint src __tests__ --max-warnings=0` 通过、`npm test` **65 passed**
+- 远端 D1 迁移状态逐条核实：0002 `auth_user_id` ✅、0003 `bill_email_sources` 已删 ✅、0004/0005 gmail_ledger 列 ✅、**0006 此前缺失（`name_override` / `annual_fee_override` 均不存在）→ 本次已执行并复查两列存在**
+- 生产 secrets：`SESSION_SECRET`、`GOOGLE_CLIENT_SECRET`、`VAPID_PRIVATE_KEY` 均已配置
+- 线上部署版本 `45f99cf0-d326-449d-90f1-356c7ec2c870`（部署前为 `4a573242-4c9f-4984-a098-2a2c8dd71c8d`，可作回滚目标）；资源哈希与本地构建产物一致（`index-D5Ee33zM.js`）
+- 线上冒烟：`/` 200；`/api/push/public-key` 200 且公钥正确；未登录 RPC **401**；`/api/sql-proxy` **404**（旧桥保持删除）；`/login` 200；错误凭据 `/api/auth/login` 401；未登录 session 返回 `user:null`；**伪造未签名 cookie 返回 `user:null`（验签生效）**
+
+### 注意
+
+- `wc_user` 改为 HMAC 签名后，旧未签名 cookie 一律 401，**本次部署使全部登录态失效一次，所有用户需重新登录**
+- `email-worker` 是独立 worker（`email-worker/wrangler.toml`），**本次未部署**；转发账单包解析的修复与测试已入库，部署后才会生效
+
 ## 更新后的下一步
 
-1. **登录态真机回归**：本轮未用真实账号做 Phase 6 式 17 路由 Chrome 爬测；登录走一遍核心页面，并在浏览器授权通知后调用 `POST /api/push/test` 验证端到端推送（cron 0 9 * * * UTC 定时推送可用 `wrangler tail` 观察）
+1. **登录态真机回归**：本轮未用真实账号做 Phase 6 式 17 路由 Chrome 爬测；登录走一遍核心页面，并在浏览器授权通知后调用 `POST /api/push/test` 验证端到端推送（cron `0 9 * * *` 定时推送可用 `wrangler tail` 观察）
 2. **成员端 UI 收尾**：成员登录后导航/入口仍按 admin 视角渲染（后端已 403 兜底，不会泄露数据）；按角色隐藏 admin 入口、成员首页文案
-3. **email-worker 回归**：worldcredit-email-worker 本轮未回归，若 Gmail 解析仍在用需单独验证
-4. **数据迁移仍按产品决定跳过**（Phase 4 脚本就绪但未执行）
+3. **email-worker 部署与回归**：代码已修复并有 65 用例覆盖，但尚未 `cd email-worker && npx wrangler deploy`；部署后需用真实转发包回归
+4. **`lib/api/payments.ts` 客户端/服务端边界**：该文件无对应 `.server.ts`，含仅 Worker 可用的 D1 helper，而消费方 `lib/export.ts` 是浏览器侧。此为存量问题（base 上同样存在），本次未扩大也未修复，仅把还款导出「卡片」列从空值修成有值。待按 RPC 边界重构
+5. **数据迁移仍按产品决定跳过**（Phase 4 脚本就绪但未执行）
