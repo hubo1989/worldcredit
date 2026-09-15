@@ -1,0 +1,90 @@
+// app/api/rpc/[module]/[fn]/route.ts — the single entry point for the named
+// RPC API. The browser can only invoke functions allowlisted in
+// lib/api/registry.ts. Identity comes from the HMAC-signed wc_user session
+// cookie; members additionally pass per-entry memberGuard checks and get
+// memberFilter applied to responses before they leave the server.
+
+import { RPC_REGISTRY, type RpcEntry } from '@/lib/api/registry'
+import { readSession } from '@/lib/session'
+import { buildMemberContext, MemberScopeError, type MemberContext } from '@/lib/api/member-scope'
+
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ module: string; fn: string }> }
+) {
+  const session = await readSession(request)
+  if (!session) {
+    return Response.json({ error: '未登录' }, { status: 401 })
+  }
+
+  const { module, fn } = await params
+  const entry = RPC_REGISTRY[module]?.[fn]
+  if (!entry) {
+    return Response.json({ error: '接口不存在' }, { status: 404 })
+  }
+  if (entry.admin && session.role !== 'admin') {
+    return Response.json({ error: '需要管理员权限' }, { status: 403 })
+  }
+
+  const contentLength = Number(request.headers.get("Content-Length") ?? "0")
+  if (contentLength > 1_000_000) {
+    return Response.json({ error: '请求体过大' }, { status: 413 })
+  }
+
+  let body: { args?: unknown }
+  try {
+    body = (await request.json()) as { args?: unknown }
+  } catch {
+    return Response.json({ error: '请求体不是合法 JSON' }, { status: 400 })
+  }
+  if (!Array.isArray(body.args)) {
+    return Response.json({ error: '缺少 args 数组' }, { status: 400 })
+  }
+
+  const impl = entry.impl as (...args: unknown[]) => unknown
+  const finalArgs = bindEntryArgs(body.args, entry, session)
+
+  // Member isolation: resolve bound holders, validate args, and prepare the
+  // response filter. Admins skip all of this.
+  let memberCtx: MemberContext | null = null
+  if (session.role === 'member') {
+    memberCtx = await buildMemberContext(session)
+    if (entry.memberGuard) {
+      try {
+        await entry.memberGuard(finalArgs, memberCtx)
+      } catch (err) {
+        if (err instanceof MemberScopeError) {
+          return Response.json({ data: null, error: err.message }, { status: 403 })
+        }
+        throw err
+      }
+    }
+  }
+
+  try {
+    let data = await impl(...finalArgs)
+    if (memberCtx && entry.memberFilter) data = await entry.memberFilter(data, memberCtx)
+    return Response.json({ data, error: null })
+  } catch (err) {
+    if (err instanceof MemberScopeError) {
+      return Response.json({ data: null, error: err.message }, { status: 403 })
+    }
+    const message = err instanceof Error ? err.message : String(err)
+    return Response.json({ data: null, error: message }, { status: 500 })
+  }
+}
+
+function bindEntryArgs(args: unknown[], entry: RpcEntry, user: { id: string }): unknown[] {
+  const finalArgs = [...args]
+  if (entry.bindUser !== undefined) {
+    finalArgs[entry.bindUser] = user.id
+  }
+  if (entry.bindField) {
+    const { arg, field } = entry.bindField
+    const target = finalArgs[arg]
+    if (target && typeof target === "object" && !Array.isArray(target)) {
+      finalArgs[arg] = { ...(target as Record<string, unknown>), [field]: user.id }
+    }
+  }
+  return finalArgs
+}

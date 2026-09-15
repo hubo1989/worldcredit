@@ -2,11 +2,10 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { Box, Typography, Button, Alert, Paper, Stack } from '@mui/material'
+import { Box, Typography, Button, Paper, Stack } from '@mui/material'
 import {
   Notifications as NotificationsIcon,
   NotificationsNone as NotificationsNoneIcon,
-  CheckCircle as CheckIcon,
 } from '@mui/icons-material'
 import { requestNotificationPermission } from '@/lib/notifications'
 
@@ -47,16 +46,19 @@ export function NotificationPermissionGuide({ onPermissionGranted }: Props) {
 
   return (
     <Paper
-      elevation={2}
+      elevation={0}
       sx={{
         p: 2,
         mb: 2,
+        // 分层阴影代替边框；左侧 1px 语义 info 强调线（语义提示，非分层）
+        borderRadius: 'var(--radius-depth-2)',
+        boxShadow: 'var(--shadow-e2)',
         borderLeft: 4,
-        borderLeftColor: 'info.main',
+        borderLeftColor: 'var(--info)',
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
-        <Box sx={{ color: 'info.main' }}>
+        <Box sx={{ color: 'var(--strong)', display: 'flex' }}>
           {permission === 'denied' ? (
             <NotificationsNoneIcon fontSize="large" />
           ) : (
@@ -65,31 +67,33 @@ export function NotificationPermissionGuide({ onPermissionGranted }: Props) {
         </Box>
 
         <Box sx={{ flex: 1 }}>
-          <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+          <Typography className="type-section" gutterBottom>
             {permission === 'denied' ? '通知权限已关闭' : '开启还款提醒'}
           </Typography>
 
           {permission === 'denied' ? (
             <>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              <Typography className="type-body" sx={{ mb: 1.5, color: 'var(--text)' }}>
                 您已拒绝浏览器通知权限。如需接收还款提醒，请在浏览器设置中重新开启通知权限。
               </Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography className="type-label">
                 提示：在地址栏左侧点击锁图标 → 网站设置 → 通知 → 允许
               </Typography>
             </>
           ) : (
             <>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              <Typography className="type-body" sx={{ mb: 1.5, color: 'var(--text)' }}>
                 开启浏览器通知后，我们将在账单到期前和逾期时及时提醒您，避免忘记还款。
               </Typography>
-              <Stack direction="row" spacing={1}>
+              {/* 两个按钮都是可点目标：文案 nowrap 且不收缩；窄屏放不下时整行下移而非折断文字 */}
+              <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
                 <Button
                   variant="contained"
                   size="small"
                   startIcon={<NotificationsIcon />}
                   onClick={handleRequestPermission}
                   disabled={loading}
+                  sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
                 >
                   {loading ? '请求中...' : '开启通知'}
                 </Button>
@@ -97,6 +101,7 @@ export function NotificationPermissionGuide({ onPermissionGranted }: Props) {
                   variant="outlined"
                   size="small"
                   onClick={() => setDismissed(true)}
+                  sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
                 >
                   暂不开启
                 </Button>

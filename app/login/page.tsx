@@ -13,6 +13,7 @@ import { useAuth } from '@/lib/auth'
 import { AuthShell } from '@/components/auth/AuthShell'
 import { useRouter } from 'next/navigation'
 import { getFriendlyAuthErrorMessage } from '@/lib/utils/auth-error'
+import { useSearchParams } from 'next/navigation'
 
 /* ============ 类型与常量 ============ */
 
@@ -55,6 +56,7 @@ export default function LoginPage() {
 
   const { user, loading: authLoading, signIn, resendVerificationEmail, verifyEmail, signInWithGoogle } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
 
   // Toast 自动消失由 Snackbar autoHideDuration 处理；此处仅切换登录方式时清理错误
   useEffect(() => {
@@ -68,6 +70,22 @@ export default function LoginPage() {
       router.replace(getPostLoginRoute(user.email))
     }
   }, [authLoading, user, router])
+
+  // Surface OAuth callback failures that bounce back to /login?error=...
+  useEffect(() => {
+    const oauthError = searchParams.get('error')
+    if (oauthError) {
+      const friendly: Record<string, string> = {
+        google_no_code: 'Google 回调缺少授权码，请重新登录',
+        google_not_configured: 'Google 登录未配置，请联系管理员',
+        google_token_exchange: 'Google 授权码换取登录态失败，请重试',
+        google_no_id_token: 'Google 未返回身份信息，请重试',
+        google_no_email: 'Google 账号缺少邮箱，无法登录',
+        google_callback_error: 'Google 登录处理异常，请重试',
+      }
+      setGlobalError(friendly[oauthError] || `Google 登录失败（${oauthError}）`)
+    }
+  }, [searchParams])
 
   /* ----- 工具函数 ----- */
 

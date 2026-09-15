@@ -28,10 +28,11 @@ export function BottomNav() {
         left: 0,
         right: 0,
         zIndex: 1000,
-        // §7.3 / §7.4：白色背景 + 顶部 1px 边框 + 向上阴影
-        borderTop: '1px solid var(--border)',
-        boxShadow: '0 -2px 8px rgba(10, 31, 68, 0.06)',
-        backgroundColor: '#FFFFFF',
+        // 顶部只保留 1px var(--track) 细线，层级改由向上的柔和投影表达
+        borderTop: '1px solid var(--track)',
+        boxShadow: 'var(--shadow-float)',
+        backgroundColor: 'var(--paper)',
+        fontFamily: 'var(--font-display)',
       }}
       elevation={0}
     >
@@ -41,8 +42,8 @@ export function BottomNav() {
           router.push(navItems[newValue].path)
         }}
         showLabels
-        // 触控目标 ≥44pt：高度 56px
-        sx={{ height: 56, backgroundColor: 'transparent' }}
+        // 触控目标 ≥44pt：高度 60px
+        sx={{ height: 60, backgroundColor: 'transparent' }}
       >
         {navItems.map((item, idx) => {
           const selected = idx === (currentIndex === -1 ? 0 : currentIndex)
@@ -52,15 +53,17 @@ export function BottomNav() {
               label={item.label}
               icon={item.icon}
               sx={{
-                // 非选中态灰色 / 选中态深蓝（§7.3）
-                color: selected ? 'var(--navy-600)' : '#5B6478',
-                fontFamily: '"Noto Sans SC", "PingFang SC", sans-serif',
+                // 非选中态次要文本 / 选中态深藏青强调（§7.3）
+                color: selected ? 'var(--strong)' : 'var(--muted)',
                 padding: 0,
                 maxWidth: 'none',
                 transition: 'color 150ms ease',
                 position: 'relative',
                 '& .MuiBottomNavigationAction-label': {
-                  fontSize: '12px',
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 'var(--type-body-size)',
+                  lineHeight: 'var(--type-body-line)',
+                  letterSpacing: 'var(--type-body-tracking)',
                   fontWeight: selected ? 600 : 400,
                   transition: 'font-weight 150ms ease',
                 },
@@ -79,9 +82,12 @@ export function BottomNav() {
                     }
                   : {},
                 '&.Mui-selected': {
-                  color: 'var(--navy-600)',
+                  color: 'var(--strong)',
                   '& .MuiBottomNavigationAction-label': {
-                    fontSize: '12px',
+                    fontFamily: 'var(--font-display)',
+                    fontSize: 'var(--type-body-size)',
+                    lineHeight: 'var(--type-body-line)',
+                    letterSpacing: 'var(--type-body-tracking)',
                     fontWeight: 600,
                   },
                 },

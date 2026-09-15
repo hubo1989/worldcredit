@@ -17,13 +17,22 @@ import {
 import { getAdminBenefits, createBenefit, updateBenefit, deleteBenefit, getAdminCardProducts } from '@/lib/api/admin'
 import { Benefit, CardProduct } from '@/lib/types'
 
+/** 权益列表行： benefits 字段 + 关联卡产品联查字段 */
+type AdminBenefitRow = Benefit & {
+  is_active: boolean
+  // The admin RPC returns flat joined columns (product_bank_name/product_card_name),
+  // not a nested card_products object.
+  product_bank_name?: string
+  product_card_name?: string
+}
+
 export default function BenefitsPage() {
   const [loading, setLoading] = useState(true)
-  const [benefits, setBenefits] = useState<any[]>([])
+  const [benefits, setBenefits] = useState<AdminBenefitRow[]>([])
   const [cardProducts, setCardProducts] = useState<CardProduct[]>([])
   const [search, setSearch] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [currentBenefit, setCurrentBenefit] = useState<Partial<Benefit & { is_active: boolean }> | null>(null)
+  const [currentBenefit, setCurrentBenefit] = useState<Partial<AdminBenefitRow> | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [page, setPage] = useState(0)
   const [rowsPerPage, setRowsPerPage] = useState(10)
@@ -35,7 +44,7 @@ export default function BenefitsPage() {
         getAdminBenefits(),
         getAdminCardProducts()
       ])
-      setBenefits(bData)
+      setBenefits(bData as unknown as AdminBenefitRow[])
       setCardProducts(cpData)
     } catch (error) {
       console.error('Failed to fetch benefits:', error)
@@ -54,7 +63,7 @@ export default function BenefitsPage() {
 
   const filteredBenefits = benefits.filter(b =>
     b.name.toLowerCase().includes(search.toLowerCase()) ||
-    (b.card_products?.card_name || '').toLowerCase().includes(search.toLowerCase())
+    (b.product_card_name || '').toLowerCase().includes(search.toLowerCase())
   )
 
   const paginatedBenefits = filteredBenefits.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
@@ -68,7 +77,7 @@ export default function BenefitsPage() {
     setPage(0)
   }
 
-  const handleOpenDialog = (benefit?: any) => {
+  const handleOpenDialog = (benefit?: AdminBenefitRow) => {
     if (benefit) {
       setCurrentBenefit(benefit)
     } else {
@@ -82,9 +91,9 @@ export default function BenefitsPage() {
     setDialogOpen(true)
   }
 
-  const handleToggleStatus = async (benefit: any) => {
+  const handleToggleStatus = async (benefit: AdminBenefitRow) => {
     try {
-      await updateBenefit(benefit.id, { is_active: !benefit.is_active })
+      await updateBenefit(benefit.id, { is_active: !benefit.is_active } as unknown as Partial<Benefit>)
       setBenefits(benefits.map(b => b.id === benefit.id ? { ...b, is_active: !b.is_active } : b))
     } catch (error) {
       console.error('Failed to toggle status:', error)
@@ -110,12 +119,14 @@ export default function BenefitsPage() {
     setSubmitting(true)
     try {
       if (currentBenefit.id) {
-        const { card_products, ...payload } = currentBenefit as any
+        const { product_bank_name, product_card_name, ...payload } = currentBenefit
+        void product_bank_name
+        void product_card_name
         const updated = await updateBenefit(currentBenefit.id, payload)
-        setBenefits(benefits.map(b => b.id === currentBenefit.id ? { ...b, ...updated } : b))
+        setBenefits(benefits.map(b => b.id === currentBenefit.id ? { ...b, ...updated } as AdminBenefitRow : b))
       } else {
         const created = await createBenefit(currentBenefit)
-        setBenefits([created, ...benefits])
+        setBenefits([created as unknown as AdminBenefitRow, ...benefits])
       }
       setDialogOpen(false)
       fetchData()
@@ -198,7 +209,7 @@ export default function BenefitsPage() {
               paginatedBenefits.map((benefit) => (
                 <TableRow key={benefit.id} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' }, borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                   <TableCell sx={{ color: '#e4e6eb', fontWeight: 500 }}>
-                    {benefit.card_products?.bank_name} - {benefit.card_products?.card_name}
+                    {benefit.product_bank_name} - {benefit.product_card_name}
                   </TableCell>
                   <TableCell sx={{ color: '#e4e6eb' }}>{benefit.name}</TableCell>
                   <TableCell>
@@ -263,7 +274,7 @@ export default function BenefitsPage() {
               <TextField fullWidth label="权益配额 (次)" type="number" value={currentBenefit?.quota || 1} onChange={(e) => setCurrentBenefit({ ...currentBenefit, quota: Number(e.target.value) })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
             </Grid>
             <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="重置周期" select value={currentBenefit?.period || 'yearly'} onChange={(e) => setCurrentBenefit({ ...currentBenefit, period: e.target.value as any })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}>
+              <TextField fullWidth label="重置周期" select value={currentBenefit?.period || 'yearly'} onChange={(e) => setCurrentBenefit({ ...currentBenefit, period: e.target.value as Benefit['period'] })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}>
                 <MenuItem value="yearly">按年重置</MenuItem>
                 <MenuItem value="monthly">按月重置</MenuItem>
                 <MenuItem value="one_time">终身一次性</MenuItem>

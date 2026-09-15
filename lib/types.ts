@@ -91,9 +91,12 @@ export interface User {
  */
 export interface CardHolder {
   id: string
-  created_by: string // InsForge Auth user.id
+  created_by: string
+  auth_user_id?: string | null
+  managed_by?: string
   name: string
   phone?: string
+  email?: string
   avatar_color: string
   aliases?: string[]
   created_at: string
@@ -115,11 +118,15 @@ export interface CreditCard {
   /** 贷款类专用：每月固定还款日（1-31） */
   loan_due_day?: number
   /** 覆盖卡产品默认账单日（NULL = 使用卡产品默认值） */
-  override_billing_day?: number
+  override_billing_day?: number | null
   /** 覆盖还款规则类型 */
   override_due_type?: 'fixed' | 'after_billing' | 'fixed_before_billing' | null
   /** 覆盖还款规则值 */
   override_due_value?: number | null
+  /** 卡片名称覆盖（NULL = 使用卡产品默认名称） */
+  name_override?: string | null
+  /** 年费覆盖（NULL = 使用卡产品默认年费） */
+  annual_fee_override?: number | null
   created_at: string
 }
 
@@ -213,19 +220,6 @@ export interface EmailParseLog {
   status: 'success' | 'failed' | 'skipped'
   error_msg?: string
   raw_ai_response?: string
-  created_at: string
-}
-
-/**
- * 用户登记的账单来源邮箱。
- * 用于 Cloudflare Email Worker 在收到账单邮件后按 From/Reply-To 归属到登录用户。
- */
-export interface BillEmailSource {
-  id: string
-  user_id: string
-  email: string
-  label?: string
-  is_active: boolean
   created_at: string
 }
 
@@ -332,4 +326,3 @@ export interface ScenarioGroup {
   /** 该分组下的快捷问题列表 */
   questions: string[]
 }
-

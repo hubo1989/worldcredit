@@ -38,9 +38,9 @@ export default function BanksPage() {
     try {
       const data = await getAdminBanks()
       setBanks(data || [])
-    } catch (error: any) {
+    } catch (error) {
       console.error('Failed to fetch banks:', error)
-      setFetchError(error?.message || 'Unknown fetching error')
+      setFetchError(error instanceof Error ? error.message : 'Unknown fetching error')
     } finally {
       setLoading(false)
     }
@@ -48,7 +48,6 @@ export default function BanksPage() {
 
   useEffect(() => {
     fetchData()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -116,7 +115,9 @@ export default function BanksPage() {
     setSaveError(null)
     try {
       // 清理只读字段，只保留可写字段
-      const { id, created_at, ...payload } = currentBank as any
+      const { id, created_at, ...payload } = currentBank
+      void id
+      void created_at
 
       if (currentBank.id) {
         const updated = await updateBank(currentBank.id, payload)
@@ -126,9 +127,9 @@ export default function BanksPage() {
         setBanks([created, ...banks])
       }
       setDialogOpen(false)
-    } catch (error: any) {
+    } catch (error) {
       console.error('Failed to save bank:', error)
-      setSaveError(`保存失败: ${error.message || '可能由于名称重复或其他错误'}`)
+      setSaveError(`保存失败: ${error instanceof Error ? error.message : '可能由于名称重复或其他错误'}`)
     } finally {
       setSubmitting(false)
     }

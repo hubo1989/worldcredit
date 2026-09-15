@@ -1,25 +1,20 @@
 /**
  * WorldCredit Email Worker
  *
- * Triggered by Cloudflare Email Routing for mail delivered to:
- *   - bills+{userId}@20160325.xyz (direct user routing)
- *   - bills@20160325.xyz, with From/Reply-To matched against bill_email_sources
+ * Triggered by Cloudflare Email Routing for mail delivered to the per-user
+ * dedicated address only:
+ *   - bills+{userId}@20160325.xyz
  *
- * Flow:
- *   1. Resolve userId from the To address or registered source email
- *   2. Decode the raw MIME message and extract readable text
- *   3. Fetch ai_config (OpenAI key / baseURL / model) from system_settings
- *   4. Call OpenAI to extract bill fields from the email body
- *   5. Look up the matching credit_card row for this user
- *   6. Upsert a bills row (idempotent: unique on card_id + bill_month)
- *   7. Write an email_parse_logs row for audit / debugging
+ * The shared public inbox (bills@20160325.xyz) is intentionally not supported:
+ * attribution is derived exclusively from the recipient address.
+ *
+ * Uses D1 binding directly (no InsForge REST client).
  */
 
-import type { Env, AiConfig, BillParseResult, BillRow, EmailParseLogRow } from './types'
-import { InsForgeClient } from './insforge'
-import { streamToString, extractTextFromRaw } from './mime'
-
-// ─── Entry point ─────────────────────────────────────────────────────────────
+import type { Env, AiConfig, BillParseResult, EmailParseLogRow } from './types'
+import { parseRawMessage, streamToBytes } from './mime'
+import { buildBundleLogPayload, processForwardedBundle } from './forwarded'
+import { keepPaidStatus } from './bills'
 
 export default {
   async email(
@@ -27,36 +22,56 @@ export default {
     env: Env,
     _ctx: ExecutionContext
   ): Promise<void> {
-    const db = new InsForgeClient(env.INSFORGE_URL, env.INSFORGE_SERVICE_KEY)
+    const db = env.DB
 
     const fromEmail = normalizeEmail(message.from ?? null)
-    // message.to may be undefined in some runtime versions; fall back to headers
     const toHeader = message.to ?? getHeader(message, 'to') ?? ''
     const subject = extractSubject(message)
-    const senderCandidates = extractSenderCandidates(message, fromEmail)
 
-    // ── 1. Resolve userId from To address or registered source email ─────────
-    const userId = parseUserId(toHeader) ?? await findUserIdBySourceEmail(db, senderCandidates)
+    // 1. Resolve userId from the dedicated address (bills+{userId}@domain)
+    const userId = parseUserId(toHeader)
     if (!userId) {
-      console.warn(`[email-worker] Cannot resolve userId from To="${toHeader}" From="${fromEmail ?? ''}"; dropping.`)
+      console.warn(`[email-worker] Cannot resolve userId from To="${toHeader}" From="${fromEmail ?? ''}"`)
       return
     }
 
     const log: EmailParseLogRow = {
-      user_id: userId,
-      from_email: fromEmail,
-      subject,
-      bill_id: null,
-      status: 'failed',
-      error_msg: null,
-      raw_ai_response: null,
+      user_id: userId, from_email: fromEmail, subject, bill_id: null,
+      status: 'failed', error_msg: null, raw_ai_response: null,
     }
 
     try {
-      // ── 2. Read raw email body ──────────────────────────────────────────────
-      const rawStream = message.raw
-      const rawText = await streamToString(rawStream)
-      const emailBody = extractTextFromRaw(rawText)
+      // 2. 一次读全原始字节。
+      //    直发路径只需要正文，但转发包里的 .eml 附件是 base64，必须先拿到原始字节
+      //    才能还原；整封邮件先按 utf-8 解码会不可逆地毁掉附件。正文提取仍在解析器内部完成。
+      const raw = await streamToBytes(message.raw)
+      const parsedTop = parseRawMessage(raw)
+      const emailBody = parsedTop.text
+
+      // 3. Fetch AI config（转发包路径里每封附件也要用它，所以提前到分支之前）
+      const aiConfig = await loadAiConfig(db)
+      if (!aiConfig.apiKey) {
+        throw new Error('AI API Key 未配置（system_settings.ai_api_key）')
+      }
+
+      // 4. 转发账单包路径。
+      //    用户把多封银行账单转发成一个包时，顶层正文往往只有「见附件」，
+      //    真正的账单是包里的 .eml 附件。命中就走附件路径并结束；没命中（返回 null）
+      //    说明是普通直发邮件，继续走下面原有逻辑，保证老流程不退化。
+      const bundle = await processForwardedBundle({
+        db,
+        userId,
+        top: parsedTop,
+        parse: body => parseBillWithAI(aiConfig, body),
+      })
+      if (bundle) {
+        // billsWritten = 0 也算「处理过但没什么可写」，用 skipped 与失败的解析区分开
+        log.status = bundle.billsWritten > 0 ? 'success' : 'skipped'
+        log.error_msg = bundle.summary
+        log.raw_ai_response = buildBundleLogPayload(bundle)
+        await writeLog(db, log)
+        return
+      }
 
       if (!emailBody.trim()) {
         log.status = 'skipped'
@@ -65,17 +80,7 @@ export default {
         return
       }
 
-      // ── 3. Fetch ai_config from system_settings ────────────────────────────
-      const settings = await db.select<{ key: string; value: AiConfig }>(
-        'system_settings',
-        'key=eq.ai_config&select=key,value'
-      )
-      if (!settings.length || !settings[0].value?.apiKey) {
-        throw new Error('ai_config not found or missing apiKey in system_settings')
-      }
-      const aiConfig = settings[0].value
-
-      // ── 4. Call OpenAI to parse bill ───────────────────────────────────────
+      // 5. Parse bill with AI
       const aiResult = await parseBillWithAI(aiConfig, emailBody)
       log.raw_ai_response = JSON.stringify(aiResult)
 
@@ -86,72 +91,59 @@ export default {
         return
       }
 
-      // ── 5. Find matching credit_card ───────────────────────────────────────
+      // 6. Find matching credit_card
       const cardId = await findCardId(db, userId, aiResult.card_last4 ?? null)
       if (!cardId) {
         log.status = 'failed'
-        log.error_msg = `暂未匹配到账户中对应的卡片（卡尾号：${aiResult.card_last4 || '未知'}），可点击【同步到本账户】自动建卡并导入账单`
+        log.error_msg = `未匹配到卡片（尾号：${aiResult.card_last4 || '未知'}）`
         await writeLog(db, log)
         return
       }
 
-      // ── 6. Upsert bills row ────────────────────────────────────────────────
-      const billRow: BillRow = {
-        card_id: cardId,
-        bill_month: aiResult.bill_month,
-        bill_amount: Number(aiResult.bill_amount),
-        min_payment: aiResult.min_payment != null ? Number(aiResult.min_payment) : null,
-        due_date: aiResult.due_date,
-        statement_date: aiResult.statement_date ?? null,
-        status: 'unpaid',
+      // 7. Upsert bill (idempotent: unique on card_id + bill_month)
+      // 必须连 status 一起读：重发邮件不能把已还清的账单打回未还款
+      const existing = await db.prepare(
+        'SELECT id, status FROM bills WHERE card_id = ? AND bill_month = ?'
+      ).bind(cardId, aiResult.bill_month).first<{ id: string; status: string | null }>()
+
+      let billId: string
+      if (existing) {
+        billId = existing.id
+        await db.prepare(
+          'UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?, status = ? WHERE id = ?'
+        ).bind(
+          Number(aiResult.bill_amount),
+          aiResult.min_payment != null ? Number(aiResult.min_payment) : null,
+          aiResult.due_date, aiResult.statement_date ?? null, keepPaidStatus(existing.status), billId
+        ).run()
+      } else {
+        billId = crypto.randomUUID()
+        await db.prepare(
+          'INSERT INTO bills (id, card_id, bill_month, bill_amount, min_payment, due_date, statement_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(
+          billId, cardId, aiResult.bill_month, Number(aiResult.bill_amount),
+          aiResult.min_payment != null ? Number(aiResult.min_payment) : null,
+          aiResult.due_date, aiResult.statement_date ?? null, 'unpaid'
+        ).run()
       }
-      const upserted = await db.upsert<{ id: string }>('bills', billRow as unknown as Record<string, unknown>)
-      const billId = upserted[0]?.id ?? null
 
-      // ── 7. Write success log ──────────────────────────────────────────────
-      log.status = 'success'
+      // 8. Write success log
       log.bill_id = billId
+      log.status = 'success'
       await writeLog(db, log)
-
-      console.info(
-        `[email-worker] Parsed bill for user=${userId} card=${cardId} month=${aiResult.bill_month} amount=${aiResult.bill_amount}`
-      )
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`[email-worker] Error for user=${userId}:`, msg)
       log.status = 'failed'
-      log.error_msg = msg.slice(0, 1000)
+      log.error_msg = err instanceof Error ? err.message : String(err)
       await writeLog(db, log)
+      console.error('[email-worker] Error processing email:', err)
     }
   },
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Extract userId from "bills+<uuid>@20160325.xyz"
- * Returns null if the address does not match the expected pattern.
- */
-function parseUserId(to: string): string | null {
-  // Handle "Display Name <bills+uuid@domain>" format
-  const angleMatch = to.match(/<([^>]+)>/)
-  const addr = angleMatch ? angleMatch[1] : to.trim()
-  const m = addr.match(/\+([^@]+)@/)
-  if (!m) return null
-  const candidate = m[1]
-  // Basic UUID validation (8-4-4-4-12)
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidate)) {
-    return null
-  }
-  return candidate
-}
-
-function normalizeEmail(value: string | null | undefined): string | null {
-  if (!value) return null
-  const angleMatch = value.match(/<([^>]+)>/)
-  const raw = (angleMatch ? angleMatch[1] : value).trim().toLowerCase()
-  const emailMatch = raw.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+/i)
-  return emailMatch ? emailMatch[0].toLowerCase() : null
+function normalizeEmail(email: string | null): string | null {
+  return email?.trim().toLowerCase() ?? null
 }
 
 function getHeader(message: ForwardableEmailMessage, name: string): string | null {
@@ -162,68 +154,70 @@ function getHeader(message: ForwardableEmailMessage, name: string): string | nul
   }
 }
 
-function extractSenderCandidates(message: ForwardableEmailMessage, fromEmail: string | null): string[] {
-  const candidates = new Set<string>()
-  if (fromEmail) candidates.add(fromEmail)
-
-  for (const headerName of [
-    'reply-to',
-    'sender',
-    'return-path',
-    'x-original-from',
-    'x-forwarded-for',
-    'resent-from',
-  ]) {
-    const normalized = normalizeEmail(getHeader(message, headerName))
-    if (normalized) candidates.add(normalized)
-  }
-
-  return Array.from(candidates)
+function parseUserId(to: string): string | null {
+  // Pattern: bills+{userId}@domain
+  const match = to.match(/bills\+([a-f0-9-]{36})@/i)
+  return match ? match[1] : null
 }
 
-async function findUserIdBySourceEmail(db: InsForgeClient, emails: string[]): Promise<string | null> {
-  for (const email of emails) {
-    const rows = await db.select<{ user_id: string }>(
-      'bill_email_sources',
-      `email=eq.${encodeURIComponent(email)}&is_active=eq.true&select=user_id&limit=2`
-    )
-    if (rows.length === 1) return rows[0].user_id
-    if (rows.length > 1) {
-      console.warn(`[email-worker] Ambiguous source email mapping for ${email}; refusing to guess.`)
-      return null
-    }
-  }
-  return null
-}
-
-/**
- * Try to extract Subject from the ForwardableEmailMessage.
- * The Workers Email API exposes headers via message.headers (Headers object).
- */
 function extractSubject(message: ForwardableEmailMessage): string | null {
   return getHeader(message, 'subject')
 }
 
+/**
+ * Read the LLM endpoint from system_settings.
+ *
+ * The admin console writes three independent keys (ai_api_key / ai_base_url /
+ * ai_model) via updateSystemSettings, which is the same shape the app's AI
+ * features read. Older builds of this worker read a single 'ai_config' blob
+ * that nothing ever wrote, so bill parsing could never authenticate. We read
+ * the product's keys first and keep 'ai_config' as a fallback for any
+ * deployment that still stores that shape.
+ */
+async function loadAiConfig(db: D1Database): Promise<AiConfig> {
+  const rows = await db.prepare(
+    "SELECT key, value FROM system_settings WHERE key IN ('ai_api_key', 'ai_base_url', 'ai_model', 'ai_config')"
+  ).all<{ key: string; value: string }>()
+
+  const settings = new Map<string, unknown>()
+  for (const row of rows.results || []) {
+    try {
+      settings.set(row.key, JSON.parse(row.value))
+    } catch {
+      settings.set(row.key, row.value)
+    }
+  }
+
+  const legacy = settings.get('ai_config')
+  const legacyConfig =
+    legacy && typeof legacy === 'object' ? (legacy as Partial<AiConfig>) : undefined
+
+  const pick = (key: string, legacyValue?: string): string => {
+    const value = settings.get(key)
+    return (typeof value === 'string' && value) || legacyValue || ''
+  }
+
+  return {
+    apiKey: pick('ai_api_key', legacyConfig?.apiKey),
+    baseURL: pick('ai_base_url', legacyConfig?.baseURL) || 'https://api.openai.com/v1',
+    model: pick('ai_model', legacyConfig?.model) || 'gpt-4o',
+  }
+}
+
 // ─── OpenAI bill parser ───────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `你是银行账单解析助手。从以下邮件内容中提取信用卡账单信息，以 JSON 格式返回：
-{
-  "bank_name": "发卡行名称",
-  "card_last4": "卡号后四位（如无则null）",
-  "bill_amount": 账单总金额（数字）,
-  "min_payment": 最低还款额（数字，如无则null）,
-  "due_date": "还款截止日 YYYY-MM-DD",
-  "bill_month": "账单月份 YYYY-MM",
-  "statement_date": "账单日 YYYY-MM-DD（如无则null）",
-  "currency": "货币代码如CNY/USD",
-  "confidence": 0-1之间的置信度
-}
+const SYSTEM_PROMPT = `你是银行账单解析助手。从邮件内容中提取信用卡账单信息，以 JSON 格式返回：
+{"is_bill":true,"bank_name":"","card_last4":"","bill_amount":0,"min_payment":null,"due_date":"YYYY-MM-DD","bill_month":"YYYY-MM","statement_date":null,"currency":"CNY","confidence":0.9}
+字段 card_last4 请填邮件中出现的"卡号/账户结尾"完整数字，不要截断：
+- 大陆/香港卡通常是末 4 位，如 "1234"
+- American Express 的账户结尾是 5 位，如 "93001"，请原样填 5 位
+- 如邮件明确给出更长结尾（如 6 位 "671006"），也请原样填写
+不要把它补零或改写。若邮件中没有出现任何卡号/账户结尾，填 null。
 如果不是账单邮件，返回 {"is_bill": false}
-只返回 JSON，不要任何解释文字。`
+只返回 JSON。`
 
 async function parseBillWithAI(config: AiConfig, emailBody: string): Promise<BillParseResult> {
   const endpoint = config.baseURL.replace(/\/$/, '') + '/chat/completions'
-
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -231,83 +225,72 @@ async function parseBillWithAI(config: AiConfig, emailBody: string): Promise<Bil
       'Authorization': `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify({
-      model: config.model,
-      temperature: 0,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: emailBody },
-      ],
+      model: config.model, temperature: 0,
+      messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: emailBody }],
       response_format: { type: 'json_object' },
     }),
   })
-
   if (!res.ok) {
     const text = await res.text()
     throw new Error(`OpenAI API error (${res.status}): ${text.slice(0, 500)}`)
   }
-
-  const json = await res.json() as {
-    choices: Array<{ message: { content: string } }>
-  }
-  const content = json.choices?.[0]?.message?.content ?? '{}'
-  return JSON.parse(content) as BillParseResult
+  const json = await res.json() as { choices: Array<{ message: { content: string } }> }
+  return JSON.parse(json.choices?.[0]?.message?.content ?? '{}') as BillParseResult
 }
 
 // ─── Card lookup ──────────────────────────────────────────────────────────────
 
 /**
- * Find the credit_card id for a given user.
+ * Match a parsed bill to one of the user's cards.
  *
- * Strategy:
- *   1. Fetch all card_holders where created_by = userId
- *   2. Fetch all credit_cards where holder_id IN (those holder ids)
- *   3. If card_last4 is available, prefer the matching card; else take the only card
- *      (if multiple cards and no last4, return null so we don't guess wrong)
+ * Card tails are compared on the full stored value (4 digits for CN/HK cards,
+ * 5-6 for American Express), so an Amex account matches on its real ending
+ * (93001) instead of a value truncated to 9300.
+ *
+ * Deliberately no last-4 fallback: 671006 and 71006 are different Amex
+ * accounts that share the suffix 1006, so falling back to four digits would
+ * silently attach one account's bill to the other. An unmatched tail is worth
+ * more than a wrong one, so this returns null and the caller logs the miss.
  */
-async function findCardId(
-  db: InsForgeClient,
-  userId: string,
-  cardLast4: string | null
-): Promise<string | null> {
-  // Step 1 – holders for this user
-  const holders = await db.select<{ id: string }>(
-    'card_holders',
-    `created_by=eq.${encodeURIComponent(userId)}&select=id`
-  )
-  if (!holders.length) return null
+async function findCardId(db: D1Database, userId: string, cardTail: string | null): Promise<string | null> {
+  const holders = await db.prepare(
+    'SELECT id FROM card_holders WHERE created_by = ?'
+  ).bind(userId).all<{ id: string }>()
+  const holderIds = (holders.results || []).map(h => h.id)
+  if (!holderIds.length) return null
 
-  const holderIds = holders.map(h => h.id)
+  const placeholders = holderIds.map(() => '?').join(',')
+  const cards = await db.prepare(
+    `SELECT id, card_number_last4 FROM credit_cards WHERE holder_id IN (${placeholders})`
+  ).bind(...holderIds).all<{ id: string; card_number_last4: string | null }>()
+  const results = cards.results || []
+  if (!results.length) return null
 
-  // Step 2 – credit_cards for these holders
-  // PostgREST: holder_id=in.(uuid1,uuid2,...)
-  const inList = holderIds.map(id => encodeURIComponent(id)).join(',')
-  const cards = await db.select<{ id: string; card_number_last4: string | null }>(
-    'credit_cards',
-    `holder_id=in.(${inList})&select=id,card_number_last4`
-  )
-  if (!cards.length) return null
-
-  // Step 3 – match by last4
-  if (cardLast4) {
-    const match = cards.find(c => c.card_number_last4 === cardLast4)
+  const wanted = normalizeCardTail(cardTail)
+  if (wanted) {
+    const match = results.find(c => normalizeCardTail(c.card_number_last4) === wanted)
     if (match) return match.id
-    // If we have a last4 from AI but no card matches, still fall through to single-card case
   }
-
-  // If exactly one card, use it
-  if (cards.length === 1) return cards[0].id
-
-  // Multiple cards, no last4 match → ambiguous
+  if (results.length === 1) return results[0].id
   return null
+}
+
+/** Card tails are digits only; keep leading zeros (Amex accounts like 01004). */
+function normalizeCardTail(value: string | null | undefined): string {
+  return (value ?? '').replace(/\D/g, '')
 }
 
 // ─── Log writer ───────────────────────────────────────────────────────────────
 
-async function writeLog(db: InsForgeClient, log: EmailParseLogRow): Promise<void> {
+async function writeLog(db: D1Database, log: EmailParseLogRow): Promise<void> {
   try {
-    await db.insert('email_parse_logs', log as unknown as Record<string, unknown>)
+    await db.prepare(
+      'INSERT INTO email_parse_logs (id, user_id, from_email, subject, bill_id, status, error_msg, raw_ai_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(
+      crypto.randomUUID(), log.user_id, log.from_email, log.subject,
+      log.bill_id, log.status, log.error_msg, log.raw_ai_response
+    ).run()
   } catch (err) {
-    // Log writing failure should never crash the worker
     console.error('[email-worker] Failed to write email_parse_logs:', err)
   }
 }

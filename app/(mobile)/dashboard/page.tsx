@@ -9,8 +9,10 @@ import {
 } from '@mui/material'
 import CheckIcon from '@mui/icons-material/CheckCircleOutline'
 import { useRouter } from 'next/navigation'
-import { insforge } from '@/lib/insforge'
 import { getBillDashboardItems, markBillAsPaid, markAllOverdueBillsAsPaid, type BillDashboardItem } from '@/lib/api/bills'
+import { getHolders } from '@/lib/api/holders'
+import { getCardsBasicByHolders } from '@/lib/api/cards'
+import { formatCardTail, getEffectiveCardName } from '@/lib/utils'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
 import { useAuth } from '@/lib/auth'
 import { WcSkeleton } from '@/components/mobile/WcStates'
@@ -121,28 +123,21 @@ export default function DashboardPage() {
     setLoading(true)
     setError(null)
     try {
-      // 并行：持卡人 / 卡片 / 账单
-      const [holdersRes, cardsRes, allBills] = await Promise.all([
-        insforge.database
-          .from('card_holders')
-          .select('*')
-          .eq('created_by', user.id)
-          .order('created_at', { ascending: true }),
-        insforge.database
-          .from('credit_cards')
-          .select('id, holder_id, card_holders!inner(created_by)')
-          .eq('card_holders.created_by', user.id),
+      // 并行：持卡人 / 账单；卡片依赖持卡人 id，随后批量查询
+      const [holderList, allBills] = await Promise.all([
+        getHolders(user.id),
         getBillDashboardItems(200, user.id),
       ])
-      if (holdersRes.error) throw holdersRes.error
-      if (cardsRes.error) throw cardsRes.error
+      holderList.sort((a, b) => a.created_at.localeCompare(b.created_at))
+      const holderIds = holderList.map(h => h.id)
+      const cardsRes = holderIds.length > 0 ? await getCardsBasicByHolders(holderIds) : []
 
-      setHolders((holdersRes.data as CardHolder[]) || [])
-      setCards((cardsRes.data || []).map((c: any) => ({ id: c.id, holder_id: c.holder_id })))
+      setHolders(holderList)
+      setCards(cardsRes)
       setBills(allBills)
-    } catch (err: any) {
+    } catch (err) {
       console.error('Dashboard load failed:', err)
-      setError(err?.message || '加载失败，请下拉重试')
+      setError(err instanceof Error ? err.message : '加载失败，请下拉重试')
     } finally {
       setLoading(false)
     }
@@ -163,8 +158,8 @@ export default function DashboardPage() {
         severity: 'success'
       })
       loadData()
-    } catch (err: any) {
-      setToast({ open: true, message: '还款失败: ' + err.message, severity: 'error' })
+    } catch (err) {
+      setToast({ open: true, message: '还款失败: ' + (err instanceof Error ? err.message : String(err)), severity: 'error' })
     }
   }
 
@@ -180,8 +175,8 @@ export default function DashboardPage() {
         severity: 'success'
       })
       await loadData()
-    } catch (err: any) {
-      setToast({ open: true, message: '一键还款失败: ' + err.message, severity: 'error' })
+    } catch (err) {
+      setToast({ open: true, message: '一键还款失败: ' + (err instanceof Error ? err.message : String(err)), severity: 'error' })
     } finally {
       setPaying(false)
     }
@@ -302,16 +297,26 @@ export default function DashboardPage() {
       >
         <Box>
           <Typography
+            variant="h5"
             sx={{
-              fontSize: 22,
-              fontWeight: 700,
-              color: 'var(--text-primary)',
-              lineHeight: 1.2,
+              fontSize: 'var(--type-title-size)',
+              lineHeight: 'var(--type-title-line)',
+              fontWeight: 'var(--type-title-weight)',
+              letterSpacing: 'var(--type-title-tracking)',
+              color: 'var(--text)',
             }}
           >
             概览
           </Typography>
-          <Typography sx={{ fontSize: 13, color: 'var(--text-secondary)', mt: 0.25 }}>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mt: 0.25,
+            }}
+          >
             管控信用卡资产与还款日程
           </Typography>
         </Box>
@@ -319,13 +324,14 @@ export default function DashboardPage() {
           <IconButton
             onClick={togglePrivacyMode}
             aria-label={privacyOn ? '显示金额' : '隐匿金额'}
-            size="small"
             sx={{
-              bgcolor: 'var(--paper)',
-              border: '1px solid var(--border)',
-              boxShadow: 'var(--shadow-card)',
-              color: 'var(--navy-600)',
-              '&:hover': { bgcolor: 'var(--paper)' },
+              width: 'var(--button-size)',
+              height: 'var(--button-size)',
+              background: 'var(--button-face)',
+              color: 'var(--text-on-dark)',
+              boxShadow: 'var(--button-shadow)',
+              '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
+              '&:active': { boxShadow: 'var(--button-shadow-press)' },
             }}
           >
             {privacyOn ? <EyeOffIcon size={18} /> : <EyeIcon size={18} />}
@@ -355,16 +361,18 @@ export default function DashboardPage() {
                 px: 2.25,
                 py: 0.75,
                 borderRadius: 'var(--radius-pill)',
-                fontSize: 13.5,
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
                 fontWeight: 600,
                 cursor: 'pointer',
-                transition: 'all var(--dur-fast) var(--ease-out)',
-                bgcolor: active ? 'var(--navy-600)' : 'rgba(10,31,68,0.05)',
-                color: active ? '#FFFFFF' : 'var(--text-secondary)',
-                border: '1px solid',
-                borderColor: active ? 'var(--navy-600)' : 'transparent',
+                transition: 'box-shadow var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out)',
+                bgcolor: active ? 'var(--navy-600)' : 'var(--paper)',
+                color: active ? 'var(--text-on-dark)' : 'var(--text)',
+                border: 0,
+                boxShadow: active ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
                 userSelect: 'none',
-                '&:hover': active ? {} : { bgcolor: 'rgba(10,31,68,0.08)' },
+                '&:hover': active ? {} : { boxShadow: 'var(--shadow-e2)' },
               }}
             >
               {p.label}
@@ -379,21 +387,30 @@ export default function DashboardPage() {
         sx={{
           p: 3,
           mb: 3,
-          borderRadius: 'var(--radius-card)',
-          background: 'linear-gradient(135deg, #0A1F44 0%, #1E3A8A 100%)',
-          color: '#FFFFFF',
+          borderRadius: 'var(--radius-depth-3)',
+          background: 'linear-gradient(135deg, var(--navy-800) 0%, var(--navy-600) 100%)',
+          color: 'var(--text-on-dark)',
+          // 深蓝主指标卡：品牌暗影
           boxShadow: 'var(--shadow-dark)',
           position: 'relative',
           overflow: 'hidden',
         }}
       >
-        <Typography sx={{ color: 'rgba(255,255,255,0.72)', fontSize: 13, mb: 1 }}>
+        <Typography
+          sx={{
+            color: 'rgba(255,255,255,0.78)',
+            fontSize: 'var(--type-body-size)',
+            lineHeight: 'var(--type-body-line)',
+            letterSpacing: 'var(--type-body-tracking)',
+            mb: 1,
+          }}
+        >
           总待还款
         </Typography>
         <Typography
           className={amountClass}
           sx={{
-            color: '#FFFFFF',
+            color: 'var(--text-on-dark)',
             fontSize: 36,
             fontWeight: 700,
             lineHeight: 1.1,
@@ -407,13 +424,24 @@ export default function DashboardPage() {
         {/* 子指标：逾期 + 未来 N 天 */}
         <Stack direction="row" spacing={3}>
           <Box>
-            <Typography sx={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, mb: 0.25 }}>
+            <Typography
+              sx={{
+                color: 'rgba(255,255,255,0.68)',
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                mb: 0.25,
+              }}
+            >
               含逾期
             </Typography>
             <Typography
               className={amountClass}
               sx={{
-                color: metrics.overdueAmount > 0 ? '#FF8A8A' : 'rgba(255,255,255,0.9)',
+                // 暗底上的告警红：从 --danger 提亮派生（同 DESIGN.md sky-on-navy 的暗表面语义色约定）
+                color: metrics.overdueAmount > 0
+                  ? 'color-mix(in srgb, var(--danger) 56%, #FFFFFF)'
+                  : 'rgba(255,255,255,0.9)',
                 fontSize: 14,
                 fontWeight: 600,
               }}
@@ -422,7 +450,15 @@ export default function DashboardPage() {
             </Typography>
           </Box>
           <Box>
-            <Typography sx={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, mb: 0.25 }}>
+            <Typography
+              sx={{
+                color: 'rgba(255,255,255,0.68)',
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                mb: 0.25,
+              }}
+            >
               未来 {futureRange} 天
             </Typography>
             <Typography
@@ -450,16 +486,25 @@ export default function DashboardPage() {
           onClick={() => router.push('/bills')}
           sx={{
             p: 2,
-            borderRadius: 'var(--radius-card)',
+            // 无边框：分层阴影表达层级
+            borderRadius: 'var(--radius-depth-2)',
             bgcolor: 'var(--paper)',
-            border: '1px solid var(--border)',
-            boxShadow: 'var(--shadow-card)',
+            border: 0,
+            boxShadow: 'var(--shadow-e1)',
             cursor: 'pointer',
             transition: 'box-shadow var(--dur-fast) var(--ease-out)',
-            '&:hover': { boxShadow: 'var(--shadow-hover)' },
+            '&:hover': { boxShadow: 'var(--shadow-e3)' },
           }}
         >
-          <Typography sx={{ fontSize: 12, color: 'var(--text-secondary)', mb: 0.5 }}>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mb: 0.5,
+            }}
+          >
             已逾期
           </Typography>
           <Typography
@@ -473,7 +518,15 @@ export default function DashboardPage() {
           >
             {formatCNY(metrics.overdueAmount)}
           </Typography>
-          <Typography sx={{ fontSize: 11, color: 'var(--text-secondary)', mt: 0.5 }}>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mt: 0.5,
+            }}
+          >
             {metrics.overdueAmount > 0 ? `${metrics.overdueBills.length} 笔待处理` : '暂无逾期'}
           </Typography>
         </Paper>
@@ -483,10 +536,10 @@ export default function DashboardPage() {
           elevation={0}
           sx={{
             p: 2,
-            borderRadius: 'var(--radius-card)',
+            borderRadius: 'var(--radius-depth-2)',
             bgcolor: 'var(--paper)',
-            border: '1px solid var(--border)',
-            boxShadow: 'var(--shadow-card)',
+            border: 0,
+            boxShadow: 'var(--shadow-e1)',
           }}
         >
           <Box
@@ -494,13 +547,26 @@ export default function DashboardPage() {
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
+              // 2 列指标卡在 360 下内宽仅 126px：标签与 7/14/30 天胶囊放不下同一行，
+              // 允许换行，避免两者被同时压成两行
+              flexWrap: 'wrap',
+              columnGap: 1,
+              rowGap: 0.5,
               mb: 0.5,
             }}
           >
-            <Typography sx={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            <Typography
+              sx={{
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                color: 'var(--muted)',
+                whiteSpace: 'nowrap',
+              }}
+            >
               未来待还
             </Typography>
-            <Box sx={{ display: 'flex', gap: 0.25 }}>
+            <Box sx={{ display: 'flex', gap: 0.25, flexShrink: 0 }}>
               {FUTURE_RANGES.map(r => {
                 const active = futureRange === r
                 return (
@@ -518,13 +584,17 @@ export default function DashboardPage() {
                     sx={{
                       px: 0.75,
                       py: 0.25,
-                      fontSize: 10.5,
+                      // 计数级小胶囊：11px 数字在 17px 圆内，属既定尺寸约束
+                      fontSize: 11,
+                      lineHeight: 1.3,
                       fontWeight: 600,
                       borderRadius: 'var(--radius-pill)',
                       cursor: 'pointer',
+                      // 「7 天」是原子语义单元，不允许在数字与单位之间折行
+                      whiteSpace: 'nowrap',
                       bgcolor: active ? 'rgba(201,162,39,0.15)' : 'transparent',
                       color: active ? 'var(--gold-700)' : 'var(--text-disabled)',
-                      transition: 'all var(--dur-fast) var(--ease-out)',
+                      transition: 'background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)',
                       '&:hover': { bgcolor: 'rgba(201,162,39,0.10)' },
                     }}
                   >
@@ -545,7 +615,15 @@ export default function DashboardPage() {
           >
             {formatCNY(metrics.futureAmount)}
           </Typography>
-          <Typography sx={{ fontSize: 11, color: 'var(--text-secondary)', mt: 0.5 }}>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mt: 0.5,
+            }}
+          >
             {futureRange} 天内到期合计
           </Typography>
         </Paper>
@@ -556,23 +634,32 @@ export default function DashboardPage() {
           onClick={() => setDebtExpanded(v => !v)}
           sx={{
             p: 2,
-            borderRadius: 'var(--radius-card)',
+            borderRadius: 'var(--radius-depth-2)',
             bgcolor: 'var(--paper)',
-            border: '1px solid var(--border)',
-            boxShadow: 'var(--shadow-card)',
+            border: 0,
+            boxShadow: 'var(--shadow-e1)',
             cursor: 'pointer',
-            transition: 'all var(--dur-fast) var(--ease-out)',
-            '&:hover': { boxShadow: 'var(--shadow-hover)' },
+            transition: 'box-shadow var(--dur-fast) var(--ease-out)',
+            '&:hover': { boxShadow: 'var(--shadow-e3)' },
           }}
         >
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography sx={{ fontSize: 12, color: 'var(--text-secondary)' }}>总欠款</Typography>
+            <Typography
+              sx={{
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                color: 'var(--muted)',
+              }}
+            >
+              总欠款
+            </Typography>
             <ChevronDownIcon
               size={16}
               style={{
                 transition: 'transform var(--dur-fast) var(--ease-out)',
                 transform: debtExpanded ? 'rotate(180deg)' : 'none',
-                color: 'var(--text-secondary)',
+                color: 'var(--strong)',
               }}
             />
           </Box>
@@ -581,7 +668,7 @@ export default function DashboardPage() {
             sx={{
               fontSize: 22,
               fontWeight: 700,
-              color: 'var(--text-primary)',
+              color: 'var(--text)',
               lineHeight: 1.2,
               mt: 0.5,
             }}
@@ -590,37 +677,37 @@ export default function DashboardPage() {
           </Typography>
 
           {debtExpanded && (
-            <Box sx={{ mt: 1.5, pt: 1.5, borderTop: '1px solid var(--divider)' }}>
+            <Box sx={{ mt: 1.5, pt: 1.5, borderTop: '1px solid var(--track)' }}>
               <Stack spacing={1}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <Typography sx={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                  <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>
                     分期剩余本金
                   </Typography>
                   <Typography
                     className="num-tabular"
-                    sx={{ fontSize: 11.5, color: 'var(--text-disabled)' }}
+                    sx={{ fontSize: 'var(--type-body-size)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--text-disabled)' }}
                   >
                     暂未接入
                   </Typography>
                 </Box>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <Typography sx={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                  <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>
                     贷款剩余本息
                   </Typography>
                   <Typography
                     className="num-tabular"
-                    sx={{ fontSize: 11.5, color: 'var(--text-disabled)' }}
+                    sx={{ fontSize: 'var(--type-body-size)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--text-disabled)' }}
                   >
                     暂未接入
                   </Typography>
                 </Box>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <Typography sx={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                  <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>
                     普通未还
                   </Typography>
                   <Typography
                     className={amountClass}
-                    sx={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-primary)' }}
+                    sx={{ fontSize: 'var(--type-body-size)', letterSpacing: 'var(--type-body-tracking)', fontWeight: 600, color: 'var(--text)' }}
                   >
                     {formatCNY(metrics.plainOwed)}
                   </Typography>
@@ -635,13 +722,22 @@ export default function DashboardPage() {
           elevation={0}
           sx={{
             p: 2,
-            borderRadius: 'var(--radius-card)',
+            borderRadius: 'var(--radius-depth-2)',
             bgcolor: 'var(--paper)',
-            border: '1px solid var(--border)',
-            boxShadow: 'var(--shadow-card)',
+            border: 0,
+            boxShadow: 'var(--shadow-e1)',
           }}
         >
-          <Typography sx={{ fontSize: 12, color: 'var(--text-secondary)' }}>未出账单</Typography>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+            }}
+          >
+            未出账单
+          </Typography>
           <Typography
             sx={{
               fontSize: 22,
@@ -653,7 +749,15 @@ export default function DashboardPage() {
           >
             暂无数据
           </Typography>
-          <Typography sx={{ fontSize: 11, color: 'var(--text-secondary)', mt: 0.5 }}>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mt: 0.5,
+            }}
+          >
             邮件解析待接入
           </Typography>
         </Paper>
@@ -662,7 +766,14 @@ export default function DashboardPage() {
       {/* 账户数 chips */}
       <Box sx={{ mb: 3 }}>
         <Typography
-          sx={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', mb: 1 }}
+          sx={{
+            fontSize: 'var(--type-section-size)',
+            lineHeight: 'var(--type-section-line)',
+            fontWeight: 'var(--type-section-weight)',
+            letterSpacing: 'var(--type-section-tracking)',
+            color: 'var(--text)',
+            mb: 1,
+          }}
         >
           账户
         </Typography>
@@ -673,13 +784,16 @@ export default function DashboardPage() {
               px: 1.5,
               py: 0.5,
               borderRadius: 'var(--radius-pill)',
-              fontSize: 12,
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
               fontWeight: 600,
               cursor: 'pointer',
-              bgcolor:
-                holderFilter === 'all' ? 'rgba(10,31,68,0.08)' : 'rgba(10,31,68,0.03)',
-              color: 'var(--text-primary)',
-              border: '1px solid var(--border)',
+              bgcolor: holderFilter === 'all' ? 'var(--navy-600)' : 'var(--paper)',
+              color: holderFilter === 'all' ? 'var(--text-on-dark)' : 'var(--text)',
+              // 无边框：选中态用填充 + 分层阴影
+              border: 0,
+              boxShadow: holderFilter === 'all' ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
             }}
           >
             全部 {totalCardCount} 张
@@ -692,13 +806,15 @@ export default function DashboardPage() {
                 px: 1.5,
                 py: 0.5,
                 borderRadius: 'var(--radius-pill)',
-                fontSize: 12,
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
                 fontWeight: 600,
                 cursor: 'pointer',
-                bgcolor:
-                  holderFilter === h.id ? 'rgba(10,31,68,0.08)' : 'rgba(10,31,68,0.03)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border)',
+                bgcolor: holderFilter === h.id ? 'var(--navy-600)' : 'var(--paper)',
+                color: holderFilter === h.id ? 'var(--text-on-dark)' : 'var(--text)',
+                border: 0,
+                boxShadow: holderFilter === h.id ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
               }}
             >
               {h.name} {cardsByHolder[h.id] || 0} 张
@@ -736,18 +852,28 @@ export default function DashboardPage() {
               justifyContent: 'center',
               gap: 0.75,
               py: 1.5,
-              borderRadius: 'var(--radius-card)',
+              borderRadius: 'var(--radius-depth-2)',
               cursor: 'pointer',
-              color: 'var(--navy-600)',
-              transition: 'background var(--dur-fast) var(--ease-out)',
-              '&:hover': { bgcolor: 'rgba(10,31,68,0.04)' },
+              color: 'var(--strong)',
+              transition: 'box-shadow var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out)',
+              bgcolor: 'var(--paper)',
+              boxShadow: 'var(--shadow-e1)',
+              '&:hover': { boxShadow: 'var(--shadow-e2)' },
               '&:focus-visible': { outline: '2px solid var(--navy-600)', outlineOffset: 2 },
               // 触控区域 ≥ 64pt（minHeight 64 + 内边距）
               minHeight: 76,
             }}
           >
             {a.icon}
-            <Typography sx={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+            <Typography
+              sx={{
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                fontWeight: 600,
+                color: 'var(--text)',
+              }}
+            >
               {a.label}
             </Typography>
           </Box>
@@ -767,9 +893,11 @@ export default function DashboardPage() {
       >
         <Typography
           sx={{
-            fontSize: 15,
-            fontWeight: 600,
-            color: 'var(--text-primary)',
+            fontSize: 'var(--type-section-size)',
+            lineHeight: 'var(--type-section-line)',
+            fontWeight: 'var(--type-section-weight)',
+            letterSpacing: 'var(--type-section-tracking)',
+            color: 'var(--text)',
             display: 'flex',
             alignItems: 'center',
             gap: 0.75,
@@ -788,7 +916,8 @@ export default function DashboardPage() {
               onClick={() => setPayAllOpen(true)}
               sx={{
                 borderRadius: 'var(--radius-pill)',
-                fontSize: 11.5,
+                fontSize: 'var(--type-body-size)',
+                letterSpacing: 'var(--type-body-tracking)',
                 fontWeight: 700,
                 py: 0.25,
                 px: 1.25,
@@ -799,17 +928,19 @@ export default function DashboardPage() {
             >
               一键全部还款
             </Button>
-            <Box
-              onClick={() => router.push('/bills')}
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 0.25,
-                cursor: 'pointer',
-                color: 'var(--navy-600)',
-                fontSize: 12,
-                fontWeight: 600,
-              }}
+          <Box
+            onClick={() => router.push('/bills')}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.25,
+              cursor: 'pointer',
+              color: 'var(--strong)',
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              fontWeight: 600,
+            }}
             >
               查看全部
               <ChevronRightIcon size={14} />
@@ -824,16 +955,25 @@ export default function DashboardPage() {
           elevation={0}
           sx={{
             p: 3,
-            borderRadius: 'var(--radius-card)',
-            bgcolor: 'rgba(22,163,74,0.06)',
-            border: '1px solid rgba(22,163,74,0.20)',
+            // 无逾期空态：语义成功色容器，保留 1px 语义描边
+            borderRadius: 'var(--radius-depth-2)',
+            bgcolor: 'color-mix(in srgb, var(--success) 6%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--success) 20%, transparent)',
             textAlign: 'center',
           }}
         >
-          <Typography sx={{ fontSize: 14, fontWeight: 600, color: 'var(--success)' }}>
+          <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', fontWeight: 600, color: 'var(--success)' }}>
             本月无逾期
           </Typography>
-          <Typography sx={{ fontSize: 12, color: 'var(--text-secondary)', mt: 0.5 }}>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mt: 0.5,
+            }}
+          >
             所有账单都在按时还款
           </Typography>
         </Paper>
@@ -844,9 +984,10 @@ export default function DashboardPage() {
             .sort((a, b) => a.days_until_due - b.days_until_due)
             .map(bill => {
               const product = bill.card?.card_product
-              const tail = bill.card?.card_number_last4
-                ? `尾号 ${bill.card.card_number_last4}`
-                : '未记录尾号'
+              const tailDigits = formatCardTail(bill.card?.card_number_last4)
+              const tail = tailDigits ? `尾号 ${tailDigits}` : '未记录尾号'
+              // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
+              const cardDisplayName = bill.card ? getEffectiveCardName(bill.card, product) : ''
               const overdueDays = Math.abs(bill.days_until_due)
               const remaining = bill.remaining_amount > 0 ? bill.remaining_amount : Number(bill.bill_amount)
 
@@ -857,13 +998,13 @@ export default function DashboardPage() {
                   onClick={() => router.push('/bills')}
                   sx={{
                     p: 2,
-                    borderRadius: 'var(--radius-card)',
+                    borderRadius: 'var(--radius-depth-2)',
                     bgcolor: 'var(--paper)',
-                    border: '1px solid var(--border)',
-                    boxShadow: 'var(--shadow-card)',
+                    border: 0,
+                    boxShadow: 'var(--shadow-e1)',
                     cursor: 'pointer',
                     transition: 'box-shadow var(--dur-fast) var(--ease-out)',
-                    '&:hover': { boxShadow: 'var(--shadow-hover)' },
+                    '&:hover': { boxShadow: 'var(--shadow-e3)' },
                   }}
                 >
                   <Box
@@ -878,15 +1019,17 @@ export default function DashboardPage() {
                     <Box sx={{ minWidth: 0 }}>
                       <Typography
                         sx={{
-                          fontSize: 14,
-                          fontWeight: 700,
-                          color: 'var(--text-primary)',
+                          fontSize: 'var(--type-body-size)',
+                          lineHeight: 'var(--type-body-line)',
+                          letterSpacing: 'var(--type-body-tracking)',
+                          fontWeight: 600,
+                          color: 'var(--text)',
                         }}
                         noWrap
                       >
-                        {product?.bank_name || '未知银行'} {product?.card_name || ''}
+                        {product?.bank_name || '未知银行'} {cardDisplayName}
                       </Typography>
-                      <Typography sx={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                      <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>
                         {tail} · {bill.bill_month || ''}
                       </Typography>
                     </Box>
@@ -898,7 +1041,9 @@ export default function DashboardPage() {
                         borderRadius: 'var(--radius-pill)',
                         bgcolor: 'rgba(207,46,46,0.10)',
                         color: 'var(--danger)',
-                        fontSize: 11,
+                        fontSize: 'var(--type-body-size)',
+                        lineHeight: 'var(--type-body-line)',
+                        letterSpacing: 'var(--type-body-tracking)',
                         fontWeight: 700,
                       }}
                     >
@@ -911,11 +1056,11 @@ export default function DashboardPage() {
                       justifyContent: 'space-between',
                       alignItems: 'center',
                       pt: 0.5,
-                      borderTop: '1px dashed #f1f5f9'
+                      borderTop: '1px dashed var(--track)'
                     }}
                   >
                     <Box>
-                      <Typography sx={{ fontSize: 11, color: 'var(--text-secondary)' }}>待还金额</Typography>
+                      <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>待还金额</Typography>
                       <Typography
                         className={amountClass}
                         sx={{
@@ -935,7 +1080,8 @@ export default function DashboardPage() {
                       onClick={(e) => handlePaySingle(e, bill)}
                       sx={{
                         borderRadius: 'var(--radius-pill)',
-                        fontSize: 11.5,
+                        fontSize: 'var(--type-body-size)',
+                        letterSpacing: 'var(--type-body-tracking)',
                         fontWeight: 700,
                         py: 0.35,
                         px: 1.5,
@@ -953,12 +1099,42 @@ export default function DashboardPage() {
 
       {/* 一键全部还款确认弹窗 */}
       <Dialog open={payAllOpen} onClose={() => !paying && setPayAllOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle sx={{ fontWeight: 800 }}>确认一键完成全部还款？</DialogTitle>
+        {/* Dialog 走 portal，在 .phone 之外：显式声明角色令牌 */}
+        <DialogTitle
+          sx={{
+            fontSize: 'var(--type-section-size)',
+            lineHeight: 'var(--type-section-line)',
+            fontWeight: 'var(--type-section-weight)',
+            letterSpacing: 'var(--type-section-tracking)',
+            color: 'var(--text)',
+            fontFamily: 'var(--font-display)',
+          }}
+        >
+          确认一键完成全部还款？
+        </DialogTitle>
         <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              fontFamily: 'var(--font-body)',
+              mb: 1,
+            }}
+          >
             系统将把当前 <strong>{metrics.overdueBills.length} 笔</strong>逾期账单全部标记为已结清。
           </Typography>
-          <Typography variant="subtitle1" fontWeight={800} color="error.main">
+          <Typography
+            sx={{
+              fontSize: 'var(--type-section-size)',
+              lineHeight: 'var(--type-section-line)',
+              fontWeight: 'var(--type-section-weight)',
+              letterSpacing: 'var(--type-section-tracking)',
+              color: 'var(--danger)',
+              fontFamily: 'var(--font-display)',
+            }}
+          >
             合计结清金额：{formatCNY(metrics.overdueAmount)}
           </Typography>
         </DialogContent>
@@ -970,7 +1146,7 @@ export default function DashboardPage() {
             onClick={handlePayAllOverdue}
             disabled={paying}
             startIcon={paying ? <CircularProgress size={16} color="inherit" /> : null}
-            sx={{ fontWeight: 700, borderRadius: 2 }}
+            sx={{ fontWeight: 700, borderRadius: 'var(--radius-pill)' }}
           >
             确认全部结清
           </Button>
@@ -984,7 +1160,7 @@ export default function DashboardPage() {
         onClose={() => setToast(prev => ({ ...prev, open: false }))}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
-        <Alert severity={toast.severity} sx={{ borderRadius: 3, fontWeight: 600 }}>
+        <Alert severity={toast.severity} sx={{ borderRadius: 'var(--radius-depth-1)', fontWeight: 600 }}>
           {toast.message}
         </Alert>
       </Snackbar>
@@ -995,13 +1171,24 @@ export default function DashboardPage() {
             elevation={0}
             sx={{
               p: 2,
-              borderRadius: 'var(--radius-card)',
+              // 错误态：语义危险色容器，保留 1px 语义描边
+              borderRadius: 'var(--radius-depth-2)',
               bgcolor: 'rgba(207,46,46,0.06)',
               border: '1px solid rgba(207,46,46,0.20)',
               textAlign: 'center',
             }}
           >
-            <Typography sx={{ fontSize: 13, color: 'var(--danger)', mb: 1 }}>{error}</Typography>
+            <Typography
+              sx={{
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                color: 'var(--danger)',
+                mb: 1,
+              }}
+            >
+              {error}
+            </Typography>
             <Box
               onClick={loadData}
               sx={{
@@ -1010,8 +1197,10 @@ export default function DashboardPage() {
                 py: 0.5,
                 borderRadius: 'var(--radius-pill)',
                 bgcolor: 'var(--danger)',
-                color: '#FFFFFF',
-                fontSize: 12,
+                color: 'var(--text-on-dark)',
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
                 fontWeight: 600,
                 cursor: 'pointer',
               }}

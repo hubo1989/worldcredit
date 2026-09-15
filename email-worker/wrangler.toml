@@ -2,9 +2,7 @@ name = "worldcredit-email-worker"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
-[vars]
-INSFORGE_URL = "https://dr7vjx28.us-east.insforge.app"
-
-# Secrets (configure with wrangler secret):
-#   wrangler secret put INSFORGE_SERVICE_KEY
-#   (value = your InsForge service_role JWT)
+[[d1_databases]]
+binding = "DB"
+database_name = "worldcredit"
+database_id = "6ce5f678-e5bb-46cc-88d7-a316f1a209cb"

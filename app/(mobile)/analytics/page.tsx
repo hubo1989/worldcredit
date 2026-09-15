@@ -2,21 +2,23 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
 import {
   Box, Typography, Card, CardContent, Stack, Select, MenuItem,
-  FormControl, InputLabel, Button, Alert, Skeleton, Chip, IconButton,
+  FormControl, InputLabel, Button, Alert, Skeleton, IconButton,
 } from '@mui/material'
-import { TrendingUp, TrendingDown, AccountBalance, Warning, FileDownload } from '@mui/icons-material'
+import { Warning, FileDownload } from '@mui/icons-material'
 import {
   LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
+import type { PieLabelRenderProps } from 'recharts'
 import { getAnalyticsSummary, getMonthlyDebtTrend, getCategoryBreakdown } from '@/lib/api/analytics'
 import { getHolders } from '@/lib/api/holders'
 import { getCardsByHolder } from '@/lib/api/cards'
+import type { CreditCardWithProduct } from '@/lib/api/cards'
 import { useAuth } from '@/lib/auth'
 import { ExportDialog } from '@/components/mobile/ExportDialog'
+import type { AnalyticsSummary, MonthlyDebtPoint, CategoryBreakdown } from '@/lib/api/analytics'
 import type { CardHolder } from '@/lib/types'
 
 interface Filters {
@@ -27,18 +29,17 @@ interface Filters {
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D']
 
 export default function AnalyticsPage() {
-  const router = useRouter()
   const { user } = useAuth()
   const [filters, setFilters] = useState<Filters>({ months: 6 })
   const [holderOptions, setHolderOptions] = useState<Array<{ id: string; name: string }>>([])
-  const [summary, setSummary] = useState<any>(null)
-  const [trend, setTrend] = useState<any[]>([])
-  const [categoryBreakdown, setCategoryBreakdown] = useState<any[]>([])
+  const [summary, setSummary] = useState<AnalyticsSummary | null>(null)
+  const [trend, setTrend] = useState<MonthlyDebtPoint[]>([])
+  const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryBreakdown[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
   const [holders, setHolders] = useState<CardHolder[]>([])
-  const [cardOptions, setCardOptions] = useState<Array<{ id: string; label: string; card: any }>>([])
+  const [cardOptions, setCardOptions] = useState<Array<{ id: string; label: string; card: CreditCardWithProduct }>>([])
 
   const loadHolders = useCallback(async () => {
     if (!user) return
@@ -48,14 +49,15 @@ export default function AnalyticsPage() {
       setHolderOptions(holdersData.map(h => ({ id: h.id, name: h.name })))
 
       // Load card options for export
-      const allCards: Array<{ id: string; label: string; card: any }> = []
+      const allCards: Array<{ id: string; label: string; card: CreditCardWithProduct }> = []
       await Promise.all(
         holdersData.map(async (h) => {
           const cards = await getCardsByHolder(h.id)
           cards.forEach(c => {
             allCards.push({
               id: c.id,
-              label: `${h.name} - ${c.card_product?.bank_name ?? ''} ${c.card_product?.card_name ?? ''}`,
+              // 修改内容优先：getCardsByHolder 已把卡级别覆盖写进 card.card_name
+              label: `${h.name} - ${c.card_product?.bank_name ?? ''} ${c.card_name ?? c.card_product?.card_name ?? ''}`,
               card: c,
             })
           })
@@ -106,12 +108,14 @@ export default function AnalyticsPage() {
   const getRiskAlerts = () => {
     const alerts = []
 
-    if (summary?.utilization_rate > 70) {
-      alerts.push(`额度使用率过高 (${summary.utilization_rate.toFixed(1)}%)`)
+    const utilization = summary?.utilization_rate
+    if (utilization != null && utilization > 70) {
+      alerts.push(`额度使用率过高 (${utilization.toFixed(1)}%)`)
     }
 
-    if (summary?.overdue_count > 0) {
-      alerts.push(`有 ${summary.overdue_count} 笔逾期账单`)
+    const overdueCount = summary?.overdue_count
+    if (overdueCount != null && overdueCount > 0) {
+      alerts.push(`有 ${overdueCount} 笔逾期账单`)
     }
 
     if (trend.length > 1) {
@@ -128,13 +132,30 @@ export default function AnalyticsPage() {
   return (
     <Box sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-        <Typography variant="h6" fontWeight={700}>
+        <Typography
+          variant="h6"
+          sx={{
+            fontSize: 'var(--type-title-size)',
+            lineHeight: 'var(--type-title-line)',
+            fontWeight: 'var(--type-title-weight)',
+            letterSpacing: 'var(--type-title-tracking)',
+            color: 'var(--text)',
+          }}
+        >
           消费与负债分析
         </Typography>
         <IconButton
-          size="small"
           onClick={() => setExportOpen(true)}
           aria-label="导出数据"
+          sx={{
+            width: 'var(--button-size)',
+            height: 'var(--button-size)',
+            background: 'var(--button-face)',
+            color: 'var(--text-on-dark)',
+            boxShadow: 'var(--button-shadow)',
+            '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
+            '&:active': { boxShadow: 'var(--button-shadow-press)' },
+          }}
         >
           <FileDownload />
         </IconButton>
@@ -187,47 +208,109 @@ export default function AnalyticsPage() {
         <Stack spacing={2}>
           {/* Risk Alerts */}
           {getRiskAlerts().length > 0 && (
-            <Alert severity="warning" icon={<Warning />}>
-              <Typography variant="subtitle2" fontWeight={700}>风险提示</Typography>
+          <Alert severity="warning" icon={<Warning />}>
+              <Typography
+                sx={{
+                  fontSize: 'var(--type-section-size)',
+                  lineHeight: 'var(--type-section-line)',
+                  fontWeight: 'var(--type-section-weight)',
+                  letterSpacing: 'var(--type-section-tracking)',
+                  color: 'var(--text)',
+                }}
+              >
+                风险提示
+              </Typography>
               {getRiskAlerts().map((alert, i) => (
-                <Typography key={i} variant="body2">• {alert}</Typography>
+                <Typography
+                  key={i}
+                  sx={{
+                    fontSize: 'var(--type-body-size)',
+                    lineHeight: 'var(--type-body-line)',
+                    letterSpacing: 'var(--type-body-tracking)',
+                    color: 'var(--text)',
+                  }}
+                >
+                  • {alert}
+                </Typography>
               ))}
             </Alert>
           )}
 
           {/* Summary Cards */}
           <Stack direction="row" spacing={1} sx={{ overflowX: 'auto', pb: 1 }}>
-            <Card sx={{ minWidth: 140, flex: 1 }}>
+            {/* 横向滚动条里的卡片：flexShrink:0 让每个语义单元保持完整宽度，
+                不让 flex 把「额度使用率」这类标签压到折行。 */}
+            <Card elevation={0} sx={{ minWidth: 140, flex: 1, flexShrink: 0, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
-                <Typography variant="caption" color="text.secondary">账单总额</Typography>
-                <Typography variant="h6" fontWeight={700}>
+                <Typography
+                  sx={{
+                    fontSize: 'var(--type-body-size)',
+                    lineHeight: 'var(--type-body-line)',
+                    letterSpacing: 'var(--type-body-tracking)',
+                    color: 'var(--muted)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  账单总额
+                </Typography>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap' }}>
                   {formatCurrency(summary.total_bill_amount)}
                 </Typography>
               </CardContent>
             </Card>
 
-            <Card sx={{ minWidth: 140, flex: 1 }}>
+            <Card elevation={0} sx={{ minWidth: 140, flex: 1, flexShrink: 0, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
-                <Typography variant="caption" color="text.secondary">待还金额</Typography>
-                <Typography variant="h6" fontWeight={700} color="error.main">
+                <Typography
+                  sx={{
+                    fontSize: 'var(--type-body-size)',
+                    lineHeight: 'var(--type-body-line)',
+                    letterSpacing: 'var(--type-body-tracking)',
+                    color: 'var(--muted)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  待还金额
+                </Typography>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: 'var(--danger)', whiteSpace: 'nowrap' }}>
                   {formatCurrency(summary.pending_amount)}
                 </Typography>
               </CardContent>
             </Card>
 
-            <Card sx={{ minWidth: 140, flex: 1 }}>
+            <Card elevation={0} sx={{ minWidth: 140, flex: 1, flexShrink: 0, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
-                <Typography variant="caption" color="text.secondary">已还金额</Typography>
-                <Typography variant="h6" fontWeight={700} color="success.main">
+                <Typography
+                  sx={{
+                    fontSize: 'var(--type-body-size)',
+                    lineHeight: 'var(--type-body-line)',
+                    letterSpacing: 'var(--type-body-tracking)',
+                    color: 'var(--muted)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  已还金额
+                </Typography>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: 'var(--success)', whiteSpace: 'nowrap' }}>
                   {formatCurrency(summary.paid_amount)}
                 </Typography>
               </CardContent>
             </Card>
 
-            <Card sx={{ minWidth: 140, flex: 1 }}>
+            <Card elevation={0} sx={{ minWidth: 140, flex: 1, flexShrink: 0, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
-                <Typography variant="caption" color="text.secondary">额度使用率</Typography>
-                <Typography variant="h6" fontWeight={700} color={summary.utilization_rate > 70 ? 'error.main' : 'primary.main'}>
+                <Typography
+                  sx={{
+                    fontSize: 'var(--type-body-size)',
+                    lineHeight: 'var(--type-body-line)',
+                    letterSpacing: 'var(--type-body-tracking)',
+                    color: 'var(--muted)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  额度使用率
+                </Typography>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: summary.utilization_rate > 70 ? 'var(--danger)' : 'var(--strong)', whiteSpace: 'nowrap' }}>
                   {summary.utilization_rate.toFixed(1)}%
                 </Typography>
               </CardContent>
@@ -235,9 +318,18 @@ export default function AnalyticsPage() {
           </Stack>
 
           {/* Monthly Trend Chart */}
-          <Card>
+          <Card elevation={0} sx={{ border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
             <CardContent>
-              <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 2 }}>
+              <Typography
+                sx={{
+                  fontSize: 'var(--type-section-size)',
+                  lineHeight: 'var(--type-section-line)',
+                  fontWeight: 'var(--type-section-weight)',
+                  letterSpacing: 'var(--type-section-tracking)',
+                  color: 'var(--text)',
+                  mb: 2,
+                }}
+              >
                 月度账单趋势
               </Typography>
               <ResponsiveContainer width="100%" height={250}>
@@ -247,7 +339,7 @@ export default function AnalyticsPage() {
                   <YAxis tick={{ fontSize: 12 }} />
                   <Tooltip
                     formatter={formatChartCurrency}
-                    labelStyle={{ color: '#666' }}
+                    labelStyle={{ color: 'var(--muted)' }}
                   />
                   <Legend />
                   <Line
@@ -271,9 +363,18 @@ export default function AnalyticsPage() {
 
           {/* Category Breakdown Chart */}
           {categoryBreakdown.length > 0 && (
-            <Card>
+            <Card elevation={0} sx={{ border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
               <CardContent>
-                <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 2 }}>
+                <Typography
+                  sx={{
+                    fontSize: 'var(--type-section-size)',
+                    lineHeight: 'var(--type-section-line)',
+                    fontWeight: 'var(--type-section-weight)',
+                    letterSpacing: 'var(--type-section-tracking)',
+                    color: 'var(--text)',
+                    mb: 2,
+                  }}
+                >
                   消费分类占比
                 </Typography>
                 <ResponsiveContainer width="100%" height={250}>
@@ -283,7 +384,10 @@ export default function AnalyticsPage() {
                       cx="50%"
                       cy="50%"
                       labelLine={false}
-                      label={(props: any) => `${props.category ?? ''} ${Number(props.percentage || 0).toFixed(1)}%`}
+                      label={(props: PieLabelRenderProps) => {
+                        const p = props as unknown as { category?: string; percentage?: number }
+                        return `${p.category ?? ''} ${Number(p.percentage || 0).toFixed(1)}%`
+                      }}
                       outerRadius={80}
                       fill="#8884d8"
                       dataKey="amount"
@@ -300,9 +404,18 @@ export default function AnalyticsPage() {
           )}
 
           {/* Category List */}
-          <Card>
+          <Card elevation={0} sx={{ border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
             <CardContent>
-              <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 2 }}>
+              <Typography
+                sx={{
+                  fontSize: 'var(--type-section-size)',
+                  lineHeight: 'var(--type-section-line)',
+                  fontWeight: 'var(--type-section-weight)',
+                  letterSpacing: 'var(--type-section-tracking)',
+                  color: 'var(--text)',
+                  mb: 2,
+                }}
+              >
                 分类详情
               </Typography>
               <Stack spacing={1}>
@@ -320,9 +433,27 @@ export default function AnalyticsPage() {
                           bgcolor: COLORS[i % COLORS.length],
                         }}
                       />
-                      <Typography variant="body2">{cat.category}</Typography>
+                      <Typography
+                        sx={{
+                          fontSize: 'var(--type-body-size)',
+                          lineHeight: 'var(--type-body-line)',
+                          letterSpacing: 'var(--type-body-tracking)',
+                          color: 'var(--text)',
+                        }}
+                      >
+                        {cat.category}
+                      </Typography>
                     </Box>
-                    <Typography variant="body2" fontWeight={600}>
+                    <Typography
+                      className="num-tabular"
+                      sx={{
+                        fontSize: 'var(--type-body-size)',
+                        lineHeight: 'var(--type-body-line)',
+                        letterSpacing: 'var(--type-body-tracking)',
+                        fontWeight: 600,
+                        color: 'var(--text)',
+                      }}
+                    >
                       {formatCurrency(cat.amount)}
                     </Typography>
                   </Box>

@@ -14,8 +14,6 @@ import {
   Chip
 } from '@mui/material'
 import DisplayIcon from '@mui/icons-material/Tune'
-import PrivacyIcon from '@mui/icons-material/VisibilityOff'
-import CheckIcon from '@mui/icons-material/CheckCircleOutline'
 import type { UserDisplayConfig } from '@/lib/types'
 
 interface DisplayPreferencesCardProps {

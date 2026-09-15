@@ -31,6 +31,7 @@
   --radius-sm: 8px;
   --radius-card: 12px;
   --radius-pill: 999px;
+  --radius-xs: 3px;
   --shadow-card: 0 2px 8px rgba(10, 31, 68, 0.06);
   --shadow-hover: 0 6px 20px rgba(10, 31, 68, 0.10);
   --shadow-dark: 0 12px 40px rgba(6, 18, 43, 0.16);
@@ -39,6 +40,220 @@
   --dur-pop: 250ms;
   --dur-skeleton: 1.1s;
   color-scheme: light;
+}
+
+/* ── Phone 视觉规范（紧凑令牌） ────────────────────────────────────────────
+   原则：分层阴影而非边框、每个标题负向字间距、分隔线只走 --track 细线。
+   Inter Tight 负责 Latin 与数字（金额/日期），CJK 由栈内系统字体接管。
+   --font-display / --font-numeric 均落到 Inter Tight，避免只声明不加载。 */
+:root {
+  /* 三段式文本语义：主文本 / 次要文本 / 强调与图标 */
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --strong: var(--navy-800);
+  /* 唯一允许的分隔线颜色，绝不使用可见边框色 */
+  --track: var(--divider);
+
+  /* 语义状态色：与 DESIGN.md 声明一致。
+     --warn 是历史遗留的黄 (#FCB900)，真正的「待还/临期」警告橙是 #ed6c02——
+     代码里 var(--warning, #d97706) 一直在走死回退，这里补齐权威 token。 */
+  --warning: #ed6c02;
+  --warning-soft: rgba(237, 108, 2, 0.14);
+
+  --font-display: "Inter Tight", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-body: var(--font-display);
+
+  /* 排版阶梯：标题 22/28 · 章节 19/24 · 正文与日期 14.5/18 */
+  --type-title-size: 22px;
+  --type-title-line: 28px;
+  --type-title-weight: 600;
+  --type-title-tracking: -0.7px;
+  --type-section-size: 19px;
+  --type-section-line: 24px;
+  --type-section-weight: 600;
+  --type-section-tracking: -0.6px;
+  --type-body-size: 14.5px;
+  --type-body-line: 18px;
+  --type-body-weight: 400;
+  --type-body-tracking: 0.3px;
+  /* 表单控件与正文同级，输入 ≥16px 防 iOS 聚焦缩放 */
+  --type-control-size: 16px;
+
+  /* 圆角按深度递进：列表 12 · 卡片 14 · 浮层与大卡 18 */
+  --radius-depth-1: 12px;
+  --radius-depth-2: 14px;
+  --radius-depth-3: 18px;
+  --radius-button: 50%;
+  --button-size: 42px;
+
+  /* 分层阴影取代边框：每一层都带偏移与柔和模糊 */
+  --shadow-e1:
+    0 1px 1px rgba(10, 31, 68, 0.05),
+    0 2px 6px rgba(10, 31, 68, 0.06);
+  --shadow-e2:
+    0 1px 2px rgba(10, 31, 68, 0.06),
+    0 4px 12px rgba(10, 31, 68, 0.08);
+  --shadow-e3:
+    0 2px 4px rgba(10, 31, 68, 0.07),
+    0 10px 28px rgba(10, 31, 68, 0.11);
+  --shadow-float:
+    0 4px 10px rgba(10, 31, 68, 0.10),
+    0 16px 40px rgba(6, 18, 43, 0.16);
+
+  /* 圆形按钮：6px 内嵌高光 + 柔和投影，无平面填充 */
+  --button-shadow:
+    inset 0 1px 6px rgba(255, 255, 255, 0.45),
+    0 1px 2px rgba(10, 31, 68, 0.10),
+    0 3px 8px rgba(10, 31, 68, 0.14);
+  --button-shadow-press:
+    inset 0 1px 6px rgba(10, 31, 68, 0.10),
+    0 1px 2px rgba(10, 31, 68, 0.10);
+  --button-face: linear-gradient(180deg, #2E4A8F 0%, var(--navy-800) 62%, #071734 100%);
+  --button-face-accent: linear-gradient(180deg, #2F7FE0 0%, var(--info) 62%, #14509E 100%);
+}
+
+/* 排版角色：直接挂 class，页面无需再逐个写字号/字距。
+
+   选择器重复一次类名（.type-title.type-title）把特异性提到 0-2-0：
+   MUI 的 emotion 样式在 <head> 中注入在 globals.css 之后，
+   .MuiTypography-body2 / .MuiDialogTitle-root 这类根类同为 0-1-0，
+   同特异性下后注入者胜出，会让角色 class 失效。提高一档即可稳定胜出，
+   且不依赖祖先元素——MUI Dialog 挂在 document.body 的 portal 里，
+   不在 .phone 之内，用祖先选择器会漏掉弹窗标题。
+
+   颜色不在这里写死：主文本色由 .phone 继承下来，只有 .type-label 需要降档。 */
+.type-title.type-title {
+  font-family: var(--font-display);
+  font-size: var(--type-title-size);
+  line-height: var(--type-title-line);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+}
+.type-section.type-section {
+  font-family: var(--font-display);
+  font-size: var(--type-section-size);
+  line-height: var(--type-section-line);
+  font-weight: var(--type-section-weight);
+  letter-spacing: var(--type-section-tracking);
+}
+.type-body.type-body {
+  font-family: var(--font-display);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--type-body-weight);
+  letter-spacing: var(--type-body-tracking);
+}
+/* 日期与弱化的元信息标签：与正文同尺寸，只降颜色 */
+.type-label.type-label {
+  font-family: var(--font-display);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--type-body-weight);
+  letter-spacing: var(--type-body-tracking);
+  color: var(--muted);
+}
+
+/* 分层阴影卡片：无边框，深度即层级 */
+.surface-1,
+.surface-2,
+.surface-3 {
+  background: var(--paper);
+  border: 0;
+}
+.surface-1 { border-radius: var(--radius-depth-1); box-shadow: var(--shadow-e1); }
+.surface-2 { border-radius: var(--radius-depth-2); box-shadow: var(--shadow-e2); }
+.surface-3 { border-radius: var(--radius-depth-3); box-shadow: var(--shadow-e3); }
+
+/* 分隔线：1px --track，永不使用可见边框色 */
+.track-top { border-top: 1px solid var(--track); }
+.track-bottom { border-bottom: 1px solid var(--track); }
+.track-left { border-left: 1px solid var(--track); }
+.track-divide > * + * { border-top: 1px solid var(--track); }
+
+/* 圆形按钮基座：内嵌高光 + 柔和投影，无平面填充 */
+.btn-round {
+  width: var(--button-size);
+  height: var(--button-size);
+  border-radius: var(--radius-button);
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--button-face);
+  color: var(--text-on-dark);
+  box-shadow: var(--button-shadow);
+  cursor: pointer;
+  transition: box-shadow var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.btn-round--accent { background: var(--button-face-accent); }
+.btn-round:hover { box-shadow: var(--shadow-e2); }
+.btn-round:active { transform: translateY(1px); box-shadow: var(--button-shadow-press); }
+
+/* ── Phone 外壳作用域 ─────────────────────────────────────────────────────
+   只有 app/(mobile) 的 MobileShell 携带 .phone，因此这套规范只作用于
+   phone 版本，不影响落地页、登录注册与管理后台三个非 phone 表面。 */
+.phone {
+  font-family: var(--font-display);
+  /* 浏览器原生表面也属于设计的一部分：选中、光标、滚动条、焦点环 */
+  caret-color: var(--strong);
+  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-width: thin;
+}
+.phone ::selection {
+  background: color-mix(in srgb, var(--navy-600) 18%, transparent);
+  color: var(--strong);
+}
+.phone ::-webkit-scrollbar { width: 8px; height: 8px; }
+.phone ::-webkit-scrollbar-track { background: transparent; }
+.phone ::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
+}
+.phone :focus-visible {
+  outline: 2px solid var(--navy-600);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* MUI 各 root 自带 font-family，需要在 phone 作用域内显式接管 */
+.phone .MuiTypography-root,
+.phone .MuiButton-root,
+.phone .MuiButtonBase-root,
+.phone .MuiInputBase-root,
+.phone .MuiInputLabel-root,
+.phone .MuiFormHelperText-root,
+.phone .MuiChip-label,
+.phone .MuiMenuItem-root,
+.phone .MuiDialogTitle-root,
+.phone .MuiDialogContentText-root,
+.phone .MuiTab-root,
+.phone .MuiAlert-message,
+.phone .MuiSnackbarContent-message {
+  font-family: var(--font-display);
+}
+
+/* 每个标题都采用负向字间距：标题 22/28 · 章节 19/24 */
+.phone h1,
+.phone h2,
+.phone h3,
+.phone h4,
+.phone h5,
+.phone h6 {
+  font-family: var(--font-display);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  /* 不在此处写 color：标题色由各页面按语义决定（白字卡面、语义色金额等），
+     这里只负责字体与字距，避免覆盖有意设置的颜色。 */
+}
+.phone h5 {
+  font-size: var(--type-title-size);
+  line-height: var(--type-title-line);
+  letter-spacing: var(--type-title-tracking);
+}
+.phone h6 {
+  font-size: var(--type-section-size);
+  line-height: var(--type-section-line);
+  letter-spacing: var(--type-section-tracking);
 }
 .theme-dark,
 [data-theme="dark"] {
@@ -81,7 +296,10 @@ html, body {
   100% { background-position: 468px 0; }
 }
 .wc-skeleton {
-  background: linear-gradient(90deg, rgba(10,31,68,0.05) 25%, rgba(10,31,68,0.10) 37%, rgba(10,31,68,0.05) 63%);
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--navy-800) 5%, transparent) 25%,
+    color-mix(in srgb, var(--navy-800) 10%, transparent) 37%,
+    color-mix(in srgb, var(--navy-800) 5%, transparent) 63%);
   background-size: 936px 100%;
   animation: wc-shimmer var(--dur-skeleton) infinite linear;
   border-radius: var(--radius-card);
@@ -94,7 +312,7 @@ html, body {
 :focus-visible {
   outline: 2px solid var(--navy-600);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

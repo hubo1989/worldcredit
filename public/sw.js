@@ -1,8 +1,10 @@
 // WorldCredit Service Worker
 // Handles Web Push notifications and basic PWA caching
-import { precacheAndRoute } from 'workbox-precaching'
+import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching'
 
 precacheAndRoute(self.__WB_MANIFEST)
+// Drop old precache revisions so a new deploy never serves stale assets.
+cleanupOutdatedCaches()
 
 self.addEventListener('install', () => {
   self.skipWaiting()
@@ -14,7 +16,7 @@ self.addEventListener('activate', (event) => {
 
 // ── Push event ──────────────────────────────────────────────────────────────
 self.addEventListener('push', (event) => {
-  let data = {}
+  let data
   try {
     data = event.data ? event.data.json() : {}
   } catch {

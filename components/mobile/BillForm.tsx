@@ -7,8 +7,9 @@ import {
   CircularProgress
 } from '@mui/material'
 import { format } from 'date-fns'
-import { insforge } from '@/lib/insforge'
-import { createBill, updateBill } from '@/lib/api/bills'
+import { createBill, updateBill, getBillByCardMonth } from '@/lib/api/bills'
+import { getAllCardsWithProduct } from '@/lib/api/cards'
+import { formatCardTail } from '@/lib/utils'
 import type { CreditCard, CardProduct, Bill } from '@/lib/types'
 import { AiFillBox } from '@/components/mobile/AiFillBox'
 
@@ -29,7 +30,8 @@ interface Props {
   existingBill?: Bill | null
 }
 
-type CardWithProduct = CreditCard & { card_product: CardProduct }
+// 服务端 joinRowToCard 会把卡级别覆盖写进顶层 card_name，这里如实声明以便选卡器显示生效名称
+type CardWithProduct = CreditCard & { card_product: CardProduct; card_name?: string }
 
 const EMPTY: BillFormData = {
   card_id: '',
@@ -50,22 +52,9 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
   // 加载所有信用卡
   useEffect(() => {
     if (!open) return
-    insforge.database
-      .from('credit_cards')
-      .select('*')
-      .then(async ({ data: rawCards, error: e }) => {
-        if (e || !rawCards) return
-        const pIds = Array.from(new Set(rawCards.map((c: any) => c.card_product_id).filter(Boolean)))
-        let pMap: Record<string, CardProduct> = {}
-        if (pIds.length > 0) {
-          const { data: pData } = await insforge.database
-            .from('card_products')
-            .select('*')
-            .in('id', pIds)
-          if (pData) pMap = pData.reduce((acc, p) => ({ ...acc, [p.id]: p }), {})
-        }
-        setCards(rawCards.map((c: any) => ({ ...c, card_product: pMap[c.card_product_id] })) as CardWithProduct[])
-      })
+    getAllCardsWithProduct()
+      .then(rows => setCards(rows as CardWithProduct[]))
+      .catch(() => setCards([]))
   }, [open])
 
   // 初始化表单
@@ -91,13 +80,8 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
   // 当选择信用卡或账单月份变化时，检查当月账单是否已存在
   useEffect(() => {
     if (!form.card_id || !form.bill_month || existingBill) return
-    insforge.database
-      .from('bills')
-      .select('id, bill_amount, min_payment, statement_date, due_date')
-      .eq('card_id', form.card_id)
-      .eq('bill_month', form.bill_month)
-      .maybeSingle()
-      .then(({ data }) => {
+    getBillByCardMonth(form.card_id, form.bill_month)
+      .then(data => {
         if (data) {
           setExistingBillId(data.id)
           setForm(prev => ({
@@ -111,6 +95,7 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
           setExistingBillId(null)
         }
       })
+      .catch(() => {})
   }, [form.card_id, form.bill_month, existingBill])
 
   const set = (field: keyof BillFormData) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -163,19 +148,24 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
 
       onSuccess()
       onClose()
-    } catch (err: any) {
-      setError(err?.message ?? '提交失败，请重试')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '提交失败，请重试')
     } finally {
       setSubmitting(false)
     }
   }
 
-  const cardLabel = (c: CardWithProduct) =>
-    `${c.card_product.bank_name} ${c.card_product.card_name}${c.card_number_last4 ? ` (${c.card_number_last4})` : ''}`
+  const cardLabel = (c: CardWithProduct) => {
+    const tail = formatCardTail(c.card_number_last4)
+    // 修改内容优先：getAllCardsWithProduct 已把卡级别覆盖写进 card.card_name，
+    // 否则两张同名产品卡在选卡器里无法区分
+    const name = c.card_name || c.card_product.card_name
+    return `${c.card_product.bank_name} ${name}${tail ? ` (${tail})` : ''}`
+  }
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle fontWeight={700}>
+      <DialogTitle className="type-title">
         {existingBillId ? '更新账单' : '录入账单'}
       </DialogTitle>
 

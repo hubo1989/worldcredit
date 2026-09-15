@@ -1,0 +1,198 @@
+// lib/api/registry.ts — server-only allowlist of the RPC API surface.
+// A client request /api/rpc/<module>/<fn> only executes if a matching entry
+// exists here. Identity always comes from the HMAC-signed wc_user session
+// cookie:
+//   - bindUser: positional arg index replaced with the session user id
+//   - bindField: field inside an object arg overwritten with the session user id
+//   - admin: requires role === 'admin'
+//   - memberGuard: runs for members before the impl (validates/rewrites args;
+//     must fail closed via MemberScopeError)
+//   - memberFilter: response filter applied to member results
+
+import * as adminServer from './admin.server'
+import * as aiServer from './ai.server'
+import * as analyticsServer from './analytics.server'
+import * as attachmentsServer from './attachments.server'
+import * as benefitsServer from './benefits.server'
+import * as billDraftsServer from './billDrafts.server'
+import * as billsServer from './bills.server'
+import * as cardsServer from './cards.server'
+import * as dashboardServer from './dashboard.server'
+import * as emailBillsServer from './emailBills.server'
+import * as gmailLedgerServer from './gmail-ledger.server'
+import * as holdersServer from './holders.server'
+import * as preferencesServer from './preferences.server'
+import * as promosServer from './promos.server'
+import * as pushServer from './push.server'
+import * as remindersServer from './reminders.server'
+import * as syncGmailServer from './sync-gmail.server'
+import {
+  applyAnalyticsScope,
+  assertBenefitAccess,
+  assertBillAccess,
+  assertBillListAccess,
+  assertCardAccess,
+  assertDraftAccess,
+  assertHolderAccess,
+  assertHolderIdsAccess,
+  assertRecordAccess,
+  filterCardsByHolder,
+  filterHolders,
+  MemberScopeError,
+  type MemberContext,
+} from './member-scope'
+
+export interface RpcEntry {
+  impl: unknown
+  admin?: boolean
+  bindUser?: number
+  bindField?: { arg: number; field: string }
+  memberGuard?: (args: unknown[], ctx: MemberContext) => Promise<void>
+  memberFilter?: (data: unknown, ctx: MemberContext) => unknown
+}
+
+type Guard = NonNullable<RpcEntry['memberGuard']>
+
+// Shorthand guards keeping the table below readable.
+const guardHolder = (index: number): Guard => async (args, ctx) => assertHolderAccess(args[index], ctx)
+const guardCard = (index: number): Guard => async (args, ctx) => assertCardAccess(args[index], ctx)
+const guardBill = (index: number): Guard => async (args, ctx) => assertBillAccess(args[index], ctx)
+const guardObjField =
+  (index: number, field: string, check: (value: unknown, ctx: MemberContext) => Promise<void>): Guard =>
+  async (args, ctx) => {
+    const obj = args[index] as Record<string, unknown> | undefined | null
+    if (!obj || typeof obj !== 'object') throw new MemberScopeError('参数缺少必需对象')
+    await check(obj[field], ctx)
+  }
+
+export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
+  admin: {
+    getAdminBanks: { impl: adminServer.getAdminBanks, admin: true },
+    createBank: { impl: adminServer.createBank, admin: true },
+    updateBank: { impl: adminServer.updateBank, admin: true },
+    deleteBank: { impl: adminServer.deleteBank, admin: true },
+    getAdminCardProducts: { impl: adminServer.getAdminCardProducts, admin: true },
+    createCardProduct: { impl: adminServer.createCardProduct, admin: true },
+    updateCardProduct: { impl: adminServer.updateCardProduct, admin: true },
+    deleteCardProduct: { impl: adminServer.deleteCardProduct, admin: true },
+    getAdminPromos: { impl: adminServer.getAdminPromos, admin: true },
+    createPromo: { impl: adminServer.createPromo, admin: true },
+    updatePromo: { impl: adminServer.updatePromo, admin: true },
+    deletePromo: { impl: adminServer.deletePromo, admin: true },
+    getAdminBenefits: { impl: adminServer.getAdminBenefits, admin: true },
+    createBenefit: { impl: adminServer.createBenefit, admin: true },
+    updateBenefit: { impl: adminServer.updateBenefit, admin: true },
+    deleteBenefit: { impl: adminServer.deleteBenefit, admin: true },
+    getSystemSettings: { impl: adminServer.getSystemSettings, admin: true },
+    updateSystemSettings: { impl: adminServer.updateSystemSettings, admin: true },
+  },
+  ai: {
+    aiComplete: { impl: aiServer.aiComplete },
+  },
+  analytics: {
+    getAnalyticsSummary: { impl: analyticsServer.getAnalyticsSummary, memberGuard: (args, ctx) => applyAnalyticsScope(args[0], ctx) },
+    getMonthlyDebtTrend: { impl: analyticsServer.getMonthlyDebtTrend, memberGuard: (args, ctx) => applyAnalyticsScope(args[0], ctx) },
+    getCategoryBreakdown: { impl: analyticsServer.getCategoryBreakdown, memberGuard: (args, ctx) => applyAnalyticsScope(args[0], ctx) },
+    getAnalyticsByHolder: { impl: analyticsServer.getAnalyticsByHolder, memberGuard: guardHolder(0) },
+  },
+  attachments: {
+    getAttachments: {
+      impl: attachmentsServer.getAttachments,
+      memberGuard: async (args, ctx) => assertRecordAccess(args[0], args[1], ctx),
+    },
+    deleteRecordAttachment: {
+      impl: attachmentsServer.deleteRecordAttachment,
+      memberGuard: async (args, ctx) => {
+        const obj = args[0] as Record<string, unknown> | undefined | null
+        if (!obj || typeof obj !== 'object') throw new MemberScopeError('参数缺少附件信息')
+        await assertRecordAccess(obj.record_type, obj.record_id, ctx)
+      },
+    },
+  },
+  benefits: {
+    getAllMyBenefits: { impl: benefitsServer.getAllMyBenefits, bindUser: 0 },
+    recordBenefitUsage: { impl: benefitsServer.recordBenefitUsage, memberGuard: guardObjField(0, "benefit_id", assertBenefitAccess) },
+    autoEnrichCardBenefits: { impl: benefitsServer.autoEnrichCardBenefits, admin: true },
+    createBenefit: { impl: benefitsServer.createBenefit, admin: true },
+    updateBenefit: { impl: benefitsServer.updateBenefit, admin: true },
+    deleteBenefit: { impl: benefitsServer.deleteBenefit, admin: true },
+  },
+  billDrafts: {
+    createBillImportDraft: { impl: billDraftsServer.createBillImportDraft, bindField: { arg: 0, field: "created_by" }, memberGuard: guardObjField(0, "card_id", async (cardId, ctx) => { if (cardId) await assertCardAccess(cardId, ctx) }) },
+    confirmBillImportDraft: { impl: billDraftsServer.confirmBillImportDraft, admin: true },
+    discardBillImportDraft: { impl: billDraftsServer.discardBillImportDraft, memberGuard: (args, ctx) => assertDraftAccess(args[0], ctx) },
+  },
+  bills: {
+    getBillDashboardItems: { impl: billsServer.getBillDashboardItems, bindUser: 1 },
+    getCardsWithBillsSummary: { impl: billsServer.getCardsWithBillsSummary, bindUser: 0 },
+    getBillDetail: { impl: billsServer.getBillDetail, memberGuard: guardBill(0) },
+    getUnpaidBills: { impl: billsServer.getUnpaidBills, memberGuard: async (args, ctx) => { args[1] = ctx.holderIds } },
+    getPaymentTotal: { impl: billsServer.getPaymentTotal, memberGuard: guardBill(0) },
+    getBillByCardMonth: { impl: billsServer.getBillByCardMonth, memberGuard: guardCard(0) },
+    getBillsByHolder: { impl: billsServer.getBillsByHolder, memberGuard: guardHolder(0) },
+    createBill: { impl: billsServer.createBill, bindField: { arg: 0, field: "created_by" }, admin: true },
+    updateBill: { impl: billsServer.updateBill, admin: true },
+    updateBillStatus: { impl: billsServer.updateBillStatus, admin: true },
+    createPayment: { impl: billsServer.createPayment, memberGuard: guardObjField(0, "bill_id", assertBillAccess) },
+    markBillAsPaid: { impl: billsServer.markBillAsPaid, memberGuard: guardBill(0) },
+    markAllOverdueBillsAsPaid: { impl: billsServer.markAllOverdueBillsAsPaid, bindUser: 0, memberGuard: (args, ctx) => assertBillListAccess(args[1], ctx) },
+  },
+  cards: {
+    getCardsByHolder: { impl: cardsServer.getCardsByHolder, memberGuard: guardHolder(0) },
+    getCardHolders: { impl: cardsServer.getCardHolders, memberFilter: (data, ctx) => filterHolders(data as { id: string }[], ctx) },
+    getCardProducts: { impl: cardsServer.getCardProducts },
+    getAllCardsWithProduct: { impl: cardsServer.getAllCardsWithProduct, memberFilter: (data, ctx) => filterCardsByHolder(data as { holder_id?: string }[], ctx) },
+    getCardsBasicByHolders: { impl: cardsServer.getCardsBasicByHolders, memberGuard: async (args, ctx) => assertHolderIdsAccess(args[0], ctx) },
+    getCardDetail: { impl: cardsServer.getCardDetail, memberGuard: guardCard(0) },
+    createCard: { impl: cardsServer.createCard, admin: true },
+    updateCard: { impl: cardsServer.updateCard, admin: true },
+  },
+  dashboard: {
+    getDashboardStats: { impl: dashboardServer.getDashboardStats, admin: true },
+    getUserActivity: { impl: dashboardServer.getUserActivity, admin: true },
+    getCardProductStats: { impl: dashboardServer.getCardProductStats, admin: true },
+    getPromoList: { impl: dashboardServer.getPromoList, admin: true },
+    getBenefitStats: { impl: dashboardServer.getBenefitStats, admin: true },
+  },
+  emailBills: {
+    syncEmailBillToAccount: { impl: emailBillsServer.syncEmailBillToAccount, admin: true },
+  },
+  'gmail-ledger': {
+    getGmailLedgerEntries: { impl: gmailLedgerServer.getGmailLedgerEntries, admin: true },
+    getGmailLedgerSummary: { impl: gmailLedgerServer.getGmailLedgerSummary, admin: true },
+    markPayment: { impl: gmailLedgerServer.markPayment, admin: true },
+    updateLedgerAmount: { impl: gmailLedgerServer.updateLedgerAmount, admin: true },
+    getGmailLedgerBanks: { impl: gmailLedgerServer.getGmailLedgerBanks, admin: true },
+  },
+  holders: {
+    getHolders: { impl: holdersServer.getHolders, bindUser: 0 },
+    getHolder: { impl: holdersServer.getHolder, memberGuard: guardHolder(0) },
+    getHolderStatsPageData: { impl: holdersServer.getHolderStatsPageData, memberGuard: guardHolder(0) },
+    getHolderCardCounts: { impl: holdersServer.getHolderCardCounts, memberGuard: async (args, ctx) => assertHolderIdsAccess(args[0], ctx) },
+    createHolder: { impl: holdersServer.createHolder, bindField: { arg: 0, field: "created_by" }, admin: true },
+    updateHolder: { impl: holdersServer.updateHolder, admin: true },
+    mergeHolders: { impl: holdersServer.mergeHolders, admin: true },
+  },
+  preferences: {
+    getUserPreferences: { impl: preferencesServer.getUserPreferences, bindUser: 0 },
+    updateUserPreferences: { impl: preferencesServer.updateUserPreferences, bindUser: 0 },
+  },
+  promos: {
+    getPromosWithBanks: { impl: promosServer.getPromosWithBanks },
+    createUserPromo: { impl: promosServer.createUserPromo, admin: true },
+  },
+  push: {
+    subscribePush: { impl: pushServer.subscribePush, bindUser: 1 },
+  },
+  reminders: {
+    getDueBillsForReminders: { impl: remindersServer.getDueBillsForReminders, bindUser: 0 },
+    getSentReminderKeys: { impl: remindersServer.getSentReminderKeys, memberGuard: async (args, ctx) => { const ids = args[0]; if (Array.isArray(ids)) { for (const id of ids) await assertBillAccess(id, ctx) } } },
+    recordBillReminder: { impl: remindersServer.recordBillReminder, memberGuard: guardBill(0) },
+    getActiveLoanCards: { impl: remindersServer.getActiveLoanCards, memberFilter: (data, ctx) => filterCardsByHolder(data as { holder_id?: string }[], ctx) },
+    hasLoanReminderLog: { impl: remindersServer.hasLoanReminderLog, memberGuard: guardCard(0) },
+    recordLoanReminder: { impl: remindersServer.recordLoanReminder, memberGuard: guardCard(0) },
+  },
+  'sync-gmail': {
+    syncGmailLedgerToCardsAndBills: { impl: syncGmailServer.syncGmailLedgerToCardsAndBills, bindUser: 0, admin: true },
+  },
+}

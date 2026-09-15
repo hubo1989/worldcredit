@@ -5,8 +5,7 @@ import {
   Container, Typography, Box, Stack, Paper,
   Card, CardContent, Chip, Button, Skeleton,
   Tabs, Tab, TextField, Dialog, DialogTitle,
-  DialogContent, DialogActions, FormControl,
-  InputLabel, Select, MenuItem, IconButton, Tooltip,
+  DialogContent, DialogActions,
   Snackbar, Alert
 } from '@mui/material'
 import PromoIcon from '@mui/icons-material/LocalOffer'
@@ -16,12 +15,9 @@ import DrinkIcon from '@mui/icons-material/Coffee'
 import TravelIcon from '@mui/icons-material/FlightTakeoff'
 import CinemaIcon from '@mui/icons-material/Movie'
 import AddIcon from '@mui/icons-material/Add'
-import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import CreditCardIcon from '@mui/icons-material/CreditCard'
-import FilterListIcon from '@mui/icons-material/FilterList'
-import { insforge } from '@/lib/insforge'
-import { useAuth } from '@/lib/auth'
+import { getPromosWithBanks, createUserPromo } from '@/lib/api/promos'
 import type { Promo } from '@/lib/types'
 
 // 热门活动初始数据源 (若云端数据库活动较少时自动合并展现)
@@ -92,7 +88,6 @@ const POPULAR_PROMOS: Array<Omit<Promo, 'id' | 'created_at' | 'updated_at'>> = [
 ]
 
 export default function PromosPage() {
-  const { user } = useAuth()
   const [promos, setPromos] = useState<Promo[]>([])
   const [userBanks, setUserBanks] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -119,14 +114,11 @@ export default function PromosPage() {
     try {
       setLoading(true)
       
-      // 1. 获取 DB 中的优惠列表
-      const { data: dbPromos } = await insforge.database
-        .from('promos')
-        .select('*')
-        .order('end_date', { ascending: true })
+      // 1. 获取 DB 中的优惠列表与用户卡包银行
+      const { promos: dbPromos, userBanks: banks } = await getPromosWithBanks()
 
       // 合并热门精选与 DB 优惠
-      const existingTitles = new Set((dbPromos || []).map((p: any) => p.title))
+      const existingTitles = new Set((dbPromos || []).map(p => p.title))
       const combined: Promo[] = [...(dbPromos || [])]
       
       POPULAR_PROMOS.forEach((p, idx) => {
@@ -140,25 +132,13 @@ export default function PromosPage() {
         }
       })
       setPromos(combined)
-
-      // 2. 获取用户卡包银行
-      if (user?.id) {
-        const { data: cards } = await insforge.database
-          .from('credit_cards')
-          .select('bank_name, card_name')
-        
-        const banks = new Set<string>()
-        ;(cards || []).forEach((c: any) => {
-          if (c.bank_name) banks.add(c.bank_name.trim())
-        })
-        setUserBanks(Array.from(banks))
-      }
+      setUserBanks(banks)
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
-  }, [user?.id])
+  }, [])
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -196,7 +176,7 @@ export default function PromosPage() {
   }, [promos])
 
   const handleRegister = (promo: Promo) => {
-    const channel = (promo.rules as any)?.channel || `${promo.bank_name}手机银行 App`
+    const channel = promo.rules?.channel || `${promo.bank_name}手机银行 App`
     setToast({
       open: true,
       message: `✨ 已为您记录关注！请在 ${channel} 报名或使用对应银行卡支付享优惠。`,
@@ -211,25 +191,22 @@ export default function PromosPage() {
     }
     setSubmitting(true)
     try {
-      await insforge.database
-        .from('promos')
-        .insert([{
-          bank_name: newBank,
-          title: newTitle.trim(),
-          discount_type: newType,
-          description: newDesc.trim() || '用户自定义记录的银行优惠活动',
-          start_date: new Date().toISOString().split('T')[0],
-          end_date: newEndDate,
-          rules: { channel: '银行官方渠道' }
-        }])
+      await createUserPromo({
+        bank_name: newBank,
+        title: newTitle.trim(),
+        discount_type: newType,
+        description: newDesc.trim() || '用户自定义记录的银行优惠活动',
+        start_date: new Date().toISOString().split('T')[0],
+        end_date: newEndDate,
+      })
       
       setAddOpen(false)
       setNewTitle('')
       setNewDesc('')
       setToast({ open: true, message: '优惠活动添加成功！', severity: 'success' })
       loadData()
-    } catch (err: any) {
-      setToast({ open: true, message: '添加失败: ' + err.message, severity: 'error' })
+    } catch (err) {
+      setToast({ open: true, message: '添加失败: ' + (err instanceof Error ? err.message : String(err)), severity: 'error' })
     } finally {
       setSubmitting(false)
     }
@@ -250,10 +227,26 @@ export default function PromosPage() {
       {/* 顶部标题栏 */}
       <Box sx={{ mb: 2.5, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <Box>
-          <Typography variant="h5" fontWeight={800} sx={{ color: 'var(--navy-800)' }}>
+          <Typography
+            variant="h5"
+            sx={{
+              fontSize: 'var(--type-title-size)',
+              lineHeight: 'var(--type-title-line)',
+              fontWeight: 'var(--type-title-weight)',
+              letterSpacing: 'var(--type-title-tracking)',
+              color: 'var(--text)',
+            }}
+          >
             优惠活动
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+            }}
+          >
             精选各行当期热门活动与信用卡专属羊毛
           </Typography>
         </Box>
@@ -262,14 +255,14 @@ export default function PromosPage() {
           size="small"
           startIcon={<AddIcon />}
           onClick={() => setAddOpen(true)}
-          sx={{ borderRadius: 2.5, fontWeight: 700, whiteSpace: 'nowrap' }}
+          sx={{ borderRadius: 'var(--radius-pill)', fontWeight: 700, whiteSpace: 'nowrap' }}
         >
           添加活动
         </Button>
       </Box>
 
       {/* 分类 Tabs */}
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+      <Box sx={{ borderBottom: '1px solid var(--track)', mb: 2 }}>
         <Tabs
           value={categoryTab}
           onChange={(_, v) => setCategoryTab(v)}
@@ -279,7 +272,8 @@ export default function PromosPage() {
             minHeight: 40,
             '& .MuiTab-root': {
               minHeight: 40,
-              fontSize: 13,
+              fontSize: 'var(--type-body-size)',
+              letterSpacing: 'var(--type-body-tracking)',
               fontWeight: 700,
               px: 1.5,
               textTransform: 'none'
@@ -304,7 +298,14 @@ export default function PromosPage() {
           color={selectedBank === 'all' ? 'primary' : 'default'}
           variant={selectedBank === 'all' ? 'filled' : 'outlined'}
           onClick={() => setSelectedBank('all')}
-          sx={{ fontWeight: 600 }}
+          sx={{
+            // 无边框：层级由分层阴影表达；选中态走品牌色填充
+            border: selectedBank === 'all' ? 0 : '1px solid transparent',
+            fontSize: 'var(--type-body-size)',
+            letterSpacing: 'var(--type-body-tracking)',
+            fontWeight: 600,
+            boxShadow: selectedBank === 'all' ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
+          }}
         />
         {userBanks.length > 0 && (
           <Chip
@@ -315,7 +316,13 @@ export default function PromosPage() {
             color={selectedBank === 'my_cards' ? 'primary' : 'default'}
             variant={selectedBank === 'my_cards' ? 'filled' : 'outlined'}
             onClick={() => setSelectedBank('my_cards')}
-            sx={{ fontWeight: 600 }}
+            sx={{
+              border: selectedBank === 'my_cards' ? 0 : '1px solid transparent',
+              fontSize: 'var(--type-body-size)',
+              letterSpacing: 'var(--type-body-tracking)',
+              fontWeight: 600,
+              boxShadow: selectedBank === 'my_cards' ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
+            }}
           />
         )}
         {allBanks.map(b => (
@@ -327,7 +334,13 @@ export default function PromosPage() {
             color={selectedBank === b ? 'primary' : 'default'}
             variant={selectedBank === b ? 'filled' : 'outlined'}
             onClick={() => setSelectedBank(b)}
-            sx={{ fontWeight: 600 }}
+            sx={{
+              border: selectedBank === b ? 0 : '1px solid transparent',
+              fontSize: 'var(--type-body-size)',
+              letterSpacing: 'var(--type-body-tracking)',
+              fontWeight: 600,
+              boxShadow: selectedBank === b ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
+            }}
           />
         ))}
       </Box>
@@ -335,13 +348,39 @@ export default function PromosPage() {
       {/* 列表渲染 */}
       {loading ? (
         <Stack spacing={2}>
-          {[1, 2, 3].map(i => <Skeleton key={i} variant="rounded" height={140} sx={{ borderRadius: 4 }} />)}
+          {[1, 2, 3].map(i => <Skeleton key={i} variant="rounded" height={140} sx={{ borderRadius: 'var(--radius-depth-3)' }} />)}
         </Stack>
       ) : filteredPromos.length === 0 ? (
-        <Paper sx={{ p: 5, textAlign: 'center', borderRadius: 4, bgcolor: 'grey.50', border: '1px dashed', borderColor: 'divider' }}>
-          <PromoIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 2 }} />
-          <Typography color="text.secondary" fontWeight={700}>该分类下暂无活动</Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, mb: 2 }}>
+        <Paper
+          elevation={0}
+          sx={{
+            p: 5, textAlign: 'center', borderRadius: 'var(--radius-depth-3)',
+            bgcolor: 'var(--bg)', border: '1px dashed', borderColor: 'var(--track)',
+          }}
+        >
+          <PromoIcon sx={{ fontSize: 48, color: 'var(--text-disabled)', mb: 2 }} />
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              fontWeight: 600,
+              color: 'var(--text)',
+            }}
+          >
+            该分类下暂无活动
+          </Typography>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              display: 'block',
+              mt: 0.5,
+              mb: 2,
+            }}
+          >
             您可以切换银行分类或手动添加您关注的信用卡优惠
           </Typography>
           <Button variant="outlined" size="small" onClick={() => { setCategoryTab('all'); setSelectedBank('all') }}>
@@ -352,15 +391,16 @@ export default function PromosPage() {
         <Stack spacing={2}>
           {filteredPromos.map(p => {
             const hasCard = userBanks.some(b => p.bank_name.includes(b))
-            const channel = (p.rules as any)?.channel || `${p.bank_name} App`
 
             return (
               <Card
                 key={p.id}
+                elevation={0}
                 sx={{
-                  borderRadius: 4,
-                  border: hasCard ? '1.5px solid #93c5fd' : '1px solid #e2e8f0',
-                  boxShadow: hasCard ? '0 4px 16px rgba(59,130,246,0.08)' : '0 1px 3px rgba(0,0,0,0.04)',
+                  // 无边框：层级由分层阴影表达；持卡可享的强调走品牌蓝描边语义
+                  borderRadius: 'var(--radius-depth-3)',
+                  border: hasCard ? '1px solid var(--navy-600)' : 0,
+                  boxShadow: hasCard ? 'var(--shadow-e3)' : 'var(--shadow-e1)',
                   position: 'relative',
                   overflow: 'hidden',
                   transition: 'transform 0.15s ease',
@@ -374,31 +414,36 @@ export default function PromosPage() {
                       position: 'absolute',
                       top: 0,
                       right: 0,
-                      bgcolor: '#2563eb',
-                      color: '#ffffff',
-                      fontSize: 10,
-                      fontWeight: 700,
+                      bgcolor: 'var(--navy-600)',
+                      color: 'var(--text-on-dark)',
+                      fontSize: 'var(--type-body-size)',
+                      lineHeight: 1.4,
+                      letterSpacing: 'var(--type-body-tracking)',
+                      fontWeight: 600,
                       px: 1.5,
                       py: 0.25,
-                      borderBottomLeftRadius: 10,
+                      borderBottomLeftRadius: 'var(--radius-depth-1)',
                     }}
                   >
                     💳 我已持卡可享
                   </Box>
                 )}
 
-                <CardContent sx={{ p: 2.5 }}>
+                {/* 持卡角标「我已持卡可享」绝对定位在卡片右上角，会盖住内容顶部；
+                    卡片根 padding 收敛后首行上移，必须给角标留出高度，否则
+                    银行名与优惠标签会被角标压住。 */}
+                <CardContent sx={{ p: 2.5, pt: hasCard ? 4 : 2.5 }}>
                   <Stack direction="row" spacing={2}>
                     <Box
                       sx={{
                         width: 52,
                         height: 52,
-                        borderRadius: 3,
+                        borderRadius: 'var(--radius-depth-1)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        bgcolor: 'rgba(37,99,235,0.08)',
-                        color: '#2563eb',
+                        bgcolor: 'rgba(30,58,138,0.08)',
+                        color: 'var(--strong)',
                         flexShrink: 0
                       }}
                     >
@@ -407,24 +452,56 @@ export default function PromosPage() {
 
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
-                        <Typography variant="caption" fontWeight={800} color="primary" sx={{ letterSpacing: '0.02em' }}>
+                        <Typography
+                          sx={{
+                            fontSize: 'var(--type-body-size)',
+                            lineHeight: 'var(--type-body-line)',
+                            letterSpacing: 'var(--type-body-tracking)',
+                            fontWeight: 600,
+                            color: 'var(--strong)',
+                            minWidth: 0,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
                           {p.bank_name}
                         </Typography>
                         <Chip
                           label={p.discount_type || '优惠'}
                           size="small"
                           color="error"
-                          sx={{ height: 20, fontSize: 11, fontWeight: 700, mr: hasCard ? 10 : 0 }}
+                          sx={{
+                            height: 20, fontSize: 'var(--type-body-size)',
+                            letterSpacing: 'var(--type-body-tracking)', fontWeight: 600,
+                            // 角标「我已持卡可享」是绝对定位在卡片右上角、盖在本行之上的，
+                            // 不需要用 80px 右边距给它让位（那会把「招商银行」压成竖排）。
+                            flexShrink: 0,
+                          }}
                         />
                       </Stack>
 
-                      <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 0.75, lineHeight: 1.3 }}>
+                      <Typography
+                        variant="h6"
+                        sx={{
+                          fontSize: 'var(--type-section-size)',
+                          lineHeight: 'var(--type-section-line)',
+                          fontWeight: 'var(--type-section-weight)',
+                          letterSpacing: 'var(--type-section-tracking)',
+                          color: 'var(--text)',
+                          mb: 0.75,
+                        }}
+                      >
                         {p.title}
                       </Typography>
 
                       {p.description && (
-                        <Typography variant="body2" color="text.secondary" sx={{
-                          fontSize: 12.5, mb: 1.5, lineHeight: 1.4,
+                        <Typography sx={{
+                          fontSize: 'var(--type-body-size)',
+                          lineHeight: 'var(--type-body-line)',
+                          letterSpacing: 'var(--type-body-tracking)',
+                          color: 'var(--muted)',
+                          mb: 1.5,
                           overflow: 'hidden', textOverflow: 'ellipsis',
                           display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'
                         }}>
@@ -432,8 +509,32 @@ export default function PromosPage() {
                         </Typography>
                       )}
 
-                      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ pt: 1, borderTop: '1px dashed #f1f5f9' }}>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      {/* 截止日期（约 105px）与操作按钮（约 82px）都是不可拆的语义
+                          单元：宽度够时并排、两端对齐，装不下时按钮整颗换行，
+                          而不是把「截止至 2026-12-31」从中间断开。 */}
+                      <Stack
+                        direction="row"
+                        justifyContent="space-between"
+                        sx={{
+                          pt: 1,
+                          borderTop: '1px dashed var(--track)',
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                          gap: 1,
+                        }}
+                      >
+                        <Typography
+                          sx={{
+                            fontSize: 'var(--type-body-size)',
+                            lineHeight: 'var(--type-body-line)',
+                            letterSpacing: 'var(--type-body-tracking)',
+                            color: 'var(--muted)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.5,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
                           <AccessTimeIcon sx={{ fontSize: 13 }} />
                           截止至 {p.end_date || '长期有效'}
                         </Typography>
@@ -442,12 +543,15 @@ export default function PromosPage() {
                           size="small"
                           onClick={() => handleRegister(p)}
                           sx={{
-                            borderRadius: 2,
-                            fontSize: 12,
+                            borderRadius: 'var(--radius-pill)',
+                            fontSize: 'var(--type-body-size)',
+                            letterSpacing: 'var(--type-body-tracking)',
                             fontWeight: 700,
                             py: 0.4,
                             px: 1.5,
-                            textTransform: 'none'
+                            textTransform: 'none',
+                            flexShrink: 0,
+                            whiteSpace: 'nowrap',
                           }}
                         >
                           {hasCard ? '一键享用' : '关注活动'}
@@ -464,7 +568,19 @@ export default function PromosPage() {
 
       {/* 新增活动 Dialog */}
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} fullWidth maxWidth="xs">
-        <DialogTitle sx={{ fontWeight: 800 }}>添加信用卡优惠活动</DialogTitle>
+        {/* Dialog 走 portal，在 .phone 作用域之外：显式声明角色令牌 */}
+        <DialogTitle
+          sx={{
+            fontSize: 'var(--type-section-size)',
+            lineHeight: 'var(--type-section-line)',
+            fontWeight: 'var(--type-section-weight)',
+            letterSpacing: 'var(--type-section-tracking)',
+            color: 'var(--text)',
+            fontFamily: 'var(--font-display)',
+          }}
+        >
+          添加信用卡优惠活动
+        </DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
@@ -518,7 +634,7 @@ export default function PromosPage() {
             variant="contained"
             onClick={handleAddPromo}
             disabled={submitting}
-            sx={{ borderRadius: 2, fontWeight: 700 }}
+            sx={{ borderRadius: 'var(--radius-pill)', fontWeight: 700 }}
           >
             {submitting ? '保存中...' : '确认添加'}
           </Button>
@@ -532,7 +648,7 @@ export default function PromosPage() {
         onClose={() => setToast(prev => ({ ...prev, open: false }))}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
-        <Alert severity={toast.severity} sx={{ borderRadius: 3, fontWeight: 600 }}>
+        <Alert severity={toast.severity} sx={{ borderRadius: 'var(--radius-depth-1)', fontWeight: 600 }}>
           {toast.message}
         </Alert>
       </Snackbar>

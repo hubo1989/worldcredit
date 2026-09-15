@@ -51,6 +51,7 @@ dist
 .vinext
 .next
 .workbuddy
+.wrangler
 tsconfig.tsbuildinfo
 .vscode
 .idea
@@ -66,4 +67,8 @@ tsconfig.tsbuildinfo
 .LSOverride
 Icon
 *.tsbuildinfo
+.dev.vars
 .video_agent/
+
+# Local verification artifacts (Playwright CLI traces/screenshots)
+.playwright-cli/

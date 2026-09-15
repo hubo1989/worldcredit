@@ -17,13 +17,22 @@ import {
 import { getAdminPromos, createPromo, updatePromo, deletePromo, getAdminCardProducts } from '@/lib/api/admin'
 import { Promo, CardProduct } from '@/lib/types'
 
+/** 优惠列表行：promos 字段 + 关联卡产品联查字段 */
+type AdminPromoRow = Promo & {
+  is_active: boolean
+  // The admin RPC returns flat joined columns (product_bank_name/product_card_name),
+  // not a nested card_products object.
+  product_bank_name?: string
+  product_card_name?: string
+}
+
 export default function PromosPage() {
   const [loading, setLoading] = useState(true)
-  const [promos, setPromos] = useState<any[]>([])
+  const [promos, setPromos] = useState<AdminPromoRow[]>([])
   const [cardProducts, setCardProducts] = useState<CardProduct[]>([])
   const [search, setSearch] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [currentPromo, setCurrentPromo] = useState<Partial<Promo & { is_active: boolean }> | null>(null)
+  const [currentPromo, setCurrentPromo] = useState<Partial<AdminPromoRow> | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [page, setPage] = useState(0)
   const [rowsPerPage, setRowsPerPage] = useState(10)
@@ -35,7 +44,7 @@ export default function PromosPage() {
         getAdminPromos(),
         getAdminCardProducts()
       ])
-      setPromos(pData)
+      setPromos(pData as unknown as AdminPromoRow[])
       setCardProducts(cpData)
     } catch (error) {
       console.error('Failed to fetch promos:', error)
@@ -68,7 +77,7 @@ export default function PromosPage() {
     setPage(0)
   }
 
-  const handleOpenDialog = (promo?: any) => {
+  const handleOpenDialog = (promo?: AdminPromoRow) => {
     if (promo) {
       setCurrentPromo(promo)
     } else {
@@ -83,7 +92,7 @@ export default function PromosPage() {
     setDialogOpen(true)
   }
 
-  const handleToggleStatus = async (promo: any) => {
+  const handleToggleStatus = async (promo: AdminPromoRow) => {
     try {
       await updatePromo(promo.id, { is_active: !promo.is_active })
       setPromos(promos.map(p => p.id === promo.id ? { ...p, is_active: !p.is_active } : p))
@@ -111,12 +120,14 @@ export default function PromosPage() {
     setSubmitting(true)
     try {
       if (currentPromo.id) {
-        const { card_products, ...payload } = currentPromo as any
+        const { product_bank_name, product_card_name, ...payload } = currentPromo
+        void product_bank_name
+        void product_card_name
         const updated = await updatePromo(currentPromo.id, payload)
-        setPromos(promos.map(p => p.id === currentPromo.id ? { ...p, ...updated } : p))
+        setPromos(promos.map(p => p.id === currentPromo.id ? { ...p, ...updated } as AdminPromoRow : p))
       } else {
         const created = await createPromo(currentPromo)
-        setPromos([created, ...promos])
+        setPromos([created as unknown as AdminPromoRow, ...promos])
       }
       setDialogOpen(false)
       fetchData() // Refresh to get relations
@@ -201,7 +212,7 @@ export default function PromosPage() {
                 <TableRow key={promo.id} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' }, borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                   <TableCell sx={{ color: '#e4e6eb', fontWeight: 500 }}>{promo.bank_name}</TableCell>
                   <TableCell sx={{ color: '#e4e6eb' }}>{promo.title}</TableCell>
-                  <TableCell sx={{ color: '#9ca3af' }}>{promo.card_products?.card_name || '全门类'}</TableCell>
+                  <TableCell sx={{ color: '#9ca3af' }}>{promo.product_card_name || '全门类'}</TableCell>
                   <TableCell>
                     <Chip label={promo.discount_type} size="small" variant="outlined" sx={{ color: '#818cf8', borderColor: '#818cf8', fontSize: 11 }} />
                   </TableCell>
@@ -266,7 +277,7 @@ export default function PromosPage() {
               <TextField fullWidth label="结束日期" type="date" value={currentPromo?.end_date || ''} onChange={(e) => setCurrentPromo({ ...currentPromo, end_date: e.target.value })} InputLabelProps={{ shrink: true, style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
             </Grid>
             <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="折扣类型" select value={currentPromo?.discount_type || '满减'} onChange={(e) => setCurrentPromo({ ...currentPromo, discount_type: e.target.value as any })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}>
+              <TextField fullWidth label="折扣类型" select value={currentPromo?.discount_type || '满减'} onChange={(e) => setCurrentPromo({ ...currentPromo, discount_type: e.target.value })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}>
                 <MenuItem value="满减">满减</MenuItem>
                 <MenuItem value="折扣">折扣</MenuItem>
                 <MenuItem value="积分">积分</MenuItem>

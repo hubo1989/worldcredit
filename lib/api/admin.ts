@@ -1,191 +1,58 @@
-import { insforge } from '../insforge'
-import { CardProduct, Promo, Benefit, Bank } from '../types'
+// lib/api/admin.ts — client-side RPC wrappers (server: admin.server.ts).
+import type * as Server from './admin.server'
+import { callRpc } from './rpc-client'
 
-/**
- * 管理后台通用 API 封装
- */
-
-// --- 银行管理 ---
-
-export async function getAdminBanks() {
-  const { data, error } = await insforge.database
-    .from('banks')
-    .select('*')
-    .order('created_at', { ascending: false })
-  if (error) throw error
-  return data as Bank[]
+export function getAdminBanks() {
+  return callRpc<typeof Server.getAdminBanks>('admin', 'getAdminBanks')
 }
-
-export async function createBank(payload: Partial<Bank>) {
-  const { data, error } = await insforge.database
-    .from('banks')
-    .insert([payload])
-    .select()
-    .single()
-  if (error) throw error
-  return data as Bank
+export function createBank(...args: Parameters<typeof Server.createBank>) {
+  return callRpc<typeof Server.createBank>('admin', 'createBank', ...args)
 }
-
-export async function updateBank(id: string, payload: Partial<Bank>) {
-  const { data, error } = await insforge.database
-    .from('banks')
-    .update(payload)
-    .eq('id', id)
-    .select()
-    .single()
-  if (error) throw error
-  return data as Bank
+export function updateBank(...args: Parameters<typeof Server.updateBank>) {
+  return callRpc<typeof Server.updateBank>('admin', 'updateBank', ...args)
 }
-
-export async function deleteBank(id: string) {
-  const { error } = await insforge.database
-    .from('banks')
-    .delete()
-    .eq('id', id)
-  if (error) throw error
+export function deleteBank(...args: Parameters<typeof Server.deleteBank>) {
+  return callRpc<typeof Server.deleteBank>('admin', 'deleteBank', ...args)
 }
-
-// --- 卡产品管理 ---
-
-export async function getAdminCardProducts() {
-  const { data, error } = await insforge.database
-    .from('card_products')
-    .select('*')
-    .order('created_at', { ascending: false })
-  if (error) throw error
-  return data as (CardProduct & { is_active: boolean })[]
+export function getAdminCardProducts() {
+  return callRpc<typeof Server.getAdminCardProducts>('admin', 'getAdminCardProducts')
 }
-
-export async function createCardProduct(payload: Partial<CardProduct & { is_active: boolean }>) {
-  const { data, error } = await insforge.database
-    .from('card_products')
-    .insert([payload])
-    .select()
-    .single()
-  if (error) throw error
-  return data
+export function createCardProduct(...args: Parameters<typeof Server.createCardProduct>) {
+  return callRpc<typeof Server.createCardProduct>('admin', 'createCardProduct', ...args)
 }
-
-export async function updateCardProduct(id: string, payload: Partial<CardProduct & { is_active: boolean }>) {
-  const { data, error } = await insforge.database
-    .from('card_products')
-    .update(payload)
-    .eq('id', id)
-    .select()
-    .single()
-  if (error) throw error
-  return data
+export function updateCardProduct(...args: Parameters<typeof Server.updateCardProduct>) {
+  return callRpc<typeof Server.updateCardProduct>('admin', 'updateCardProduct', ...args)
 }
-
-export async function deleteCardProduct(id: string) {
-  const { error } = await insforge.database
-    .from('card_products')
-    .delete()
-    .eq('id', id)
-  if (error) throw error
+export function deleteCardProduct(...args: Parameters<typeof Server.deleteCardProduct>) {
+  return callRpc<typeof Server.deleteCardProduct>('admin', 'deleteCardProduct', ...args)
 }
-
-// --- 优惠活动管理 ---
-
-export async function getAdminPromos() {
-  const { data, error } = await insforge.database
-    .from('promos')
-    .select('*, card_products(bank_name, card_name)')
-    .order('created_at', { ascending: false })
-  if (error) throw error
-  return data
+export function getAdminPromos() {
+  return callRpc<typeof Server.getAdminPromos>('admin', 'getAdminPromos')
 }
-
-export async function createPromo(payload: Partial<Promo & { is_active: boolean }>) {
-  const { data, error } = await insforge.database
-    .from('promos')
-    .insert([payload])
-    .select()
-    .single()
-  if (error) throw error
-  return data
+export function createPromo(...args: Parameters<typeof Server.createPromo>) {
+  return callRpc<typeof Server.createPromo>('admin', 'createPromo', ...args)
 }
-
-export async function updatePromo(id: string, payload: Partial<Promo & { is_active: boolean }>) {
-  const { data, error } = await insforge.database
-    .from('promos')
-    .update(payload)
-    .eq('id', id)
-    .select()
-    .single()
-  if (error) throw error
-  return data
+export function updatePromo(...args: Parameters<typeof Server.updatePromo>) {
+  return callRpc<typeof Server.updatePromo>('admin', 'updatePromo', ...args)
 }
-
-export async function deletePromo(id: string) {
-  const { error } = await insforge.database
-    .from('promos')
-    .delete()
-    .eq('id', id)
-  if (error) throw error
+export function deletePromo(...args: Parameters<typeof Server.deletePromo>) {
+  return callRpc<typeof Server.deletePromo>('admin', 'deletePromo', ...args)
 }
-
-// --- 权益管理 ---
-
-export async function getAdminBenefits() {
-  const { data, error } = await insforge.database
-    .from('benefits')
-    .select('*, card_products(bank_name, card_name)')
-    .order('created_at', { ascending: false })
-  if (error) throw error
-  return data
+export function getAdminBenefits() {
+  return callRpc<typeof Server.getAdminBenefits>('admin', 'getAdminBenefits')
 }
-
-export async function createBenefit(payload: Partial<Benefit & { is_active: boolean }>) {
-  const { data, error } = await insforge.database
-    .from('benefits')
-    .insert([payload])
-    .select()
-    .single()
-  if (error) throw error
-  return data
+export function createBenefit(...args: Parameters<typeof Server.createBenefit>) {
+  return callRpc<typeof Server.createBenefit>('admin', 'createBenefit', ...args)
 }
-
-export async function updateBenefit(id: string, payload: Partial<Benefit & { is_active: boolean }>) {
-  const { data, error } = await insforge.database
-    .from('benefits')
-    .update(payload)
-    .eq('id', id)
-    .select()
-    .single()
-  if (error) throw error
-  return data
+export function updateBenefit(...args: Parameters<typeof Server.updateBenefit>) {
+  return callRpc<typeof Server.updateBenefit>('admin', 'updateBenefit', ...args)
 }
-
-export async function deleteBenefit(id: string) {
-  const { error } = await insforge.database
-    .from('benefits')
-    .delete()
-    .eq('id', id)
-  if (error) throw error
+export function deleteBenefit(...args: Parameters<typeof Server.deleteBenefit>) {
+  return callRpc<typeof Server.deleteBenefit>('admin', 'deleteBenefit', ...args)
 }
-
-// --- 系统设置 ---
-
-export async function getSystemSettings() {
-  const { data, error } = await insforge.database
-    .from('system_settings')
-    .select('*')
-  if (error) throw error
-  
-  const settings: Record<string, any> = {}
-  for (const item of data || []) {
-    settings[item.key] = item.value
-  }
-  return settings
+export function getSystemSettings() {
+  return callRpc<typeof Server.getSystemSettings>('admin', 'getSystemSettings')
 }
-
-export async function updateSystemSettings(key: string, value: any) {
-  const { data, error } = await insforge.database
-    .from('system_settings')
-    .upsert({ key, value, updated_at: new Date().toISOString() })
-    .select()
-    .single()
-  if (error) throw error
-  return data
+export function updateSystemSettings(...args: Parameters<typeof Server.updateSystemSettings>) {
+  return callRpc<typeof Server.updateSystemSettings>('admin', 'updateSystemSettings', ...args)
 }

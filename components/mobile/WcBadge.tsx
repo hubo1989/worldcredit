@@ -1,6 +1,6 @@
 'use client'
 
-import { Box, Typography } from '@mui/material'
+import { Box } from '@mui/material'
 import type { ReactNode } from 'react'
 
 /**
@@ -8,11 +8,15 @@ import type { ReactNode } from 'react'
  * 状态四色：绿已还 / 黄部分 / 红逾期 / 蓝待还（§7.3）。
  */
 
+// 状态与来源徽章的颜色一律走语义令牌（--success/--warn/--danger/--info），
+// 只用 color-mix 生成淡底，不再散落字面色值。
+const tint = (token: string, pct: number) => `color-mix(in srgb, var(${token}) ${pct}%, transparent)`
+
 const STATUS_STYLES: Record<string, { bg: string; fg: string; label: string }> = {
-  paid:    { bg: 'rgba(22,163,74,0.12)',  fg: '#16A34A', label: '已还' },
-  partial: { bg: 'rgba(252,185,0,0.16)',  fg: '#9A7000', label: '部分' },
-  overdue: { bg: 'rgba(207,46,46,0.12)',  fg: '#CF2E2E', label: '逾期' },
-  unpaid:  { bg: 'rgba(37,99,235,0.10)',  fg: '#2563EB', label: '待还' },
+  paid:    { bg: tint('--success', 12), fg: 'var(--success)', label: '已还' },
+  partial: { bg: tint('--warn', 18),    fg: 'var(--gold-700)', label: '部分' },
+  overdue: { bg: tint('--danger', 12),  fg: 'var(--danger)', label: '逾期' },
+  unpaid:  { bg: tint('--info', 10),    fg: 'var(--info)', label: '待还' },
 }
 
 export function StatusBadge({ status, label, size = 'sm' }: { status: string; label?: string; size?: 'sm' | 'md' }) {
@@ -43,9 +47,9 @@ export function StatusBadge({ status, label, size = 'sm' }: { status: string; la
 }
 
 const SOURCE_STYLES: Record<string, { bg: string; fg: string; label: string }> = {
-  email:  { bg: 'rgba(37,99,235,0.10)',  fg: '#2563EB', label: '邮件' },
-  manual: { bg: 'rgba(91,100,120,0.12)', fg: '#5B6478', label: '手动' },
-  ai:     { bg: 'rgba(201,162,39,0.16)', fg: '#8A6D1F', label: 'AI' },
+  email:  { bg: tint('--info', 10),   fg: 'var(--info)', label: '邮件' },
+  manual: { bg: tint('--muted', 14),  fg: 'var(--muted)', label: '手动' },
+  ai:     { bg: tint('--gold-500', 18), fg: 'var(--gold-700)', label: 'AI' },
 }
 
 export function SourceBadge({ source, size = 'sm' }: { source: string; size?: 'sm' | 'md' }) {
@@ -82,14 +86,14 @@ export function SourceBadge({ source, size = 'sm' }: { source: string; size?: 's
 }
 
 /** 通用胶囊徽章 */
-export function PillBadge({ children, color = '#5B6478', bg = 'rgba(91,100,120,0.10)' }: { children: ReactNode; color?: string; bg?: string }) {
+export function PillBadge({ children, color = 'var(--muted)', bg }: { children: ReactNode; color?: string; bg?: string }) {
   return (
     <Box
       component="span"
       sx={{
         display: 'inline-flex',
         alignItems: 'center',
-        bgcolor: bg,
+        bgcolor: bg ?? tint('--muted', 14),
         color,
         borderRadius: 'var(--radius-pill)',
         px: 1,

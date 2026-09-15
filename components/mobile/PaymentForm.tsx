@@ -44,12 +44,46 @@ export function PaymentForm({ open, onClose, onSubmit, totalAmount, billMonth }:
   }
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle fontWeight={700}>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth="xs"
+      // 弹窗浮层：18px 圆角 + float 阴影 + 无边框
+      slotProps={{
+        paper: {
+          sx: {
+            border: 0,
+            borderRadius: 'var(--radius-depth-3)',
+            boxShadow: 'var(--shadow-float)',
+          },
+        },
+      }}
+    >
+      {/* 弹窗标题：22/28 · 600 · -0.7px */}
+      <DialogTitle
+        sx={{
+          fontSize: 'var(--type-title-size)',
+          lineHeight: 'var(--type-title-line)',
+          fontWeight: 'var(--type-title-weight)',
+          letterSpacing: 'var(--type-title-tracking)',
+          color: 'var(--text)',
+        }}
+      >
         登记账单还款 {billMonth ? `(${billMonth})` : ''}
       </DialogTitle>
       <DialogContent>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        <Typography
+          sx={{
+            fontSize: 'var(--type-body-size)',
+            lineHeight: 'var(--type-body-line)',
+            fontWeight: 'var(--type-body-weight)',
+            letterSpacing: 'var(--type-body-tracking)',
+            // 次要说明文字
+            color: 'var(--muted)',
+            mb: 2,
+          }}
+        >
           账单总额: ¥{totalAmount.toFixed(2)}
         </Typography>
 
@@ -86,12 +120,13 @@ export function PaymentForm({ open, onClose, onSubmit, totalAmount, billMonth }:
         </Stack>
       </DialogContent>
       <DialogActions sx={{ p: 2, pt: 0 }}>
-        <Button onClick={onClose} color="inherit">取消</Button>
+        <Button onClick={onClose} color="inherit" sx={{ borderRadius: 'var(--radius-pill)' }}>取消</Button>
         <Button
           variant="contained"
           onClick={handleSubmit}
           disabled={submitting || !amount || parseFloat(amount) <= 0}
           startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : null}
+          sx={{ borderRadius: 'var(--radius-pill)' }}
         >
           {submitting ? '登记中...' : '确认已还款'}
         </Button>

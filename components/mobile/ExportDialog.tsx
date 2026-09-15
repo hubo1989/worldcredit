@@ -5,10 +5,10 @@ import { useEffect, useState } from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, FormControl, InputLabel, Select, MenuItem,
-  TextField, Box, Typography, Stack, Alert,
-  CircularProgress, Chip,
+  TextField, Stack, Alert,
+  CircularProgress,
 } from '@mui/material'
-import { Download, FileDownload } from '@mui/icons-material'
+import { FileDownload } from '@mui/icons-material'
 import { format, startOfMonth, endOfMonth } from 'date-fns'
 import {
   getExportData,
@@ -59,19 +59,6 @@ export function ExportDialog({ open, onClose, holderId, holders, cards }: Props)
       setError('')
     }
   }, [open, holderId])
-
-  const resetForm = () => {
-    setMode('data')
-    setExportType('bills')
-    setSelectedHolderId(holderId)
-    setSelectedCardId('')
-    setDateRange('current_month')
-    setStartDate(format(new Date(), 'yyyy-MM-dd'))
-    setEndDate(format(new Date(), 'yyyy-MM-dd'))
-    setReportPeriod(format(new Date(), 'yyyy-MM'))
-    setReportYear(format(new Date(), 'yyyy'))
-    setError('')
-  }
 
   const handleDateRangeChange = (value: 'current_month' | 'last_month' | 'custom') => {
     setDateRange(value)
@@ -247,7 +234,7 @@ export function ExportDialog({ open, onClose, holderId, holders, cards }: Props)
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>导出数据</DialogTitle>
+      <DialogTitle className="type-title">导出数据</DialogTitle>
 
       <DialogContent>
         {error && (
@@ -328,7 +315,7 @@ export function ExportDialog({ open, onClose, holderId, holders, cards }: Props)
                 <InputLabel>时间范围</InputLabel>
                 <Select
                   value={dateRange}
-                  onChange={e => handleDateRangeChange(e.target.value as any)}
+                  onChange={e => handleDateRangeChange(e.target.value as 'current_month' | 'last_month' | 'custom')}
                   label="时间范围"
                 >
                   <MenuItem value="current_month">本月</MenuItem>

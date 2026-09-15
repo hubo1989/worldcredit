@@ -44,14 +44,45 @@ export default function HolderDetailPage() {
     <Box sx={{ p: 2, pb: 2 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-        <IconButton aria-label="返回" onClick={() => router.back()}>
+        <IconButton
+          aria-label="返回"
+          onClick={() => router.back()}
+          sx={{
+            width: 'var(--button-size)',
+            height: 'var(--button-size)',
+            background: 'var(--button-face)',
+            color: 'var(--text-on-dark)',
+            boxShadow: 'var(--button-shadow)',
+            '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
+            '&:active': { boxShadow: 'var(--button-shadow-press)' },
+          }}
+        >
           <ArrowBackIcon />
         </IconButton>
         <Avatar sx={{ bgcolor: holder.avatar_color, width: 40, height: 40, ml: 1, mr: 1.5 }}>
           {holder.name.charAt(0)}
         </Avatar>
-        <Typography variant="h6" fontWeight={700}>{holder.name}</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+        <Typography
+          variant="h6"
+          sx={{
+            fontSize: 'var(--type-section-size)',
+            lineHeight: 'var(--type-section-line)',
+            fontWeight: 'var(--type-section-weight)',
+            letterSpacing: 'var(--type-section-tracking)',
+            color: 'var(--text)',
+          }}
+        >
+          {holder.name}
+        </Typography>
+        <Typography
+          sx={{
+            fontSize: 'var(--type-body-size)',
+            lineHeight: 'var(--type-body-line)',
+            letterSpacing: 'var(--type-body-tracking)',
+            color: 'var(--muted)',
+            ml: 1,
+          }}
+        >
           ({cards.length} 张卡)
         </Typography>
       </Box>
@@ -59,11 +90,20 @@ export default function HolderDetailPage() {
       {/* Card List */}
       {cards.length === 0 ? (
         <Box sx={{
-          textAlign: 'center', p: 4, bgcolor: '#fff', borderRadius: 4,
-          border: '2px dashed', borderColor: 'divider'
+          textAlign: 'center', p: 4, bgcolor: 'var(--paper)', borderRadius: 'var(--radius-depth-3)',
+          border: '2px dashed', borderColor: 'var(--track)',
         }}>
-          <CreditCardIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
-          <Typography color="text.secondary">暂无信用卡，点击右下角添加</Typography>
+          <CreditCardIcon sx={{ fontSize: 48, color: 'var(--text-disabled)', mb: 1 }} />
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+            }}
+          >
+            暂无信用卡，点击右下角添加
+          </Typography>
         </Box>
       ) : (
         cards.map(card => (
@@ -77,8 +117,15 @@ export default function HolderDetailPage() {
       )}
 
       <Fab
-        color="primary"
-        sx={{ position: 'fixed', bottom: 72, right: 16 }}
+        aria-label="添加信用卡"
+        sx={{
+          position: 'fixed', bottom: 72, right: 16,
+          width: 'var(--button-size)', height: 'var(--button-size)', minHeight: 'var(--button-size)',
+          background: 'var(--button-face)', color: 'var(--text-on-dark)',
+          boxShadow: 'var(--button-shadow)', border: 0,
+          '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
+          '&:active': { boxShadow: 'var(--button-shadow-press)' },
+        }}
         onClick={() => { setEditingCard(undefined); setFormOpen(true) }}
       >
         <AddIcon />

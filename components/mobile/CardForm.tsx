@@ -27,6 +27,15 @@ const DUE_TYPE_LABELS: Record<DueType, string> = {
   fixed_before_billing: '每月固定还款日（账单日倒推）',
 }
 
+// MUI Typography 自带样式注入在 globals.css 之后，同特异性下角色 class 会被覆盖，
+// 因此排版令牌直接写进 sx。
+const BODY = {
+  fontSize: 'var(--type-body-size)',
+  lineHeight: 'var(--type-body-line)',
+  fontWeight: 'var(--type-body-weight)',
+  letterSpacing: 'var(--type-body-tracking)',
+}
+
 export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) {
   const [products, setProducts] = useState<CardProduct[]>([])
   const [selectedBank, setSelectedBank] = useState('')
@@ -149,15 +158,39 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
   }
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle fontWeight={700}>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth="xs"
+      // 弹窗浮层：18px 圆角 + float 阴影 + 无边框
+      slotProps={{
+        paper: {
+          sx: {
+            border: 0,
+            borderRadius: 'var(--radius-depth-3)',
+            boxShadow: 'var(--shadow-float)',
+          },
+        },
+      }}
+    >
+      {/* 弹窗标题：22/28 · 600 · -0.7px */}
+      <DialogTitle
+        sx={{
+          fontSize: 'var(--type-title-size)',
+          lineHeight: 'var(--type-title-line)',
+          fontWeight: 'var(--type-title-weight)',
+          letterSpacing: 'var(--type-title-tracking)',
+          color: 'var(--text)',
+        }}
+      >
         {initial ? '编辑卡片' : '添加卡片'}
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <AiFillBox mode="card" onFill={(data) => {
             if (data.bank_name) setSelectedBank(String(data.bank_name))
-            if (data.card_number_last4) setLast4(String(data.card_number_last4).slice(-4))
+            if (data.card_number_last4) setLast4(String(data.card_number_last4))
             if (data.billing_day) {
               const d = String(data.billing_day).replace(/\D/g, '')
               if (d) setBillingDay(d)
@@ -173,7 +206,18 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
 
           {/* 卡类型选择 */}
           <Box>
-            <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+            {/* 分组小标题：19/24 · 600 · -0.6px，次要色 */}
+            <Typography
+              sx={{
+                fontSize: 'var(--type-section-size)',
+                lineHeight: 'var(--type-section-line)',
+                fontWeight: 'var(--type-section-weight)',
+                letterSpacing: 'var(--type-section-tracking)',
+                color: 'var(--muted)',
+                mb: 0.5,
+                display: 'block',
+              }}
+            >
               卡类型
             </Typography>
             <ToggleButtonGroup
@@ -263,7 +307,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
                     />
                   }
                   label={
-                    <Typography variant="body2">
+                    <Typography sx={{ ...BODY, color: 'var(--text)' }}>
                       覆盖卡产品默认还款规则
                     </Typography>
                   }
@@ -271,7 +315,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
               </Box>
 
               {overrideEnabled && (
-                <Stack spacing={2} sx={{ pl: 1, borderLeft: '2px solid', borderColor: 'divider' }}>
+                // 分组缩进线：1px var(--track)
+                <Stack spacing={2} className="track-left" sx={{ pl: 1 }}>
                   <TextField
                     fullWidth
                     label="账单日（覆盖）"
@@ -349,7 +394,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
             </>
           )}
 
-          <Divider />
+          {/* 分隔线：1px var(--track) */}
+          <Divider sx={{ borderColor: 'var(--track)' }} />
 
           {/* 卡号末4位（通用） */}
           <TextField
@@ -358,17 +404,18 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
             placeholder="选填"
             value={last4}
             onChange={e => setLast4(e.target.value)}
-            inputProps={{ maxLength: 4 }}
+            inputProps={{ maxLength: 6 }}
           />
 
         </Stack>
       </DialogContent>
       <DialogActions sx={{ p: 2, pt: 0 }}>
-        <Button onClick={onClose} color="inherit">取消</Button>
+        <Button onClick={onClose} color="inherit" sx={{ borderRadius: 'var(--radius-pill)' }}>取消</Button>
         <Button
           variant="contained"
           onClick={handleSubmit}
           disabled={submitting || !canSubmit}
+          sx={{ borderRadius: 'var(--radius-pill)' }}
         >
           {submitting ? '保存中...' : '保存'}
         </Button>

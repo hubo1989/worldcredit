@@ -5,12 +5,9 @@ import {
   Button, 
   ButtonGroup, 
   CircularProgress, 
-  Tooltip, 
   Menu, 
   MenuItem, 
-  Checkbox, 
   ListItemText,
-  ListItemIcon,
   Box,
   Snackbar,
   Alert
@@ -23,8 +20,8 @@ import { aiComplete } from '@/lib/api/ai'
 
 interface AiCompleteButtonProps {
   type: 'bank' | 'card_product'
-  formData: Record<string, any>
-  onComplete: (completedData: Record<string, any>) => void
+  formData: Record<string, unknown>
+  onComplete: (completedData: Record<string, unknown>) => void
   availableFields: { key: string; label: string }[]
 }
 
@@ -68,9 +65,9 @@ export default function AiCompleteButton({
         return
       }
       onComplete(result)
-    } catch (err: any) {
+    } catch (err) {
       console.error('AI Complete Full Error:', err)
-      setErrorMsg(err.message || 'AI 补全失败')
+      setErrorMsg(err instanceof Error ? err.message : 'AI 补全失败')
     } finally {
       setLoading(false)
     }
@@ -87,8 +84,8 @@ export default function AiCompleteButton({
         fields: [fieldKey]
       })
       onComplete(result)
-    } catch (err: any) {
-      setErrorMsg(err.message || 'AI 补全失败')
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'AI 补全失败')
     } finally {
       setLoading(false)
     }

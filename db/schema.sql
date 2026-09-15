@@ -221,24 +221,6 @@ CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(use
 CREATE INDEX IF NOT EXISTS idx_reminder_logs_bill ON reminder_logs(bill_id);
 
 -- ============================================
--- Bill Email Sources
--- ============================================
-
--- 用户登记的账单来源邮箱。用于 Email Worker 在收到账单邮件后按发件人归属用户。
-CREATE TABLE IF NOT EXISTS bill_email_sources (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL,
-  email TEXT NOT NULL,
-  label TEXT,
-  is_active BOOLEAN NOT NULL DEFAULT true,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(user_id, email)
-);
-
-CREATE INDEX IF NOT EXISTS idx_bill_email_sources_user ON bill_email_sources(user_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_bill_email_sources_email ON bill_email_sources(lower(email)) WHERE is_active = true;
-
--- ============================================
 -- Record Attachments
 -- ============================================
 
@@ -304,4 +286,3 @@ CREATE TABLE IF NOT EXISTS user_preferences (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_preferences_user ON user_preferences(user_id);
-

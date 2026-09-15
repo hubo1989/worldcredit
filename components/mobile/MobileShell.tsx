@@ -28,6 +28,14 @@ export function MobileShell({ children }: { children: ReactNode }) {
 
     // Register SW
     if ('serviceWorker' in navigator) {
+      // One-shot auto reload when a newly installed service worker takes
+      // control: fixes the stale-precache first load after each deploy.
+      let refreshing = false
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (refreshing) return
+        refreshing = true
+        window.location.reload()
+      })
       navigator.serviceWorker
         .register('/sw.js', { scope: '/' })
         .catch(err => console.warn('[SW] registration failed:', err))
@@ -42,16 +50,20 @@ export function MobileShell({ children }: { children: ReactNode }) {
   // 加载状态显示全屏加载动画
   if (loading) {
     return (
-      <Box sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        minHeight: '100vh',
-        gap: 2
-      }}>
-        <CircularProgress size={40} />
-        <Typography variant="body2" color="text.secondary">
+      <Box
+        className="phone"
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          minHeight: '100vh',
+          gap: 2,
+          bgcolor: 'background.default',
+        }}
+      >
+        <CircularProgress size={40} sx={{ color: 'var(--strong)' }} />
+        <Typography className="type-label">
           正在加载 WorldCredit...
         </Typography>
       </Box>
@@ -64,12 +76,15 @@ export function MobileShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <Box sx={{
-      pb: 9, // 为底部导航栏留出空间
-      minHeight: '100vh',
-      bgcolor: 'background.default',
-      position: 'relative'
-    }}>
+    <Box
+      className="phone"
+      sx={{
+        pb: 9, // 为底部导航栏留出空间
+        minHeight: '100vh',
+        bgcolor: 'background.default',
+        position: 'relative'
+      }}
+    >
       <Box sx={{ maxWidth: 600, mx: 'auto' }}>
         {children}
       </Box>

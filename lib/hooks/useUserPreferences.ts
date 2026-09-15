@@ -8,7 +8,7 @@ import {
   DEFAULT_DISPLAY_CONFIG,
   DEFAULT_REMINDER_CONFIG
 } from '../api/preferences'
-import type { UserDisplayConfig, UserReminderConfig, UserPreferences } from '../types'
+import type { UserDisplayConfig, UserReminderConfig } from '../types'
 
 const PREF_CACHE_KEY = 'worldcredit_user_prefs_cache'
 
@@ -20,7 +20,9 @@ export function useUserPreferences() {
       if (cached) {
         try {
           return JSON.parse(cached).display_config || DEFAULT_DISPLAY_CONFIG
-        } catch {}
+        } catch {
+          // ignore malformed cache, fall back to defaults
+        }
       }
     }
     return DEFAULT_DISPLAY_CONFIG
@@ -32,7 +34,9 @@ export function useUserPreferences() {
       if (cached) {
         try {
           return JSON.parse(cached).reminder_config || DEFAULT_REMINDER_CONFIG
-        } catch {}
+        } catch {
+          // ignore malformed cache, fall back to defaults
+        }
       }
     }
     return DEFAULT_REMINDER_CONFIG

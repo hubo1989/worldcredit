@@ -1,8 +1,27 @@
-// env.d.ts — vinext 使用 NEXT_PUBLIC_ 前缀 + process.env 访问环境变量
+// env.d.ts — Cloudflare Workers bindings + vinext public env
+/// <reference types="@cloudflare/workers-types" />
+
+// @cloudflare/workers-types replaces the DOM Response type. Restore the standard
+// body-mixin methods so `res.json()` returns Promise<any> in app code.
+interface Body {
+  json(): Promise<any>
+}
+
 declare namespace NodeJS {
   interface ProcessEnv {
-    NEXT_PUBLIC_INSFORGE_URL: string
-    NEXT_PUBLIC_INSFORGE_ANON_KEY: string
     NODE_ENV: 'development' | 'production' | 'test'
+  }
+}
+
+interface Env {
+  DB: D1Database
+  ATTACHMENTS: R2Bucket
+  ASSETS: { fetch(request: Request): Promise<Response> }
+  IMAGES: {
+    input(stream: ReadableStream): {
+      transform(options: Record<string, unknown>): {
+        output(options: { format: string; quality: number }): Promise<{ response(): Response }>
+      }
+    }
   }
 }
