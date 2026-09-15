@@ -2,14 +2,15 @@
 
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
-import { Container, Box, Typography, Stack, IconButton, Paper } from '@mui/material'
+import { Container, Box, Typography, Stack, IconButton, Paper, Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, MenuItem, InputAdornment, Alert } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
+import EditIcon from '@mui/icons-material/Edit'
 import { format } from 'date-fns'
-import { getCardDetail } from '@/lib/api/cards'
+import { getCardDetail, updateCard } from '@/lib/api/cards'
 import { StatusBadge } from '@/components/mobile/WcBadge'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import { ChevronRightIcon, ClockIcon } from '@/components/icons/WcIcon'
-import { getEffectiveBillingDay, getEffectiveDueConfig, formatCardTail } from '@/lib/utils'
+import { getEffectiveBillingDay, getEffectiveDueConfig, formatCardTail, getEffectiveCardName, getEffectiveAnnualFee } from '@/lib/utils'
 import type { CreditCard, CardProduct, CardHolder, Bill, Benefit } from '@/lib/types'
 
 type CardDetail = CreditCard & {
@@ -28,6 +29,17 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
   const [benefits, setBenefits] = useState<Array<Benefit & { used: number }>>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // 编辑表单状态
+  const [editOpen, setEditOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+  const [nameOverride, setNameOverride] = useState('')
+  const [limitInput, setLimitInput] = useState('')
+  const [billingDayInput, setBillingDayInput] = useState('')
+  const [dueType, setDueType] = useState<'default' | 'after_billing' | 'fixed' | 'fixed_before_billing'>('default')
+  const [dueValue, setDueValue] = useState('')
+  const [annualFeeInput, setAnnualFeeInput] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -51,6 +63,69 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
 
   useEffect(() => { load() }, [load])
 
+  const openEdit = () => {
+    if (!card) return
+    const product = card.card_product
+    const due = getEffectiveDueConfig(card, product)
+    setNameOverride(card.name_override || '')
+    setLimitInput(String(Number(card.credit_limit) || 0))
+    setBillingDayInput(String(getEffectiveBillingDay(card)))
+    // 回填当前生效的还款规则（修改过后即是卡级覆盖，否则是产品默认）
+    setDueType(card.override_due_type && card.override_due_value != null
+      ? card.override_due_type
+      : 'default')
+    setDueValue(card.override_due_value != null
+      ? String(card.override_due_value)
+      : (card.override_due_type ? '' : String(due.value)))
+    setAnnualFeeInput(card.annual_fee_override != null ? String(Number(card.annual_fee_override)) : '')
+    setEditError(null)
+    setEditOpen(true)
+  }
+
+  const handleSave = async () => {
+    if (!card) return
+    const day = parseInt(billingDayInput, 10)
+    const limitNum = parseFloat(limitInput)
+    if (isNaN(limitNum) || limitNum < 0) {
+      setEditError('请输入有效的总额度')
+      return
+    }
+    if (isNaN(day) || day < 1 || day > 31) {
+      setEditError('账单日必须是 1-31 之间的数字')
+      return
+    }
+    if (dueType !== 'default') {
+      const val = parseInt(dueValue, 10)
+      if (isNaN(val) || val < 1 || (dueType !== 'after_billing' && val > 31)) {
+        setEditError('请输入有效的还款规则数值')
+        return
+      }
+    }
+    setSaving(true)
+    setEditError(null)
+    try {
+      await updateCard(card.id, {
+        // 卡片名称：留空恢复使用卡产品默认
+        name_override: nameOverride.trim() || null,
+        credit_limit: limitNum,
+        // 账单日：以修改后的值为准，清除旧覆盖
+        billing_day: day,
+        override_billing_day: null,
+        // 还款日：选「跟随卡产品」时清除覆盖，否则写入卡级覆盖（优先生效）
+        override_due_type: dueType === 'default' ? null : dueType,
+        override_due_value: dueType === 'default' ? null : parseInt(dueValue, 10),
+        // 年费：留空恢复使用卡产品默认
+        annual_fee_override: annualFeeInput.trim() === '' ? null : parseFloat(annualFeeInput),
+      })
+      setEditOpen(false)
+      await load()
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : '保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   if (loading) {
     return (
       <Container maxWidth="sm" sx={{ py: 2 }}>
@@ -72,7 +147,8 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
 
   const product = card.card_product
   const bankName = product?.bank_name || '银行卡'
-  const cardName = product?.card_name || '信用卡'
+  // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
+  const cardName = getEffectiveCardName(card, product)
   const holderName = card.card_holders?.name
   const last4 = formatCardTail(card.card_number_last4)
 
@@ -89,8 +165,13 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
     card.loan_due_day ??
     (dueConfig.type !== 'after_billing' ? dueConfig.value : null)
   const grace = billingDay && dueDayOfMonth ? Math.max(0, dueDayOfMonth - billingDay) : null
-  const annualFee = product?.annual_fee != null ? Number(product.annual_fee) : null
+  // 修改内容优先：卡级别年费覆盖 > 卡产品默认
+  const annualFee = getEffectiveAnnualFee(card, product)
   const currency = product?.currency || 'CNY'
+  // 是否存在卡级别自定义（展示「已自定义」徽标）
+  const isNameOverridden = !!card.name_override
+  const isDueOverridden = card.override_due_type != null && card.override_due_value != null
+  const isAnnualFeeOverridden = card.annual_fee_override != null
 
   return (
     <Container maxWidth="sm" sx={{ py: 2, pb: 10 }}>
@@ -152,9 +233,29 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
                 letterSpacing: 'var(--type-section-tracking)',
                 color: 'var(--text-on-dark)',
                 mt: 0.25,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.5,
               }}
             >
               {cardName}
+              {isNameOverridden && (
+                <Box
+                  component="span"
+                  sx={{
+                    fontSize: 10,
+                    lineHeight: 1,
+                    px: 0.5,
+                    py: 0.25,
+                    borderRadius: 'var(--radius-pill)',
+                    bgcolor: 'rgba(255,255,255,0.18)',
+                    color: 'var(--text-on-dark)',
+                    fontWeight: 600,
+                  }}
+                >
+                  已自定义
+                </Box>
+              )}
             </Typography>
           </Box>
           {card.status !== 'active' && (
@@ -207,10 +308,30 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       </Box>
 
       {/* 日期与费用 */}
-      <Section title="日期与费用">
+      <Section
+        title="日期与费用"
+        action={
+          <IconButton
+            onClick={openEdit}
+            aria-label="编辑卡片"
+            size="small"
+            sx={{ color: 'var(--muted)', p: 0.5 }}
+          >
+            <EditIcon sx={{ fontSize: 16 }} />
+          </IconButton>
+        }
+      >
         <Stack spacing={0.75}>
           <Row label="账单日" value={billingDay ? `每月 ${billingDay} 日` : '—'} />
-          <Row label="还款日" value={dueDayOfMonth ? `每月 ${dueDayOfMonth} 日` : (card.loan_due_day ? `每月 ${card.loan_due_day} 日` : '—')} />
+          <Row
+            label="还款日"
+            value={
+              <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                {dueDayOfMonth ? `每月 ${dueDayOfMonth} 日` : (card.loan_due_day ? `每月 ${card.loan_due_day} 日` : (dueConfig.type === 'after_billing' ? `账单日后 ${dueConfig.value} 天` : '—'))}
+                {isDueOverridden && <CustomizedTag />}
+              </Box>
+            }
+          />
           <Row
             label="最长免息"
             value={
@@ -221,10 +342,97 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
               ) : '—'
             }
           />
-          <Row label="年费" value={annualFee != null ? `¥${annualFee.toLocaleString()}` : '—'} />
+          <Row
+            label="年费"
+            value={
+              <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                {annualFee != null ? `¥${annualFee.toLocaleString()}` : '—'}
+                {isAnnualFeeOverridden && <CustomizedTag />}
+              </Box>
+            }
+          />
           <Row label="币种" value={currency} />
         </Stack>
       </Section>
+
+      {/* 编辑卡片对话框：保存后卡级别内容优先于卡产品默认 */}
+      <Dialog open={editOpen} onClose={() => !saving && setEditOpen(false)} fullWidth maxWidth="xs" PaperProps={{ sx: { borderRadius: 'var(--radius-depth-2)' } }}>
+        <DialogTitle sx={{ fontWeight: 700, fontSize: 'var(--type-section-size)' }}>编辑卡片</DialogTitle>
+        <DialogContent>
+          {editError && <Alert severity="error" sx={{ mb: 2 }}>{editError}</Alert>}
+          <Stack spacing={2} sx={{ mt: 0.5 }}>
+            <TextField
+              label="卡片名称"
+              placeholder={product?.card_name || '输入卡片名称'}
+              value={nameOverride}
+              onChange={e => setNameOverride(e.target.value)}
+              helperText={product?.card_name ? `留空则使用卡产品默认名称「${product.card_name}」` : ' '}
+              fullWidth
+            />
+            <TextField
+              label="总额度"
+              type="number"
+              value={limitInput}
+              onChange={e => setLimitInput(e.target.value)}
+              required
+              fullWidth
+              InputProps={{ startAdornment: <InputAdornment position="start">¥</InputAdornment> }}
+            />
+            <TextField
+              label="账单日"
+              type="number"
+              value={billingDayInput}
+              onChange={e => setBillingDayInput(e.target.value)}
+              required
+              helperText="每月出账日期（1-31）"
+              fullWidth
+              inputProps={{ min: 1, max: 31 }}
+              InputProps={{ endAdornment: <InputAdornment position="end">日</InputAdornment> }}
+            />
+            <TextField
+              select
+              label="还款日规则"
+              value={dueType}
+              onChange={e => setDueType(e.target.value as typeof dueType)}
+              helperText="修改后以此规则优先计算各期账单还款日"
+              fullWidth
+            >
+              <MenuItem value="default" disabled={!product}>
+                跟随卡产品默认
+                {product ? `（${product.payment_due_type === 'after_billing' ? `账单日后 ${product.payment_due_value} 天` : `每月 ${product.payment_due_value} 日`}）` : ''}
+              </MenuItem>
+              <MenuItem value="after_billing">账单日后 X 天</MenuItem>
+              <MenuItem value="fixed">每月固定还款日</MenuItem>
+              <MenuItem value="fixed_before_billing">每月固定还款日（账单日倒推）</MenuItem>
+            </TextField>
+            {dueType !== 'default' && (
+              <TextField
+                label={dueType === 'after_billing' ? '账单日后天数' : '每月还款日'}
+                type="number"
+                value={dueValue}
+                onChange={e => setDueValue(e.target.value)}
+                required
+                fullWidth
+                inputProps={dueType === 'after_billing' ? { min: 1 } : { min: 1, max: 31 }}
+                InputProps={{ endAdornment: <InputAdornment position="end">{dueType === 'after_billing' ? '天' : '日'}</InputAdornment> }}
+              />
+            )}
+            <TextField
+              label="年费"
+              type="number"
+              value={annualFeeInput}
+              onChange={e => setAnnualFeeInput(e.target.value)}
+              helperText={product?.annual_fee != null && Number(product.annual_fee) > 0 ? `留空则使用卡产品默认年费 ¥${Number(product.annual_fee).toLocaleString()}` : '留空表示无年费'}
+              fullWidth
+              InputProps={{ startAdornment: <InputAdornment position="start">¥</InputAdornment> }}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, pt: 0 }}>
+          <Button onClick={() => setEditOpen(false)} disabled={saving} sx={{ color: 'var(--muted)' }}>取消</Button>
+          <Button onClick={handleSave} disabled={saving} variant="contained">{saving ? '保存中…' : '保存'}</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* 最近账单 */}
       <Section title="最近账单">
@@ -379,27 +587,50 @@ function HeaderBack({ title, onBack }: { title: string; onBack: () => void }) {
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <Box sx={{ mb: 1.5 }}>
-      <Typography
-        sx={{
-          fontSize: 'var(--type-section-size)',
-          lineHeight: 'var(--type-section-line)',
-          fontWeight: 'var(--type-section-weight)',
-          letterSpacing: 'var(--type-section-tracking)',
-          color: 'var(--text)',
-          mb: 0.75,
-        }}
-      >
-        {title}
-      </Typography>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.75 }}>
+        <Typography
+          sx={{
+            fontSize: 'var(--type-section-size)',
+            lineHeight: 'var(--type-section-line)',
+            fontWeight: 'var(--type-section-weight)',
+            letterSpacing: 'var(--type-section-tracking)',
+            color: 'var(--text)',
+          }}
+        >
+          {title}
+        </Typography>
+        {action}
+      </Stack>
       <Paper
         elevation={0}
         sx={{ p: 1.5, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e2)' }}
       >
         {children}
       </Paper>
+    </Box>
+  )
+}
+
+/** 「已自定义」小徽标：标记该字段为卡级别覆盖值 */
+function CustomizedTag() {
+  return (
+    <Box
+      component="span"
+      sx={{
+        fontSize: 10,
+        lineHeight: 1,
+        px: 0.5,
+        py: 0.25,
+        borderRadius: 'var(--radius-pill)',
+        bgcolor: 'rgba(10,31,68,0.06)',
+        color: 'var(--muted)',
+        fontWeight: 600,
+      }}
+    >
+      已自定义
     </Box>
   )
 }

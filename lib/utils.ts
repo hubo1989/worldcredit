@@ -20,6 +20,28 @@ export function getEffectiveBillingDay(card: CreditCard): number {
 }
 
 /**
+ * 返回卡片实际生效的名称（卡级别覆盖 > 卡产品默认）
+ */
+export function getEffectiveCardName(
+  card: Pick<CreditCard, 'name_override'> | undefined | null,
+  cardProduct: Pick<CardProduct, 'card_name'> | undefined | null
+): string {
+  return card?.name_override || cardProduct?.card_name || '信用卡'
+}
+
+/**
+ * 返回卡片实际生效的年费（卡级别覆盖 > 卡产品默认）
+ */
+export function getEffectiveAnnualFee(
+  card: Pick<CreditCard, 'annual_fee_override'> | undefined | null,
+  cardProduct: Pick<CardProduct, 'annual_fee'> | undefined | null
+): number | null {
+  if (card?.annual_fee_override != null) return Number(card.annual_fee_override)
+  if (cardProduct?.annual_fee != null) return Number(cardProduct.annual_fee)
+  return null
+}
+
+/**
  * 返回实际生效的还款规则（优先使用卡级别 override，否则用卡产品默认）
  */
 export function getEffectiveDueConfig(

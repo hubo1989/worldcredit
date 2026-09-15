@@ -24,7 +24,7 @@ export interface NotificationHistory {
 }
 
 interface BillWithCard extends Bill {
-  credit_cards: Pick<CreditCard, 'card_number_last4' | 'holder_id'> & {
+  credit_cards: Pick<CreditCard, 'card_number_last4' | 'holder_id' | 'name_override'> & {
     card_products: Pick<CardProduct, 'bank_name' | 'card_name'>
   }
 }
@@ -88,7 +88,9 @@ function createNotificationContent(
   bill: BillWithCard,
   type: 'due' | 'overdue'
 ): { title: string; body: string } {
-  const { bank_name, card_name } = bill.credit_cards.card_products
+  // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
+  const bank_name = bill.credit_cards.card_products.bank_name
+  const card_name = bill.credit_cards.name_override || bill.credit_cards.card_products.card_name
   const daysUntil = bill.due_date
     ? Math.ceil((new Date(bill.due_date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
     : 0
@@ -144,7 +146,7 @@ export async function runDailyNotificationScan(): Promise<void> {
   today.setHours(0, 0, 0, 0)
 
   const { data: bills } = await query<Record<string, unknown>>(
-    `SELECT b.*, cc.card_number_last4, cc.holder_id, cp.bank_name, cp.card_name
+    `SELECT b.*, cc.card_number_last4, cc.holder_id, cc.name_override, cp.bank_name, cp.card_name
      FROM bills b
      JOIN credit_cards cc ON b.card_id = cc.id
      LEFT JOIN card_products cp ON cc.card_product_id = cp.id

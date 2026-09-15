@@ -21,6 +21,8 @@ interface CardJoinRow {
   override_billing_day: number | null
   override_due_type: string | null
   override_due_value: number | null
+  name_override: string | null
+  annual_fee_override: number | null
   created_at: string
   // product fields
   p_id: string | null
@@ -51,6 +53,8 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
     override_billing_day: row.override_billing_day || undefined,
     override_due_type: row.override_due_type as CreditCard['override_due_type'],
     override_due_value: row.override_due_value || undefined,
+    name_override: row.name_override || undefined,
+    annual_fee_override: row.annual_fee_override != null ? row.annual_fee_override : undefined,
     created_at: row.created_at,
   }
   if (row.p_id) {
@@ -69,14 +73,14 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
       created_at: row.p_created_at || row.created_at,
     }
     card.bank_name = card.card_product.bank_name
-    card.card_name = card.card_product.card_name
+    card.card_name = card.name_override || card.card_product.card_name
   }
   return card
 }
 
 const CARD_SELECT = `cc.id, cc.holder_id, cc.card_product_id, cc.card_number_last4, cc.credit_limit,
   cc.billing_day, cc.status, cc.card_type, cc.loan_due_day, cc.override_billing_day,
-  cc.override_due_type, cc.override_due_value, cc.created_at,
+  cc.override_due_type, cc.override_due_value, cc.name_override, cc.annual_fee_override, cc.created_at,
   cp.id AS p_id, cp.country AS p_country, cp.bank_id AS p_bank_id, cp.bank_name AS p_bank_name,
   cp.card_name AS p_card_name, cp.currency AS p_currency, cp.payment_due_type AS p_payment_due_type,
   cp.payment_due_value AS p_payment_due_value, cp.annual_fee AS p_annual_fee,
@@ -284,6 +288,8 @@ export async function updateCard(
     override_billing_day: patch.override_billing_day,
     override_due_type: patch.override_due_type,
     override_due_value: patch.override_due_value,
+    name_override: patch.name_override,
+    annual_fee_override: patch.annual_fee_override,
   }
   for (const [key, value] of Object.entries(fieldMap)) {
     if (value !== undefined) {

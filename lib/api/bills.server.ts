@@ -33,7 +33,7 @@ function withCreditCardProductFields(bill: BillWithCard): BillWithCard {
     credit_cards: {
       ...card,
       bank_name: card.bank_name ?? card.card_product?.bank_name,
-      card_name: card.card_name ?? card.card_product?.card_name,
+      card_name: card.name_override ?? card.card_name ?? card.card_product?.card_name,
     },
   }
 }
@@ -80,6 +80,11 @@ interface BillJoinRow extends Record<string, unknown> {
   cc_status: string | null
   cc_card_type: string | null
   cc_loan_due_day: number | null
+  cc_override_billing_day: number | null
+  cc_override_due_type: string | null
+  cc_override_due_value: number | null
+  cc_name_override: string | null
+  cc_annual_fee_override: number | null
   cc_created_at: string | null
   // card_products fields
   cp_id: string | null
@@ -142,6 +147,11 @@ function mapJoinRowToDashboard(
     status: (row.cc_status || 'active') as CreditCard['status'],
     card_type: (row.cc_card_type || 'credit') as CreditCard['card_type'],
     loan_due_day: row.cc_loan_due_day || undefined,
+    override_billing_day: row.cc_override_billing_day || undefined,
+    override_due_type: (row.cc_override_due_type as CreditCard['override_due_type']) || undefined,
+    override_due_value: row.cc_override_due_value || undefined,
+    name_override: row.cc_name_override || undefined,
+    annual_fee_override: row.cc_annual_fee_override != null ? row.cc_annual_fee_override : undefined,
     created_at: row.cc_created_at || row.created_at,
     card_product: product,
   }
@@ -172,7 +182,10 @@ export async function getRecentBills(limit = 10): Promise<(Bill & { card: Credit
     `SELECT b.*, cc.id AS cc_id, cc.holder_id AS cc_holder_id, cc.card_product_id AS cc_card_product_id,
             cc.card_number_last4 AS cc_card_number_last4, cc.credit_limit AS cc_credit_limit,
             cc.billing_day AS cc_billing_day, cc.status AS cc_status, cc.card_type AS cc_card_type,
-            cc.loan_due_day AS cc_loan_due_day, cc.created_at AS cc_created_at,
+            cc.loan_due_day AS cc_loan_due_day, cc.override_billing_day AS cc_override_billing_day,
+            cc.override_due_type AS cc_override_due_type, cc.override_due_value AS cc_override_due_value,
+            cc.name_override AS cc_name_override, cc.annual_fee_override AS cc_annual_fee_override,
+            cc.created_at AS cc_created_at,
             cp.id AS cp_id, cp.bank_name AS cp_bank_name, cp.card_name AS cp_card_name,
             cp.currency AS cp_currency, cp.country AS cp_country,
             cp.payment_due_type AS cp_payment_due_type, cp.payment_due_value AS cp_payment_due_value,
@@ -204,7 +217,10 @@ export async function getBillDashboardItems(limit = 100, userId?: string): Promi
     `SELECT b.*, cc.id AS cc_id, cc.holder_id AS cc_holder_id, cc.card_product_id AS cc_card_product_id,
             cc.card_number_last4 AS cc_card_number_last4, cc.credit_limit AS cc_credit_limit,
             cc.billing_day AS cc_billing_day, cc.status AS cc_status, cc.card_type AS cc_card_type,
-            cc.loan_due_day AS cc_loan_due_day, cc.created_at AS cc_created_at,
+            cc.loan_due_day AS cc_loan_due_day, cc.override_billing_day AS cc_override_billing_day,
+            cc.override_due_type AS cc_override_due_type, cc.override_due_value AS cc_override_due_value,
+            cc.name_override AS cc_name_override, cc.annual_fee_override AS cc_annual_fee_override,
+            cc.created_at AS cc_created_at,
             cp.id AS cp_id, cp.bank_name AS cp_bank_name, cp.card_name AS cp_card_name,
             cp.currency AS cp_currency, cp.country AS cp_country,
             cp.payment_due_type AS cp_payment_due_type, cp.payment_due_value AS cp_payment_due_value,
@@ -260,7 +276,10 @@ export async function getBillById(id: string): Promise<BillWithCard | null> {
     `SELECT b.*, cc.id AS cc_id, cc.holder_id AS cc_holder_id, cc.card_product_id AS cc_card_product_id,
             cc.card_number_last4 AS cc_card_number_last4, cc.credit_limit AS cc_credit_limit,
             cc.billing_day AS cc_billing_day, cc.status AS cc_status, cc.card_type AS cc_card_type,
-            cc.loan_due_day AS cc_loan_due_day, cc.created_at AS cc_created_at,
+            cc.loan_due_day AS cc_loan_due_day, cc.override_billing_day AS cc_override_billing_day,
+            cc.override_due_type AS cc_override_due_type, cc.override_due_value AS cc_override_due_value,
+            cc.name_override AS cc_name_override, cc.annual_fee_override AS cc_annual_fee_override,
+            cc.created_at AS cc_created_at,
             cp.id AS cp_id, cp.bank_name AS cp_bank_name, cp.card_name AS cp_card_name,
             cp.currency AS cp_currency, cp.country AS cp_country,
             cp.payment_due_type AS cp_payment_due_type, cp.payment_due_value AS cp_payment_due_value,
@@ -586,7 +605,10 @@ export async function getBillsByHolder(holderId: string): Promise<BillWithCard[]
     `SELECT b.*, cc.id AS cc_id, cc.holder_id AS cc_holder_id, cc.card_product_id AS cc_card_product_id,
             cc.card_number_last4 AS cc_card_number_last4, cc.credit_limit AS cc_credit_limit,
             cc.billing_day AS cc_billing_day, cc.status AS cc_status, cc.card_type AS cc_card_type,
-            cc.loan_due_day AS cc_loan_due_day, cc.created_at AS cc_created_at,
+            cc.loan_due_day AS cc_loan_due_day, cc.override_billing_day AS cc_override_billing_day,
+            cc.override_due_type AS cc_override_due_type, cc.override_due_value AS cc_override_due_value,
+            cc.name_override AS cc_name_override, cc.annual_fee_override AS cc_annual_fee_override,
+            cc.created_at AS cc_created_at,
             cp.id AS cp_id, cp.bank_name AS cp_bank_name, cp.card_name AS cp_card_name,
             cp.currency AS cp_currency, cp.country AS cp_country,
             cp.payment_due_type AS cp_payment_due_type, cp.payment_due_value AS cp_payment_due_value,

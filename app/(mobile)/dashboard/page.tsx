@@ -12,7 +12,7 @@ import { useRouter } from 'next/navigation'
 import { getBillDashboardItems, markBillAsPaid, markAllOverdueBillsAsPaid, type BillDashboardItem } from '@/lib/api/bills'
 import { getHolders } from '@/lib/api/holders'
 import { getCardsBasicByHolders } from '@/lib/api/cards'
-import { formatCardTail } from '@/lib/utils'
+import { formatCardTail, getEffectiveCardName } from '@/lib/utils'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
 import { useAuth } from '@/lib/auth'
 import { WcSkeleton } from '@/components/mobile/WcStates'
@@ -986,6 +986,8 @@ export default function DashboardPage() {
               const product = bill.card?.card_product
               const tailDigits = formatCardTail(bill.card?.card_number_last4)
               const tail = tailDigits ? `尾号 ${tailDigits}` : '未记录尾号'
+              // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
+              const cardDisplayName = bill.card ? getEffectiveCardName(bill.card, product) : ''
               const overdueDays = Math.abs(bill.days_until_due)
               const remaining = bill.remaining_amount > 0 ? bill.remaining_amount : Number(bill.bill_amount)
 
@@ -1025,7 +1027,7 @@ export default function DashboardPage() {
                         }}
                         noWrap
                       >
-                        {product?.bank_name || '未知银行'} {product?.card_name || ''}
+                        {product?.bank_name || '未知银行'} {cardDisplayName}
                       </Typography>
                       <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>
                         {tail} · {bill.bill_month || ''}
