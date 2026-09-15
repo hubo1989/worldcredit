@@ -1,6 +1,6 @@
 // lib/notifications.ts
 import { query, queryOne, execute, uuid, now } from './db'
-import type { Bill, CardProduct, CreditCard, User } from './types'
+import type { Bill, User } from './types'
 
 export interface NotificationPreferences {
   user_id: string
@@ -23,10 +23,18 @@ export interface NotificationHistory {
   error: string | null
 }
 
-interface BillWithCard extends Bill {
-  credit_cards: Pick<CreditCard, 'card_number_last4' | 'holder_id'> & {
-    card_products: Pick<CardProduct, 'bank_name' | 'card_name'>
-  }
+/**
+ * runDailyNotificationScan 的查询是扁平 JOIN（lib/db/helpers.ts 不支持
+ * PostgREST 风格的嵌套 select，见该文件头注释），所以这里如实声明扁平列。
+ * 此前按嵌套对象访问这些列，在扁平结果上运行时必然是 undefined。
+ */
+interface NotificationBillRow extends Bill {
+  bank_name: string | null
+  card_name: string | null
+  /** 卡级别名称覆盖（NULL = 使用卡产品默认名称） */
+  name_override: string | null
+  card_number_last4: string | null
+  holder_id: string
 }
 
 interface NotificationPreferenceRow {
@@ -64,7 +72,7 @@ export async function upsertNotificationPreferences(
 }
 
 function shouldSendNotification(
-  bill: BillWithCard,
+  bill: NotificationBillRow,
   preferences: Pick<NotificationPreferences, 'bill_due_enabled' | 'overdue_enabled' | 'due_days_before'>,
   today: Date
 ): { shouldSend: boolean; type: 'due' | 'overdue'; key: string } | null {
@@ -85,10 +93,12 @@ function shouldSendNotification(
 }
 
 function createNotificationContent(
-  bill: BillWithCard,
+  bill: NotificationBillRow,
   type: 'due' | 'overdue'
 ): { title: string; body: string } {
-  const { bank_name, card_name } = bill.credit_cards.card_products
+  // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
+  const bank_name = bill.bank_name
+  const card_name = bill.name_override || bill.card_name
   const daysUntil = bill.due_date
     ? Math.ceil((new Date(bill.due_date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
     : 0
@@ -144,7 +154,7 @@ export async function runDailyNotificationScan(): Promise<void> {
   today.setHours(0, 0, 0, 0)
 
   const { data: bills } = await query<Record<string, unknown>>(
-    `SELECT b.*, cc.card_number_last4, cc.holder_id, cp.bank_name, cp.card_name
+    `SELECT b.*, cc.card_number_last4, cc.holder_id, cc.name_override, cp.bank_name, cp.card_name
      FROM bills b
      JOIN credit_cards cc ON b.card_id = cc.id
      LEFT JOIN card_products cp ON cc.card_product_id = cp.id
@@ -160,7 +170,7 @@ export async function runDailyNotificationScan(): Promise<void> {
       await processUserNotifications(
         pref.user_id, 'admin',
         { bill_due_enabled: pref.bill_due_enabled === 1, overdue_enabled: pref.overdue_enabled === 1, due_days_before: pref.due_days_before },
-        bills as unknown as BillWithCard[], today
+        bills as unknown as NotificationBillRow[], today
       )
     } catch (error) {
       console.error(`Failed to process notifications for user ${pref.user_id}:`, error)
@@ -172,7 +182,7 @@ export async function runDailyNotificationScan(): Promise<void> {
 async function processUserNotifications(
   userId: string, _role: User['role'],
   preferences: { bill_due_enabled: boolean; overdue_enabled: boolean; due_days_before: number },
-  bills: BillWithCard[], today: Date
+  bills: NotificationBillRow[], today: Date
 ): Promise<void> {
   for (const bill of bills) {
     const notification = shouldSendNotification(bill, preferences, today)

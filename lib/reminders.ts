@@ -79,7 +79,9 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
       const key = `${bill.id}:${remindType}`
       if (sentKeys.has(key)) continue
 
-      const cardName = bill.bank_name ? `${bill.bank_name} ${bill.card_name}` : '信用卡'
+      // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
+      const displayName = bill.name_override || bill.card_name
+      const cardName = bill.bank_name ? `${bill.bank_name} ${displayName ?? ''}` : '信用卡'
       const amount = Number(bill.bill_amount).toLocaleString('zh-CN', { style: 'currency', currency: 'CNY' })
 
       let title = 'WorldCredit 还款提醒'
@@ -131,7 +133,9 @@ async function checkLoanReminders(): Promise<void> {
     )
     if (alreadySent) continue
 
-    const cardName = card.bank_name ? `${card.bank_name} ${card.card_name}` : '贷款'
+    // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
+    const displayName = card.name_override || card.card_name
+    const cardName = card.bank_name ? `${card.bank_name} ${displayName ?? ''}` : '贷款'
     const dateLabel = `${nextDue.getMonth() + 1}月${nextDue.getDate()}日`
     await showNotification('贷款还款提醒', `${cardName} 还款日 ${dateLabel}，请及时还款`)
     await callRpc<typeof RemindersServer.recordLoanReminder>(

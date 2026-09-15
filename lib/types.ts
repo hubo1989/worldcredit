@@ -118,11 +118,15 @@ export interface CreditCard {
   /** 贷款类专用：每月固定还款日（1-31） */
   loan_due_day?: number
   /** 覆盖卡产品默认账单日（NULL = 使用卡产品默认值） */
-  override_billing_day?: number
+  override_billing_day?: number | null
   /** 覆盖还款规则类型 */
   override_due_type?: 'fixed' | 'after_billing' | 'fixed_before_billing' | null
   /** 覆盖还款规则值 */
   override_due_value?: number | null
+  /** 卡片名称覆盖（NULL = 使用卡产品默认名称） */
+  name_override?: string | null
+  /** 年费覆盖（NULL = 使用卡产品默认年费） */
+  annual_fee_override?: number | null
   created_at: string
 }
 

@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // workers-types 与 vitest 自带的 DOM/node 全局声明会互相重定义
+    // （TextDecoder、crypto、Request 等），只对第三方 .d.ts 关掉检查，
+    // 我们自己的 src/ 与 __tests__/ 仍然全程 strict 检查。
+    "skipLibCheck": true,
+    "types": ["@cloudflare/workers-types", "vitest/globals"]
+  },
+  "include": ["src/**/*.ts", "__tests__/**/*.ts", "vitest.config.mts"]
+}

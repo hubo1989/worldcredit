@@ -10,7 +10,7 @@ import { StatusBadge, SourceBadge } from '@/components/mobile/WcBadge'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { ChevronRightIcon, BankIcon, UserIcon, ClockIcon } from '@/components/icons/WcIcon'
-import { getDueDate, getEffectiveBillingDay, getEffectiveDueConfig, getLoanNextDueDate, formatCardTail } from '@/lib/utils'
+import { getDueDate, getEffectiveBillingDay, getEffectiveDueConfig, getLoanNextDueDate, formatCardTail, getEffectiveCardName } from '@/lib/utils'
 import type { Bill, Payment, CreditCard, CardProduct, CardHolder } from '@/lib/types'
 
 type BillDetail = Bill & {
@@ -110,7 +110,8 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const product = card?.card_product
   const holder = card?.card_holders
   const bankName = product?.bank_name || '未知银行'
-  const cardName = product?.card_name || '信用卡'
+  // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
+  const cardName = card ? getEffectiveCardName(card, product) : '信用卡'
   const holderName = holder?.name
   const last4 = formatCardTail(card?.card_number_last4)
 

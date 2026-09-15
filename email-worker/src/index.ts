@@ -12,7 +12,9 @@
  */
 
 import type { Env, AiConfig, BillParseResult, EmailParseLogRow } from './types'
-import { streamToString, extractTextFromRaw } from './mime'
+import { parseRawMessage, streamToBytes } from './mime'
+import { buildBundleLogPayload, processForwardedBundle } from './forwarded'
+import { keepPaidStatus } from './bills'
 
 export default {
   async email(
@@ -39,9 +41,38 @@ export default {
     }
 
     try {
-      // 2. Read email body
-      const rawText = await streamToString(message.raw)
-      const emailBody = extractTextFromRaw(rawText)
+      // 2. 一次读全原始字节。
+      //    直发路径只需要正文，但转发包里的 .eml 附件是 base64，必须先拿到原始字节
+      //    才能还原；整封邮件先按 utf-8 解码会不可逆地毁掉附件。正文提取仍在解析器内部完成。
+      const raw = await streamToBytes(message.raw)
+      const parsedTop = parseRawMessage(raw)
+      const emailBody = parsedTop.text
+
+      // 3. Fetch AI config（转发包路径里每封附件也要用它，所以提前到分支之前）
+      const aiConfig = await loadAiConfig(db)
+      if (!aiConfig.apiKey) {
+        throw new Error('AI API Key 未配置（system_settings.ai_api_key）')
+      }
+
+      // 4. 转发账单包路径。
+      //    用户把多封银行账单转发成一个包时，顶层正文往往只有「见附件」，
+      //    真正的账单是包里的 .eml 附件。命中就走附件路径并结束；没命中（返回 null）
+      //    说明是普通直发邮件，继续走下面原有逻辑，保证老流程不退化。
+      const bundle = await processForwardedBundle({
+        db,
+        userId,
+        top: parsedTop,
+        parse: body => parseBillWithAI(aiConfig, body),
+      })
+      if (bundle) {
+        // billsWritten = 0 也算「处理过但没什么可写」，用 skipped 与失败的解析区分开
+        log.status = bundle.billsWritten > 0 ? 'success' : 'skipped'
+        log.error_msg = bundle.summary
+        log.raw_ai_response = buildBundleLogPayload(bundle)
+        await writeLog(db, log)
+        return
+      }
+
       if (!emailBody.trim()) {
         log.status = 'skipped'
         log.error_msg = 'Empty email body'
@@ -49,13 +80,7 @@ export default {
         return
       }
 
-      // 3. Fetch AI config
-      const aiConfig = await loadAiConfig(db)
-      if (!aiConfig.apiKey) {
-        throw new Error('AI API Key 未配置（system_settings.ai_api_key）')
-      }
-
-      // 4. Parse bill with AI
+      // 5. Parse bill with AI
       const aiResult = await parseBillWithAI(aiConfig, emailBody)
       log.raw_ai_response = JSON.stringify(aiResult)
 
@@ -66,7 +91,7 @@ export default {
         return
       }
 
-      // 5. Find matching credit_card
+      // 6. Find matching credit_card
       const cardId = await findCardId(db, userId, aiResult.card_last4 ?? null)
       if (!cardId) {
         log.status = 'failed'
@@ -75,10 +100,11 @@ export default {
         return
       }
 
-      // 6. Upsert bill (idempotent: unique on card_id + bill_month)
+      // 7. Upsert bill (idempotent: unique on card_id + bill_month)
+      // 必须连 status 一起读：重发邮件不能把已还清的账单打回未还款
       const existing = await db.prepare(
-        'SELECT id FROM bills WHERE card_id = ? AND bill_month = ?'
-      ).bind(cardId, aiResult.bill_month).first<{ id: string }>()
+        'SELECT id, status FROM bills WHERE card_id = ? AND bill_month = ?'
+      ).bind(cardId, aiResult.bill_month).first<{ id: string; status: string | null }>()
 
       let billId: string
       if (existing) {
@@ -88,7 +114,7 @@ export default {
         ).bind(
           Number(aiResult.bill_amount),
           aiResult.min_payment != null ? Number(aiResult.min_payment) : null,
-          aiResult.due_date, aiResult.statement_date ?? null, 'unpaid', billId
+          aiResult.due_date, aiResult.statement_date ?? null, keepPaidStatus(existing.status), billId
         ).run()
       } else {
         billId = crypto.randomUUID()
@@ -101,7 +127,7 @@ export default {
         ).run()
       }
 
-      // 7. Write success log
+      // 8. Write success log
       log.bill_id = billId
       log.status = 'success'
       await writeLog(db, log)

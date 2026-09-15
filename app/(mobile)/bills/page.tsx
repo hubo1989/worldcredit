@@ -29,7 +29,7 @@ import { getHolders } from '@/lib/api/holders'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
 import { format } from 'date-fns'
-import { formatCardTail, compareBillsListCards, pickDueReference, dueDistanceLabel } from '@/lib/utils'
+import { formatCardTail, compareBillsListCards, pickDueReference, dueDistanceLabel, getEffectiveCardName } from '@/lib/utils'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import {
   SyncIcon, BankIcon, UserIcon,
@@ -93,7 +93,8 @@ function CardSummaryRow({
   const [historyOpen, setHistoryOpen] = useState(false)
   const product = item.card.card_product
   const bankName = product?.bank_name || '银行卡'
-  const cardName = product?.card_name || '信用卡'
+  // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
+  const cardName = getEffectiveCardName(item.card, product)
   // 卡名常自带银行名前缀（如「中国银行 普卡」），再拼一次 bankName 会渲染成
   // 「中国银行 中国银行 普卡」。只在确实是前缀时去掉，避免误伤正常卡名。
   // 标题里也不再重复 bankName：下一行已有带银行图标的 chip 显示银行，

@@ -92,6 +92,8 @@ export interface CreditCardRow {
   override_billing_day: number | null
   override_due_type: 'fixed' | 'after_billing' | 'fixed_before_billing' | null
   override_due_value: number | null
+  name_override: string | null
+  annual_fee_override: number | null
   created_at: string
 }
 

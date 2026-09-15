@@ -173,7 +173,8 @@ async function exportPayments(
     .map(payment => ({
       '还款日期': payment.paid_at,
       '银行': payment.bill.credit_cards.bank_name,
-      '卡片': payment.bill.credit_cards.card_name,
+      // 卡级别覆盖 > 卡产品默认名称；顶层 card_name 由 payments.ts 按同一优先级拼好
+      '卡片': payment.bill.credit_cards.card_name ?? payment.bill.credit_cards.card_product?.card_name ?? '',
       '卡号末四位': formatCardTail(payment.bill.credit_cards.card_number_last4),
       '还款金额': payment.amount.toFixed(2),
       '还款渠道': payment.channel,
