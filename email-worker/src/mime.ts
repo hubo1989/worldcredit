@@ -217,15 +217,24 @@ function decodeQuotedPrintableBytes(bytes: Uint8Array): Uint8Array {
 /**
  * Decode base64，输出字节。
  * 输入允许是字符串（头部编码词）或原始字节（base64 部件可能被折行）。
+ *
+ * 解码失败返回 null 而不是空字节：空字节会被上层当成「这个编码词没有内容」，
+ * 让坏编码词静默消失（整个 To 头显示名变空 → 认人降级到默认持卡人）。
+ * 返回 null 让调用方能把「解码失败」和「本来就没有内容」区分开。
  */
-function decodeBase64Bytes(input: Uint8Array | string): Uint8Array {
+function decodeBase64Bytes(input: Uint8Array | string): Uint8Array | null {
   const text = typeof input === 'string' ? input : bytesToLatin1String(input)
+  const trimmed = text.replace(/\s+/g, '')
   const cleaned = text
     .replace(/\s+/g, '')
     .replace(/[^A-Za-z0-9+/=_-]/g, '')
     .replace(/-/g, '+')
     .replace(/_/g, '/')
-  if (!cleaned) return new Uint8Array(0)
+  if (!cleaned) {
+    // 原文为空/全空白：确实没有内容，返回空字节。
+    // 原文非空却被过滤成空（如 payload 全是非法字符）：这是坏编码词，返回 null 让上层保留原样。
+    return trimmed ? null : new Uint8Array(0)
+  }
   // 部分邮件会在结尾丢掉 padding，atob 会因此抛错，这里补回来
   const remainder = cleaned.length % 4
   const padded = remainder ? cleaned + '='.repeat(4 - remainder) : cleaned
@@ -233,7 +242,7 @@ function decodeBase64Bytes(input: Uint8Array | string): Uint8Array {
   try {
     binary = atob(padded)
   } catch {
-    return new Uint8Array(0)
+    return null
   }
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i) & 0xff
@@ -243,7 +252,8 @@ function decodeBase64Bytes(input: Uint8Array | string): Uint8Array {
 /** 按 Content-Transfer-Encoding 把部件正文还原成字节；7bit/8bit/binary 原样返回。 */
 function decodeTransferEncoding(body: Uint8Array, encoding: string | null | undefined): Uint8Array {
   const enc = (encoding || '7bit').trim().toLowerCase()
-  if (enc === 'base64') return decodeBase64Bytes(body)
+  // 部件解码失败仍按空内容处理：单个坏附件不该让整封邮件解析失败
+  if (enc === 'base64') return decodeBase64Bytes(body) ?? new Uint8Array(0)
   if (enc === 'quoted-printable') return decodeQuotedPrintableBytes(body)
   return body
 }
@@ -342,10 +352,15 @@ export function decodeMimeHeaderValue(value: string | null | undefined): string 
   if (joined.includes('=?')) {
     return joined.replace(ENCODED_WORD_RE, (whole, charset: string, kind: string, payload: string) => {
       try {
-        const bytes =
-          kind.toLowerCase() === 'b'
-            ? decodeBase64Bytes(payload)
-            : decodeQuotedPrintableBytes(asciiBytes(payload.replace(/_/g, ' ')))
+        let bytes: Uint8Array | null
+        if (kind.toLowerCase() === 'b') {
+          bytes = decodeBase64Bytes(payload)
+        } else {
+          bytes = decodeQuotedPrintableBytes(asciiBytes(payload.replace(/_/g, ' ')))
+        }
+        // 解码失败（bytes === null）时保留原始编码词：让它原样可见，
+        // 而不是变成空串把整个显示名抹掉、把认人悄悄降级到默认持卡人。
+        if (bytes === null) return whole
         return bytesToString(bytes, charset)
       } catch {
         // 单个编码词坏了不该拖垮整个头，保留原样
@@ -429,6 +444,8 @@ function splitMultipart(body: Uint8Array, boundary: string): Uint8Array[] {
   let scanFrom = 0
   let partStart = -1
   let firstSeen = false
+  /** 是否遇到了规范收尾分隔符 --boundary--。没有它说明邮件被截断，剩余字节仍是最后一个部件。 */
+  let closed = false
 
   while (true) {
     const at = indexOfSeq(body, delimiter, scanFrom)
@@ -458,11 +475,21 @@ function splitMultipart(body: Uint8Array, boundary: string): Uint8Array[] {
       parts.push(body.subarray(partStart, Math.max(partStart, end)))
     }
 
-    if (isClosing) break
+    if (isClosing) {
+      closed = true
+      break
+    }
     partStart = skipLineBreak(body, after)
     // 下一个部件从内容起始处继续扫描：分隔行的行尾已由 skipLineBreak 跳过，
     // 这里若停回 after 会把同一行再当成分隔行扫一遍。
     scanFrom = partStart
+  }
+
+  // 没有收尾分隔符（邮件被截断、客户端漏写 --boundary--）时，上面循环会带着一个
+  // 已定位、还没收下的部件退出。这里把剩余字节当作最后一个部件收下，
+  // 否则它的正文会被整段丢掉。
+  if (!closed && firstSeen && partStart >= 0 && partStart < body.length) {
+    parts.push(body.subarray(partStart))
   }
 
   return parts
@@ -495,17 +522,30 @@ interface WalkContext {
   attachmentBytes: number
 }
 
-/** 没有明确 disposition 但本质是附件的部件（转发客户端常这么发包）。 */
+/**
+ * 判断一个部件是不是附件。
+ *
+ * 判据以 Content-Disposition 为主：只带 name=/filename= 而没有 disposition: attachment
+ * 的部件是正文（Content-Type: text/plain; name="body.txt" 的正文部件很常见），
+ * 把它当附件会让邮件正文变成空串。
+ */
 function isAttachmentPart(header: HeaderInfo): boolean {
-  if (header.disposition === 'attachment') return true
-  if (header.filename) return true
   const type = header.contentType
-  return (
+  // 明确的附件 disposition 优先
+  if (header.disposition === 'attachment') return true
+  // Content-Type 本身就是二进制/邮件载荷的，即使没有 disposition 也是附件
+  if (
     type === 'application/octet-stream' ||
     type === 'application/eml' ||
     type === 'application/x-eml' ||
     type === 'message/rfc822'
-  )
+  ) {
+    return true
+  }
+  // 文本正文即使带了 name=/filename= 也不算附件
+  if (type === 'text/plain' || type === 'text/html' || type === '') return false
+  // 其余类型（图片、PDF 等）带文件名即视为附件
+  return Boolean(header.filename)
 }
 
 function walk(header: HeaderInfo, body: Uint8Array, ctx: WalkContext, depth: number): void {

@@ -77,40 +77,148 @@ function pickStatementDay(statementDate: string | null | undefined): number {
 
 /**
  * 在指定持卡人范围内按尾号找卡，找不到且尾号明确时建卡。
- * 返回 null 有两种含义：尾号缺失（不建卡），或库里没有可用卡产品（建不了卡）。
  * 尾号为空时不建卡，否则每一封无尾号账单都会造出一张新卡。
+ *
+ * 建卡必须挂到真实卡产品上（card_product_id NOT NULL + 外键 RESTRICT），而卡产品
+ * 同时决定了这张卡的币种。所以这里只在按银行名匹配到产品时才建卡：宁可跳过、
+ * 让用户在界面手动补，也不能随便挑一个产品把美国卡标成 CNY。
  */
+export interface CardProductCandidate {
+  id: string
+  bank_name: string
+  currency: string
+}
+
+/** 银行名归一化：去空白 + 小写，让 'Chase' / 'chase bank' 这类写法可比。 */
+function normalizeBankName(value: string | null | undefined): string {
+  return (value ?? '').trim().toLowerCase().replace(/[\s\u3000]+/g, '')
+}
+
+/**
+ * 按账单里的银行名挑一个卡产品作为新卡的载体。
+ * 先按银行名匹配（精确名优先于互相包含，因为「Citibank」与「Citibank HK」是两家），
+ * 再优先选币种一致的那个——同一家银行可能有本币和外币两种产品
+ * （如汇丰中国 CNY / 汇丰香港 HKD），选错会把币种记错。
+ * 匹配不到返回 null，调用方据此跳过而不是硬造卡。
+ */
+export function pickCardProductForBank(
+  products: CardProductCandidate[],
+  bankName: string | null,
+  currency: string | null
+): CardProductCandidate | null {
+  const wanted = normalizeBankName(bankName)
+  if (!wanted) return null
+
+  const exact = products.filter(product => normalizeBankName(product.bank_name) === wanted)
+  const partial = products.filter(product => {
+    const have = normalizeBankName(product.bank_name)
+    if (!have) return false
+    return have.includes(wanted) || wanted.includes(have)
+  })
+  const matches = exact.length ? exact : partial
+  if (!matches.length) return null
+
+  const wantedCurrency = (currency ?? '').trim().toUpperCase()
+  if (wantedCurrency) {
+    const sameCurrency = matches.find(p => (p.currency ?? '').trim().toUpperCase() === wantedCurrency)
+    if (sameCurrency) return sameCurrency
+  }
+  return matches[0]
+}
+
+export interface FindOrCreateCardParams {
+  holderId: string
+  cardTail: string | null
+  statementDate: string | null
+  /** AI 解出的银行名，用于匹配卡产品；缺失则不建卡。 */
+  bankName: string | null
+  /** AI 解出的币种，用于在同银行多产品里排除币种不符的候选。 */
+  currency: string | null
+}
+
+export type FindOrCreateCardOutcome =
+  | { ok: true; cardId: string; created: boolean }
+  | { ok: false; reason: string }
+
 export async function findOrCreateCardForHolder(
   db: D1Database,
-  holderId: string,
-  cardTail: string | null,
-  statementDate: string | null
-): Promise<{ cardId: string; created: boolean } | null> {
-  const tail = normalizeCardTail(cardTail)
-  if (!tail) return null
+  params: FindOrCreateCardParams
+): Promise<FindOrCreateCardOutcome> {
+  const tail = normalizeCardTail(params.cardTail)
+  if (!tail) return { ok: false, reason: '账单未给出尾号，跳过（避免误挂到其他卡）' }
 
   const existing = await db.prepare(
     'SELECT id FROM credit_cards WHERE holder_id = ? AND card_number_last4 = ? LIMIT 1'
-  ).bind(holderId, tail).first<{ id: string }>()
-  if (existing) return { cardId: existing.id, created: false }
+  ).bind(params.holderId, tail).first<{ id: string }>()
+  if (existing) return { ok: true, cardId: existing.id, created: false }
 
   // credit_cards.card_product_id 是 NOT NULL 且外键 RESTRICT，必须挂在真实卡产品上。
   // 这里刻意不新建卡产品：缺少银行/卡种上下文时硬造会污染产品目录。
-  const product = await db.prepare(
-    'SELECT id FROM card_products ORDER BY is_active DESC, created_at ASC LIMIT 1'
-  ).first<{ id: string }>()
-  if (!product) return null
+  const products = await db.prepare(
+    'SELECT id, bank_name, currency FROM card_products WHERE is_active = 1 ORDER BY created_at ASC, id ASC'
+  ).all<CardProductCandidate>()
+  const product = pickCardProductForBank(products.results ?? [], params.bankName, params.currency)
+  if (!product) {
+    const bank = (params.bankName ?? '').trim()
+    return {
+      ok: false,
+      reason: bank
+        ? `未匹配到银行「${bank}」，请在界面手动添加该卡`
+        : '账单未给出银行名，无法自动建卡',
+    }
+  }
 
   const cardId = crypto.randomUUID()
+  // 额度暂记 0：AI 结果里没有额度字段，宁可留空等用户补，也不猜一个数。
+  // 币种不落库在这里——它由 card_product 决定，所以上面必须挑对产品。
   await db.prepare(
     'INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type) VALUES (?, ?, ?, ?, 0, ?, ?, ?)'
-  ).bind(cardId, holderId, product.id, tail, pickStatementDay(statementDate), 'active', 'credit').run()
+  ).bind(cardId, params.holderId, product.id, tail, pickStatementDay(params.statementDate), 'active', 'credit').run()
 
-  return { cardId, created: true }
+  return { ok: true, cardId, created: true }
 }
 
-/** 幂等写账单：唯一键是 (card_id, bill_month)，命中则覆盖，未命中则插入。 */
-export async function upsertBillForCard(db: D1Database, cardId: string, parsed: BillParseResult): Promise<string> {
+export interface UpsertBillOptions {
+  /**
+   * 归属是否可信（To 头显示名或正文称呼真的命中了某个持卡人）。
+   * false 表示这人只是被回落成了默认持卡人，不能凭此覆盖他那个月的既有账单。
+   */
+  trusted: boolean
+}
+
+export interface UpsertBillOutcome {
+  billId: string
+  action: 'inserted' | 'updated' | 'preserved'
+  /** 仅 action='preserved' 时给出，写进 skipped 让日志说清为什么没写。 */
+  reason: string | null
+}
+
+/**
+ * 重发/补发邮件不能把已经还清或部分还款的账单打回未还款。
+ * 只有原本就是 unpaid（或没有状态）时才保持 unpaid，其余状态一律原样保留。
+ *
+ * 直发路径（index.ts）与附件路径共用这条规则：同一家银行重发邮件不该让已还清
+ * 的账单重新出现在待还列表里，两条路径的行为必须一致。
+ */
+export function keepPaidStatus(existing: string | null | undefined): string {
+  const current = (existing ?? '').trim()
+  return current && current !== 'unpaid' ? current : 'unpaid'
+}
+
+/**
+ * 幂等写账单：唯一键是 (card_id, bill_month)。
+ *
+ * 归属不可信（trusted=false）且该月账单已存在时**不覆盖**，返回 preserved 让上层
+ * 记进 skipped：名册外的人（新卡、亲戚、银行拼写差异）寄来的同尾号账单，不能
+ * 顶着默认持卡人的身份把他那个月的账单改写掉。归属不可信但库里还没有这条账单时
+ * 仍然插入——此时不存在"覆盖别人"的风险，记下来总比丢掉好。
+ */
+export async function upsertBillForCard(
+  db: D1Database,
+  cardId: string,
+  parsed: BillParseResult,
+  options: UpsertBillOptions
+): Promise<UpsertBillOutcome> {
   const billMonth = parsed.bill_month as string
   const dueDate = parsed.due_date as string
   const amount = Number(parsed.bill_amount)
@@ -118,21 +226,28 @@ export async function upsertBillForCard(db: D1Database, cardId: string, parsed: 
   const statementDate = parsed.statement_date ?? null
 
   const existing = await db.prepare(
-    'SELECT id FROM bills WHERE card_id = ? AND bill_month = ?'
-  ).bind(cardId, billMonth).first<{ id: string }>()
+    'SELECT id, status FROM bills WHERE card_id = ? AND bill_month = ?'
+  ).bind(cardId, billMonth).first<{ id: string; status: string | null }>()
 
   if (existing) {
+    if (!options.trusted) {
+      return {
+        billId: existing.id,
+        action: 'preserved',
+        reason: `该卡 ${billMonth} 账单已存在，但收件人无法确认归属（已回落默认持卡人），保留原值`,
+      }
+    }
     await db.prepare(
       'UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?, status = ? WHERE id = ?'
-    ).bind(amount, minPayment, dueDate, statementDate, 'unpaid', existing.id).run()
-    return existing.id
+    ).bind(amount, minPayment, dueDate, statementDate, keepPaidStatus(existing.status), existing.id).run()
+    return { billId: existing.id, action: 'updated', reason: null }
   }
 
   const billId = crypto.randomUUID()
   await db.prepare(
     'INSERT INTO bills (id, card_id, bill_month, bill_amount, min_payment, due_date, statement_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ).bind(billId, cardId, billMonth, amount, minPayment, dueDate, statementDate, 'unpaid').run()
-  return billId
+  return { billId, action: 'inserted', reason: null }
 }
 
 /**
@@ -222,24 +337,34 @@ export async function persistNestedBills(
       continue
     }
 
-    const card = await findOrCreateCardForHolder(
-      db, resolution.holderId, parsed.card_last4 ?? null, parsed.statement_date ?? null
-    )
-    if (!card) {
-      // 尾号缺失不能建卡，也不能随便挂到已有卡上——记录后跳过，等人工在界面补
-      const reason = (parsed.card_last4 ?? '').replace(/\D/g, '')
-        ? '缺少可用卡产品，无法建卡'
-        : '账单未给出尾号，跳过（避免误挂到其他卡）'
-      skipped.push({ label: message.label, reason })
+    // 归属是否可信只由「真的命中了某个人」决定；回落默认持卡人不算可信。
+    const trusted = resolution.source === 'header_name' || resolution.source === 'body_honorific'
+
+    const card = await findOrCreateCardForHolder(db, {
+      holderId: resolution.holderId,
+      cardTail: parsed.card_last4 ?? null,
+      statementDate: parsed.statement_date ?? null,
+      bankName: parsed.bank_name ?? null,
+      currency: parsed.currency ?? null,
+    })
+    if (!card.ok) {
+      // 尾号缺失、或按银行名匹配不到卡产品时都不建卡，也不能随便挂到已有卡上，
+      // 记录后跳过，等人工在界面补
+      skipped.push({ label: message.label, reason: card.reason })
       continue
     }
 
-    const billId = await upsertBillForCard(db, card.cardId, parsed)
+    const outcome = await upsertBillForCard(db, card.cardId, parsed, { trusted })
+    if (outcome.action === 'preserved') {
+      // 归属不可信 + 该月账单已存在：不覆盖，如实记进 skipped
+      skipped.push({ label: message.label, reason: outcome.reason ?? '归属无法确认，保留原值' })
+      continue
+    }
     written.push({
       holderId: resolution.holderId,
       holderName: scope.holders.find(h => h.id === resolution.holderId)?.name ?? '',
       cardId: card.cardId,
-      billId,
+      billId: outcome.billId,
       aiResult: parsed,
       matchSource: resolution.source,
     })

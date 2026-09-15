@@ -202,15 +202,55 @@ function looksLikeRfc822(bytes: Uint8Array): boolean {
   return MAIL_HEADER_RE.test(head)
 }
 
-/** 判断一个附件是不是嵌套账单邮件。 */
+/** PDF/PNG/JPEG 这类明确的二进制魔数：命中就一定不是邮件正文。 */
+function looksLikeBinaryDocument(bytes: Uint8Array): boolean {
+  if (bytes.length >= 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) return true // %PDF
+  if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return true // ‰PNG
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return true // JPEG
+  return false
+}
+
+/** 已知的非邮件附件扩展名：带这些后缀的部件不做内容嗅探，直接排除。 */
+const NON_EMAIL_EXTENSIONS = new Set([
+  'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'heic', 'tif', 'tiff',
+  'zip', 'rar', '7z', 'gz', 'tar',
+  'xls', 'xlsx', 'numbers', 'ods',
+  'doc', 'docx', 'pages', 'odt',
+  'ppt', 'pptx', 'key', 'odp',
+  'csv', 'txt', 'htm', 'html', 'json', 'xml', 'ics',
+  'mp3', 'mp4', 'mov', 'wav', 'm4a',
+])
+
+/**
+ * 判断一个附件是不是嵌套账单邮件。
+ *
+ * 三条判据按强弱依次适用：
+ *   1. Content-Type 明确是邮件（message/rfc822 等）——直接采纳；
+ *   2. 明确是 PDF/PNG/JPEG 等二进制——哪怕名字叫 .eml 也否掉；
+ *   3. 其余情况按内容嗅探，覆盖两类常见情况：
+ *        - 后缀写了 .eml / .emlx（仍做内容校验，防误标）；
+ *        - 无可用后缀，包括 Gmail 转发时常见的裸名附件「attachment」。
+ */
 export function isEmlAttachment(attachment: RawAttachment): boolean {
-  const name = (attachment.filename || '').toLowerCase()
-  if (name.endsWith('.eml') || name.endsWith('.emlx')) return true
-  if (attachment.contentType === 'message/rfc822') return true
-  if (attachment.contentType === 'application/eml' || attachment.contentType === 'application/x-eml') return true
-  // 扩展名缺失（转发客户端常见）时退回内容嗅探，但只对 octet-stream 这种模糊类型做
-  if (!name && (attachment.contentType === 'application/octet-stream' || !attachment.contentType)) {
+  const contentType = (attachment.contentType || '').trim().toLowerCase()
+  const name = (attachment.filename || '').trim().toLowerCase()
+  const basename = name.replace(/\\/g, '/').split('/').pop() ?? name
+
+  if (contentType === 'message/rfc822' || contentType === 'application/eml' || contentType === 'application/x-eml') {
+    return true
+  }
+
+  if (looksLikeBinaryDocument(attachment.bytes)) return false
+
+  if (basename.endsWith('.eml') || basename.endsWith('.emlx')) {
+    // 后缀是强信号但不是证据：误标后缀（如把 PDF 存成 .eml）时靠内容否掉
     return looksLikeRfc822(attachment.bytes)
   }
-  return false
+
+  const dot = basename.lastIndexOf('.')
+  const ext = dot > 0 ? basename.slice(dot + 1) : ''
+  if (ext && NON_EMAIL_EXTENSIONS.has(ext)) return false
+
+  // 没有可用后缀（含空名字与「attachment」这类通用名）时按内容判定
+  return looksLikeRfc822(attachment.bytes)
 }

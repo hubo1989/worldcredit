@@ -14,6 +14,7 @@
 import type { Env, AiConfig, BillParseResult, EmailParseLogRow } from './types'
 import { parseRawMessage, streamToBytes } from './mime'
 import { buildBundleLogPayload, processForwardedBundle } from './forwarded'
+import { keepPaidStatus } from './bills'
 
 export default {
   async email(
@@ -100,9 +101,10 @@ export default {
       }
 
       // 7. Upsert bill (idempotent: unique on card_id + bill_month)
+      // 必须连 status 一起读：重发邮件不能把已还清的账单打回未还款
       const existing = await db.prepare(
-        'SELECT id FROM bills WHERE card_id = ? AND bill_month = ?'
-      ).bind(cardId, aiResult.bill_month).first<{ id: string }>()
+        'SELECT id, status FROM bills WHERE card_id = ? AND bill_month = ?'
+      ).bind(cardId, aiResult.bill_month).first<{ id: string; status: string | null }>()
 
       let billId: string
       if (existing) {
@@ -112,7 +114,7 @@ export default {
         ).bind(
           Number(aiResult.bill_amount),
           aiResult.min_payment != null ? Number(aiResult.min_payment) : null,
-          aiResult.due_date, aiResult.statement_date ?? null, 'unpaid', billId
+          aiResult.due_date, aiResult.statement_date ?? null, keepPaidStatus(existing.status), billId
         ).run()
       } else {
         billId = crypto.randomUUID()
