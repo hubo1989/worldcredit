@@ -22,6 +22,8 @@ interface BillWithCard {
   created_by: string
   bank_name: string | null
   card_name: string | null
+  /** 卡级别名称覆盖（NULL = 使用卡产品默认名称）。 */
+  name_override: string | null
 }
 
 export async function handleScheduled(_event: ScheduledEvent, env: CronEnv, _ctx: ExecutionContext): Promise<void> {
@@ -34,7 +36,7 @@ export async function handleScheduled(_event: ScheduledEvent, env: CronEnv, _ctx
   const bills = await db.prepare(`
     SELECT b.id, b.card_id, b.bill_month, b.bill_amount, b.min_payment, b.due_date, b.status,
            ch.id AS holder_id, ch.created_by,
-           cp.bank_name, cp.card_name
+           cp.bank_name, cp.card_name, cc.name_override
     FROM bills b
     JOIN credit_cards cc ON b.card_id = cc.id
     JOIN card_holders ch ON cc.holder_id = ch.id
@@ -83,16 +85,18 @@ export async function handleScheduled(_event: ScheduledEvent, env: CronEnv, _ctx
       let title: string | null = null
       let body: string | null = null
       const notificationKey = `bill:${bill.id}:${today}`
+      // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
+      const cardName = bill.name_override || bill.card_name || ''
 
       if (daysUntil < 0 && pref.overdue_enabled === 1) {
-        title = `已逾期：${bill.bank_name || ''} ${bill.card_name || ''}`
+        title = `已逾期：${bill.bank_name || ''} ${cardName}`
         body = `账单 ¥${bill.bill_amount} 已逾期 ${Math.abs(daysUntil)} 天`
       } else if (daysUntil >= 0 && daysUntil <= pref.due_days_before && pref.bill_due_enabled === 1) {
         if (daysUntil === 0) {
-          title = `今天到期：${bill.bank_name || ''} ${bill.card_name || ''}`
+          title = `今天到期：${bill.bank_name || ''} ${cardName}`
           body = `账单 ¥${bill.bill_amount} 今天到期`
         } else {
-          title = `${daysUntil}天后还款：${bill.bank_name || ''} ${bill.card_name || ''}`
+          title = `${daysUntil}天后还款：${bill.bank_name || ''} ${cardName}`
           body = `账单 ¥${bill.bill_amount} ${daysUntil}天后到期`
         }
       }

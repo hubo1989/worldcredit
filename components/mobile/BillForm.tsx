@@ -30,7 +30,8 @@ interface Props {
   existingBill?: Bill | null
 }
 
-type CardWithProduct = CreditCard & { card_product: CardProduct }
+// 服务端 joinRowToCard 会把卡级别覆盖写进顶层 card_name，这里如实声明以便选卡器显示生效名称
+type CardWithProduct = CreditCard & { card_product: CardProduct; card_name?: string }
 
 const EMPTY: BillFormData = {
   card_id: '',
@@ -156,7 +157,10 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
 
   const cardLabel = (c: CardWithProduct) => {
     const tail = formatCardTail(c.card_number_last4)
-    return `${c.card_product.bank_name} ${c.card_product.card_name}${tail ? ` (${tail})` : ''}`
+    // 修改内容优先：getAllCardsWithProduct 已把卡级别覆盖写进 card.card_name，
+    // 否则两张同名产品卡在选卡器里无法区分
+    const name = c.card_name || c.card_product.card_name
+    return `${c.card_product.bank_name} ${name}${tail ? ` (${tail})` : ''}`
   }
 
   return (

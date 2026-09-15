@@ -56,7 +56,8 @@ export default function AnalyticsPage() {
           cards.forEach(c => {
             allCards.push({
               id: c.id,
-              label: `${h.name} - ${c.card_product?.bank_name ?? ''} ${c.card_product?.card_name ?? ''}`,
+              // 修改内容优先：getCardsByHolder 已把卡级别覆盖写进 card.card_name
+              label: `${h.name} - ${c.card_product?.bank_name ?? ''} ${c.card_name ?? c.card_product?.card_name ?? ''}`,
               card: c,
             })
           })

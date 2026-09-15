@@ -48,6 +48,7 @@ export async function getPaymentsByHolder(holderId: string): Promise<PaymentWith
             b.id AS bill_id, b.card_id, b.bill_month, b.bill_amount, b.min_payment,
             b.due_date, b.status AS bill_status, b.created_at AS bill_created_at,
             cc.id AS cc_id, cc.holder_id, cc.card_product_id,
+            cc.name_override AS cc_name_override,
             cp.bank_name, cp.card_name, cp.currency
      FROM payments p
      JOIN bills b ON p.bill_id = b.id
@@ -73,6 +74,10 @@ export async function getPaymentsByHolder(holderId: string): Promise<PaymentWith
         id: row.cc_id,
         holder_id: row.holder_id,
         card_product_id: row.card_product_id,
+        // 与 lib/api/bills.server.ts 的 withCreditCardProductFields 保持同一优先级：
+        // 卡级别覆盖 > 卡产品默认名称。导出的「卡片」列读的就是这里的顶层 card_name。
+        name_override: row.cc_name_override ?? undefined,
+        card_name: (row.cc_name_override as string) || (row.card_name as string) || undefined,
         card_product: {
           bank_name: row.bank_name,
           card_name: row.card_name,

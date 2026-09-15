@@ -448,7 +448,10 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
     `SELECT b.*, cc.id AS c_id, cc.holder_id AS c_holder_id, cc.card_product_id AS c_card_product_id,
             cc.card_number_last4 AS c_card_number_last4, cc.credit_limit AS c_credit_limit,
             cc.billing_day AS c_billing_day, cc.status AS c_status, cc.card_type AS c_card_type,
-            cc.loan_due_day AS c_loan_due_day, cc.created_at AS c_created_at,
+            cc.loan_due_day AS c_loan_due_day, cc.override_billing_day AS c_override_billing_day,
+            cc.override_due_type AS c_override_due_type, cc.override_due_value AS c_override_due_value,
+            cc.name_override AS c_name_override, cc.annual_fee_override AS c_annual_fee_override,
+            cc.created_at AS c_created_at,
             cp.id AS p_id, cp.country AS p_country, cp.bank_id AS p_bank_id, cp.bank_name AS p_bank_name,
             cp.card_name AS p_card_name, cp.currency AS p_currency, cp.payment_due_type AS p_payment_due_type,
             cp.payment_due_value AS p_payment_due_value, cp.annual_fee AS p_annual_fee,
@@ -480,6 +483,12 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
       status: row.c_status as CreditCard['status'],
       card_type: row.c_card_type as CreditCard['card_type'],
       loan_due_day: (row.c_loan_due_day as number) || undefined,
+      override_billing_day: (row.c_override_billing_day as number) || undefined,
+      override_due_type: (row.c_override_due_type as CreditCard['override_due_type']) || undefined,
+      override_due_value: (row.c_override_due_value as number) || undefined,
+      name_override: (row.c_name_override as string) || undefined,
+      annual_fee_override:
+        row.c_annual_fee_override != null ? (row.c_annual_fee_override as number) : undefined,
       created_at: row.c_created_at as string,
     }
     if (row.p_id) {

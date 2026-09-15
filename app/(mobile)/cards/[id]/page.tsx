@@ -101,6 +101,13 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
         return
       }
     }
+    // 年费留空表示回退卡产品默认；填了就必须是非负数字（避免写入负数或 NaN）
+    const annualFeeTrimmed = annualFeeInput.trim()
+    const annualFeeValue = annualFeeTrimmed === '' ? null : parseFloat(annualFeeTrimmed)
+    if (annualFeeValue != null && (isNaN(annualFeeValue) || annualFeeValue < 0)) {
+      setEditError('请输入有效的年费金额')
+      return
+    }
     setSaving(true)
     setEditError(null)
     try {
@@ -115,7 +122,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
         override_due_type: dueType === 'default' ? null : dueType,
         override_due_value: dueType === 'default' ? null : parseInt(dueValue, 10),
         // 年费：留空恢复使用卡产品默认
-        annual_fee_override: annualFeeInput.trim() === '' ? null : parseFloat(annualFeeInput),
+        annual_fee_override: annualFeeValue,
       })
       setEditOpen(false)
       await load()
