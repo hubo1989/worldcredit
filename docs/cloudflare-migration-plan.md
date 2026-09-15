@@ -214,6 +214,43 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 
 验证边界（尚待真实邮件）：部署后 `email_parse_logs` 最新记录仍是 09-14 09:18，即**尚未有新邮件经过修复版**。修复后的归属与幂等行为已由 65 个用例覆盖，但生产端到端仍需下一封真实转发包落库后才能确认；观察方式 `npx wrangler tail worldcredit-email-worker --config email-worker/wrangler.toml`。
 
+## Phase 10：自定义域名下 Google 登录 400 redirect_uri_mismatch ✅（2026-09-15）
+
+### 现象与根因
+
+- `https://app.all-bill.com/login` 点 Google 登录报 `Error 400: redirect_uri_mismatch`
+- 根因在 Google 侧：OAuth 客户端只登记了 `https://worldcredit.hubo1989.workers.dev/api/auth/google/callback`（9/11 接 Google 登录时那个域名），自定义域名上线后未登记
+- 注意该报错发生在**进入本应用之前**，服务端日志看不到任何线索，因此不能靠应用日志排查
+
+### 代码修复：回调域名固定为 APP_ORIGIN
+
+- 新增 `lib/auth-origin.ts`：`resolveAuthOrigin()` / `googleRedirectUri()`
+  - 本机开发（`localhost` / `127.0.0.1` / `*.localhost`）：用请求自身 origin，本地调 Google 不需要生产域名参与
+  - 其余情况：用 `APP_ORIGIN`（`wrangler.jsonc` 的 vars，本次设为 `https://app.all-bill.com`）
+  - `APP_ORIGIN` 未配置或非法（非 http/https、空值）时退回请求 origin，并留 error/warn 日志，避免漏配一个变量就打挂登录
+  - 带路径/尾斜杠的写法一律归一化为 origin（防止出现 `//api/...` 这类又会 mismatch 的地址）
+- `start` 与 `callback` 共用同一个 `googleRedirectUri()`：授权请求与换取 token 的 `redirect_uri` 必须逐字符一致，分开写迟早会漂
+- `callback` 的所有回跳（成功进 `/dashboard`、各类 `?error=` 失败回跳）统一落在规范域名上；否则从 workers.dev 进来的回调会把 `wc_user` cookie 种在 workers.dev，再跳 `/dashboard` 时反而没有登录态
+- `worker/index.ts` 的 `WorkerEnv` 与 `env.d.ts` 补 `APP_ORIGIN` 类型
+
+### 验证
+
+- 本地：`tsc --noEmit` 0 错误、`eslint --max-warnings=0` 通过、vitest **203 passed**（新增 `lib/__tests__/auth-origin.test.ts` 10 例）、`vite build` 成功
+- 单测覆盖：自定义域名与 workers.dev 都归一化到 APP_ORIGIN、localhost 回退、未配置/非法值回退、尾斜杠与带路径归一化、绑定优先于 `process.env`、两个路由不得再出现 `url.origin`
+- `vite dev` 实测（`--host 127.0.0.1` + `Host` 头覆盖）：`Host: worldcredit.hubo1989.workers.dev` 与 `Host: app.all-bill.com` 均生成 `https://app.all-bill.com/api/auth/google/callback`；`Host: 127.0.0.1` 生成本地回调
+- Google 侧探针（对照实验，同一探针在未登记域名上必须复现 mismatch）：`bogus.example.com` mismatch、`app.all-bill.com` **仍 mismatch**、`worldcredit.hubo1989.workers.dev` 正常返回登录页 → 探针有效，且证明 Google Console **尚未**登记自定义域名（该步需人工操作）
+
+### 待人工完成（未做，故 Google 登录在本轮仍不可用）
+
+1. Google Cloud Console → Credentials → 该 OAuth 客户端「已获授权的重定向 URI」新增 `https://app.all-bill.com/api/auth/google/callback`，「已获授权的 JavaScript 来源」补 `https://app.all-bill.com`
+2. 若同意屏幕仍是 Testing，仅 Test users 可登录；对外可用需切 In production
+3. 换域名/再加域名时需同步改 `wrangler.jsonc` 的 `APP_ORIGIN` 与 Google Console，两处必须一致
+
+### 本轮未验证
+
+- 真实 Google 授权端到端（本机到 `*.workers.dev` 网络不通，且 Console 未登记新回调）
+- 生产 Worker 未部署本改动（等 Console 配置与部署确认后再做）
+
 ## 更新后的下一步
 
 1. **登录态真机回归**：本轮未用真实账号做 Phase 6 式 17 路由 Chrome 爬测；登录走一遍核心页面，并在浏览器授权通知后调用 `POST /api/push/test` 验证端到端推送（cron `0 9 * * *` 定时推送可用 `wrangler tail` 观察）

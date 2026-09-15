@@ -15,6 +15,7 @@ declare namespace NodeJS {
 
 interface Env {
   DB: D1Database
+  APP_ORIGIN?: string
   ATTACHMENTS: R2Bucket
   ASSETS: { fetch(request: Request): Promise<Response> }
   IMAGES: {
