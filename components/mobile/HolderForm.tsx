@@ -78,7 +78,7 @@ export function HolderForm({ open, onClose, onSubmit, initial }: Props) {
           value={phone} onChange={e => setPhone(e.target.value)}
         />
         <TextField
-          fullWidth label="成员账号邮箱（匹配已注册用户后自动绑定）" margin="normal"
+          fullWidth label="邮箱（选填，仅作记录）" margin="normal"
           type="email" value={email} onChange={e => setEmail(e.target.value)}
         />
         <Box sx={{ display: 'flex', gap: 1, mt: 2, flexWrap: 'wrap' }}>

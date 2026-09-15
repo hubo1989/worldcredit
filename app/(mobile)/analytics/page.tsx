@@ -189,11 +189,11 @@ export default function AnalyticsPage() {
         </FormControl>
 
         <FormControl size="small" sx={{ minWidth: 120 }}>
-          <InputLabel>成员</InputLabel>
+          <InputLabel>持卡人</InputLabel>
           <Select
             value={filters.holderId || 'all'}
             onChange={e => setFilters({ ...filters, holderId: e.target.value === 'all' ? undefined : e.target.value })}
-            label="成员"
+            label="持卡人"
           >
             <MenuItem value="all">全部</MenuItem>
             {holderOptions.map(h => (
