@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Box, Button, TextField, CircularProgress, Alert, Stack } from '@mui/material'
 import { AiSparkleIcon } from '@/components/icons/WcIcon'
-import { getSystemSettings } from '@/lib/api/admin'
+import { aiComplete } from '@/lib/api/ai'
 
 /**
  * AI 智能填充盒（§5.3）。
@@ -11,6 +11,9 @@ import { getSystemSettings } from '@/lib/api/admin'
  * 解析成功 → onFill(data)；失败 → 正则本地兜底；都失败 → 显示错误。
  *
  * 数据策略：AI 仅预填，父表单收到后视为 manual 来源。
+ *
+ * 安全：LLM 调用走服务端 aiComplete（RPC `ai/aiComplete`）。浏览器不再读取
+ * system_settings，也不再持有 AI API Key——密钥只存在于 Worker 内存里。
  */
 interface Props {
   /** 解析成功后回调，父表单预填字段并标记 AI 来源 */
@@ -23,26 +26,6 @@ const PLACEHOLDER: Record<Props['mode'], string> = {
   bill: '粘贴账单邮件 / 短信文本，例如：本期应还 ¥6,480.00，最低还款 ¥650，到期还款日 9 月 10 日',
   card: '粘贴卡面 / 官网信息，例如：招商银行 Young 卡，年费 300 元，账单日每月 15 日，尾号 2201',
 }
-
-const BILL_SYSTEM_PROMPT = `你是信用卡账单解析助手。从用户粘贴的账单邮件或短信文本中提取以下字段，严格以 JSON 返回，不要任何多余文字：
-{
-  "bill_amount": 数字或null,
-  "min_payment": 数字或null,
-  "due_date": "YYYY-MM-DD"或null,
-  "bill_month": "YYYY-MM"或null,
-  "statement_date": "YYYY-MM-DD"或null
-}
-注意：金额可能是"6480"、"6,480.00"、"¥6480元"，统一转为数字。无法确定的字段返回 null。`
-
-const CARD_SYSTEM_PROMPT = `你是信用卡产品信息解析助手。从用户粘贴的卡面或官网文本中提取以下字段，严格以 JSON 返回，不要任何多余文字：
-{
-  "bank_name": 字符串或null,
-  "card_name": 字符串或null,
-  "annual_fee": 数字或null,
-  "billing_day": 数字或null,
-  "card_number_last4": 字符串或null
-}
-无法确定的字段返回 null。`
 
 /** 本地正则兜底解析（无 AI key 时使用） */
 function localExtract(text: string, mode: Props['mode']): Record<string, unknown> {
@@ -75,22 +58,6 @@ function localExtract(text: string, mode: Props['mode']): Record<string, unknown
   return data
 }
 
-function safeJsonParse(content: string): Record<string, unknown> | null {
-  try {
-    return JSON.parse(content)
-  } catch {
-    const match = content.match(/\{[\s\S]*\}/)
-    if (match) {
-      try {
-        return JSON.parse(match[0])
-      } catch {
-        return null
-      }
-    }
-    return null
-  }
-}
-
 export function AiFillBox({ onFill, mode }: Props) {
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(false)
@@ -111,34 +78,12 @@ export function AiFillBox({ onFill, mode }: Props) {
     let usedFallback = false
 
     try {
-      const settings = await getSystemSettings()
-      const apiKey = settings.ai_api_key as string | undefined
-      const baseURL = (settings.ai_base_url as string) || 'https://api.openai.com/v1'
-      const model = (settings.ai_model as string) || 'gpt-4o'
-
-      if (apiKey) {
-        const res = await fetch(`${baseURL.replace(/\/$/, '')}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: 'system', content: mode === 'bill' ? BILL_SYSTEM_PROMPT : CARD_SYSTEM_PROMPT },
-              { role: 'user', content: text },
-            ],
-            temperature: 0.2,
-            response_format: { type: 'json_object' },
-          }),
-        })
-        if (res.ok) {
-          const ai = await res.json()
-          const content = ai?.choices?.[0]?.message?.content
-          if (content) result = safeJsonParse(content)
-        }
-      }
+      // 服务端解析：密钥不出服务端。失败（含未配置 Key）时回落到本地正则。
+      const parsed = await aiComplete({
+        type: mode === 'bill' ? 'bill_text' : 'card_text',
+        data: { text },
+      })
+      if (parsed) result = parsed
 
       if (!result || Object.keys(result).length === 0) {
         result = localExtract(text, mode)

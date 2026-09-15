@@ -14,6 +14,8 @@ import { getHolders } from '@/lib/api/holders'
 import { getCardsBasicByHolders } from '@/lib/api/cards'
 import { formatCardTail, getEffectiveCardName } from '@/lib/utils'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
+import { fetchRates, sumByCurrency, currencySymbol, type FxRates } from '@/lib/fx'
+import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
 import { useAuth } from '@/lib/auth'
 import { WcSkeleton } from '@/components/mobile/WcStates'
 import { QuickActionSheet } from '@/components/mobile/QuickActionSheet'
@@ -43,36 +45,72 @@ interface QuickAction {
 
 const FUTURE_RANGES: FutureRange[] = [7, 14, 30]
 
-/** 元转展示字符串（千分位）。隐私模式下由调用方决定是否脱敏。 */
-function formatCNY(n: number): string {
-  return `¥${(n || 0).toLocaleString('zh-CN')}`
+/**
+ * 金额转展示字符串（币种符号 + 千分位）。隐私模式下由调用方决定是否脱敏。
+ *
+ * 币种必须由调用方传入：这个应用同时有 CNY / USD / HKD 的卡，写死 ¥ 会把外币
+ * 账单显示成人民币。
+ */
+function formatMoney(n: number, currency: string): string {
+  return `${currencySymbol(currency)}${(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
 }
 
-/** 计算一组账单的六大指标 */
-function computeMetrics(bills: BillDashboardItem[], futureDays: FutureRange) {
+/** 账单所在币种：卡产品的币种就是账单币种。 */
+function billCurrency(bill: BillDashboardItem, fallback: string): string {
+  return bill.card?.card_product?.currency || fallback
+}
+
+/**
+ * 计算一组账单的指标。
+ *
+ * 所有金额都先按币种分组、再折算到目标币种，绝不跨币种直接相加。返回的四个数字
+ * 都是「折算后的真数」，同时附带 fx 元数据：汇率不可用时跨币种部分被排除在数字
+ * 之外（而不是按 1:1 混进去），UI 通过 fx 标记向用户说明。
+ */
+function computeMetrics(
+  bills: BillDashboardItem[],
+  futureDays: FutureRange,
+  targetCurrency: string,
+  rates: FxRates | null
+) {
   // 只统计未还清的账单（§3.4）
   const unpaid = bills.filter(b => b.computed_status !== 'paid')
+  const pickAmount = (b: BillDashboardItem) => ({
+    amount: b.remaining_amount || 0,
+    currency: billCurrency(b, targetCurrency),
+  })
 
-  const totalPending = unpaid.reduce((acc, b) => acc + (b.remaining_amount || 0), 0)
+  const pendingSum = sumByCurrency(unpaid, pickAmount, targetCurrency, rates)
 
   // 已逾期：已过还款日且未还清（days_until_due < 0）
   const overdueBills = unpaid.filter(b => b.days_until_due < 0)
-  const overdueAmount = overdueBills.reduce((acc, b) => acc + (b.remaining_amount || 0), 0)
+  const overdueSum = sumByCurrency(overdueBills, pickAmount, targetCurrency, rates)
 
   // 未来 N 天待还：还款日在 [0, N] 区间内
   const futureBills = unpaid.filter(b => b.days_until_due >= 0 && b.days_until_due <= futureDays)
-  const futureAmount = futureBills.reduce((acc, b) => acc + (b.remaining_amount || 0), 0)
+  const futureSum = sumByCurrency(futureBills, pickAmount, targetCurrency, rates)
 
   // 总欠款：当前数据模型仅"普通未还"，分期/贷款暂未接入（§3.2）
-  const plainOwed = totalPending
+  const plainOwedSum = pendingSum
 
   return {
-    totalPending,
-    overdueAmount,
+    totalPending: pendingSum.total,
+    overdueAmount: overdueSum.total,
     overdueBills,
-    futureAmount,
-    plainOwed,
+    futureAmount: futureSum.total,
+    plainOwed: plainOwedSum.total,
     unpaidCount: unpaid.length,
+    /** 汇率拿到没有：为 false 时下面的合计是不完整的，必须显式标注。 */
+    ratesAvailable: rates !== null,
+    /** 缺汇率因而未计入合计的币种（含未折算金额，供 UI 展示明细）。 */
+    unconvertedCurrencies: Array.from(new Set([
+      ...pendingSum.unconverted_currencies,
+      ...overdueSum.unconverted_currencies,
+      ...futureSum.unconverted_currencies,
+    ])).sort(),
+    fx: { pending: pendingSum, overdue: overdueSum, future: futureSum, plainOwed: plainOwedSum },
+    /** 当前口径下是否出现多币种，用于决定要不要展示币种构成。 */
+    mixed: pendingSum.mixed,
   }
 }
 
@@ -91,6 +129,11 @@ export default function DashboardPage() {
   const { user } = useAuth()
   const { displayConfig, togglePrivacyMode } = useUserPreferences()
   const router = useRouter()
+
+  /** 折算目标币种：用户偏好 display_config.default_currency（缺省 CNY）。 */
+  const displayCurrency = resolveDisplayCurrency(displayConfig)
+  /** 汇率状态：null 表示这次没取到，界面走「未含汇率」的降级展示。 */
+  const [fxRates, setFxRates] = useState<FxRates | null>(null)
 
   // ---- 数据状态 ----
   const [loading, setLoading] = useState(true)
@@ -147,14 +190,24 @@ export default function DashboardPage() {
     loadData()
   }, [loadData])
 
+  // 汇率与业务数据解耦：拿不到也不该让整页失败，只是合计里少了外币部分。
+  useEffect(() => {
+    let cancelled = false
+    fetchRates()
+      .then(rates => { if (!cancelled) setFxRates(rates) })
+      .catch(() => { if (!cancelled) setFxRates(null) })
+    return () => { cancelled = true }
+  }, [])
+
   const handlePaySingle = async (e: React.MouseEvent, bill: BillDashboardItem) => {
     e.stopPropagation()
     try {
       const amount = bill.remaining_amount > 0 ? bill.remaining_amount : Number(bill.bill_amount)
       await markBillAsPaid(bill.id, amount)
+      // 单张账单金额用自己的币种展示，不能挂人民币符号
       setToast({
         open: true,
-        message: `🎉 已成功结清 ${bill.card?.card_product?.bank_name || ''} 账单（¥${amount.toLocaleString()}）！`,
+        message: `🎉 已成功结清 ${bill.card?.card_product?.bank_name || ''} 账单（${formatMoney(amount, billCurrency(bill, displayCurrency))}）！`,
         severity: 'success'
       })
       loadData()
@@ -169,9 +222,11 @@ export default function DashboardPage() {
     try {
       const res = await markAllOverdueBillsAsPaid(user.id, metrics.overdueBills)
       setPayAllOpen(false)
+      // 展示口径用界面已折算好的 metrics.overdueAmount：服务端返回的 totalAmount
+      // 仍是跨币种直接相加的老口径（那是 bills.server.ts，本次不改）。
       setToast({
         open: true,
-        message: `🎉 恭喜！已一键全额结清 ${res.count} 笔逾期账单（合计 ¥${res.totalAmount.toLocaleString()}）！`,
+        message: `🎉 恭喜！已一键全额结清 ${res.count} 笔逾期账单（合计 ${formatMoney(metrics.overdueAmount, displayCurrency)}）！`,
         severity: 'success'
       })
       await loadData()
@@ -197,8 +252,8 @@ export default function DashboardPage() {
   }, [cards, holderFilter])
 
   const metrics = useMemo(
-    () => computeMetrics(visibleBills, futureRange),
-    [visibleBills, futureRange]
+    () => computeMetrics(visibleBills, futureRange, displayCurrency, fxRates),
+    [visibleBills, futureRange, displayCurrency, fxRates]
   )
 
   const cardsByHolder = useMemo(() => countCardsByHolder(cards), [cards])
@@ -418,7 +473,7 @@ export default function DashboardPage() {
             letterSpacing: 0,
           }}
         >
-          {formatCNY(metrics.totalPending)}
+          {formatMoney(metrics.totalPending, displayCurrency)}
         </Typography>
 
         {/* 子指标：逾期 + 未来 N 天 */}
@@ -446,7 +501,7 @@ export default function DashboardPage() {
                 fontWeight: 600,
               }}
             >
-              {formatCNY(metrics.overdueAmount)}
+              {formatMoney(metrics.overdueAmount, displayCurrency)}
             </Typography>
           </Box>
           <Box>
@@ -465,10 +520,16 @@ export default function DashboardPage() {
               className={amountClass}
               sx={{ color: 'var(--warn)', fontSize: 14, fontWeight: 600 }}
             >
-              {formatCNY(metrics.futureAmount)}
+              {formatMoney(metrics.futureAmount, displayCurrency)}
             </Typography>
           </Box>
         </Stack>
+        {/* 汇率不可用时，明确告诉用户合计里缺了哪些外币，而不是给一个看着正常的假数 */}
+        {metrics.unconvertedCurrencies.length > 0 && (
+          <Typography sx={{ fontSize: 12, lineHeight: '16px', color: 'rgba(255,255,255,0.72)', mt: 1 }}>
+            未含汇率：{metrics.unconvertedCurrencies.join('、')} 未计入合计
+          </Typography>
+        )}
       </Paper>
 
       {/* 指标网格 2×2 */}
@@ -516,7 +577,7 @@ export default function DashboardPage() {
               lineHeight: 1.2,
             }}
           >
-            {formatCNY(metrics.overdueAmount)}
+            {formatMoney(metrics.overdueAmount, displayCurrency)}
           </Typography>
           <Typography
             sx={{
@@ -613,7 +674,7 @@ export default function DashboardPage() {
               lineHeight: 1.2,
             }}
           >
-            {formatCNY(metrics.futureAmount)}
+            {formatMoney(metrics.futureAmount, displayCurrency)}
           </Typography>
           <Typography
             sx={{
@@ -673,7 +734,7 @@ export default function DashboardPage() {
               mt: 0.5,
             }}
           >
-            {formatCNY(metrics.plainOwed)}
+            {formatMoney(metrics.plainOwed, displayCurrency)}
           </Typography>
 
           {debtExpanded && (
@@ -709,7 +770,7 @@ export default function DashboardPage() {
                     className={amountClass}
                     sx={{ fontSize: 'var(--type-body-size)', letterSpacing: 'var(--type-body-tracking)', fontWeight: 600, color: 'var(--text)' }}
                   >
-                    {formatCNY(metrics.plainOwed)}
+                    {formatMoney(metrics.plainOwed, displayCurrency)}
                   </Typography>
                 </Box>
               </Stack>
@@ -1069,7 +1130,7 @@ export default function DashboardPage() {
                           color: 'var(--danger)',
                         }}
                       >
-                        {formatCNY(remaining)}
+                        {formatMoney(remaining, billCurrency(bill, displayCurrency))}
                       </Typography>
                     </Box>
                     <Button
@@ -1135,7 +1196,7 @@ export default function DashboardPage() {
               fontFamily: 'var(--font-display)',
             }}
           >
-            合计结清金额：{formatCNY(metrics.overdueAmount)}
+            合计结清金额：{formatMoney(metrics.overdueAmount, displayCurrency)}
           </Typography>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>

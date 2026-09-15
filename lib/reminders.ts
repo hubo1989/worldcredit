@@ -11,6 +11,7 @@
 import { callRpc } from './api/rpc-client'
 import type * as RemindersServer from './api/reminders.server'
 import { getLoanNextDueDate } from './utils'
+import { currencySymbol, normalizeCurrencyOrDefault } from './fx'
 
 type RemindType = '3days' | '1day' | 'due_day' | 'loan_3days' | 'loan_1day' | 'loan_due_day'
 
@@ -27,6 +28,18 @@ function remindTypeForDays(days: number): RemindType | null {
   if (days === 1) return '1day'
   if (days === 0) return 'due_day'
   return null
+}
+
+/**
+ * 提醒文案里的金额。
+ *
+ * 币种来自账单所属卡产品；缺失时回落 CNY（历史数据几乎都是人民币），但显式带上
+ * 币种符号，避免把 USD / HKD 的账单标成 ¥。
+ */
+function formatReminderAmount(amount: number, currency: string | null | undefined): string {
+  const code = normalizeCurrencyOrDefault(currency, 'CNY')
+  const value = Number(amount) || 0
+  return `${currencySymbol(code)}${value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
 }
 
 async function showNotification(title: string, body: string): Promise<void> {
@@ -82,7 +95,8 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
       // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
       const displayName = bill.name_override || bill.card_name
       const cardName = bill.bank_name ? `${bill.bank_name} ${displayName ?? ''}` : '信用卡'
-      const amount = Number(bill.bill_amount).toLocaleString('zh-CN', { style: 'currency', currency: 'CNY' })
+      // 币种取自账单所属卡产品：外币账单不能标成人民币
+      const amount = formatReminderAmount(bill.bill_amount, bill.currency)
 
       let title = 'WorldCredit 还款提醒'
       let body = ''

@@ -78,23 +78,87 @@ describe('RPC registry contract', () => {
     }
   })
 
-  it('keeps base-data mutations admin-only (plan.md D2)', () => {
-    const adminOnlyFns: Array<[string, string]> = [
-      ['cards', 'createCard'],
-      ['cards', 'updateCard'],
-      ['bills', 'createBill'],
-      ['bills', 'updateBill'],
-      ['bills', 'updateBillStatus'],
-      ['billDrafts', 'confirmBillImportDraft'],
-      ['holders', 'createHolder'],
-      ['holders', 'updateHolder'],
-      ['holders', 'mergeHolders'],
-      ['promos', 'createUserPromo'],
-      ['emailBills', 'syncEmailBillToAccount'],
-      ['sync-gmail', 'syncGmailLedgerToCardsAndBills'],
-    ];
-    for (const [moduleName, fn] of adminOnlyFns) {
-      expect(RPC_REGISTRY[moduleName]?.[fn]?.admin, `${moduleName}.${fn} must require admin`).toBe(true);
+  // Permission model (post-downshift):
+  //   - everyday operations (recording a bill, editing one's own card, ...) are
+  //     reachable by members but constrained by an ownership guard;
+  //   - the operations surface (bank/card-product catalogue, system settings,
+  //     site-wide stats, identity management) stays admin-only.
+  // The two lists below are the contract; entries must appear in exactly one.
+  const MEMBER_SCOPED: Array<[string, string]> = [
+    ['cards', 'createCard'],
+    ['cards', 'updateCard'],
+    ['bills', 'createBill'],
+    ['bills', 'updateBill'],
+    ['bills', 'updateBillStatus'],
+    ['billDrafts', 'confirmBillImportDraft'],
+    ['gmail-ledger', 'getGmailLedgerEntries'],
+    ['gmail-ledger', 'getGmailLedgerSummary'],
+    ['gmail-ledger', 'markPayment'],
+    ['gmail-ledger', 'updateLedgerAmount'],
+    ['gmail-ledger', 'getGmailLedgerBanks'],
+    ['sync-gmail', 'syncGmailLedgerToCardsAndBills'],
+  ];
+
+  const ADMIN_ONLY: Array<[string, string]> = [
+    ['holders', 'createHolder'],
+    ['holders', 'updateHolder'],
+    ['holders', 'mergeHolders'],
+    ['promos', 'createUserPromo'],
+    ['emailBills', 'syncEmailBillToAccount'],
+    ['admin', 'getSystemSettings'],
+    ['admin', 'updateSystemSettings'],
+    ['dashboard', 'getDashboardStats'],
+    ['benefits', 'createBenefit'],
+    ['benefits', 'updateBenefit'],
+    ['benefits', 'deleteBenefit'],
+    ['benefits', 'autoEnrichCardBenefits'],
+  ];
+
+  it('lets members perform everyday writes, each behind an ownership guard', () => {
+    for (const [moduleName, fn] of MEMBER_SCOPED) {
+      const entry = RPC_REGISTRY[moduleName]?.[fn];
+      expect(entry, moduleName + '.' + fn + ' is missing from RPC_REGISTRY').toBeTruthy();
+      expect(entry.admin, moduleName + '.' + fn + ' must not require admin').not.toBe(true);
+      const guarded =
+        entry.memberGuard !== undefined ||
+        entry.memberFilter !== undefined ||
+        entry.bindUser !== undefined ||
+        entry.bindField !== undefined;
+      expect(guarded, moduleName + '.' + fn + ' must carry an ownership guard').toBe(true);
+    }
+  });
+
+  it('keeps the operations surface admin-only', () => {
+    for (const [moduleName, fn] of ADMIN_ONLY) {
+      expect(RPC_REGISTRY[moduleName]?.[fn]?.admin, moduleName + '.' + fn + ' must require admin').toBe(true);
+    }
+  });
+
+  it('requires every RPC to declare its permission posture explicitly', () => {
+    // A function with no admin flag and no guard/filter/binding is callable by
+    // any signed-in member against unscoped data, so each such entry must be
+    // justified here rather than overlooked.
+    const SANCTIONED_UNGUARDED = new Set([
+      'ai.aiComplete',
+      'cards.getCardProducts',
+      'promos.getPromosWithBanks',
+    ]);
+    for (const [moduleName, mod] of Object.entries(RPC_REGISTRY)) {
+      for (const [fn, entry] of Object.entries(mod)) {
+        if (entry.admin) continue;
+        const guarded =
+          entry.memberGuard !== undefined ||
+          entry.memberFilter !== undefined ||
+          entry.bindUser !== undefined ||
+          entry.bindField !== undefined;
+        if (!guarded) {
+          const key = moduleName + '.' + fn;
+          expect(
+            SANCTIONED_UNGUARDED.has(key),
+            key + ' has no admin flag and no ownership guard; add one or justify it in SANCTIONED_UNGUARDED'
+          ).toBe(true);
+        }
+      }
     }
   });
 

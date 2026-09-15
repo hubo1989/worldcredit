@@ -264,9 +264,19 @@ export async function getGmailLedgerEntries(options?: {
   needsAmount?: boolean
   /** Also return no-amount entries alongside priced ones. */
   includeUnpriced?: boolean
+  /**
+   * Owner scope. Members must pass their own user id; admins omit it and see
+   * every row (preserving the pre-downshift behaviour). Ledger rows are keyed
+   * by the user that ingested the statement mail, same as sync-gmail.
+   */
+  createdBy?: string
 }): Promise<GmailLedgerEntry[]> {
   const conditions: string[] = []
   const params: unknown[] = []
+  if (options?.createdBy) {
+    conditions.push('created_by = ?')
+    params.push(options.createdBy)
+  }
   if (options?.status) {
     conditions.push('payment_status = ?')
     params.push(options.status)
@@ -346,10 +356,10 @@ export async function getGmailLedgerEntries(options?: {
 }
 
 /** 获取汇总统计 */
-export async function getGmailLedgerSummary(): Promise<GmailLedgerSummary> {
-  const entries = await getGmailLedgerEntries()
+export async function getGmailLedgerSummary(createdBy?: string): Promise<GmailLedgerSummary> {
+  const entries = await getGmailLedgerEntries({ createdBy })
   // Counted separately: unpriced rows are excluded from the default list above.
-  const pendingAmount = await getGmailLedgerEntries({ needsAmount: true })
+  const pendingAmount = await getGmailLedgerEntries({ needsAmount: true, createdBy })
   return {
     total: entries.length,
     unpaid: entries.filter(e => e.payment_status === '未还款').length,
@@ -445,8 +455,8 @@ export async function markPayment(ledgerId: string, updates: {
 }
 
 /** 获取银行列表 */
-export async function getGmailLedgerBanks(): Promise<string[]> {
-  const entries = await getGmailLedgerEntries()
+export async function getGmailLedgerBanks(createdBy?: string): Promise<string[]> {
+  const entries = await getGmailLedgerEntries({ createdBy })
   const banks = new Set(entries.map(e => e.bank))
   return Array.from(banks).sort()
 }

@@ -31,12 +31,13 @@ interface ToastState {
   severity: 'error' | 'success'
 }
 
-const ADMIN_EMAILS = ['admin@worldcredit.com']
-
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-const getPostLoginRoute = (em?: string | null) =>
-  em && ADMIN_EMAILS.includes(em.trim().toLowerCase()) ? '/admin' : '/dashboard'
+// Landing route keys off the session role, never a browser-side email list.
+// The server stamps role from the admin allowlist when it signs the cookie
+// (lib/admin-emails.ts), so the browser cannot drift from the real allowlist.
+const getPostLoginRoute = (role?: string | null) =>
+  role === 'admin' ? '/admin' : '/dashboard'
 
 /* ============ 页面 ============ */
 
@@ -67,7 +68,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!authLoading && user) {
-      router.replace(getPostLoginRoute(user.email))
+      router.replace(getPostLoginRoute(user.role))
     }
   }, [authLoading, user, router])
 
@@ -96,10 +97,6 @@ export default function LoginPage() {
   const closeToast = () => setToast(prev => ({ ...prev, open: false }))
 
   const validateEmail = (v: string) => EMAIL_REGEX.test(v)
-
-  const routeAfterLogin = (em: string) => {
-    router.push(getPostLoginRoute(em))
-  }
 
   /* ----- 实时校验：输入变化时清除对应错误 ----- */
 
@@ -147,7 +144,8 @@ export default function LoginPage() {
     try {
       await signIn(email.trim(), password)
       showToast('登录成功，正在跳转…', 'success')
-      routeAfterLogin(email)
+      // Redirect is handled by the effect above once the session user lands;
+      // the route depends on the server-issued role, not the typed address.
     } catch (err: unknown) {
       setGlobalError(getFriendlyAuthErrorMessage(err, '邮箱或密码错误，请检查后重试'))
     } finally {
@@ -196,7 +194,6 @@ export default function LoginPage() {
     try {
       await verifyEmail(email.trim(), otp)
       showToast('登录成功，正在跳转…', 'success')
-      routeAfterLogin(email)
     } catch (err: unknown) {
       setGlobalError(getFriendlyAuthErrorMessage(err, '验证码错误或已失效，请重新获取'))
     } finally {

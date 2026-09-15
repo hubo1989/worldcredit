@@ -20,6 +20,9 @@ import { useAuth } from '@/lib/auth'
 import { ExportDialog } from '@/components/mobile/ExportDialog'
 import type { AnalyticsSummary, MonthlyDebtPoint, CategoryBreakdown } from '@/lib/api/analytics'
 import type { CardHolder } from '@/lib/types'
+import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
+import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
+import { currencySymbol } from '@/lib/fx'
 
 interface Filters {
   months: number
@@ -30,6 +33,9 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D'
 
 export default function AnalyticsPage() {
   const { user } = useAuth()
+  const { displayConfig } = useUserPreferences()
+  /** 折算目标币种：与服务端 analytics 使用同一份偏好，保证口径一致。 */
+  const displayCurrency = resolveDisplayCurrency(displayConfig)
   const [filters, setFilters] = useState<Filters>({ months: 6 })
   const [holderOptions, setHolderOptions] = useState<Array<{ id: string; name: string }>>([])
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null)
@@ -74,8 +80,8 @@ export default function AnalyticsPage() {
     setError(null)
     try {
       const [summaryData, trendData, categoryData] = await Promise.all([
-        getAnalyticsSummary({ holder_id: filters.holderId }),
-        getMonthlyDebtTrend({ holder_id: filters.holderId }, filters.months),
+        getAnalyticsSummary({ holder_id: filters.holderId, display_currency: displayCurrency }),
+        getMonthlyDebtTrend({ holder_id: filters.holderId, display_currency: displayCurrency }, filters.months),
         getCategoryBreakdown({ holder_id: filters.holderId }),
       ])
 
@@ -87,7 +93,7 @@ export default function AnalyticsPage() {
     } finally {
       setLoading(false)
     }
-  }, [filters])
+  }, [filters, displayCurrency])
 
   useEffect(() => {
     loadHolders()
@@ -97,8 +103,9 @@ export default function AnalyticsPage() {
     loadData()
   }, [loadData])
 
+  // 金额一律按折算目标币种渲染：历史上这里写死 ¥，把 USD/HKD 的合计显示成人民币
   const formatCurrency = (amount: number) => {
-    return `¥${amount.toFixed(2)}`
+    return `${currencySymbol(displayCurrency)}${amount.toFixed(2)}`
   }
 
   const formatChartCurrency = (value: unknown) => {
@@ -109,8 +116,14 @@ export default function AnalyticsPage() {
     const alerts = []
 
     const utilization = summary?.utilization_rate
+    // null 表示口径不齐（缺汇率）或没有可用额度，不该当成 0% 或高风险
     if (utilization != null && utilization > 70) {
       alerts.push(`额度使用率过高 (${utilization.toFixed(1)}%)`)
+    }
+
+    // 汇率缺失会让上面的合计不完整，必须显式提示，别让用户以为看到的是全部
+    if (summary && !summary.fx_converted) {
+      alerts.push(`部分外币未折算（缺汇率）：${summary.fx_unconverted_currencies.join('、')}`)
     }
 
     const overdueCount = summary?.overdue_count
@@ -237,6 +250,19 @@ export default function AnalyticsPage() {
           )}
 
           {/* Summary Cards */}
+          {/* 折算口径说明：明确合计数是折算结果、折算到哪个币种 */}
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mb: 1,
+            }}
+          >
+            金额已折算为 {summary.display_currency}
+            {summary.fx_converted ? '' : `（未含汇率：${summary.fx_unconverted_currencies.join('、')}）`}
+          </Typography>
           <Stack direction="row" spacing={1} sx={{ overflowX: 'auto', pb: 1 }}>
             {/* 横向滚动条里的卡片：flexShrink:0 让每个语义单元保持完整宽度，
                 不让 flex 把「额度使用率」这类标签压到折行。 */}
@@ -310,8 +336,9 @@ export default function AnalyticsPage() {
                 >
                   额度使用率
                 </Typography>
-                <Typography variant="h6" sx={{ fontWeight: 700, color: summary.utilization_rate > 70 ? 'var(--danger)' : 'var(--strong)', whiteSpace: 'nowrap' }}>
-                  {summary.utilization_rate.toFixed(1)}%
+                <Typography variant="h6" sx={{ fontWeight: 700, color: (summary.utilization_rate ?? 0) > 70 ? 'var(--danger)' : 'var(--strong)', whiteSpace: 'nowrap' }}>
+                  {/* null = 口径不齐或没有可用额度，展示「—」而不是 0%，避免把未知说成宽裕 */}
+                  {summary.utilization_rate == null ? '—' : `${summary.utilization_rate.toFixed(1)}%`}
                 </Typography>
               </CardContent>
             </Card>

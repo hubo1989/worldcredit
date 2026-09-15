@@ -3,7 +3,8 @@
 // Members are bound to card_holders rows via card_holders.auth_user_id.
 // Every member RPC goes through a guard here before the server function
 // runs; guards fail closed with MemberScopeError (mapped to HTTP 403).
-// Admins skip all guards.
+// Admins skip all guards: the route only calls memberGuard when
+// session.role === 'member', so nothing here is expected to be role-aware.
 
 import { query, queryOne } from '../db'
 
@@ -72,6 +73,20 @@ export async function assertDraftAccess(draftId: unknown, ctx: MemberContext): P
   memberAssert(!!data && data.created_by === ctx.userId, '无权操作其他用户的导入草稿')
 }
 
+/**
+ * Ledger rows are account-scoped: gmail_ledger_entries.created_by stores the
+ * user id that ingested the statement mail. A member may only touch their own
+ * rows; rows with no owner fail closed.
+ */
+export async function assertLedgerAccess(ledgerId: unknown, ctx: MemberContext): Promise<void> {
+  memberAssert(typeof ledgerId === 'string', '参数必须是账本记录 ID')
+  const { data } = await queryOne<{ created_by: string | null }>(
+    'SELECT created_by FROM gmail_ledger_entries WHERE ledger_id = ?',
+    [ledgerId]
+  )
+  memberAssert(!!data && data.created_by === ctx.userId, '无权操作其他用户的邮件账本')
+}
+
 const RECORD_TYPE_GUARDS: Record<string, (id: unknown, ctx: MemberContext) => Promise<void>> = {
   bill: assertBillAccess,
   card: assertCardAccess,
@@ -86,8 +101,10 @@ export async function assertRecordAccess(recordType: unknown, recordId: unknown,
 }
 
 export async function assertBillListAccess(targetBills: unknown, ctx: MemberContext): Promise<void> {
-  if (!Array.isArray(targetBills)) return
-  for (const bill of targetBills) {
+  // Fail closed. Returning early on a non-array would let a member through with
+  // a payload we never validated; that contradicts the module contract above.
+  memberAssert(Array.isArray(targetBills), '参数必须是账单 ID 数组')
+  for (const bill of targetBills as unknown[]) {
     const id = bill && typeof bill === 'object' ? (bill as { id?: unknown }).id : bill
     await assertBillAccess(id, ctx)
   }

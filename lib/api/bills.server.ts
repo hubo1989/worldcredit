@@ -660,38 +660,71 @@ export async function createPayment(
   return created.data
 }
 
+/**
+ * 一键结清。
+ *
+ * 金额由客户端传入，因此必须服务端校验：生产上真实发生过同一笔 30334.51
+ * 相隔 12 秒被提交两次、第二次挂到一张 254.06 元的账单上，而 computeStatus
+ * 的 `status === 'paid'` 短路让这笔错误永久不可见。这里做三件事：
+ *   1. 拒绝已结清账单（重复提交是主要入口）
+ *   2. 拒绝 NaN / 负数 / 超过剩余应还的金额
+ *   3. 支付记录与状态更新放进同一个 batch（隐式事务），避免「记了还款但状态没改」
+ */
 export async function markBillAsPaid(billId: string, amount: number, note = '一键结清'): Promise<void> {
-  await createPayment({
-    bill_id: billId,
-    amount,
-    paid_at: today(),
-    channel: '快捷全额结清',
-    note,
-  })
-  await updateBillStatus(billId, 'paid')
+  const bill = await getBillById(billId)
+  if (!bill) throw new Error('账单不存在')
+
+  if (bill.status === 'paid') throw new Error('该账单已结清，无需重复还款')
+
+  const billAmount = Number(bill.bill_amount) || 0
+  const alreadyPaid = await getPaymentTotal(billId)
+  const remaining = Math.max(0, billAmount - alreadyPaid)
+  if (remaining <= 0) throw new Error('该账单已无应还金额，无需重复还款')
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('还款金额必须是大于 0 的数字')
+  }
+  // 金额列为 REAL，留 0.01 的浮点余量；超过剩余一律拒绝（不再有「已还 > 应还」的账单）
+  if (amount > remaining + 0.01) {
+    throw new Error(`还款金额超过剩余应还（剩余 ¥${remaining.toFixed(2)}）`)
+  }
+
+  const covered = alreadyPaid + amount >= billAmount - 0.01
+  const { error } = await batch([
+    {
+      sql: 'INSERT INTO payments (id, bill_id, amount, paid_at, channel, note, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      params: [uuid(), billId, amount, today(), '快捷全额结清', note, `pay_${uuid()}`, now()],
+    },
+    { sql: 'UPDATE bills SET status = ? WHERE id = ?', params: [covered ? 'paid' : 'partial', billId] },
+  ])
+  if (error) throw new Error(error.message)
 }
 
 export async function markAllOverdueBillsAsPaid(
   userId: string,
   targetBills?: { id: string; remaining_amount?: number; bill_amount?: number }[]
 ): Promise<{ count: number; totalAmount: number }> {
-  let overdueBills = targetBills
-  if (!overdueBills || overdueBills.length === 0) {
-    const allBills = await getBillDashboardItems(300, userId)
-    overdueBills = allBills.filter(b => b.computed_status === 'overdue' || (b.days_until_due < 0 && b.computed_status !== 'paid'))
-  }
-  if (!overdueBills || overdueBills.length === 0) {
+  // 金额一律以服务端重算为准：入参里的 remaining_amount 来自客户端，与
+  // markBillAsPaid 的 amount 同样不可信。getBillDashboardItems 返回的
+  // remaining_amount 是服务端按 payments 聚合出来的，才是可用口径。
+  const allBills = await getBillDashboardItems(300, userId)
+  const onlyIds = targetBills && targetBills.length > 0 ? new Set(targetBills.map(b => b.id)) : null
+  const overdueBills = allBills.filter(b =>
+    (!onlyIds || onlyIds.has(b.id)) &&
+    b.computed_status !== 'paid' &&
+    // payments.amount 有 CHECK (amount > 0)，剩余为 0 的账单绝不能进 batch，否则整批失败
+    (b.remaining_amount ?? 0) > 0 &&
+    (b.computed_status === 'overdue' || b.days_until_due < 0)
+  )
+  if (overdueBills.length === 0) {
     return { count: 0, totalAmount: 0 }
   }
 
-  const billIds = overdueBills.map(b => b.id)
   const paidAt = today()
   let totalAmount = 0
 
   const statements = overdueBills.map(bill => {
-    const remaining = (bill.remaining_amount !== undefined && bill.remaining_amount > 0)
-      ? bill.remaining_amount
-      : Number(bill.bill_amount || 0)
+    const remaining = bill.remaining_amount
     totalAmount += remaining
     return {
       sql: `INSERT INTO payments (id, bill_id, amount, paid_at, channel, note, idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -699,9 +732,8 @@ export async function markAllOverdueBillsAsPaid(
     }
   })
 
-  // Add status updates
-  for (const billId of billIds) {
-    statements.push({ sql: 'UPDATE bills SET status = ? WHERE id = ?', params: ['paid', billId] })
+  for (const bill of overdueBills) {
+    statements.push({ sql: 'UPDATE bills SET status = ? WHERE id = ?', params: ['paid', bill.id] })
   }
 
   const { error } = await batch(statements)

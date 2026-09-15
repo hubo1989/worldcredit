@@ -14,6 +14,8 @@ export interface DueBillRow {
   card_product_id: string | null
   bank_name: string | null
   card_name: string | null
+  /** 账单币种（来自卡产品），推送文案据此渲染金额，不能一律标 ¥。 */
+  currency: string | null
   /** 卡级别名称覆盖（NULL = 使用卡产品默认名称）。 */
   name_override: string | null
 }
@@ -25,7 +27,7 @@ export async function getDueBillsForReminders(
 ): Promise<DueBillRow[]> {
   const { data, error } = await query<DueBillRow>(
     `SELECT b.id, b.due_date, b.bill_amount, b.card_id,
-            cc.card_product_id, cc.name_override, cp.bank_name, cp.card_name
+            cc.card_product_id, cc.name_override, cp.bank_name, cp.card_name, cp.currency
      FROM bills b
      JOIN credit_cards cc ON b.card_id = cc.id
      JOIN card_holders ch ON cc.holder_id = ch.id
@@ -64,6 +66,8 @@ export interface ActiveLoanCard {
   loan_due_day: number
   bank_name: string | null
   card_name: string | null
+  /** 贷款币种（来自卡产品），用于贷后金额展示。 */
+  currency: string | null
   /** 卡级别名称覆盖（NULL = 使用卡产品默认名称）。 */
   name_override: string | null
 }
@@ -71,7 +75,7 @@ export interface ActiveLoanCard {
 export async function getActiveLoanCards(): Promise<ActiveLoanCard[]> {
   const { data, error } = await query<ActiveLoanCard>(
     `SELECT cc.id, cc.holder_id, cc.card_product_id, cc.loan_due_day,
-            cc.name_override, cp.bank_name, cp.card_name
+            cc.name_override, cp.bank_name, cp.card_name, cp.currency
      FROM credit_cards cc LEFT JOIN card_products cp ON cc.card_product_id = cp.id
      WHERE cc.card_type = 'loan' AND cc.status = 'active'`
   )

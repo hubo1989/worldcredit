@@ -1,10 +1,103 @@
-import { getSystemSettings } from './admin.server'
+import { getSystemSettingsWithSecrets } from './admin.server'
 
 export interface AiCompleteRequest {
-  type: 'bank' | 'card_product'
+  type: 'bank' | 'card_product' | 'bill_text' | 'card_text'
   data: Record<string, unknown>
   fields?: string[]
 }
+
+// ============================================
+// 低层 LLM 调用（服务端唯一使用密钥的地方）
+// ============================================
+
+interface ChatCompletionParams {
+  baseURL: string
+  model: string
+  /** 只在服务端内存中使用，绝不进入任何返回值或客户端载荷 */
+  apiKey: string
+  systemPrompt: string
+  userPrompt: string
+  jsonObject?: boolean
+}
+
+/**
+ * 调用 OpenAI 兼容的 chat/completions，返回首条消息内容。
+ *
+ * 密钥由调用方从 getSystemSettingsWithSecrets() 取得；客户端永远拿不到它，
+ * 也不再需要在浏览器里拼 Authorization 头。
+ */
+async function chatCompletion({
+  baseURL, model, apiKey, systemPrompt, userPrompt, jsonObject,
+}: ChatCompletionParams): Promise<string> {
+  const completionURL = `${baseURL.replace(/\/$/, '')}/chat/completions`
+  console.log(`[AI] Calling ${completionURL} with model ${model}`)
+
+  const response = await fetch(completionURL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.3,
+      ...(jsonObject ? { response_format: { type: 'json_object' } } : {}),
+    }),
+  })
+
+  if (!response.ok) {
+    const errText = await response.text()
+    console.error(`[AI] API Error: ${response.status} - ${errText}`)
+    throw new Error(`AI API 调用失败 (${response.status}): ${errText.slice(0, 200)}`)
+  }
+
+  const result = await response.json()
+  const content = result?.choices?.[0]?.message?.content
+  if (!content) throw new Error('AI 未返回有效内容')
+  return content as string
+}
+
+/** 宽松解析 LLM 返回的 JSON 对象（容忍前后缀文字）。 */
+function parseJsonObject(content: string): Record<string, unknown> {
+  try {
+    return JSON.parse(content)
+  } catch {
+    const match = content.match(/\{[\s\S]*\}/)
+    if (match) {
+      try {
+        return JSON.parse(match[0])
+      } catch {
+        // fallthrough to the error below
+      }
+    }
+    throw new Error(`AI 返回格式错误: ${content.slice(0, 200)}`)
+  }
+}
+
+// 智能填充（AiFillBox）的抽取 prompt。原先放在客户端组件里，现随密钥一起留在服务端。
+const BILL_TEXT_SYSTEM_PROMPT = `你是信用卡账单解析助手。从用户粘贴的账单邮件或短信文本中提取以下字段，严格以 JSON 返回，不要任何多余文字：
+{
+  "bill_amount": 数字或null,
+  "min_payment": 数字或null,
+  "due_date": "YYYY-MM-DD"或null,
+  "bill_month": "YYYY-MM"或null,
+  "statement_date": "YYYY-MM-DD"或null
+}
+注意：金额可能是"6480"、"6,480.00"、"¥6480元"，统一转为数字。无法确定的字段返回 null。`
+
+const CARD_TEXT_SYSTEM_PROMPT = `你是信用卡产品信息解析助手。从用户粘贴的卡面或官网文本中提取以下字段，严格以 JSON 返回，不要任何多余文字：
+{
+  "bank_name": 字符串或null,
+  "card_name": 字符串或null,
+  "annual_fee": 数字或null,
+  "billing_day": 数字或null,
+  "card_number_last4": 字符串或null
+}
+无法确定的字段返回 null。`
 
 // ============================================
 // Wikipedia 搜索增强
@@ -110,13 +203,28 @@ const CARD_SYSTEM_PROMPT = `你是一个信用卡产品专家。根据用户提�
  */
 export async function aiComplete(params: AiCompleteRequest) {
   // 1. 获取 AI 配置
-  const settings = await getSystemSettings()
+  const settings = await getSystemSettingsWithSecrets()
   const baseURL = (typeof settings.ai_base_url === 'string' && settings.ai_base_url) || 'https://api.openai.com/v1'
   const model = settings.ai_model || 'gpt-4o'
   const apiKey = settings.ai_api_key
 
   if (!apiKey) {
     throw new Error('未配置 AI API Key，请在系统设置中配置')
+  }
+
+  // 智能填充：从粘贴的账单/卡面文本里抽字段。密钥留在服务端，前端只发文本。
+  if (params.type === 'bill_text' || params.type === 'card_text') {
+    const text = typeof params.data.text === 'string' ? params.data.text : ''
+    if (!text.trim()) throw new Error('请先粘贴需要解析的文本')
+    const content = await chatCompletion({
+      baseURL,
+      model: model as string,
+      apiKey: apiKey as string,
+      systemPrompt: params.type === 'bill_text' ? BILL_TEXT_SYSTEM_PROMPT : CARD_TEXT_SYSTEM_PROMPT,
+      userPrompt: text,
+      jsonObject: true,
+    })
+    return parseJsonObject(content)
   }
 
   // 2. 搜索 Wikipedia 获取参考资料
@@ -158,38 +266,14 @@ export async function aiComplete(params: AiCompleteRequest) {
   }
 
   // 4. 调用 LLM
-  const completionURL = `${baseURL.replace(/\/$/, '')}/chat/completions`
-  console.log(`[AI] Calling ${completionURL} with model ${model}`)
-
-  const aiResponse = await fetch(completionURL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0.3,
-      response_format: { type: 'json_object' },
-    }),
+  const content = await chatCompletion({
+    baseURL,
+    model: model as string,
+    apiKey: apiKey as string,
+    systemPrompt,
+    userPrompt,
+    jsonObject: true,
   })
-
-  if (!aiResponse.ok) {
-    const errText = await aiResponse.text()
-    console.error(`[AI] API Error: ${aiResponse.status} - ${errText}`)
-    throw new Error(`AI API 调用失败 (${aiResponse.status}): ${errText.slice(0, 200)}`)
-  }
-
-  const aiResult = await aiResponse.json()
-  const content = aiResult.choices?.[0]?.message?.content
-
-  if (!content) {
-    throw new Error('AI 未返回有效内容')
-  }
 
   // 5. 解析 JSON 结果
   try {
@@ -234,7 +318,7 @@ const BENEFIT_SYSTEM_PROMPT = `你是一个信用卡权益专家。根据提供�
  * 利用 LLM + 搜索自动搜集并解析信用卡的专属权益
  */
 export async function aiCollectCardBenefits(bankName: string, cardName: string) {
-  const settings = await getSystemSettings()
+  const settings = await getSystemSettingsWithSecrets()
   const baseURL = (typeof settings.ai_base_url === 'string' && settings.ai_base_url) || 'https://api.openai.com/v1'
   const model = settings.ai_model || 'gpt-4o'
   const apiKey = settings.ai_api_key
@@ -246,35 +330,13 @@ export async function aiCollectCardBenefits(bankName: string, cardName: string) 
   const searchQuery = `${bankName} ${cardName} 信用卡 核心权益 优惠`
   const searchContext = await getSearchContext(searchQuery)
 
-  const completionURL = `${baseURL.replace(/\/$/, '')}/chat/completions`
-
-  const aiResponse = await fetch(completionURL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: BENEFIT_SYSTEM_PROMPT },
-        { role: 'user', content: `银行：${bankName}，卡片：${cardName}${searchContext}` },
-      ],
-      temperature: 0.3,
-    }),
+  const content = await chatCompletion({
+    baseURL,
+    model: model as string,
+    apiKey: apiKey as string,
+    systemPrompt: BENEFIT_SYSTEM_PROMPT,
+    userPrompt: `银行：${bankName}，卡片：${cardName}${searchContext}`,
   })
-
-  if (!aiResponse.ok) {
-    const errText = await aiResponse.text()
-    throw new Error(`AI API 调用失败 (${aiResponse.status}): ${errText.slice(0, 200)}`)
-  }
-
-  const aiResult = await aiResponse.json()
-  const content = aiResult.choices?.[0]?.message?.content
-
-  if (!content) {
-    throw new Error('AI 未返回有效内容')
-  }
 
   try {
     const jsonMatch = content.match(/\[[\s\S]*\]/)

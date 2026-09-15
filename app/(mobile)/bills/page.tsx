@@ -36,6 +36,9 @@ import {
   FilterIcon, ChevronDownIcon, CloseIcon, ClockIcon,
 } from '@/components/icons/WcIcon'
 import { useAuth } from '@/lib/auth'
+import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
+import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
+import { fetchRates, sumByCurrency, currencySymbol, type FxRates } from '@/lib/fx'
 
 type Dimension = 'holder' | 'bank'
 type ViewFilter = 'all' | 'unpaid' | 'cleared'
@@ -93,6 +96,8 @@ function CardSummaryRow({
   const [historyOpen, setHistoryOpen] = useState(false)
   const product = item.card.card_product
   const bankName = product?.bank_name || '银行卡'
+  // 该卡账单的币种：金额一律按它渲染，不能写死 ¥（本应用有 USD / HKD 的卡）
+  const rowCurrency = product?.currency || 'CNY'
   // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
   const cardName = getEffectiveCardName(item.card, product)
   // 卡名常自带银行名前缀（如「中国银行 普卡」），再拼一次 bankName 会渲染成
@@ -260,7 +265,7 @@ function CardSummaryRow({
               whiteSpace: 'nowrap',
             }}
           >
-            ¥{item.unpaidAmount.toLocaleString()}
+            {currencySymbol(rowCurrency)}{item.unpaidAmount.toLocaleString()}
           </Typography>
         </Box>
 
@@ -424,7 +429,7 @@ function CardSummaryRow({
                         className="num-tabular"
                         sx={{ fontSize: 14.5, lineHeight: '18px', letterSpacing: '0.3px', fontWeight: 600, color: 'var(--text)' }}
                       >
-                        ¥{Number(b.bill_amount).toLocaleString()}
+                        {currencySymbol(rowCurrency)}{Number(b.bill_amount).toLocaleString()}
                       </Typography>
                       <Box
                         sx={{
@@ -456,6 +461,11 @@ function CardSummaryRow({
 
 export default function BillsPage() {
   const { user } = useAuth()
+  const { displayConfig } = useUserPreferences()
+  /** 折算目标币种：用户偏好 display_config.default_currency（缺省 CNY）。 */
+  const displayCurrency = resolveDisplayCurrency(displayConfig)
+  /** 汇率状态：null 表示本次没取到，界面走「未含汇率」的降级展示。 */
+  const [fxRates, setFxRates] = useState<FxRates | null>(null)
   const [cardsSummary, setCardsSummary] = useState<CardWithBillsSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -516,6 +526,15 @@ export default function BillsPage() {
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  // 汇率与业务数据解耦：拿不到也不让整页失败，只是合计缺少外币部分。
+  useEffect(() => {
+    let cancelled = false
+    fetchRates()
+      .then(rates => { if (!cancelled) setFxRates(rates) })
+      .catch(() => { if (!cancelled) setFxRates(null) })
+    return () => { cancelled = true }
+  }, [])
 
   // 同步邮件账单
   const handleSync = async () => {
@@ -591,9 +610,25 @@ export default function BillsPage() {
     return list
   }, [cardsSummary])
 
-  const totalOverdueAmount = useMemo(() => {
-    return allOverdueBills.reduce((sum, b) => sum + (b.remaining_amount > 0 ? b.remaining_amount : Number(b.bill_amount || 0)), 0)
-  }, [allOverdueBills])
+  /**
+   * 逾期待还合计。
+   *
+   * 原来是把所有逾期账单的金额直接相加，而卡可能是不同币种（生产库有 USD / HKD），
+   * 相加后再标 ¥ 是错的。这里按币种分组、折算到目标币种；汇率拿不到时跨币种部分
+   * 不计入，并在下方明确提示未含哪些币种。
+   */
+  const overdueTotals = useMemo(() => {
+    const sum = sumByCurrency(
+      allOverdueBills,
+      b => ({
+        amount: b.remaining_amount > 0 ? b.remaining_amount : Number(b.bill_amount || 0),
+        currency: b.card?.card_product?.currency || displayCurrency,
+      }),
+      displayCurrency,
+      fxRates
+    )
+    return { total: sum.total, unconverted: sum.unconverted_currencies }
+  }, [allOverdueBills, displayCurrency, fxRates])
 
   const handlePayAllOverdue = async () => {
     if (!user?.id) return
@@ -601,9 +636,11 @@ export default function BillsPage() {
     try {
       const res = await markAllOverdueBillsAsPaid(user.id, allOverdueBills)
       setPayAllOpen(false)
+      // 展示口径用界面已折算好的 overdueTotals.total：服务端返回的 totalAmount
+      // 仍是跨币种直接相加的老口径（那属于 bills.server.ts，本次不改）。
       setCelebrationNotice({
         open: true,
-        message: `🎉 恭喜！已一键全额结清 ${res.count} 笔逾期账单（合计 ¥${res.totalAmount.toLocaleString()}）！`,
+        message: `🎉 恭喜！已一键全额结清 ${res.count} 笔逾期账单（合计 ${currencySymbol(displayCurrency)}${overdueTotals.total.toLocaleString()}）！`,
       })
       await loadData()
     } catch (err) {
@@ -773,7 +810,8 @@ export default function BillsPage() {
                 存在 {allOverdueBills.length} 笔历史逾期账单未结清
               </Typography>
               <Typography className="type-label" sx={{ whiteSpace: 'nowrap' }}>
-                待还合计：¥{totalOverdueAmount.toLocaleString()}
+              待还合计：{currencySymbol(displayCurrency)}{overdueTotals.total.toLocaleString()}
+              {overdueTotals.unconverted.length > 0 && `（未含 ${overdueTotals.unconverted.join('、')}）`}
               </Typography>
             </Box>
           </Stack>
@@ -1019,7 +1057,13 @@ export default function BillsPage() {
       ) : (
         <Stack spacing={2}>
           {bankGroups.map(group => {
-            const unpaidTotal = group.cards.reduce((s, c) => s + c.unpaidAmount, 0)
+            // 同一银行分组的卡也可能跨币种，按币种分组折算后再汇总
+            const groupSum = sumByCurrency(
+              group.cards,
+              c => ({ amount: c.unpaidAmount, currency: c.card.card_product?.currency || displayCurrency }),
+              displayCurrency,
+              fxRates
+            )
             return (
               <Box key={group.bankName}>
                 {/* 组头：银行 · 卡片数 · 待还合计 */}
@@ -1053,7 +1097,8 @@ export default function BillsPage() {
                     className="num-tabular"
                     sx={{ fontSize: 14.5, lineHeight: '18px', letterSpacing: '0.3px', fontWeight: 600, color: '#fff' }}
                   >
-                    待还 ¥{unpaidTotal.toLocaleString()}
+                    待还 {currencySymbol(displayCurrency)}{groupSum.total.toLocaleString()}
+                    {groupSum.unconverted_currencies.length > 0 && `（未含 ${groupSum.unconverted_currencies.join('、')}）`}
                   </Typography>
                 </Box>
                 <Stack spacing={1.5}>
@@ -1122,7 +1167,8 @@ export default function BillsPage() {
             系统将把当前 <strong>{allOverdueBills.length} 笔</strong>逾期账单全部标记为已结清。
           </Typography>
           <Typography variant="subtitle1" fontWeight={800} color="error.main">
-            合计结清金额：¥{totalOverdueAmount.toLocaleString()}
+            合计结清金额：{currencySymbol(displayCurrency)}{overdueTotals.total.toLocaleString()}
+            {overdueTotals.unconverted.length > 0 && `（未含 ${overdueTotals.unconverted.join('、')}）`}
           </Typography>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>

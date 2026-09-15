@@ -14,11 +14,15 @@ interface SystemSettings {
   enableRegistration: boolean
   maintenanceMode: boolean
   defaultCurrency: string
-  ai_api_key?: string
+  /** 服务端只回是否已配置，绝不回显密钥本身 */
+  ai_api_key_set?: boolean
   ai_base_url?: string
   ai_model?: string
   [key: string]: unknown
 }
+
+/** 服务端派生的状态标志（<key>_set），不是可写设置，保存时须排除。 */
+const isDerivedSettingKey = (key: string) => key.endsWith('_set')
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
@@ -31,6 +35,9 @@ export default function SettingsPage() {
     defaultCurrency: 'CNY'
   })
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' })
+  const [aiKeyConfigured, setAiKeyConfigured] = useState(false)
+  // 只写不读的草稿：密钥从不从服务端取回，输入框始终为空
+  const [aiApiKeyInput, setAiApiKeyInput] = useState('')
 
   useEffect(() => {
     const fetchData = async () => {
@@ -38,6 +45,7 @@ export default function SettingsPage() {
       try {
         const data = await getSystemSettings()
         if (Object.keys(data).length > 0) {
+          setAiKeyConfigured(data.ai_api_key_set === true)
           setSettings(prev => ({ ...prev, ...data }) as SystemSettings)
         }
       } catch (error) {
@@ -67,12 +75,34 @@ export default function SettingsPage() {
     setSaving(true)
     try {
       await Promise.all(
-        Object.entries(settings).map(([k, v]) => updateSystemSettings(k, v))
+        Object.entries(settings)
+          .filter(([k]) => !isDerivedSettingKey(k))
+          .map(([k, v]) => updateSystemSettings(k, v))
       )
       setSnackbar({ open: true, message: '全局设置已保存', severity: 'success' })
     } catch (error) {
       console.error('Save all failed:', error)
       setSnackbar({ open: true, message: '部分设置保存失败', severity: 'error' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  /** 密钥单独保存：只在用户输入了新值时才写入，避免空值覆盖已配置密钥。 */
+  const handleSaveAiKey = async () => {
+    if (!aiApiKeyInput.trim()) {
+      setSnackbar({ open: true, message: '请输入新的 API Key', severity: 'error' })
+      return
+    }
+    setSaving(true)
+    try {
+      await updateSystemSettings('ai_api_key', aiApiKeyInput.trim())
+      setAiApiKeyInput('')
+      setAiKeyConfigured(true)
+      setSnackbar({ open: true, message: 'API Key 已更新', severity: 'success' })
+    } catch (error) {
+      console.error('Update AI key failed:', error)
+      setSnackbar({ open: true, message: 'API Key 更新失败', severity: 'error' })
     } finally {
       setSaving(false)
     }
@@ -186,16 +216,36 @@ export default function SettingsPage() {
             </Typography>
             <Grid container spacing={3}>
               <Grid size={{ xs: 12, md: 4 }}>
-                <TextField
-                  fullWidth
-                  label="API Key"
-                  type="password"
-                  placeholder="sk-..."
-                  value={settings.ai_api_key || ''}
-                  onChange={(e) => setSettings({ ...settings, ai_api_key: e.target.value })}
-                  InputLabelProps={{ style: { color: '#9ca3af' } }}
-                  sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-                />
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <TextField
+                    fullWidth
+                    label="API Key"
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder={aiKeyConfigured ? '已配置（留空则保持不变）' : 'sk-...'}
+                    value={aiApiKeyInput}
+                    onChange={(e) => setAiApiKeyInput(e.target.value)}
+                    InputLabelProps={{ style: { color: '#9ca3af' } }}
+                    sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
+                  />
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="caption" sx={{ color: aiKeyConfigured ? '#4ade80' : '#9ca3af' }}>
+                      {aiKeyConfigured ? '● 已配置' : '○ 未配置'}
+                    </Typography>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={handleSaveAiKey}
+                      disabled={saving}
+                      sx={{ textTransform: 'none', color: '#818cf8', borderColor: 'rgba(129,140,248,0.5)' }}
+                    >
+                      保存密钥
+                    </Button>
+                  </Box>
+                  <Typography variant="caption" sx={{ color: '#9ca3af' }}>
+                    密钥仅存于服务端，保存后不再回显；AI 调用由服务端代为执行。
+                  </Typography>
+                </Box>
               </Grid>
               <Grid size={{ xs: 12, md: 4 }}>
                 <TextField
