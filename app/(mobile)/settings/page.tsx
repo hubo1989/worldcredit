@@ -40,7 +40,6 @@ import {
 } from '@/components/icons/WcIcon'
 
 const DOMAIN = '20160325.xyz'
-const ADMIN_EMAILS = ['admin@worldcredit.com']
 
 /** 我的页管理入口行（§5.1）。点击整行触发 onClick（跳转或展开）。 */
 interface MineEntryProps {
@@ -140,7 +139,9 @@ export default function SettingsPage() {
   const router = useRouter()
   const { displayConfig, reminderConfig, updateDisplay, updateReminder, loading: loadingPrefs } = useUserPreferences()
 
-  const isAdmin = Boolean(user && ADMIN_EMAILS.includes(user.email))
+  // 用会话 role 判定（服务端按 lib/admin-emails.ts 写入），不再在浏览器端
+  // 维护第二份邮箱白名单，避免与服务端口径漂移。
+  const isAdmin = user?.role === 'admin'
 
   const handleSignOut = async () => {
     try {

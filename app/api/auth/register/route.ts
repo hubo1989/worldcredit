@@ -1,6 +1,7 @@
 import { getDb, uuid } from '@/lib/db'
 import { pbkdf2Hash } from '@/lib/auth-crypto'
 import { createSessionValue, sessionCookieHeader, type SessionUser } from '@/lib/session'
+import { isAdminEmail } from '@/lib/admin-emails'
 
 export async function POST(request: Request) {
   try {
@@ -13,10 +14,11 @@ export async function POST(request: Request) {
     if (existing) {
       return Response.json({ error: '该邮箱已注册' }, { status: 409 })
     }
-    // Bootstrap: the first registered user becomes admin; everyone after is a
-    // family member. Existing deployments already have their admin user.
-    const count = await db.prepare('SELECT COUNT(*) AS n FROM users').first<{ n: number }>()
-    const role = (count?.n ?? 0) === 0 ? 'admin' : 'member'
+    // Admin is granted only from the explicit allowlist. The previous
+    // "first row in the table wins" bootstrap was a race: two concurrent
+    // registrations on an empty database both read n=0 and both became admin,
+    // and it re-armed on every fresh database.
+    const role = isAdminEmail(email) ? 'admin' : 'member'
     const hash = await pbkdf2Hash(password)
     const id = uuid()
     await db

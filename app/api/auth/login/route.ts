@@ -1,6 +1,7 @@
 import { getDb } from '@/lib/db'
 import { pbkdf2Verify } from '@/lib/auth-crypto'
 import { createSessionValue, sessionCookieHeader, type SessionUser } from '@/lib/session'
+import { isAdminEmail } from '@/lib/admin-emails'
 
 export async function POST(request: Request) {
   try {
@@ -23,7 +24,9 @@ export async function POST(request: Request) {
       return Response.json({ error: '密码错误' }, { status: 401 })
     }
 
-    const user: SessionUser = { id: result.id, email: result.email, name: result.name, role: result.role === 'admin' ? 'admin' : 'member', created_at: result.created_at }
+    // 角色以白名单为准，不照抄 users.role：这样历史遗留的 admin 行（例如早先
+    // 自动提权产生的测试账号）在下次登录时自动降级，无需手动改库。
+    const user: SessionUser = { id: result.id, email: result.email, name: result.name, role: isAdminEmail(result.email) ? 'admin' : 'member', created_at: result.created_at }
     const cookieValue = await createSessionValue(user)
     return Response.json(
       { user },

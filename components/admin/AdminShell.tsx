@@ -32,9 +32,6 @@ const NAV_ITEMS = [
   { label: '系统设置', icon: <SettingsIcon />, path: '/admin/settings' },
 ]
 
-// 管理员邮箱白名单（与 scripts/create-admin.ts 保持一致）
-const ADMIN_EMAILS = ['admin@worldcredit.com']
-
 export function AdminShell({ children }: { children: ReactNode }) {
   const { user, loading, signOut } = useAuth()
   const router = useRouter()
@@ -42,14 +39,17 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [drawerOpen, setDrawerOpen] = useState(true)
 
-  // 权限校验：未登录或非管理员重定向到 /dashboard
+  // 权限校验：未登录或非管理员重定向到 /dashboard。
+  // 判定用会话里的 role，而不是浏览器端再维护一份邮箱白名单：role 由服务端
+  // 在签发 cookie 时按 lib/admin-emails.ts 的白名单写入，客户端无法与之漂移，
+  // 也避免出现「服务端认的管理员打不开 /admin」这种两边名单不一致的问题。
   useEffect(() => {
     if (loading) return
     if (!user) {
       router.replace('/login')
       return
     }
-    if (!ADMIN_EMAILS.includes(user.email)) {
+    if (user.role !== 'admin') {
       router.replace('/dashboard')
     }
   }, [user, loading, router])
@@ -65,7 +65,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   }
 
   // 加载中或无权限时不渲染管理后台内容
-  if (loading || !user || !ADMIN_EMAILS.includes(user.email)) {
+  if (loading || !user || user.role !== 'admin') {
     return null
   }
 

@@ -7,6 +7,7 @@
 // "wrangler secret put SESSION_SECRET" in production.
 
 import { getWorkerEnv } from "./db/client"
+import { isAdminEmail } from "./admin-emails"
 
 export interface SessionUser {
   id: string
@@ -92,11 +93,16 @@ export async function verifySessionValue(value: string | undefined | null): Prom
       console.log(`[session-verify] reject=payload-fields exp=${String(payload.exp)} idType=${typeof payload.id}`)
       return null
     }
+    const email = typeof payload.email === 'string' ? payload.email : ''
     return {
       id: payload.id,
-      email: typeof payload.email === 'string' ? payload.email : '',
+      email,
       name: payload.name ?? null,
-      role: payload.role === 'admin' ? 'admin' : 'member',
+      // 角色不取自 cookie，而是按白名单在每次请求时重新裁定。cookie 自带 7 天
+      // 有效期，若信任其中的 role，任何已签发的旧 admin cookie 都会在有效期内
+      // 继续生效——收紧授权入口也拦不住它们。email 在签名载荷内不可篡改，且
+      // 白名单是静态常量（不查库），所以这一步既安全又便宜。
+      role: isAdminEmail(email) ? 'admin' : 'member',
       created_at: typeof payload.created_at === 'string' ? payload.created_at : '',
     }
   } catch (err) {
