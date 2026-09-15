@@ -104,6 +104,9 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
   },
   ai: {
     aiComplete: { impl: aiServer.aiComplete },
+    // 后台「按真实内容补全」：抓官网页面为证。只写 /tmp 无关，会读外网但绝不写库
+    // （写库由调用方在界面上确认后走 admin.updateBank）。仅管理员可用。
+    enrichBankFromWeb: { impl: aiServer.enrichBankFromWeb, admin: true },
   },
   analytics: {
     getAnalyticsSummary: { impl: analyticsServer.getAnalyticsSummary, memberGuard: (args, ctx) => applyAnalyticsScope(args[0], ctx) },
