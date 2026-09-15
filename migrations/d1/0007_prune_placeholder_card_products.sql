@@ -21,8 +21,9 @@
 -- benefits / promos / benefit_usages 在执行时均为 0 行，故无级联影响；若将来这些
 -- 表有数据，需重新评估依赖。
 --
--- 执行前已备份全部 550 行待删记录（id/bank_name/card_name 等原始字段），见
--- 提交说明中的 /tmp/backup_deleted_products.json。
+-- 删除前导出过 550 行待删记录做过核对，但那只是临时校验文件，刻意没有入库：
+-- 这些行是按模板批量生成的垃圾数据，没有任何回滚价值。本迁移不可逆，需要「还原」
+-- 的话应当重新生成占位数据，而不是恢复这批记录。
 
 DELETE FROM card_products
 WHERE id NOT IN (SELECT DISTINCT card_product_id FROM credit_cards WHERE card_product_id IS NOT NULL)
