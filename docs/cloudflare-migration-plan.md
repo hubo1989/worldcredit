@@ -210,6 +210,7 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 - D1 binding 指向同一个 `worldcredit` 库（`6ce5f678-…`），因此本次 0006 迁移对它同样生效
 - `TextDecoder('gbk')` 可用性：该 worker 的 `compatibility_date` 是 `2024-01-01`（主 worker 为 `2026-03-20`），CJK 解码有对应的 compatibility flag。已在本机 workerd 实测：`gbk` / `gb2312` / `gb18030` 在 `2024-01-01` 与 `2026-03-20` 下均正确解出「张改菊女士」，不构成阻塞
 - 该 worker 上残留的 `INSFORGE_SERVICE_KEY` secret 无影响：`Env` 只声明了 `DB`
+- 该 worker 仅导出 `async email`，**没有 `fetch` 处理器**，因此对它发 HTTP 请求返回 500 属预期行为，不能当作健康探针；只有 Email Routing 能触发它
 
 验证边界（尚待真实邮件）：部署后 `email_parse_logs` 最新记录仍是 09-14 09:18，即**尚未有新邮件经过修复版**。修复后的归属与幂等行为已由 65 个用例覆盖，但生产端到端仍需下一封真实转发包落库后才能确认；观察方式 `npx wrangler tail worldcredit-email-worker --config email-worker/wrangler.toml`。
 
