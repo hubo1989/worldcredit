@@ -193,12 +193,30 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 ### 注意
 
 - `wc_user` 改为 HMAC 签名后，旧未签名 cookie 一律 401，**本次部署使全部登录态失效一次，所有用户需重新登录**
-- `email-worker` 是独立 worker（`email-worker/wrangler.toml`），**本次未部署**；转发账单包解析的修复与测试已入库，部署后才会生效
+- `email-worker` 是独立 worker（`email-worker/wrangler.toml`），先于主 worker 单独部署，见下方「email-worker 部署」
+
+### email-worker 部署 ✅
+
+`worldcredit-email-worker` 并非未启用：Email Routing 在 `20160325.xyz` 已开启，catch-all 规则指向该 worker，`bill@20160325.xyz` 另有一条指向 `aipopot-mail` 的规则。它一直在收信，线上跑的是**修复前**的版本，所以「启用」实际是用修复版替换它。
+
+- 部署前线上版本 `5dad3de0`（2026-09-14 09:06）→ 部署后 `87562532-268e-454e-9606-18e8627d9dac`（2026-09-15 03:01 UTC，version number 7）；回滚目标 `5dad3de0`
+- `./node_modules/.bin/wrangler deploy --config wrangler.toml`（该目录自带 wrangler 3.114，与主仓库的 4.x 不同），Total Upload 40.77 KiB / gzip 11.64 KiB
+- 部署产物校验：dry-run 打包字节数与线上上传一致；产物内含 `keepPaidStatus`（4 次）、`pickCardProductForBank`（3 次）、`preserved`（2 次），而修复前版本这两处均为 0 次——确认跑的是修复后代码
+- 部署未改动路由绑定：catch-all 仍指向 `worldcredit-email-worker`
+
+部署前置条件已核实：
+
+- `system_settings` 的 `ai_api_key` / `ai_base_url` / `ai_model` 三项均已配置（缺 key 时每封邮件会直接失败）
+- D1 binding 指向同一个 `worldcredit` 库（`6ce5f678-…`），因此本次 0006 迁移对它同样生效
+- `TextDecoder('gbk')` 可用性：该 worker 的 `compatibility_date` 是 `2024-01-01`（主 worker 为 `2026-03-20`），CJK 解码有对应的 compatibility flag。已在本机 workerd 实测：`gbk` / `gb2312` / `gb18030` 在 `2024-01-01` 与 `2026-03-20` 下均正确解出「张改菊女士」，不构成阻塞
+- 该 worker 上残留的 `INSFORGE_SERVICE_KEY` secret 无影响：`Env` 只声明了 `DB`
+
+验证边界（尚待真实邮件）：部署后 `email_parse_logs` 最新记录仍是 09-14 09:18，即**尚未有新邮件经过修复版**。修复后的归属与幂等行为已由 65 个用例覆盖，但生产端到端仍需下一封真实转发包落库后才能确认；观察方式 `npx wrangler tail worldcredit-email-worker --config email-worker/wrangler.toml`。
 
 ## 更新后的下一步
 
 1. **登录态真机回归**：本轮未用真实账号做 Phase 6 式 17 路由 Chrome 爬测；登录走一遍核心页面，并在浏览器授权通知后调用 `POST /api/push/test` 验证端到端推送（cron `0 9 * * *` 定时推送可用 `wrangler tail` 观察）
 2. **成员端 UI 收尾**：成员登录后导航/入口仍按 admin 视角渲染（后端已 403 兜底，不会泄露数据）；按角色隐藏 admin 入口、成员首页文案
-3. **email-worker 部署与回归**：代码已修复并有 65 用例覆盖，但尚未 `cd email-worker && npx wrangler deploy`；部署后需用真实转发包回归
+3. **email-worker 真实邮件回归**：修复版 `87562532` 已部署（见 Phase 9），但尚无真实邮件经过；收到下一封转发包后核对 `email_parse_logs` 的 `skipped` 原因与 `raw_ai_response` 的 `matchSource`，确认「归属不可信不覆盖」与「已还清不被降级」在真实邮件上成立
 4. **`lib/api/payments.ts` 客户端/服务端边界**：该文件无对应 `.server.ts`，含仅 Worker 可用的 D1 helper，而消费方 `lib/export.ts` 是浏览器侧。此为存量问题（base 上同样存在），本次未扩大也未修复，仅把还款导出「卡片」列从空值修成有值。待按 RPC 边界重构
 5. **数据迁移仍按产品决定跳过**（Phase 4 脚本就绪但未执行）
