@@ -363,6 +363,68 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 - 生产 D1 尚未执行 0008/0009（未部署）；Google OAuth 加固与本次改动均未上线
 - 未做真机视觉回归：颜色改动含 P0 级可读性修复（`/admin` 标题、全部状态徽章），建议部署后实际看一眼
 
+## Phase 12：后台控制台五项反馈 + 合入 main 并部署 ✅（2026-09-16）
+
+### 1. 银行管理增加简称列
+
+- `migrations/d1/0010_bank_short_name.sql`（`banks.short_name`）；列表加「简称」列与编辑框
+- INSERT 与 UPDATE 各有一份字段清单，两处都要改；只改一处会「填了不保存」，已加测试锁住
+
+### 2. 修复「按真实内容补全」点了没有变化 ⚠️ 根因不是补全本身
+
+- **补全功能是好的**：本地与 worker 运行时都实测过，招商银行能正确返回 `95555` 与官网
+- **真正原因**：一次把 69 家全部串行跑完。每家要调一次模型提名域名 + 最多抓 7 个页面（每个 10s 超时），实测平均 3–11 秒，整轮数分钟 → 请求被中途掐断，前端拿不到结果、库里也没写入
+- **生产库佐证**：69 家银行中 `full_name` 缺 68 家、客服电话与官网**缺 69 家（全部）**，说明此前从未有过一次批次真正落库
+- **改动**：分批（每次最多 8 家）；按钮标注「本次补 N/M 家」；结果提示剩余家数可继续点击；剩余数用刷新后的新数据计算，不读闭包旧值
+- **对照发现**：分批后单家产出仍不稳定 —— 官网可抓时有 `site` 级产出（招行/农行/中行/中信），但民泰 412、建行/交行直接拒连。因此写入仍坚持「只有官网页面直接读到的字段才写」
+
+### 3. 卡产品管理：复选框批量操作（AI 补全 / 启用 / 禁用 / 删除）
+
+- 表头全选（含半选态）+ 每行选择框；选中后出现操作条
+- 逐条调用既有单条接口而非新增批量 RPC：单条接口已带全部校验与级联语义（删除会影响关联用户信用卡），批量版容易漏一条变成静默不一致；结束时汇总成败，**部分失败必须报出来**
+- 批量 AI 补全**只填充空白字段**，不覆盖人工维护过的值 —— 批量操作最危险的失败模式
+
+### 4. 卡产品管理：按国家筛选
+
+- 与搜索、按银行筛选共同参与过滤；任一变化回到第一页（否则停在空页看着像「没数据」）
+
+### 5. 优惠活动：AI 获取活动
+
+- 新增 `ai.suggestPromosFromWeb`（admin-only）：检索候选并标注依据；官网活动页抓到正文且标题能对上才算「官网」，否则「待确认」；默认只勾选「官网」项
+- **只返回候选、不写库**；落库发生在显式「写入勾选」
+- **实测限制**：银行活动页多为 JS 渲染（招行 `/promotion` 抽不出正文），且当前模型端点不支持联网检索 → 候选实际以「待确认」为主。据此把 prompt 从「只列有依据的活动」放宽为「列出该行广为人知的常设活动」，并**日期一律置 null**（不允许编造起止日期）。修正前实测返回空数组，修正后稳定返回 8 条
+- 字段侧白名单与截断：`discount_type` 只接受四个声明值、日期须匹配 `YYYY-MM-DD` 否则置空、条数与长度上限、URL 只取 origin
+
+### 验证
+
+- 本地：`tsc` 0 错误、`eslint --max-warnings=0`、vitest **306 passed**（新增 admin-console 22 例，锁住「填了不保存」「超时无写入」「批量覆盖人工值」这类静默失效）、`vite build` 成功
+- `migrations/d1/0010` 在完整 sqlite 链上冒烟
+- `vite dev` 真实链路：三个后台页 200；`suggestPromosFromWeb` 返回 8 条；未登录 401
+- 探针数据、临时部署的边缘探针 worker 均已清理；本地管理员密码已还原
+
+## 合入 main 并部署 ✅（2026-09-16）
+
+- PR **#18** 已合并：merge commit **`e1775c5`**（合并前三块共 5 个 commit、55 文件 +2855/−208 更新为含 Phase 12）
+- `main` 此前停在 `277517b`（InsForge 架构之后的 D1 主线）；合并后 `main` 重新具备可部署性，且**首次包含 OAuth 加固、移动端四项与后台五项全部改动**
+- **生产 D1 迁移已执行**：0008 / 0009 / 0010
+  - 注意 `wrangler.jsonc` 的 `migrations_dir` 指向 `migrations/`（InsForge/Postgres 时代的 5 个文件），**不是** `migrations/d1/`；`d1_migrations` 跟踪表为空。因此 D1 迁移历来是 `wrangler d1 execute --remote --file=migrations/d1/00xx.sql` 逐条执行，**不要**用 `d1 migrations apply`
+  - 执行后复查：`bills.bill_amount_override`、`recurring_payables`、`recurring_payable_payments`、`banks.short_name` 均已存在，`idx_recurring*` 索引 2 个
+  - 两个 `ALTER TABLE` 曾因 API 间歇性 `fetch failed` 未落库，重试后确认成功（表创建与 ALTER 分属不同语句，失败时不会自动回滚）
+- **Worker 已部署**：版本 **`8915d81e-62c6-4696-8666-740622ac798c`**（部署自 `main` / `e1775c5`）
+  - 回滚点：`e9e16068-36da-455f-b24c-1dc945b4e3b6`（上一版）
+  - 绑定确认：`env.APP_ORIGIN (https://app.all-bill.com)`；Cron `0 9 * * *` 保留
+- 线上冒烟（`https://app.all-bill.com`）：
+  - 页面 `/login` `/dashboard` `/bills` `/settings` `/admin` 及其 banks/card-products/promos/settings 全部 200
+  - OAuth start：`redirect_uri=https://app.all-bill.com/api/auth/google/callback`，`nonce==state`
+  - 错 state 回调 → `login?error=google_state_invalid`（state 校验生效）
+  - 未登录 RPC 401（含新增 payables）、伪造未签名 cookie `user:null`、旧桥 `/api/sql-proxy` 404
+- 生产数据现状：banks 69 / card_products 33 / promos 0 / recurring_payables 0 / 手填金额 0 —— schema 就绪，待实际使用产生数据
+
+### 本轮未验证
+
+- 真机视觉与交互回归（颜色 P0 级可读性修复、卡片层级、手填金额入口、固定支出、后台批量操作、AI 获取活动）均只做了接口与渲染冒烟，**未在真实浏览器逐项操作**
+- 生产上的「按真实内容补全」在 69 家全量下的实际通过率（分批后需实际点若干轮才能观察）
+
 ## 更新后的下一步
 
 1. **登录态真机回归**：本轮未用真实账号做 Phase 6 式 17 路由 Chrome 爬测；登录走一遍核心页面，并在浏览器授权通知后调用 `POST /api/push/test` 验证端到端推送（cron `0 9 * * *` 定时推送可用 `wrangler tail` 观察）
