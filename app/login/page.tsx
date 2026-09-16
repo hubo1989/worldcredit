@@ -83,6 +83,8 @@ export default function LoginPage() {
         google_no_id_token: 'Google 未返回身份信息，请重试',
         google_no_email: 'Google 账号缺少邮箱，无法登录',
         google_callback_error: 'Google 登录处理异常，请重试',
+        google_state_invalid: '登录请求已失效（页面可能停留过久或非本次发起），请重新点击 Google 登录',
+        google_id_token_invalid: 'Google 返回的身份信息未通过校验，请重新登录',
       }
       setGlobalError(friendly[oauthError] || `Google 登录失败（${oauthError}）`)
     }

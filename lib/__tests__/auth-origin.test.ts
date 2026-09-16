@@ -89,4 +89,10 @@ describe('Google 路由不得再按请求域名拼回调地址', () => {
   it('callback 里不再出现 url.origin（回跳与 token 交换都在规范域名上）', () => {
     expect(read('app/api/auth/google/callback/route.ts')).not.toMatch(/url\.origin/)
   })
+
+  it('start 会把非规范入口转交到 APP_ORIGIN（state cookie 不跨父域）', () => {
+    // 下发 state cookie 的主机必须与收到回调的主机一致，否则从 workers.dev 发起
+    // 授权时浏览器把 cookie 存在 workers.dev，回调落在 APP_ORIGIN 就必然校验失败。
+    expect(read('app/api/auth/google/start/route.ts')).toMatch(/url\.origin !== canonicalOrigin/)
+  })
 })

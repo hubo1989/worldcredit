@@ -269,6 +269,47 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 
 `app.all-bill.com` 恢复登录的唯一前置条件仍是人工在 Google Console 登记 `https://app.all-bill.com/api/auth/google/callback`（部署后探针复测仍为 mismatch=3）。
 
+### Google 登录安全加固：state 校验 + ID token 验签 ✅（2026-09-16）
+
+原实现有两处信任边界缺陷（Phase 10 首次引入时就存在，非后续回归），本次一并修掉：
+
+**1. OAuth `state` 曾是摆设**
+
+- 原实现：`start` 生成 `crypto.randomUUID()` 后直接丢弃，`callback` 从不读取或校验
+- 风险：login CSRF / 会话固定。攻击者可先自行走一遍授权拿到 `(code, state)`，再把该回调地址喂给受害者，受害者的会话就变成攻击者的 Google 账号
+- 修法（新增 `lib/oauth-state.ts`）：`state` 随下发写进 HttpOnly 签名 cookie（`wc_oauth_state`），且同时作为 **ID token 的 nonce**（start 额外下发 `nonce=state`）
+  - 签名而非只靠 HttpOnly：兄弟子域可以给父域种 cookie（cookie tossing），不签名就能被提前固定
+  - 10 分钟有效期；校验失败时回写 `Max-Age=0` 清 cookie，使每个 `start` 只能对应一次成功回调
+  - 仍不做的：服务端存储。真正的「一次性」由 cookie 失效 + Google 授权码本身单次可用共同保证
+
+**2. ID token 只解码不验签**
+
+- 原实现：`JSON.parse(atob(payloadB64))` —— 签名完全不看。任何能构造自签 JWT 的人都能声明任意 email（**含白名单里的管理员邮箱**）直接登入，等于绕过 Phase 8 全部权限收紧
+- 修法（新增 `lib/google-id-token.ts`）：按 Google JWKS（`https://www.googleapis.com/oauth2/v3/certs`）做 RS256 验签，并核对 `iss` / `aud` / `exp` / `iat` / `nonce` / `email_verified`
+  - 只接受 `alg=RS256`（放行 `none` 或 HS* 即等于允许自签）
+  - `kid` 未命中时强制刷新一次 JWKS（覆盖 Google 轮换密钥）
+  - JWKS 缓存挂在 `globalThis`（module 级变量会被 worker 入口与 SSR bundle 各存一份，与 `lib/db/client` 的 `setDb` 同理）；尊重 `Cache-Control: max-age`，JWKS 不可用时退回旧缓存，完全拿不到则**拒绝**而非放行
+  - `email_verified !== true` 一律拒绝（未验证邮箱可能是他人地址，拿去建用户等于让攻击者占据该账号）
+- 新增 `lib/hmac.ts`（从 `lib/session.ts` 抽出 HMAC 原语，供 state cookie 复用同一 `SESSION_SECRET`）。**session cookie 线格式刻意未动**：现网 cookie 有 7 天有效期，改封装又会把全部用户登出一次
+- 新增 `lib/base64url.ts` / `lib/cookies.ts` 供上述模块共享
+
+**3. state cookie 不跨父域 → 非规范入口改为转交**
+
+- state 存 HttpOnly cookie，而 cookie 不跨父域。若从 workers.dev 发起授权，浏览器把 state cookie 存在 workers.dev，回调却固定在 `APP_ORIGIN` → 校验必然失败
+- 因此 `start` 现在检测到入口非规范域名时，直接 302 转交到 `APP_ORIGIN` 再发起授权（比继续依赖「Cookie 域 = 回调域」更稳）
+
+**验证**
+
+- 本地：`tsc --noEmit` 0 错误、`eslint --max-warnings=0` 通过、vitest **227 passed**（新增 `oauth-state` 9 例、`google-id-token` 14 例、auth-origin +1 例）、`vite build` 成功
+- ID token 用例真的用 RS256 生成密钥对签名：正例用「JWKS 里发布的公钥」签、反例用攻击者自己的密钥签，从而证明拒绝来自验签本身而非字段缺失侥幸。覆盖自签/`alg=none`/未知 kid/换 aud/伪造 iss/过期/超龄 iat/nonce 不符/邮箱未验证/JWKS 不可用/密钥轮换
+- 用真实 Google JWKS 验证过 `importKey` 参数（2 个 RS256 `sig` key 均导入成功、垃圾签名返回 false），排除「mock key 结构不真实」的可能
+- `vite dev` 实测四条链路：start 下发签名 state cookie 且 `nonce == state`；错 state / 缺 state 均 302 到 `login?error=google_state_invalid` 并清除 cookie；原 state 在失败一次后不能再使用；`Host: workers.dev` 的 start 302 转交 `https://app.all-bill.com/api/auth/google/start`
+- 登录页补 `google_state_invalid` / `google_id_token_invalid` 两条中文提示
+
+### 仍存的已知项（本次未修）
+
+- Phase 10 遗留的 `callback` 逻辑（查/建用户、签发 session）覆盖线上主路径，本轮以单测 + dev 链路验证，**尚未在本机真机走一次完整 Google 授权**（Console 已登记，具备条件）
+
 ## 更新后的下一步
 
 1. **登录态真机回归**：本轮未用真实账号做 Phase 6 式 17 路由 Chrome 爬测；登录走一遍核心页面，并在浏览器授权通知后调用 `POST /api/push/test` 验证端到端推送（cron `0 9 * * *` 定时推送可用 `wrangler tail` 观察）
