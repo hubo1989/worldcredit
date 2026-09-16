@@ -4,6 +4,8 @@
 export interface Bank {
   id: string
   name: string
+  /** 简称（如「招行」）。列表窄栏与卡片标题用；与 full_name 是两端。 */
+  short_name?: string
   full_name?: string
   logo_url?: string
   country: string
