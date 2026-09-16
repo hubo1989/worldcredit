@@ -213,20 +213,23 @@ export default function SettingsPage() {
         {isAdmin && (
           <Card
             sx={{
-              // 管理端靛蓝：取 Design.md admin-indigo 色阶最深两档
-              background: 'linear-gradient(135deg, #312e81 0%, #3730a3 100%)',
+              // 管理端靛蓝：取 Design.md admin-indigo 声明档位（deep → main）。
+              // 此前用的是 Tailwind indigo-900/800（#312e81/#3730a3），既不在
+              // Design.md 的声明色阶里，也违反「管理端配色只经 adminDarkTheme 表达」。
+              background: 'linear-gradient(135deg, #4338ca 0%, #4f46e5 100%)',
               color: '#ffffff',
               border: 0,
               borderRadius: 'var(--radius-depth-3)',
               // 管理端品牌浮层：靛蓝光晕而非中性分层
-              boxShadow: '0 8px 32px rgba(49, 46, 129, 0.25)',
+              boxShadow: '0 8px 32px rgba(67, 56, 202, 0.28)',
             }}
           >
             <CardContent sx={{ p: 2.5 }}>
               <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between">
                 <Box>
                   <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
-                    <AdminIcon color="warning" fontSize="small" />
+                    {/* 图标在靛蓝底上：#ed6c02 只有 3.67:1，改用 admin-indigo-light 档 */}
+                    <AdminIcon sx={{ color: '#c7d2fe', fontSize: 20 }} />
                     <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                       系统管理员权限
                     </Typography>

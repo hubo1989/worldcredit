@@ -171,7 +171,11 @@ export async function getCardDetail(cardId: string): Promise<CardDetail> {
   }
 
   const { data: billRows, error: billsError } = await query<Bill>(
-    'SELECT * FROM bills WHERE card_id = ? ORDER BY due_date DESC LIMIT 3',
+    // 手填金额优先：SQL 层直接归一化，避免下游各自合成时漏掉一处
+    `SELECT id, card_id, bill_month, statement_start, statement_end, statement_date,
+            COALESCE(bill_amount_override, bill_amount) AS bill_amount,
+            bill_amount_override, min_payment, due_date, status, created_at
+     FROM bills WHERE card_id = ? ORDER BY due_date DESC LIMIT 3`,
     [cardId]
   )
   if (billsError) throw new Error(billsError.message)

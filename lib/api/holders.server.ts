@@ -61,7 +61,11 @@ async function getUnpaidBillsByCards(cardIds: string[]): Promise<Record<string, 
   if (cardIds.length === 0) return {}
   const placeholders = cardIds.map(() => '?').join(',')
   const { data, error } = await query<Bill>(
-    `SELECT * FROM bills WHERE card_id IN (${placeholders}) AND status IN ('unpaid', 'partial', 'overdue')`,
+    // 手填金额优先：SQL 层归一化，避免「账单页显示 800、持卡人页显示 1200」
+    `SELECT id, card_id, bill_month, statement_start, statement_end, statement_date,
+            COALESCE(bill_amount_override, bill_amount) AS bill_amount,
+            bill_amount_override, min_payment, due_date, status, created_at
+     FROM bills WHERE card_id IN (${placeholders}) AND status IN ('unpaid', 'partial', 'overdue')`,
     cardIds
   )
   if (error) throw new Error(error.message)
@@ -308,7 +312,11 @@ export async function getHolderStatsPageData(holderId: string): Promise<StatsPag
   if (cardIds.length > 0) {
     const placeholders = cardIds.map(() => '?').join(',')
     const { data: bills, error: billError } = await query<Bill>(
-      `SELECT * FROM bills WHERE card_id IN (${placeholders})`, cardIds
+      // 手填金额优先：统计口径必须与账单页一致
+      `SELECT id, card_id, bill_month, statement_start, statement_end, statement_date,
+              COALESCE(bill_amount_override, bill_amount) AS bill_amount,
+              bill_amount_override, min_payment, due_date, status, created_at
+       FROM bills WHERE card_id IN (${placeholders})`, cardIds
     )
     if (billError) throw new Error(billError.message)
     allBills = (bills || []) as Bill[]

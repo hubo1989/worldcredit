@@ -5,17 +5,20 @@ import {
   Box, Typography, Paper, Button, TextField, InputAdornment,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   IconButton, Switch, Chip, Dialog, DialogTitle, DialogContent,
-  DialogActions, Grid, MenuItem, CircularProgress, Autocomplete, TablePagination
+  DialogActions, Grid, MenuItem, CircularProgress, Autocomplete, TablePagination,
+  Checkbox, Snackbar, Alert
 } from '@mui/material'
 import {
   Add as AddIcon,
   Search as SearchIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
-  Refresh as RefreshIcon
+  Refresh as RefreshIcon,
+  AutoAwesome as AiIcon
 } from '@mui/icons-material'
 import { getAdminPromos, createPromo, updatePromo, deletePromo, getAdminCardProducts } from '@/lib/api/admin'
 import { Promo, CardProduct } from '@/lib/types'
+import { suggestPromosFromWeb, type PromoSuggestion } from '@/lib/api/ai'
 
 /** 优惠列表行：promos 字段 + 关联卡产品联查字段 */
 type AdminPromoRow = Promo & {
@@ -36,6 +39,16 @@ export default function PromosPage() {
   const [submitting, setSubmitting] = useState(false)
   const [page, setPage] = useState(0)
   const [rowsPerPage, setRowsPerPage] = useState(10)
+  // AI 拉取活动：候选先复核再落库
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiBank, setAiBank] = useState('')
+  const [aiCardName, setAiCardName] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
+  const [aiRows, setAiRows] = useState<PromoSuggestion[]>([])
+  const [aiChecked, setAiChecked] = useState<boolean[]>([])
+  const [aiSaving, setAiSaving] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const fetchData = async () => {
     setLoading(true)
@@ -139,6 +152,77 @@ export default function PromosPage() {
     }
   }
 
+  /** 拉取 AI 候选。不写库——活动时效性强，先复核再落库。 */
+  const handleFetchSuggestions = async () => {
+    if (!aiBank.trim()) {
+      setAiError('请先填写银行名称')
+      return
+    }
+    setAiLoading(true)
+    setAiError(null)
+    setAiRows([])
+    setAiChecked([])
+    try {
+      const rows = await suggestPromosFromWeb({
+        bankName: aiBank.trim(),
+        cardName: aiCardName.trim() || null,
+        websiteUrl: null,
+      })
+      if (rows.length === 0) {
+        setAiError('未查到可用的活动信息，可换一个银行名称或稍后再试')
+      }
+      setAiRows(rows)
+      // 默认只勾选「官网页面能对上」的候选；模型记忆的留给人工判断
+      setAiChecked(rows.map(r => r.provenance === 'site'))
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'AI 获取失败')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  /** 把勾选的候选写入 promos。逐条创建并在结束时汇总成败。 */
+  const handleImportSuggestions = async () => {
+    const picked = aiRows.filter((_, i) => aiChecked[i])
+    if (picked.length === 0) {
+      setAiError('请先勾选要写入的活动')
+      return
+    }
+    setAiSaving(true)
+    let ok = 0
+    const failed: string[] = []
+    try {
+      for (const row of picked) {
+        try {
+          await createPromo({
+            bank_name: aiBank.trim(),
+            title: row.title,
+            description: row.description || undefined,
+            discount_type: row.discount_type || undefined,
+            start_date: row.start_date || undefined,
+            end_date: row.end_date || undefined,
+            conditions: row.conditions || undefined,
+            is_active: true,
+          } as Partial<Promo & { is_active: boolean }>)
+          ok++
+        } catch (err) {
+          failed.push(`${row.title}（${err instanceof Error ? err.message : '失败'}）`)
+        }
+      }
+      await fetchData()
+      setAiOpen(false)
+      setAiRows([])
+      setAiChecked([])
+      setNotice(
+        failed.length === 0
+          ? `已导入 ${ok} 条优惠活动`
+          : `已导入 ${ok} 条，${failed.length} 条失败：${failed.slice(0, 3).join('；')}`
+      )
+    } finally {
+      setAiSaving(false)
+    }
+  }
+
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
@@ -150,14 +234,24 @@ export default function PromosPage() {
             管理全平台银行优惠活动，支持设置满减、返现、折扣等活动细节
           </Typography>
         </Box>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenDialog()}
-          sx={{ bgcolor: '#818cf8', '&:hover': { bgcolor: '#4338ca' }, textTransform: 'none', borderRadius: 2, px: 3 }}
-        >
-          发布新活动
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button
+            variant="outlined"
+            startIcon={<AiIcon />}
+            onClick={() => { setAiOpen(true); setAiError(null); setAiRows([]); setAiChecked([]) }}
+            sx={{ color: '#c7d2fe', borderColor: 'rgba(199,210,254,0.4)', textTransform: 'none', borderRadius: 2, px: 3 }}
+          >
+            AI 获取活动
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => handleOpenDialog()}
+            sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, textTransform: 'none', borderRadius: 2, px: 3 }}
+          >
+            发布新活动
+          </Button>
+        </Box>
       </Box>
 
       {/* 搜索 */}
@@ -248,6 +342,123 @@ export default function PromosPage() {
         />
       </TableContainer>
 
+      {/* AI 获取活动：先复核再落库 */}
+      <Dialog open={aiOpen} onClose={() => !aiSaving && setAiOpen(false)} maxWidth="md" fullWidth PaperProps={{ sx: { bgcolor: '#1e2028', color: '#e4e6eb', borderRadius: 3, p: 1 } }}>
+        <DialogTitle sx={{ fontWeight: 700 }}>AI 获取活动</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ color: '#9ca3af', fontSize: 13, mb: 2 }}>
+            按银行（可选指定卡片）检索当前可查到的优惠活动。抓得到官网活动页时以页面正文为准，
+            标为「官网」；仅来自模型记忆的标为「待确认」。默认只勾选「官网」项，写入前请自行核对。
+          </Typography>
+          <Grid container spacing={2} sx={{ mb: 1 }}>
+            <Grid size={{ xs: 12, md: 5 }}>
+              <TextField
+                fullWidth size="small" label="银行名称" required value={aiBank}
+                onChange={e => setAiBank(e.target.value)}
+                InputLabelProps={{ style: { color: '#9ca3af' } }}
+                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' } }}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 5 }}>
+              <TextField
+                fullWidth size="small" label="卡片名称（可选）" value={aiCardName}
+                onChange={e => setAiCardName(e.target.value)}
+                InputLabelProps={{ style: { color: '#9ca3af' } }}
+                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' } }}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 2 }} sx={{ display: 'flex', alignItems: 'center' }}>
+              <Button
+                fullWidth variant="contained" onClick={handleFetchSuggestions}
+                disabled={aiLoading}
+                startIcon={aiLoading ? <CircularProgress size={16} color="inherit" /> : <AiIcon />}
+                sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, textTransform: 'none' }}
+              >
+                {aiLoading ? '获取中' : '获取'}
+              </Button>
+            </Grid>
+          </Grid>
+
+          {aiError && <Alert severity="warning" sx={{ mb: 2 }}>{aiError}</Alert>}
+
+          {aiRows.length > 0 && (
+            <TableContainer component={Paper} sx={{ bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell padding="checkbox" sx={{ color: '#9ca3af' }}>
+                      <Checkbox
+                        size="small"
+                        checked={aiChecked.length > 0 && aiChecked.every(Boolean)}
+                        indeterminate={aiChecked.some(Boolean) && !aiChecked.every(Boolean)}
+                        onChange={e => setAiChecked(aiRows.map(() => e.target.checked))}
+                        sx={{ color: '#6b7280', '&.Mui-checked': { color: 'primary.main' } }}
+                      />
+                    </TableCell>
+                    <TableCell sx={{ color: '#9ca3af' }}>活动名称</TableCell>
+                    <TableCell sx={{ color: '#9ca3af' }}>类型</TableCell>
+                    <TableCell sx={{ color: '#9ca3af' }}>有效期</TableCell>
+                    <TableCell sx={{ color: '#9ca3af' }}>依据</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {aiRows.map((row, i) => (
+                    <TableRow key={i}>
+                      <TableCell padding="checkbox">
+                        <Checkbox
+                          size="small"
+                          checked={aiChecked[i] || false}
+                          onChange={e => setAiChecked(aiChecked.map((v, j) => j === i ? e.target.checked : v))}
+                          sx={{ color: '#6b7280', '&.Mui-checked': { color: 'primary.main' } }}
+                        />
+                      </TableCell>
+                      <TableCell sx={{ color: '#e4e6eb', fontSize: 13 }}>
+                        {row.title}
+                        {row.description && (
+                          <Typography sx={{ color: '#9ca3af', fontSize: 12 }}>{row.description}</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell sx={{ color: '#e4e6eb', fontSize: 12 }}>{row.discount_type || '—'}</TableCell>
+                      <TableCell sx={{ color: '#9ca3af', fontSize: 12 }}>
+                        {row.start_date || '即日起'} 至 {row.end_date || '长期'}
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          size="small"
+                          label={row.provenance === 'site' ? '官网' : '待确认'}
+                          sx={{
+                            height: 18, fontSize: 11,
+                            bgcolor: row.provenance === 'site' ? 'rgba(74,222,128,0.15)' : 'rgba(251,191,36,0.15)',
+                            color: row.provenance === 'site' ? '#4ade80' : '#fbbf24',
+                          }}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ p: 3 }}>
+          <Button onClick={() => setAiOpen(false)} disabled={aiSaving} sx={{ color: '#9ca3af' }}>取消</Button>
+          <Button
+            onClick={handleImportSuggestions}
+            variant="contained"
+            disabled={aiSaving || aiRows.length === 0}
+            sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, px: 4, borderRadius: 2 }}
+          >
+            {aiSaving ? '写入中...' : `写入勾选 (${aiChecked.filter(Boolean).length})`}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Snackbar open={Boolean(notice)} autoHideDuration={6000} onClose={() => setNotice(null)}>
+        <Alert onClose={() => setNotice(null)} severity="success" variant="filled" sx={{ width: '100%' }}>
+          {notice}
+        </Alert>
+      </Snackbar>
+
       {/* 对话框 */}
       <Dialog open={dialogOpen} onClose={() => !submitting && setDialogOpen(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { bgcolor: '#1e2028', color: '#e4e6eb', borderRadius: 3, p: 1 } }}>
         <DialogTitle sx={{ fontWeight: 700 }}>{currentPromo?.id ? '编辑优惠活动' : '发布新优惠活动'}</DialogTitle>
@@ -294,7 +505,7 @@ export default function PromosPage() {
         </DialogContent>
         <DialogActions sx={{ p: 3 }}>
           <Button onClick={() => setDialogOpen(false)} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: '#818cf8', '&:hover': { bgcolor: '#4338ca' }, px: 4, borderRadius: 2 }}>确定</Button>
+          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, px: 4, borderRadius: 2 }}>确定</Button>
         </DialogActions>
       </Dialog>
     </Box>

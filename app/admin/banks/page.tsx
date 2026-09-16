@@ -5,7 +5,7 @@ import {
   Box, Typography, Paper, Button, TextField, InputAdornment,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TablePagination,
   IconButton, Switch, Dialog, DialogTitle, DialogContent,
-  DialogActions, Grid, CircularProgress, Autocomplete,
+  DialogActions, Grid, CircularProgress, Autocomplete, Tooltip,
   Snackbar, Alert, Avatar, Chip
 } from '@mui/material'
 import {
@@ -43,14 +43,23 @@ export default function BanksPage() {
   const banksMissingFields = (list: Bank[]) =>
     list.filter(b => !b.full_name || !b.customer_service_phone || !b.website_url)
 
+  // 单次「按真实内容补全」最多处理几家。
+  //
+  // 每家要调一次模型提名域名 + 最多抓 7 个页面（每个 10s 超时），实测平均 3–11s。
+  // 此前一次把 69 家全部串行跑完，整轮要几分钟，请求会在中途被掐断——于是
+  // 「点了没反应、什么都没变」。分批处理、每批立刻落库，才能有可见进展。
+  const ENRICH_BATCH_SIZE = 8
+
   const handleEnrich = async (targets: Bank[]) => {
     if (enriching || targets.length === 0) return
     setEnriching(true)
-    setEnrichProgress({ done: 0, total: targets.length })
+    // 分批：只跑前 N 家。跑完整列表会超时，而超时后前端既拿不到结果、库里也没写入。
+    const batch = targets.slice(0, ENRICH_BATCH_SIZE)
+    setEnrichProgress({ done: 0, total: batch.length })
     const acc: BankEnrichment[] = []
     try {
       // 串行：每次都打外网 + 调模型，并发会把第三方站点打急眼，也更容易触发限流
-      for (const bank of targets) {
+      for (const bank of batch) {
         try {
           acc.push(await enrichBankFromWeb({
             id: bank.id,
@@ -71,7 +80,7 @@ export default function BanksPage() {
             domainConsistent: false,
           })
         }
-        setEnrichProgress({ done: acc.length, total: targets.length })
+        setEnrichProgress({ done: acc.length, total: batch.length })
       }
       setEnrichRows(acc)
       setEnrichOpen(true)
@@ -96,10 +105,20 @@ export default function BanksPage() {
         await updateBank(row.id, patch)
         applied++
       }
+      // 先统计再清空 enrichRows（清空后这份数据就没了）
+      const skipped = enrichRows.filter(r => r.provenance.full_name !== 'site'
+        && r.provenance.customer_service_phone !== 'site'
+        && r.provenance.website_url !== 'site').length
       setEnrichOpen(false)
       setEnrichRows([])
-      await fetchData()
-      setNotice(`已写入 ${applied} 家银行（仅官网页面上直接读到的字段）`)
+      // 用 fetchData 返回的新列表算「还剩多少」，不能读闭包里的 banks —— 那是写入前的旧值。
+      const fresh = await fetchData()
+      // 说清「还剩多少家」，否则用户不知道要不要再点一次（这正是上次「什么都没变」的困惑来源）
+      const remaining = banksMissingFields(fresh ?? []).length
+      setNotice(
+        `已写入 ${applied} 家；本批 ${skipped} 家未从官网读到可写字段` +
+        (remaining > 0 ? `；仍有 ${remaining} 家缺字段，可再次点击继续` : '')
+      )
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : '写入失败')
     } finally {
@@ -113,6 +132,7 @@ export default function BanksPage() {
     try {
       const data = await getAdminBanks()
       setBanks(data || [])
+      return data || []
     } catch (error) {
       console.error('Failed to fetch banks:', error)
       setFetchError(error instanceof Error ? error.message : 'Unknown fetching error')
@@ -227,8 +247,8 @@ export default function BanksPage() {
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
           sx={{
-            bgcolor: '#818cf8',
-            '&:hover': { bgcolor: '#4338ca' },
+            bgcolor: 'primary.main',
+            '&:hover': { bgcolor: 'primary.dark' },
             textTransform: 'none',
             borderRadius: 2,
             px: 3
@@ -278,6 +298,11 @@ export default function BanksPage() {
             />
           </Grid>
           <Grid size={{ xs: 12, md: 4 }} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+            {/* 明确这是「一次一批」，否则点完只补了 8 家会被当成没生效 */}
+            <Tooltip
+              title={`每次最多补 ${ENRICH_BATCH_SIZE} 家（每家要抓官网，全部一起跑会超时）。补完可再次点击继续。`}
+              arrow
+            >
             <Button
               size="small"
               variant="outlined"
@@ -288,8 +313,9 @@ export default function BanksPage() {
             >
               {enriching
                 ? `补全中 ${enrichProgress.done}/${enrichProgress.total}`
-                : `按真实内容补全 (${banksMissingFields(filteredBanks).length})`}
+                : `按真实内容补全 (${Math.min(ENRICH_BATCH_SIZE, banksMissingFields(filteredBanks).length)}/${banksMissingFields(filteredBanks).length})`}
             </Button>
+            </Tooltip>
             <IconButton aria-label="刷新" onClick={fetchData} sx={{ color: '#9ca3af' }}>
               <RefreshIcon />
             </IconButton>
@@ -303,6 +329,7 @@ export default function BanksPage() {
             <TableRow>
               <TableCell sx={{ color: '#9ca3af', fontWeight: 600, width: 60 }}>图标</TableCell>
               <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>银行名称</TableCell>
+              <TableCell sx={{ color: '#9ca3af', fontWeight: 600, width: 100 }}>简称</TableCell>
               <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>国家</TableCell>
               <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>状态</TableCell>
               <TableCell align="right" sx={{ color: '#9ca3af', fontWeight: 600 }}>操作</TableCell>
@@ -311,13 +338,13 @@ export default function BanksPage() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={5} align="center" sx={{ py: 10 }}>
+                <TableCell colSpan={6} align="center" sx={{ py: 10 }}>
                   <CircularProgress size={24} sx={{ color: '#818cf8' }} />
                 </TableCell>
               </TableRow>
             ) : filteredBanks.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} align="center" sx={{ py: 10, color: '#9ca3af' }}>
+                <TableCell colSpan={6} align="center" sx={{ py: 10, color: '#9ca3af' }}>
                   {fetchError ? `加载失败: ${fetchError}` : '暂无银行数据'}
                 </TableCell>
               </TableRow>
@@ -334,6 +361,9 @@ export default function BanksPage() {
                     </Avatar>
                   </TableCell>
                   <TableCell sx={{ color: '#e4e6eb', fontWeight: 500 }}>{bank.name}</TableCell>
+                  <TableCell sx={{ color: bank.short_name ? '#e4e6eb' : '#6b7280', fontSize: 13 }}>
+                    {bank.short_name || '—'}
+                  </TableCell>
                   <TableCell sx={{ color: '#e4e6eb' }}>
                     {COUNTRIES.find(c => c.code === bank.country)?.label || bank.country}
                   </TableCell>
@@ -392,11 +422,23 @@ export default function BanksPage() {
             <Grid size={{ xs: 12 }}>
               <TextField
                 fullWidth
-                label="银行简称 (如 招商银行)"
+                label="银行名称 (如 招商银行)"
                 required
                 value={currentBank?.name || ''}
                 onChange={(e) => setCurrentBank({ ...currentBank, name: e.target.value })}
                 InputLabelProps={{ style: { color: '#9ca3af' } }}
+                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
+              />
+            </Grid>
+            <Grid size={{ xs: 12 }}>
+              <TextField
+                fullWidth
+                label="简称 (如 招行)"
+                value={currentBank?.short_name || ''}
+                onChange={(e) => setCurrentBank({ ...currentBank, short_name: e.target.value })}
+                helperText="用于列表窄栏与卡片标题"
+                InputLabelProps={{ style: { color: '#9ca3af' } }}
+                FormHelperTextProps={{ style: { color: '#6b7280' } }}
                 sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
               />
             </Grid>
@@ -466,7 +508,7 @@ export default function BanksPage() {
         </DialogContent>
         <DialogActions sx={{ p: 3 }}>
           <Button onClick={() => setDialogOpen(false)} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: '#818cf8', px: 4 }}>
+          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: 'primary.main', px: 4 }}>
             {submitting ? '保存中...' : '确定'}
           </Button>
         </DialogActions>
@@ -554,7 +596,7 @@ export default function BanksPage() {
         </DialogContent>
         <DialogActions sx={{ p: 3 }}>
           <Button onClick={() => setEnrichOpen(false)} disabled={submitting} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button onClick={handleApplyEnrichment} variant="contained" disabled={submitting} sx={{ bgcolor: '#818cf8', px: 4 }}>
+          <Button onClick={handleApplyEnrichment} variant="contained" disabled={submitting} sx={{ bgcolor: 'primary.main', px: 4 }}>
             {submitting ? '写入中...' : '写入已确认字段'}
           </Button>
         </DialogActions>

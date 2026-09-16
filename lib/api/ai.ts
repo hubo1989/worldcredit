@@ -11,3 +11,7 @@ export function aiComplete(...args: Parameters<typeof Server.aiComplete>) {
 export function enrichBankFromWeb(...args: Parameters<typeof Server.enrichBankFromWeb>) {
   return callRpc<typeof Server.enrichBankFromWeb>('ai', 'enrichBankFromWeb', ...args)
 }
+export function suggestPromosFromWeb(...args: Parameters<typeof Server.suggestPromosFromWeb>) {
+  return callRpc<typeof Server.suggestPromosFromWeb>('ai', 'suggestPromosFromWeb', ...args)
+}
+export type { PromoSuggestion } from './ai.server'

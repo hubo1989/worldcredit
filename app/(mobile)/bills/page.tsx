@@ -28,8 +28,19 @@ import { syncGmailLedgerToCardsAndBills } from '@/lib/api/sync-gmail'
 import { getHolders } from '@/lib/api/holders'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
+import { ManualBillAmountDialog } from '@/components/mobile/ManualBillAmountDialog'
+import { PayableList } from '@/components/mobile/PayableList'
+import { PayableForm } from '@/components/mobile/PayableForm'
+import {
+  getRecurringPayables, payRecurringPayable,
+  type PayableWithStatus,
+} from '@/lib/api/payables'
 import { format } from 'date-fns'
-import { formatCardTail, compareBillsListCards, pickDueReference, dueDistanceLabel, getEffectiveCardName } from '@/lib/utils'
+import {
+  formatCardTail, compareBillsListCards, pickDueReference, dueDistanceLabel, getEffectiveCardName,
+  canManuallySetBillAmount, hasManualBillAmount,
+  effectiveBillAmount,
+} from '@/lib/utils'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import {
   SyncIcon, BankIcon, UserIcon,
@@ -88,10 +99,12 @@ function CardSummaryRow({
   item,
   holderName,
   onOpenPayment,
+  onManualAmount,
 }: {
   item: CardWithBillsSummary
   holderName?: string
   onOpenPayment: (bill: BillDashboardItem) => void
+  onManualAmount: (item: CardWithBillsSummary) => void
 }) {
   const [historyOpen, setHistoryOpen] = useState(false)
   const product = item.card.card_product
@@ -111,6 +124,12 @@ function CardSummaryRow({
   const isCleared = item.status === 'unissued' || item.unpaidAmount <= 0
   const isOverdue = item.status === 'overdue'
 
+  // 账单日临近（不足 5 天）时允许手填金额，且手填值优先于一切导入来源。
+  // 已经手填过的账单始终保留「修改」入口，否则用户改一次就再也改不回来了。
+  const billingDay = item.card.override_billing_day ?? item.card.billing_day
+  const manualPinned = item.historyBills.some(hasManualBillAmount)
+  const canManual = manualPinned || canManuallySetBillAmount(billingDay)
+
   // 未结清时挑出最该关注的一张：已逾期取逾期最久的，否则取最近到期的。
   // 不能直接用 activeBill——它按到期日倒序排，一张卡挂着早期漏还的账单时
   // 会让「本期还款日」和「逾期 N 日」指向两张不同的账单。
@@ -128,19 +147,20 @@ function CardSummaryRow({
 
   if (isOverdue) {
     badgeBg = 'rgba(207, 46, 46, 0.12)'
-    badgeColor = 'var(--danger)'
+    // 徽章文字用 ink 档：语义本色压在自己 12% 的淡底上只有 4.16:1，不到 AA
+    badgeColor = 'var(--danger-ink)'
     badgeText = '逾期'
   } else if (item.status === 'partial') {
     badgeBg = 'rgba(217, 119, 6, 0.12)'
-    badgeColor = 'var(--warning)'
+    badgeColor = 'var(--warning-ink)'
     badgeText = '部分还款'
   } else if (item.status === 'unpaid') {
     badgeBg = 'var(--warning-soft)'
-    badgeColor = 'var(--warning)'
+    badgeColor = 'var(--warning-ink)'
     badgeText = '待还款'
   } else {
     badgeBg = 'rgba(22, 163, 74, 0.12)'
-    badgeColor = 'var(--success)'
+    badgeColor = 'var(--success-ink)'
     badgeText = item.historyBills.length > 0 ? '本期已结清' : '未出账单'
   }
 
@@ -157,17 +177,16 @@ function CardSummaryRow({
         '&:hover': { boxShadow: 'var(--shadow-e3)' },
       }}
     >
-      {/* 头部：卡名 + 银行/持卡人标签 + 状态 */}
-      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} sx={{ mb: 1.25 }}>
+      {/* 头部：持卡人（主）+ 银行/卡名·尾号（次）+ 状态
+          信息主次：先回答「这是谁的、哪家银行」，再回答「哪张卡」。
+          卡片名称本身多半只是卡产品档位（「普卡」「The Platinum Card」），
+          同一持卡人在同一家银行常常持有多张同名卡；把卡名放主行，等于让
+          人先读到最具区分度最低的一栏，而把「归属」挤成小号 chip。 */}
+      <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={1} sx={{ mb: 1.25 }}>
         <Box sx={{ minWidth: 0, flex: 1 }}>
-          {/* 卡片标题：章节档 19/24 · 半粗体 · -0.6px */}
-          {/*
-            卡尾号必须留在标题行且永不被截断：同一款卡办了两张时
-            （如「尊然白金信用卡（精粹版）」尾号 2016 与 8909），
-            卡名完全相同，尾号是唯一能区分它们的识别信息。
-            因此卡名负责省略，尾号单独一个 flexShrink:0 元素。
-          */}
-          <Stack direction="row" alignItems="baseline" spacing={0.5} sx={{ minWidth: 0 }}>
+          {/* 主行：持卡人（章节档 19/24 · 半粗体 · -0.6px）。无持卡人时退化为银行。 */}
+          <Stack direction="row" alignItems="center" spacing={0.5} sx={{ minWidth: 0 }}>
+            <UserIcon size={16} style={{ color: 'var(--strong)', flexShrink: 0 }} />
             <Typography
               sx={{
                 fontSize: 'var(--type-section-size)',
@@ -181,49 +200,51 @@ function CardSummaryRow({
               }}
               noWrap
             >
-              {displayName}
+              {holderName || bankName}
             </Typography>
-            {tailDigits && (
-              <Typography
-                component="span"
-                sx={{
-                  flexShrink: 0,
-                  whiteSpace: 'nowrap',
-                  fontSize: 'var(--type-body-size)',
-                  lineHeight: 'var(--type-body-line)',
-                  letterSpacing: 'var(--type-body-tracking)',
-                  fontWeight: 400,
-                  color: 'var(--muted)',
-                }}
-              >
-                ····{tailDigits}
-              </Typography>
-            )}
           </Stack>
-          <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mt: 0.5, flexWrap: 'wrap', rowGap: 0.5 }}>
-            <Box
-              component="span"
-              sx={{
-                display: 'inline-flex', alignItems: 'center', gap: 0.35,
-                fontSize: 14.5, lineHeight: '18px', letterSpacing: '0.3px', fontWeight: 600, color: 'var(--muted)',
-                bgcolor: 'rgba(30,58,138,0.08)', borderRadius: 'var(--radius-pill)', px: 0.85, py: 0.2,
-              }}
-            >
-              <BankIcon size={13} style={{ color: 'var(--strong)' }} />
-              {bankName}
-            </Box>
+          {/* 次行：银行 chip +「卡名 ····尾号」。
+              尾号必须与卡名同排且永不被截断：同一款卡办了两张时尾号是唯一
+              能区分它们的识别信息，因此卡名负责省略、尾号单独 flexShrink:0。
+              主行已是持卡人时才显示银行 chip；否则与主行重复。 */}
+          <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mt: 0.5, minWidth: 0 }}>
             {holderName && (
               <Box
                 component="span"
                 sx={{
-                  display: 'inline-flex', alignItems: 'center', gap: 0.35,
+                  display: 'inline-flex', alignItems: 'center', gap: 0.35, flexShrink: 0,
                   fontSize: 14.5, lineHeight: '18px', letterSpacing: '0.3px', fontWeight: 600, color: 'var(--muted)',
-                  bgcolor: 'rgba(122,173,255,0.14)', borderRadius: 'var(--radius-pill)', px: 0.85, py: 0.2,
+                  bgcolor: 'rgba(30,58,138,0.08)', borderRadius: 'var(--radius-pill)', px: 0.85, py: 0.2,
                 }}
               >
-                <UserIcon size={13} style={{ color: 'var(--strong)' }} />
-                {holderName}
+                <BankIcon size={13} style={{ color: 'var(--strong)' }} />
+                {bankName}
               </Box>
+            )}
+            {displayName && (
+              <Typography
+                component="span"
+                sx={{
+                  minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
+                  fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)',
+                  letterSpacing: 'var(--type-body-tracking)', fontWeight: 400, color: 'var(--muted)',
+                }}
+                noWrap
+              >
+                {displayName}
+              </Typography>
+            )}
+            {tailDigits && (
+              <Typography
+                component="span"
+                sx={{
+                  flexShrink: 0, whiteSpace: 'nowrap',
+                  fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)',
+                  letterSpacing: 'var(--type-body-tracking)', fontWeight: 400, color: 'var(--muted)',
+                }}
+              >
+                ····{tailDigits}
+              </Typography>
             )}
           </Stack>
         </Box>
@@ -250,9 +271,32 @@ function CardSummaryRow({
       {/* 金额与主要操作 */}
       <Stack direction="row" alignItems="flex-end" justifyContent="space-between" sx={{ mb: 1.5 }}>
         <Box sx={{ minWidth: 0 }}>
-          <Typography className="type-label">
-            {isCleared ? '本期待还' : '当前待还金额'}
-          </Typography>
+          <Stack direction="row" spacing={0.75} alignItems="center">
+            <Typography className="type-label">
+              {isCleared ? '本期待还' : '当前待还金额'}
+            </Typography>
+            {/* 手填金额入口：账单日临近（不足 5 天）时出现；已手填过的账单始终
+                保留入口，否则改一次就再也改不回来了。金额旁而非账单日旁——
+                用户要改的是金额，入口就该贴在它旁边。 */}
+            {canManual && (
+              <Box
+                component="button"
+                type="button"
+                onClick={() => onManualAmount(item)}
+                sx={{
+                  display: 'inline-flex', alignItems: 'center', gap: 0.3,
+                  bgcolor: 'transparent', border: 0, p: 0, cursor: 'pointer',
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 13, lineHeight: '16px', fontWeight: 600,
+                  color: 'var(--strong)',
+                  textDecoration: 'underline', textUnderlineOffset: '2px',
+                  '&:focus-visible': { outline: '2px solid var(--navy-600)', outlineOffset: 2, borderRadius: 'var(--radius-xs)' },
+                }}
+              >
+                {manualPinned ? '修改金额' : '填写金额'}
+              </Box>
+            )}
+          </Stack>
           <Typography
             className="num-tabular"
             sx={{
@@ -350,7 +394,7 @@ function CardSummaryRow({
             alignItems: 'center',
             gap: 0.5,
             whiteSpace: 'nowrap',
-            color: isOverdue ? 'var(--danger)' : dueRef?.days === 0 ? 'var(--warning)' : 'var(--gold-700)',
+            color: isOverdue ? 'var(--danger-ink)' : dueRef?.days === 0 ? 'var(--warning-ink)' : 'var(--gold-700)',
             fontWeight: 600,
             letterSpacing: '-0.6px',
           }}
@@ -442,7 +486,7 @@ function CardSummaryRow({
                           py: 0.15,
                           borderRadius: 'var(--radius-pill)',
                           bgcolor: bPaid ? 'rgba(22, 163, 74, 0.10)' : 'rgba(207, 46, 46, 0.10)',
-                          color: bPaid ? 'var(--success)' : 'var(--danger)',
+                          color: bPaid ? 'var(--success-ink)' : 'var(--danger-ink)',
                         }}
                       >
                         {bPaid ? '已结清' : '未结清'}
@@ -474,6 +518,12 @@ export default function BillsPage() {
   const [paymentOpen, setPaymentOpen] = useState(false)
   const [selectedBill, setSelectedBill] = useState<BillDashboardItem | null>(null)
   const [billFormOpen, setBillFormOpen] = useState(false)
+  // 手填金额：只针对「卡」，账单可能还没生成，因此传的是 card，不是 bill
+  const [manualTarget, setManualTarget] = useState<CardWithBillsSummary | null>(null)
+  // 固定支出（房租/贷款等按月应付）
+  const [payables, setPayables] = useState<PayableWithStatus[]>([])
+  const [payableFormOpen, setPayableFormOpen] = useState(false)
+  const [editingPayable, setEditingPayable] = useState<PayableWithStatus | null>(null)
 
   const [celebrationNotice, setCelebrationNotice] = useState<{ open: boolean; message: string }>({
     open: false,
@@ -515,6 +565,13 @@ export default function BillsPage() {
       const map: Record<string, string> = {}
       for (const h of holders) map[h.id] = h.name
       setHolderMap(map)
+      // 固定支出单独拉取：取不到也不该让整页失败（与汇率同样的降级策略）
+      try {
+        setPayables(await getRecurringPayables(user.id))
+      } catch (payableErr) {
+        console.error(payableErr)
+        setPayables([])
+      }
     } catch (err) {
       console.error(err)
       setLoadError(err instanceof Error ? err.message : '加载账单与卡片失败')
@@ -722,6 +779,29 @@ export default function BillsPage() {
     setPaymentOpen(true)
   }
 
+  /** 手填对话框的预填金额：优先已手填的那期，否则用当前待还对应的账单。 */
+  const manualAmountOf = (item: CardWithBillsSummary): number => {
+    const pinned = item.historyBills.find(hasManualBillAmount)
+    if (pinned) return effectiveBillAmount(pinned)
+    const ref = pickDueReference(item.historyBills.filter(b => b.computed_status !== 'paid'))
+    const bill = ref?.bill ?? item.activeBill
+    return bill ? effectiveBillAmount(bill) : 0
+  }
+
+  /** 登记固定支出本期付款。账期由服务端决定，客户端只传金额。 */
+  const handlePayPayable = async (payable: PayableWithStatus) => {
+    try {
+      await payRecurringPayable(payable.id, payable.amount)
+      setCelebrationNotice({
+        open: true,
+        message: `🎉 已登记「${payable.name}」本期付款 ${currencySymbol(payable.currency)}${payable.amount.toLocaleString()}`,
+      })
+      await loadData()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '登记失败，请重试')
+    }
+  }
+
   const unpaidCount = useMemo(() => cardsSummary.filter(c => c.unpaidAmount > 0).length, [cardsSummary])
   const clearedCount = useMemo(() => cardsSummary.filter(c => c.unpaidAmount <= 0).length, [cardsSummary])
 
@@ -804,9 +884,9 @@ export default function BillsPage() {
           }}
         >
           <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
-            <WarningIcon sx={{ color: 'var(--danger)', fontSize: 20, flexShrink: 0 }} />
+            <WarningIcon sx={{ color: 'var(--danger-ink)', fontSize: 20, flexShrink: 0 }} />
             <Box sx={{ minWidth: 0, flex: 1 }}>
-              <Typography sx={{ fontSize: 14.5, lineHeight: '18px', letterSpacing: '0.3px', fontWeight: 600, color: 'var(--danger)' }} noWrap>
+              <Typography sx={{ fontSize: 14.5, lineHeight: '18px', letterSpacing: '0.3px', fontWeight: 600, color: 'var(--danger-ink)' }} noWrap>
                 存在 {allOverdueBills.length} 笔历史逾期账单未结清
               </Typography>
               <Typography className="type-label" sx={{ whiteSpace: 'nowrap' }}>
@@ -950,7 +1030,7 @@ export default function BillsPage() {
                 sx={
                   unpaidCount > 0 && viewFilter !== 'unpaid'
                     ? {
-                        color: 'var(--warning)',
+                        color: 'var(--warning-ink)',
                         boxShadow:
                           '0 1px 2px rgba(237,108,2,0.12), 0 3px 8px rgba(237,108,2,0.16)',
                       }
@@ -1034,6 +1114,17 @@ export default function BillsPage() {
         </Box>
       )}
 
+      {/* 固定支出（房租/贷款等）。独立于卡账渲染：没有卡片时也应该能添加，
+          否则「一张卡都没有」的用户会被空状态挡住、看不到这个入口。 */}
+      {!loading && (
+        <PayableList
+          payables={payables}
+          onAdd={() => { setEditingPayable(null); setPayableFormOpen(true) }}
+          onEdit={p => { setEditingPayable(p); setPayableFormOpen(true) }}
+          onPay={handlePayPayable}
+        />
+      )}
+
       {loading ? (
         <WcSkeleton height={140} count={3} />
       ) : sortedCards.length === 0 ? (
@@ -1051,6 +1142,7 @@ export default function BillsPage() {
               item={item}
               holderName={holderMap[item.holder_id]}
               onOpenPayment={openPaymentForBill}
+              onManualAmount={setManualTarget}
             />
           ))}
         </Stack>
@@ -1108,6 +1200,7 @@ export default function BillsPage() {
                       item={item}
                       holderName={holderMap[item.holder_id]}
                       onOpenPayment={openPaymentForBill}
+                      onManualAmount={setManualTarget}
                     />
                   ))}
                 </Stack>
@@ -1157,6 +1250,26 @@ export default function BillsPage() {
         open={billFormOpen}
         onClose={() => setBillFormOpen(false)}
         onSuccess={loadData}
+      />
+
+      {/* 手填账单金额：金额优先级高于一切导入来源 */}
+      <ManualBillAmountDialog
+        open={manualTarget !== null}
+        onClose={() => setManualTarget(null)}
+        onSuccess={loadData}
+        cardId={manualTarget?.card.id ?? null}
+        cardLabel={`${getEffectiveCardName(manualTarget?.card, manualTarget?.card.card_product)} ${formatCardTail(manualTarget?.card.card_number_last4) ? `····${formatCardTail(manualTarget?.card.card_number_last4)}` : ''}`.trim()}
+        currency={manualTarget?.card.card_product?.currency || 'CNY'}
+        currentAmount={manualTarget ? manualAmountOf(manualTarget) : 0}
+        isPinned={!!manualTarget?.historyBills.some(hasManualBillAmount)}
+      />
+
+      {/* 固定支出新增/编辑 */}
+      <PayableForm
+        open={payableFormOpen}
+        onClose={() => setPayableFormOpen(false)}
+        onSuccess={loadData}
+        existing={editingPayable}
       />
 
       {/* 一键全部结清弹窗 */}

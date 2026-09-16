@@ -214,6 +214,155 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 
 验证边界（尚待真实邮件）：部署后 `email_parse_logs` 最新记录仍是 09-14 09:18，即**尚未有新邮件经过修复版**。修复后的归属与幂等行为已由 65 个用例覆盖，但生产端到端仍需下一封真实转发包落库后才能确认；观察方式 `npx wrangler tail worldcredit-email-worker --config email-worker/wrangler.toml`。
 
+## Phase 10：自定义域名下 Google 登录 400 redirect_uri_mismatch ✅（2026-09-15）
+
+### 现象与根因
+
+- `https://app.all-bill.com/login` 点 Google 登录报 `Error 400: redirect_uri_mismatch`
+- 根因在 Google 侧：OAuth 客户端只登记了 `https://worldcredit.hubo1989.workers.dev/api/auth/google/callback`（9/11 接 Google 登录时那个域名），自定义域名上线后未登记
+- 注意该报错发生在**进入本应用之前**，服务端日志看不到任何线索，因此不能靠应用日志排查
+
+### 代码修复：回调域名固定为 APP_ORIGIN
+
+- 新增 `lib/auth-origin.ts`：`resolveAuthOrigin()` / `googleRedirectUri()`
+  - 本机开发（`localhost` / `127.0.0.1` / `*.localhost`）：用请求自身 origin，本地调 Google 不需要生产域名参与
+  - 其余情况：用 `APP_ORIGIN`（`wrangler.jsonc` 的 vars，本次设为 `https://app.all-bill.com`）
+  - `APP_ORIGIN` 未配置或非法（非 http/https、空值）时退回请求 origin，并留 error/warn 日志，避免漏配一个变量就打挂登录
+  - 带路径/尾斜杠的写法一律归一化为 origin（防止出现 `//api/...` 这类又会 mismatch 的地址）
+- `start` 与 `callback` 共用同一个 `googleRedirectUri()`：授权请求与换取 token 的 `redirect_uri` 必须逐字符一致，分开写迟早会漂
+- `callback` 的所有回跳（成功进 `/dashboard`、各类 `?error=` 失败回跳）统一落在规范域名上；否则从 workers.dev 进来的回调会把 `wc_user` cookie 种在 workers.dev，再跳 `/dashboard` 时反而没有登录态
+- `worker/index.ts` 的 `WorkerEnv` 与 `env.d.ts` 补 `APP_ORIGIN` 类型
+
+### 验证
+
+- 本地：`tsc --noEmit` 0 错误、`eslint --max-warnings=0` 通过、vitest **203 passed**（新增 `lib/__tests__/auth-origin.test.ts` 10 例）、`vite build` 成功
+- 单测覆盖：自定义域名与 workers.dev 都归一化到 APP_ORIGIN、localhost 回退、未配置/非法值回退、尾斜杠与带路径归一化、绑定优先于 `process.env`、两个路由不得再出现 `url.origin`
+- `vite dev` 实测（`--host 127.0.0.1` + `Host` 头覆盖）：`Host: worldcredit.hubo1989.workers.dev` 与 `Host: app.all-bill.com` 均生成 `https://app.all-bill.com/api/auth/google/callback`；`Host: 127.0.0.1` 生成本地回调
+- Google 侧探针（对照实验，同一探针在未登记域名上必须复现 mismatch）：`bogus.example.com` mismatch、`app.all-bill.com` **仍 mismatch**、`worldcredit.hubo1989.workers.dev` 正常返回登录页 → 探针有效，且证明 Google Console **尚未**登记自定义域名（该步需人工操作）
+
+### 待人工完成（未做，故 Google 登录在本轮仍不可用）
+
+1. Google Cloud Console → Credentials → 该 OAuth 客户端「已获授权的重定向 URI」新增 `https://app.all-bill.com/api/auth/google/callback`，「已获授权的 JavaScript 来源」补 `https://app.all-bill.com`
+2. 若同意屏幕仍是 Testing，仅 Test users 可登录；对外可用需切 In production
+3. 换域名/再加域名时需同步改 `wrangler.jsonc` 的 `APP_ORIGIN` 与 Google Console，两处必须一致
+
+### 本轮未验证
+
+- 真实 Google 授权端到端（Console 未登记新回调，见下）
+
+### 部署与线上验证 ✅（2026-09-15）
+
+- `npx vite build && npx wrangler deploy --config dist/server/wrangler.json` 成功
+- **线上版本 `da6e002c-ed2a-4118-9a0f-d53f2bd2df23`，部署自分支 `codex/fixed-oauth-origin` 的 commit `c729f29`**
+  - 回滚点：改动前的生产版本 `45f99cf0-d326-449d-90f1-356c7ec2c870`（Phase 9 部署）→ `npx wrangler rollback`
+  - 注意 `main` 仍是 `277517b`（PR #18 未合），本次是分支预览部署；`c729f29` 之后的提交若只改文档/测试，生产代码内容与分支 HEAD 一致
+- 绑定确认：`env.APP_ORIGIN ("https://app.all-bill.com")` 已随部署生效；D1/R2/Images/Assets/Cron 均保留
+- 线上冒烟（`https://app.all-bill.com`）：`/login` 200、`/dashboard` 200、`/api/push/public-key` 200、未登录 RPC POST **401**、伪造未签名 cookie 返回 `user:null`（验签仍生效）、错误凭据登录 **401**、`/api/sql-proxy` 与 `/api/db-proxy` 均 **404**（旧桥保持删除）
+- OAuth 起始跳转：自定义域名与旧 workers.dev 入口都生成 `redirect_uri=https://app.all-bill.com/api/auth/google/callback`（workers.dev 入口现在也归一化到规范域名）
+
+### ⚠️ 本次部署对 app.all-bill.com 并未修复登录
+
+部署前后，`https://app.all-bill.com/api/auth/google/start` 生成的 `redirect_uri` **完全相同**（都是 `https://app.all-bill.com/api/auth/google/callback`）——因为该路径下 `url.origin` 本来就等于 `APP_ORIGIN`。所以本次部署改变的是**入口无关性**：
+
+- 从 `worldcredit.hubo1989.workers.dev` 进入时，回调不再落到 workers.dev（此前会把 `wc_user` cookie 种在那里，再跳 `/dashboard` 反而没有登录态），而是统一拉到规范域名，即「只需在 Google Console 登记一个回调地址」
+- 前面加代理/CDN 导致 `request.url` 变形时，回调地址不再随之漂移
+
+`app.all-bill.com` 恢复登录的唯一前置条件仍是人工在 Google Console 登记 `https://app.all-bill.com/api/auth/google/callback`（部署后探针复测仍为 mismatch=3）。
+
+### Google 登录安全加固：state 校验 + ID token 验签 ✅（2026-09-16）
+
+原实现有两处信任边界缺陷（Phase 10 首次引入时就存在，非后续回归），本次一并修掉：
+
+**1. OAuth `state` 曾是摆设**
+
+- 原实现：`start` 生成 `crypto.randomUUID()` 后直接丢弃，`callback` 从不读取或校验
+- 风险：login CSRF / 会话固定。攻击者可先自行走一遍授权拿到 `(code, state)`，再把该回调地址喂给受害者，受害者的会话就变成攻击者的 Google 账号
+- 修法（新增 `lib/oauth-state.ts`）：`state` 随下发写进 HttpOnly 签名 cookie（`wc_oauth_state`），且同时作为 **ID token 的 nonce**（start 额外下发 `nonce=state`）
+  - 签名而非只靠 HttpOnly：兄弟子域可以给父域种 cookie（cookie tossing），不签名就能被提前固定
+  - 10 分钟有效期；校验失败时回写 `Max-Age=0` 清 cookie，使每个 `start` 只能对应一次成功回调
+  - 仍不做的：服务端存储。真正的「一次性」由 cookie 失效 + Google 授权码本身单次可用共同保证
+
+**2. ID token 只解码不验签**
+
+- 原实现：`JSON.parse(atob(payloadB64))` —— 签名完全不看。任何能构造自签 JWT 的人都能声明任意 email（**含白名单里的管理员邮箱**）直接登入，等于绕过 Phase 8 全部权限收紧
+- 修法（新增 `lib/google-id-token.ts`）：按 Google JWKS（`https://www.googleapis.com/oauth2/v3/certs`）做 RS256 验签，并核对 `iss` / `aud` / `exp` / `iat` / `nonce` / `email_verified`
+  - 只接受 `alg=RS256`（放行 `none` 或 HS* 即等于允许自签）
+  - `kid` 未命中时强制刷新一次 JWKS（覆盖 Google 轮换密钥）
+  - JWKS 缓存挂在 `globalThis`（module 级变量会被 worker 入口与 SSR bundle 各存一份，与 `lib/db/client` 的 `setDb` 同理）；尊重 `Cache-Control: max-age`，JWKS 不可用时退回旧缓存，完全拿不到则**拒绝**而非放行
+  - `email_verified !== true` 一律拒绝（未验证邮箱可能是他人地址，拿去建用户等于让攻击者占据该账号）
+- 新增 `lib/hmac.ts`（从 `lib/session.ts` 抽出 HMAC 原语，供 state cookie 复用同一 `SESSION_SECRET`）。**session cookie 线格式刻意未动**：现网 cookie 有 7 天有效期，改封装又会把全部用户登出一次
+- 新增 `lib/base64url.ts` / `lib/cookies.ts` 供上述模块共享
+
+**3. state cookie 不跨父域 → 非规范入口改为转交**
+
+- state 存 HttpOnly cookie，而 cookie 不跨父域。若从 workers.dev 发起授权，浏览器把 state cookie 存在 workers.dev，回调却固定在 `APP_ORIGIN` → 校验必然失败
+- 因此 `start` 现在检测到入口非规范域名时，直接 302 转交到 `APP_ORIGIN` 再发起授权（比继续依赖「Cookie 域 = 回调域」更稳）
+
+**验证**
+
+- 本地：`tsc --noEmit` 0 错误、`eslint --max-warnings=0` 通过、vitest **227 passed**（新增 `oauth-state` 9 例、`google-id-token` 14 例、auth-origin +1 例）、`vite build` 成功
+- ID token 用例真的用 RS256 生成密钥对签名：正例用「JWKS 里发布的公钥」签、反例用攻击者自己的密钥签，从而证明拒绝来自验签本身而非字段缺失侥幸。覆盖自签/`alg=none`/未知 kid/换 aud/伪造 iss/过期/超龄 iat/nonce 不符/邮箱未验证/JWKS 不可用/密钥轮换
+- 用真实 Google JWKS 验证过 `importKey` 参数（2 个 RS256 `sig` key 均导入成功、垃圾签名返回 false），排除「mock key 结构不真实」的可能
+- `vite dev` 实测四条链路：start 下发签名 state cookie 且 `nonce == state`；错 state / 缺 state 均 302 到 `login?error=google_state_invalid` 并清除 cookie；原 state 在失败一次后不能再使用；`Host: workers.dev` 的 start 302 转交 `https://app.all-bill.com/api/auth/google/start`
+- 登录页补 `google_state_invalid` / `google_id_token_invalid` 两条中文提示
+
+### 仍存的已知项（本次未修）
+
+- Phase 10 遗留的 `callback` 逻辑（查/建用户、签发 session）覆盖线上主路径，本轮以单测 + dev 链路验证，**尚未在本机真机走一次完整 Google 授权**（Console 已登记，具备条件）
+
+## Phase 11：四项界面反馈（颜色审计、卡片信息层级、手填金额、固定支出）✅（2026-09-16）
+
+### 1. 全站颜色审计（针对「系统管理员权限」卡片提出）
+
+审计发现的问题都是可测量的缺陷，不是审美分歧：
+
+- **P0 暗色世界用亮色 token**：`app/admin/page.tsx` 硬编码 `#030059` / `#636363` 落在 `#181a24` 上，实测 1.06:1 与 2.88:1 —— 标题几乎不可见。同页模块卡与 `StatCard` 也是「暗色世界里放白卡 + 亮色文字」。改为 `text.primary` / `text.secondary` / `background.paper`。
+- **P0 状态徽章彩色文字全部不达 AA**：语义本色压在自己 10~14% 的淡底上只有 2.66~4.18:1（`--success` 2.89、`--warning` 2.66、`--danger` 4.16、`--info` 4.49）。新增 `--success-ink/--warning-ink/--danger-ink/--info-ink` 四档文字色，徽章与正文一律下沉到 ink 档。
+- **语义色两套来源**：`globals.css` 另存 `#16A34A/#CF2E2E/#2563EB`，与 `lib/theme.ts` / Design.md 的 `#2e7d32/#d32f2f/#0277bd` 不是同一组。已对齐（`--warn` 作为深底琥珀保留，白底警示文字改走 `--warning-ink`）。
+- **P1 填充色误用**：`#818cf8`（admin-indigo 的**暗底文字/图标档**）被当按钮填充底，白字仅 2.98:1；11 处改为 `primary.main`（6.29:1）。
+- **P1 其他**：`gmail-ledger` 6 处把 legacy 黄 `#FCB900` 当警示文字（白底 1.74:1）；`dashboard` 白卡金额用 `--gold-500`（2.42:1，连 3:1 大字号门槛都不到）改 `--gold-700`；`settings` 管理员卡从 Tailwind indigo-900/800 收敛到声明的 `admin-indigo-deep → main`。
+- 新增 `lib/__tests__/color-contrast.test.ts`（17 例）：把「算得出」的对比度固化成断言（含 WCAG 计算函数），并锁住「语义本色压淡底确实不达 AA」这一前提——若哪天淡底变浅使该前提不成立，测试会提醒可以简化。
+
+### 2. 账单卡片信息层级：持卡人/银行优先于卡名
+
+- 原布局把卡产品名放主行（19/24 半粗体），持卡人与银行压成小 chip。同一持卡人在同一家银行常持有多张同名卡（如多张「普卡」），卡名区分度最低却最抢眼。
+- 改为：主行 = 持卡人（无持卡人时退化银行）；次行 = 银行 chip +「卡名 ····尾号」。尾号仍与卡名同排且不截断（同款两张卡时尾号是唯一识别信息）。
+
+### 3. 手填账单金额，优先级高于一切导入来源
+
+- 新增 `migrations/d1/0008_bills_amount_override.sql`：`bills.bill_amount_override`。手填值单独存列，**导入永远只写 `bill_amount`**，两者都保留 ⇒ 撤销手填可回落到最新导入值，也不会出现「导入时猜是不是人工填的」这类在某条路径上必失效的判断。
+- `lib/utils.ts`：`effectiveBillAmount` / `hasManualBillAmount` / `canManuallySetBillAmount`（账单日不足 5 天可填，与账单页排序同为 `daysUntilNextBilling` 口径）。
+- **读边界统一归一化**，避免 20+ 个读取点各自合成时漏掉一处：`bills.server` 映射层归一化，`cards.server` / `holders.server` / `analytics.server` / `worker/cron.ts` 在 SQL 层 `COALESCE(bill_amount_override, bill_amount)`。
+- 「生效金额」而不是「原始金额」参与状态判定、剩余应还与还款上限校验（否则屏幕上 800、拒绝理由却按 1200）。
+- 新增 `setBillAmountOverride` / `setCardManualBillAmount`（后者在账单尚未生成时先建当期再钉住），RPC 走 `guardBill` / `guardCard`；新增 `components/mobile/ManualBillAmountDialog.tsx`，入口贴在金额旁。
+- 新用户 `bill_amount_override` 恒为 NULL，导入行为与之前一致（无迁移风险）。
+
+### 4. 固定支出：手动添加房租、贷款等周期账单
+
+- 新增 `migrations/d1/0009_recurring_payables.sql`：`recurring_payables` + `recurring_payable_payments`。
+  - **刻意不复用 `credit_cards`**：`bills.card_id` 是 NOT NULL 外键，房租没有卡；家庭财务审计明确要求「不得为了复用现有表，把房租也伪装成信用卡产品」，否则会污染卡数/额度/免息期等一切口径。
+  - 账期按「应付日所在月」固定、不滚动：房租 15 号到期，16 号仍属本月（只是逾期），否则「本月该付没付」会被直接抹掉。
+  - 还款按 `(payable_id, period)` 唯一 ⇒ 重复登记天然幂等；`period` 由服务端按当天决定，客户端传账期就等于可以往任意月份记账。
+- 新增 `lib/api/payables.server.ts` / `payables.ts` / `payables.shared.ts`（纯标签函数放 `.shared`，避免把 D1 依赖带进浏览器包）、`components/mobile/PayableList.tsx` / `PayableForm.tsx`，账单页独立分节展示，**没有卡片时也能添加**。
+- 成员隔离：按 `created_by` 判定（`assertPayableAccess`），`createRecurringPayable` 的 `created_by` 由会话覆盖。
+- 本轮只做「每月固定一笔」最小闭环；期表拆分、提前还款重排、押金结算留给审计计划的 W15–W19。
+
+### 验证
+
+- 本地：`tsc --noEmit` 0 错误、`eslint --max-warnings=0` 通过、vitest **284 passed**（新增 color-contrast 17、bill-amount-override 22、recurring-payables 13）、`vite build` 成功
+- 迁移在完整 sqlite 链上冒烟：0008/0009 可重复执行；`UNIQUE(payable_id, period)` 与 `CHECK(category IN ...)` 实测生效
+- `vite dev` 真实链路（注册→登录→RPC）：
+  - 建固定支出时 `created_by` 伪装成 `attacker` → 落库为会话用户（身份绑定生效）
+  - 登记付款后 `status=paid`；重复登记返回「本期已登记还款」；**另一账号看不到、也删不掉**（403）
+  - 手填 800 → 导入写入 1500 → 读取**仍为 800**（导入落 `bill_amount`、手填落 `override`，两者并存）；撤销手填后回落 1500
+  - 新 RPC 未登录 401、未知函数 404（先鉴权再查 registry，避免端点枚举）
+- 探针数据与 dev server 已清理
+
+### 本轮未验证
+
+- 生产 D1 尚未执行 0008/0009（未部署）；Google OAuth 加固与本次改动均未上线
+- 未做真机视觉回归：颜色改动含 P0 级可读性修复（`/admin` 标题、全部状态徽章），建议部署后实际看一眼
+
 ## 更新后的下一步
 
 1. **登录态真机回归**：本轮未用真实账号做 Phase 6 式 17 路由 Chrome 爬测；登录走一遍核心页面，并在浏览器授权通知后调用 `POST /api/push/test` 验证端到端推送（cron `0 9 * * *` 定时推送可用 `wrangler tail` 观察）

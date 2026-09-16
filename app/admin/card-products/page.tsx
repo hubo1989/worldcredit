@@ -5,7 +5,8 @@ import {
   Box, Typography, Paper, Button, TextField, InputAdornment,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   IconButton, Switch, Chip, Dialog, DialogTitle, DialogContent,
-  DialogActions, Grid, MenuItem, CircularProgress, Autocomplete, TablePagination
+  DialogActions, Grid, MenuItem, CircularProgress, Autocomplete, TablePagination,
+  Checkbox, Snackbar, Alert
 } from '@mui/material'
 import {
   Add as AddIcon,
@@ -24,6 +25,7 @@ import {
 import { CardProduct, Bank } from '@/lib/types'
 import { COUNTRIES } from '@/lib/constants'
 import AiCompleteButton from '@/components/admin/AiCompleteButton'
+import { aiComplete } from '@/lib/api/ai'
 
 export default function CardProductsPage() {
   const [loading, setLoading] = useState(true)
@@ -35,6 +37,11 @@ export default function CardProductsPage() {
   const [fetchError, setFetchError] = useState<string | null>(null)
   const [banks, setBanks] = useState<Bank[]>([])
   const [filterBank, setFilterBank] = useState<string>('all')
+  const [filterCountry, setFilterCountry] = useState<string>('all')
+  // 批量选择：选中的卡产品 id
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [notice, setNotice] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [page, setPage] = useState(0)
   const [rowsPerPage, setRowsPerPage] = useState(10)
 
@@ -62,13 +69,14 @@ export default function CardProductsPage() {
 
   useEffect(() => {
     setPage(0)
-  }, [search, filterBank])
+  }, [search, filterBank, filterCountry])
 
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.bank_name.toLowerCase().includes(search.toLowerCase()) ||
       p.card_name.toLowerCase().includes(search.toLowerCase())
     const matchesBank = filterBank === 'all' || p.bank_id === filterBank || p.bank_name === filterBank
-    return matchesSearch && matchesBank
+    const matchesCountry = filterCountry === 'all' || p.country === filterCountry
+    return matchesSearch && matchesBank && matchesCountry
   })
 
   const paginatedProducts = filteredProducts.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
@@ -117,6 +125,99 @@ export default function CardProductsPage() {
     }
   }
 
+  // ── 批量操作 ──────────────────────────────────────────────────────────────
+  // 逐条调用既有单条接口而不是新增批量 RPC：单条接口已经带了全部校验与级联语义
+  // （例如删除会影响关联用户信用卡），批量版很容易漏掉其中一条变成静默不一致。
+  // 顺序执行并在结束时汇总成败，避免「部分成功」被当成全成功。
+  const runBatch = async (ids: string[], label: string, fn: (id: string) => Promise<unknown>) => {
+    if (ids.length === 0) return
+    setSubmitting(true)
+    let ok = 0
+    const failed: string[] = []
+    try {
+      for (const id of ids) {
+        try {
+          await fn(id)
+          ok++
+        } catch (err) {
+          const name = products.find(p => p.id === id)?.card_name || id
+          failed.push(`${name}（${err instanceof Error ? err.message : '失败'}）`)
+        }
+      }
+      await fetchData()
+      setSelectedIds([])
+      if (failed.length === 0) {
+        setNotice(`已${label} ${ok} 项`)
+      } else {
+        setSaveError(`${label}完成 ${ok} 项，${failed.length} 项失败：${failed.slice(0, 3).join('；')}${failed.length > 3 ? ' …' : ''}`)
+      }
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleBatchEnable = () => runBatch(selectedIds, '启用', id => updateCardProduct(id, { is_active: true }))
+  const handleBatchDisable = () => runBatch(selectedIds, '禁用', id => updateCardProduct(id, { is_active: false }))
+
+  /**
+   * 批量 AI 补全：逐条调 aiComplete 再把结果写回。
+   *
+   * 不盲目覆盖：只写入 AI 返回且当前为空/缺失的字段，已有值保持不动——批量操作
+   * 最危险的失败模式就是把人工精心维护过的字段批量冲掉。
+   */
+  const handleBatchAI = async () => {
+    if (selectedIds.length === 0) return
+    setSubmitting(true)
+    let ok = 0
+    const failed: string[] = []
+    try {
+      for (const id of selectedIds) {
+        const product = products.find(p => p.id === id)
+        if (!product) continue
+        try {
+          const result = await aiComplete({
+            type: 'card_product',
+            data: {
+              bank_name: product.bank_name,
+              card_name: product.card_name,
+              currency: product.currency,
+              country: product.country,
+            },
+          }) as Record<string, unknown>
+
+          const patch: Record<string, unknown> = {}
+          const fillable = ['annual_fee', 'annual_fee_waiver', 'rewards_summary', 'description_md', 'apply_url', 'payment_due_type', 'payment_due_value'] as const
+          for (const key of fillable) {
+            const current = (product as unknown as Record<string, unknown>)[key]
+            const next = result?.[key]
+            if ((current === null || current === undefined || current === '') && next !== null && next !== undefined) {
+              patch[key] = next
+            }
+          }
+          if (Object.keys(patch).length > 0) {
+            await updateCardProduct(id, patch as Partial<CardProduct>)
+            ok++
+          }
+        } catch (err) {
+          failed.push(`${product.card_name}（${err instanceof Error ? err.message : '失败'}）`)
+        }
+      }
+      await fetchData()
+      setSelectedIds([])
+      if (failed.length === 0) {
+        setNotice(ok > 0 ? `AI 补全完成 ${ok} 项（仅填充空白字段）` : '选中项没有可补全的空白字段')
+      } else {
+        setSaveError(`AI 补全完成 ${ok} 项，${failed.length} 项失败：${failed.slice(0, 3).join('；')}${failed.length > 3 ? ' …' : ''}`)
+      }
+    } finally {
+      setSubmitting(false)
+    }
+  }
+  const handleBatchDelete = () => {
+    if (!confirm(`确定删除选中的 ${selectedIds.length} 个卡产品？此操作不可撤销且会影响关联的用户信用卡。`)) return
+    return runBatch(selectedIds, '删除', id => deleteCardProduct(id))
+  }
+
   const handleSubmit = async () => {
     if (!currentProduct?.bank_name || !currentProduct?.card_name) {
       alert('请填写必填项（银行名称、卡片名称）')
@@ -157,8 +258,8 @@ export default function CardProductsPage() {
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
           sx={{
-            bgcolor: '#818cf8',
-            '&:hover': { bgcolor: '#4338ca' },
+            bgcolor: 'primary.main',
+            '&:hover': { bgcolor: 'primary.dark' },
             textTransform: 'none',
             borderRadius: 2,
             px: 3
@@ -188,7 +289,7 @@ export default function CardProductsPage() {
               }}
             />
           </Grid>
-          <Grid size={{ xs: 12, md: 3 }}>
+          <Grid size={{ xs: 12, md: 2.5 }}>
             <TextField
               fullWidth
               size="small"
@@ -205,7 +306,27 @@ export default function CardProductsPage() {
               ))}
             </TextField>
           </Grid>
-          <Grid size={{ xs: 12, md: 5 }} sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+          <Grid size={{ xs: 12, md: 2.5 }}>
+            <TextField
+              fullWidth
+              size="small"
+              select
+              label="按国家筛选"
+              value={filterCountry}
+              onChange={(e) => setFilterCountry(e.target.value)}
+              InputLabelProps={{ shrink: true, style: { color: '#9ca3af' } }}
+              sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' } }}
+            >
+              <MenuItem value="all">全部国家</MenuItem>
+              {COUNTRIES.map(c => (
+                <MenuItem key={c.code} value={c.code}>{c.label}</MenuItem>
+              ))}
+            </TextField>
+          </Grid>
+          <Grid size={{ xs: 12, md: 3 }} sx={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 1 }}>
+            <Typography sx={{ color: '#9ca3af', fontSize: 13 }}>
+              共 {filteredProducts.length} 项
+            </Typography>
             <IconButton aria-label="刷新" onClick={fetchData} sx={{ color: '#9ca3af' }}>
               <RefreshIcon />
             </IconButton>
@@ -215,9 +336,66 @@ export default function CardProductsPage() {
 
       {/* 数据表格 */}
       <TableContainer component={Paper} sx={{ bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2 }}>
+        {/* 批量操作条：只在有选中项时出现，免得平时占位 */}
+        {selectedIds.length > 0 && (
+          <Box sx={{
+            px: 2, py: 1.25, display: 'flex', alignItems: 'center', gap: 1,
+            bgcolor: 'rgba(79,70,229,0.10)', borderBottom: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            <Typography sx={{ color: '#c7d2fe', fontSize: 13, fontWeight: 600, mr: 1 }}>
+              已选 {selectedIds.length} 项
+            </Typography>
+            <Button
+              size="small" variant="outlined" disabled={submitting}
+              onClick={handleBatchAI}
+              sx={{ color: '#c7d2fe', borderColor: 'rgba(199,210,254,0.4)', textTransform: 'none' }}
+            >
+              AI 补全
+            </Button>
+            <Button
+              size="small" variant="outlined" disabled={submitting}
+              onClick={handleBatchEnable}
+              sx={{ color: '#4ade80', borderColor: 'rgba(74,222,128,0.4)', textTransform: 'none' }}
+            >
+              启用
+            </Button>
+            <Button
+              size="small" variant="outlined" disabled={submitting}
+              onClick={handleBatchDisable}
+              sx={{ color: '#9ca3af', borderColor: 'rgba(156,163,175,0.4)', textTransform: 'none' }}
+            >
+              禁用
+            </Button>
+            <Button
+              size="small" variant="outlined" disabled={submitting}
+              onClick={handleBatchDelete}
+              sx={{ color: '#f87171', borderColor: 'rgba(248,113,113,0.4)', textTransform: 'none' }}
+            >
+              删除
+            </Button>
+            <Box sx={{ flex: 1 }} />
+            <Button size="small" onClick={() => setSelectedIds([])} sx={{ color: '#9ca3af', textTransform: 'none' }}>
+              取消选择
+            </Button>
+          </Box>
+        )}
         <Table sx={{ minWidth: 650 }}>
           <TableHead sx={{ bgcolor: 'rgba(255,255,255,0.02)' }}>
             <TableRow>
+              <TableCell padding="checkbox" sx={{ color: '#9ca3af', fontWeight: 600, width: 48 }}>
+                <Checkbox
+                  size="small"
+                  indeterminate={selectedIds.length > 0 && selectedIds.length < paginatedProducts.length}
+                  checked={paginatedProducts.length > 0 && paginatedProducts.every(p => selectedIds.includes(p.id))}
+                  onChange={(e) => {
+                    const pageIds = paginatedProducts.map(p => p.id)
+                    setSelectedIds(e.target.checked
+                      ? [...new Set([...selectedIds, ...pageIds])]
+                      : selectedIds.filter(id => !pageIds.includes(id)))
+                  }}
+                  sx={{ color: '#6b7280', '&.Mui-checked': { color: 'primary.main' } }}
+                />
+              </TableCell>
               <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>银行名称</TableCell>
               <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>卡片名称</TableCell>
               <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>年费</TableCell>
@@ -229,13 +407,13 @@ export default function CardProductsPage() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6} align="center" sx={{ py: 10 }}>
+                <TableCell colSpan={7} align="center" sx={{ py: 10 }}>
                   <CircularProgress size={24} sx={{ color: '#818cf8' }} />
                 </TableCell>
               </TableRow>
             ) : filteredProducts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} align="center" sx={{ py: 10, color: '#9ca3af' }}>
+                <TableCell colSpan={7} align="center" sx={{ py: 10, color: '#9ca3af' }}>
                   {fetchError ? `加载失败: ${fetchError}` : '未检索到卡产品数据'}
                 </TableCell>
               </TableRow>
@@ -245,6 +423,16 @@ export default function CardProductsPage() {
                   key={product.id}
                   sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' }, borderBottom: '1px solid rgba(255,255,255,0.04)' }}
                 >
+                  <TableCell padding="checkbox">
+                    <Checkbox
+                      size="small"
+                      checked={selectedIds.includes(product.id)}
+                      onChange={(e) => setSelectedIds(e.target.checked
+                        ? [...selectedIds, product.id]
+                        : selectedIds.filter(id => id !== product.id))}
+                      sx={{ color: '#6b7280', '&.Mui-checked': { color: 'primary.main' } }}
+                    />
+                  </TableCell>
                   <TableCell sx={{ color: '#e4e6eb', fontWeight: 500 }}>{product.bank_name}</TableCell>
                   <TableCell sx={{ color: '#e4e6eb' }}>{product.card_name}</TableCell>
                   <TableCell sx={{ color: '#e4e6eb' }}>
@@ -498,12 +686,24 @@ export default function CardProductsPage() {
             onClick={handleSubmit}
             variant="contained"
             disabled={submitting}
-            sx={{ bgcolor: '#818cf8', '&:hover': { bgcolor: '#4338ca' }, px: 4, borderRadius: 2 }}
+            sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, px: 4, borderRadius: 2 }}
           >
             {submitting ? '保存中...' : '确定'}
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* 批量结果反馈：部分成功必须说清楚，不能静默 */}
+      <Snackbar open={Boolean(notice)} autoHideDuration={6000} onClose={() => setNotice(null)}>
+        <Alert onClose={() => setNotice(null)} severity="success" variant="filled" sx={{ width: '100%' }}>
+          {notice}
+        </Alert>
+      </Snackbar>
+      <Snackbar open={Boolean(saveError)} autoHideDuration={10000} onClose={() => setSaveError(null)}>
+        <Alert onClose={() => setSaveError(null)} severity="error" variant="filled" sx={{ width: '100%' }}>
+          {saveError}
+        </Alert>
+      </Snackbar>
     </Box>
   )
 }

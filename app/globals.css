@@ -4,10 +4,22 @@
   --blue-400: #7AADFF;
   --gold-500: #C9A227;
   --gold-700: #8A6D1F;
-  --success: #16A34A;
+  /* 语义状态色：一律对齐 Design.md 的声明值。此前这里另存一套
+     （#16A34A/#CF2E2E/#2563EB），与 lib/theme.ts 的声明值不是同一组，
+     于是同一句「成功」在徽章和主题里渲染成两种绿。 */
+  --success: #2e7d32;
+  /* --warn 只用于深色底（navy-800 卡片）上的琥珀强调；
+     亮底上的警示文字请用 --warning-ink，否则白底只有 1.74:1。 */
   --warn: #FCB900;
-  --danger: #CF2E2E;
-  --info: #2563EB;
+  --danger: #d32f2f;
+  --info: #0277bd;
+  /* 文字档（ink）：语义色当「正文/标签」用时的 AA 档。
+     语义色本色只适合填充、描边和大字号；压在自己 10~14% 的淡底上时，
+     本色与底色太接近（实测 2.66~4.18:1），文字必须下沉到这一档。 */
+  --success-ink: #1B5E20;
+  --warning-ink: #92400e;
+  --danger-ink: #B71C1C;
+  --info-ink: #01579B;
   --bg: #F5F7FA;
   --paper: #FFFFFF;
   --text-primary: #0A1F44;

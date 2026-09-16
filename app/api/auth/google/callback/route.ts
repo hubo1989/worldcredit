@@ -1,19 +1,39 @@
 import { getDb } from '@/lib/db'
 import { createSessionValue, sessionCookieHeader, type SessionUser } from '@/lib/session'
 import { isAdminEmail } from '@/lib/admin-emails'
+import { googleRedirectUri, resolveAuthOrigin } from '@/lib/auth-origin'
+import { clearOAuthStateCookie, verifyOAuthState } from '@/lib/oauth-state'
+import { verifyGoogleIdToken } from '@/lib/google-id-token'
 
 export async function GET(request: Request) {
   const url = new URL(request.url)
+  // 下面所有回跳都落在规范域名上（与 start 发出的 redirect_uri 保持一致）。
+  // 若这里改用请求自身的 origin，从 workers.dev 之类地址进来的回调会把 session
+  // cookie 种在那个域名上，再跳去 APP_ORIGIN/dashboard 时反而没有登录态。
+  const origin = resolveAuthOrigin(request)
+  // state 校验必须在任何其他处理之前：它决定「这次回调是否来自本浏览器的本次授权」。
+  // 失败时一并清掉 state cookie，避免把上一次的合法值留在浏览器里被复用，
+  // 这样每个 start 只能对应一次成功的回调（详见 lib/oauth-state.ts）。
+  const stateFromQuery = url.searchParams.get('state')
+  const stateOk = await verifyOAuthState(request, stateFromQuery)
+  if (!stateOk) {
+    console.warn('[google-callback] state 校验失败，拒绝本次回调')
+    const headers = new Headers()
+    headers.set('Location', `${origin}/login?error=google_state_invalid`)
+    headers.append('Set-Cookie', clearOAuthStateCookie())
+    return new Response(null, { status: 302, headers })
+  }
+
   const code = url.searchParams.get('code')
   if (!code) {
-    return Response.redirect(`${url.origin}/login?error=google_no_code`, 302)
+    return Response.redirect(`${origin}/login?error=google_no_code`, 302)
   }
 
   const clientId = process.env.GOOGLE_CLIENT_ID
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET
   if (!clientId || !clientSecret) {
     console.error('[google-callback] Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET')
-    return Response.redirect(`${url.origin}/login?error=google_not_configured`, 302)
+    return Response.redirect(`${origin}/login?error=google_not_configured`, 302)
   }
 
   try {
@@ -24,26 +44,33 @@ export async function GET(request: Request) {
         code,
         client_id: clientId,
         client_secret: clientSecret,
-        redirect_uri: `${url.origin}/api/auth/google/callback`,
+        // 必须与授权请求阶段逐字符一致，否则 Google 会拒绝换取 token。
+        redirect_uri: googleRedirectUri(request),
         grant_type: 'authorization_code',
       }),
     })
     if (!tokenRes.ok) {
       const errText = await tokenRes.text()
       console.error('[google-callback] Token exchange failed:', errText.slice(0, 500))
-      return Response.redirect(`${url.origin}/login?error=google_token_exchange`, 302)
+      return Response.redirect(`${origin}/login?error=google_token_exchange`, 302)
     }
     const tokens = await tokenRes.json() as { id_token?: string }
     if (!tokens.id_token) {
-      return Response.redirect(`${url.origin}/login?error=google_no_id_token`, 302)
+      return Response.redirect(`${origin}/login?error=google_no_id_token`, 302)
     }
 
-    const [, payloadB64] = tokens.id_token.split('.')
-    const payload = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')))
-    const { email, name, sub: googleId } = payload as { email: string; name?: string; sub: string }
-    if (!email) {
-      return Response.redirect(`${url.origin}/login?error=google_no_email`, 302)
+    // 身份只能来自验签通过的 ID token。此前是直接把 payload 解码出来就用，等于
+    // 自签一个 JWT 就能冒充任意邮箱（含白名单管理员）登录。nonce 用同一请求的
+    // state，保证这个 token 是本次授权流程签发的，而不是别处捡来的。
+    const verified = await verifyGoogleIdToken(tokens.id_token, {
+      clientId,
+      nonce: stateFromQuery ?? undefined,
+    })
+    if (!verified.ok) {
+      console.warn(`[google-callback] ID token 校验失败: ${verified.reason}`)
+      return Response.redirect(`${origin}/login?error=google_id_token_invalid`, 302)
     }
+    const { email, name, sub: googleId } = verified.identity
 
     const db = getDb()
     let user = await db
@@ -71,11 +98,13 @@ export async function GET(request: Request) {
     const cookieValue = await createSessionValue(sessionUser)
     console.log(`[google-callback] session issued for ${sessionUser.email} role=${sessionUser.role} cookieBytes=${cookieValue.length}`)
     const headers = new Headers()
-    headers.set('Location', `${url.origin}/dashboard`)
+    headers.set('Location', `${origin}/dashboard`)
     headers.set('Set-Cookie', sessionCookieHeader(cookieValue))
+    // 本次 state 用完即废：留在浏览器里会让同一个 state 还能再次通过校验。
+    headers.append('Set-Cookie', clearOAuthStateCookie())
     return new Response(null, { status: 302, headers })
   } catch (err) {
     console.error('[google-callback] Error:', err)
-    return Response.redirect(`${url.origin}/login?error=google_callback_error`, 302)
+    return Response.redirect(`${origin}/login?error=google_callback_error`, 302)
   }
 }

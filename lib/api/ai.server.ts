@@ -649,3 +649,145 @@ export async function aiCollectCardBenefits(bankName: string, cardName: string) 
     throw new Error(`AI 返回格式错误: ${content.slice(0, 200)}`)
   }
 }
+
+// ============================================
+// 优惠活动候选（管理端「AI 获取活动」）
+// ============================================
+
+export interface PromoSuggestion {
+  title: string
+  description: string | null
+  discount_type: '满减' | '折扣' | '积分' | '返现' | null
+  start_date: string | null
+  end_date: string | null
+  conditions: string | null
+  /**
+   * 依据等级：
+   * - 'site'  : 该行信息在抓到的官网活动页正文里能对应上
+   * - 'model' : 仅来自模型/搜索资料，未经官网页面验证
+   *
+   * 与银行补全同一套口径——不把未经证实的内容当既定事实。界面按此标注，
+   * 由人工勾选后才落库。
+   */
+  provenance: 'site' | 'model'
+  /** 抓取到的页面（用于说明依据） */
+  fetched: string[]
+}
+
+const PROMO_SYSTEM_PROMPT = `你是信用卡优惠活动整理助手。根据银行/卡片名称，列出该行**长期常见的**信用卡优惠活动（如招牌餐饮/观影日、多倍积分、开卡礼等）。
+严格以 JSON 数组返回，不要任何多余文字：
+[
+  {
+    "title": "活动名称（简短）",
+    "description": "一句话说明",
+    "discount_type": "满减" | "折扣" | "积分" | "返现" | null,
+    "start_date": "YYYY-MM-DD" 或 null,
+    "end_date": "YYYY-MM-DD" 或 null,
+    "conditions": "参与条件/门槛" 或 null
+  }
+]
+要求：
+- 列出的应是该行广为人知的常设活动；**日期一律返回 null**，除非官网正文里明确写了，绝不猜测起止日期。
+- discount_type 只能是给出的四个值之一。
+- 最多 8 条。完全不了解该行时返回 []。`
+
+/**
+ * 获取某银行（可选指定卡片）的优惠活动候选。
+ *
+ * 不写库：返回候选交界面复核。官网活动页能被抓到并读到时标 'site'，
+ * 否则标 'model'——活动信息的时效性比银行基础信息更差，
+ * 把模型记忆直接当事实写进共享目录风险更高。
+ */
+export async function suggestPromosFromWeb(input: {
+  bankName: string
+  cardName?: string | null
+  websiteUrl?: string | null
+}): Promise<PromoSuggestion[]> {
+  const settings = await getSystemSettingsWithSecrets()
+  const baseURL = (typeof settings.ai_base_url === 'string' && settings.ai_base_url) || 'https://api.openai.com/v1'
+  const model = settings.ai_model || 'gpt-4o'
+  const apiKey = settings.ai_api_key
+  if (!apiKey) throw new Error('未配置 AI API Key，请在系统设置中配置')
+
+  const bankName = input.bankName?.trim()
+  if (!bankName) throw new Error('请先选择或填写银行')
+
+  // 1) 尽量拿到官网活动页作为证据
+  let siteText = ''
+  const fetched: string[] = []
+  const origin = normalizeOrigin(input.websiteUrl)
+  if (origin) {
+    try {
+      const page = await fetchPage(origin + '/promotion', { timeoutMs: 10000, maxChars: 15000 })
+      if (page.status < 400 && page.text.length > 200) {
+        fetched.push(page.finalUrl)
+        siteText = page.text
+      }
+    } catch {
+      // 抓不到就走搜索资料，不阻断整个流程
+    }
+  }
+
+  // 2) Wikipedia/搜索资料作为补充上下文
+  const searchContext = await getSearchContext(`${bankName} ${input.cardName || ''} 信用卡 优惠活动`)
+
+  const content = await chatCompletion({
+    baseURL,
+    model: model as string,
+    apiKey: apiKey as string,
+    systemPrompt: PROMO_SYSTEM_PROMPT,
+    userPrompt:
+      `银行：${bankName}` +
+      (input.cardName ? `，卡片：${input.cardName}` : '') +
+      (siteText ? `\n\n以下是该行官网活动页正文，请优先据此整理：\n---\n${siteText.slice(0, 6000)}\n---` : '') +
+      searchContext,
+  })
+
+  let parsed: unknown
+  try {
+    const match = content.match(/\[[\s\S]*\]/)
+    parsed = JSON.parse(match ? match[0] : content)
+  } catch {
+    throw new Error(`AI 返回格式错误: ${content.slice(0, 200)}`)
+  }
+  if (!Array.isArray(parsed)) throw new Error('AI 未返回活动列表')
+
+  const ALLOWED = new Set(['满减', '折扣', '积分', '返现'])
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/
+  const suggestions: PromoSuggestion[] = []
+  for (const raw of parsed.slice(0, 8)) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as Record<string, unknown>
+    const title = typeof row.title === 'string' ? row.title.trim().slice(0, 80) : ''
+    if (!title) continue
+    const type = typeof row.discount_type === 'string' && ALLOWED.has(row.discount_type)
+      ? (row.discount_type as PromoSuggestion['discount_type'])
+      : null
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 300) : null)
+    const date = (v: unknown) => (typeof v === 'string' && dateRe.test(v) ? v : null)
+    // 官网正文里能对上标题的关键词才算 site
+    const grounded = siteText.length > 0 && siteText.includes(title.slice(0, Math.min(6, title.length)))
+    suggestions.push({
+      title,
+      description: str(row.description),
+      discount_type: type,
+      start_date: date(row.start_date),
+      end_date: date(row.end_date),
+      conditions: str(row.conditions),
+      provenance: grounded ? 'site' : 'model',
+      fetched,
+    })
+  }
+  return suggestions
+}
+
+/** 把不完整/非法的 URL 安全地归一到 origin；非法则返回 null。 */
+function normalizeOrigin(value?: string | null): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null
+  try {
+    const url = new URL(value.trim())
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : null
+  } catch {
+    return null
+  }
+}

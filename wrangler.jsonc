@@ -33,6 +33,9 @@
     ]
   },
   "vars": {
+    // OAuth 回调的规范域名。Google Console 里登记的 redirect_uri 对应该域名的
+    // /api/auth/google/callback；改这里必须同步改 Google Console 的已授权重定向 URI。
+    "APP_ORIGIN": "https://app.all-bill.com",
     "GOOGLE_CLIENT_ID": "490117963106-31ss52gua36fa8i231ss074ed61rn330.apps.googleusercontent.com",
     "VAPID_SUBJECT": "mailto:hubo@worldcredit.app",
     "VAPID_PUBLIC_KEY": "BBtXBsGVcB6xC80wd33dTZmCtSDVesZZvI-X4kbMNL_Bdt-dsjY15Xxld-1WJ97nxvUzKjGq6EsGHB2vSRIrP7M"

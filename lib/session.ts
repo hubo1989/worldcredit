@@ -8,6 +8,9 @@
 
 import { getWorkerEnv } from "./db/client"
 import { isAdminEmail } from "./admin-emails"
+import { fromB64Url, toB64Url } from "./base64url"
+import { readCookie } from "./cookies"
+import { hmacSign, hmacVerify } from "./hmac"
 
 export interface SessionUser {
   id: string
@@ -17,49 +20,18 @@ export interface SessionUser {
   created_at: string
 }
 
-const SESSION_COOKIE = "wc_user"
+export const SESSION_COOKIE = "wc_user"
 const MAX_AGE_SECONDS = 7 * 24 * 3600
-
-function toB64Url(bytes: Uint8Array): string {
-  let binary = ""
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
-function fromB64Url(value: string): Uint8Array {
-  const padded = value.replace(/-/g, '+').replace(/_/g, '/')
-  const binary = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4))
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  return bytes
-}
-
-async function getSessionKey(): Promise<CryptoKey> {
-  const secret = getWorkerEnv().SESSION_SECRET
-  if (typeof secret !== 'string' || secret.length < 16) {
-    throw new Error(
-      'SESSION_SECRET 未配置（至少 16 字符）。本地请在 .dev.vars 设置，生产请 wrangler secret put SESSION_SECRET。'
-    )
-  }
-  return crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret) as unknown as ArrayBuffer,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign', 'verify']
-  )
-}
 
 interface SessionPayload extends SessionUser {
   exp: number
 }
 
 export async function createSessionValue(user: SessionUser): Promise<string> {
-  const key = await getSessionKey()
   const payload: SessionPayload = { ...user, exp: Math.floor(Date.now() / 1000) + MAX_AGE_SECONDS }
-  const payloadBytes = new TextEncoder().encode(JSON.stringify(payload))
-  const signature = await crypto.subtle.sign('HMAC', key, payloadBytes as unknown as ArrayBuffer)
-  return toB64Url(payloadBytes) + '.' + toB64Url(new Uint8Array(signature))
+  // 线格式保持不变：base64url(JSON payload) + '.' + base64url(HMAC-SHA256)。
+  // 现存 cookie 有 7 天有效期，改封装会把全部用户登出一次。
+  return toB64Url(new TextEncoder().encode(JSON.stringify(payload))) + '.' + toB64Url(await hmacSign(JSON.stringify(payload)))
 }
 
 export async function verifySessionValue(value: string | undefined | null): Promise<SessionUser | null> {
@@ -69,15 +41,9 @@ export async function verifySessionValue(value: string | undefined | null): Prom
   try {
     const payloadBytes = fromB64Url(value.slice(0, dot))
     const signature = fromB64Url(value.slice(dot + 1))
-    const key = await getSessionKey()
     const rawSecret = getWorkerEnv().SESSION_SECRET
     const secretLen = typeof rawSecret === 'string' ? rawSecret.length : -1
-    const valid = await crypto.subtle.verify(
-      'HMAC',
-      key,
-      signature as unknown as ArrayBuffer,
-      payloadBytes as unknown as ArrayBuffer
-    )
+    const valid = await hmacVerify(new TextDecoder().decode(payloadBytes), signature)
     if (!valid) {
       console.log(`[session-verify] reject=bad-signature payloadBytes=${payloadBytes.length} sigBytes=${signature.length} secretLen=${secretLen}`)
       return null
@@ -109,18 +75,6 @@ export async function verifySessionValue(value: string | undefined | null): Prom
     console.log(`[session-verify] reject=exception ${err instanceof Error ? err.message : String(err)}`)
     return null
   }
-}
-
-function readCookie(header: string | null, name: string): string | undefined {
-  if (!header) return undefined
-  // Split-based parsing: a malformed dynamic RegExp here silently breaks every
-  // request whose wc_user cookie is not the first one in the header.
-  for (const part of header.split(';')) {
-    const eq = part.indexOf('=')
-    if (eq === -1) continue
-    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1)
-  }
-  return undefined
 }
 
 export async function readSession(request: Request): Promise<SessionUser | null> {
