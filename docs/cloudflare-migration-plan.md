@@ -248,8 +248,26 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 
 ### 本轮未验证
 
-- 真实 Google 授权端到端（本机到 `*.workers.dev` 网络不通，且 Console 未登记新回调）
-- 生产 Worker 未部署本改动（等 Console 配置与部署确认后再做）
+- 真实 Google 授权端到端（Console 未登记新回调，见下）
+
+### 部署与线上验证 ✅（2026-09-15）
+
+- `npx vite build && npx wrangler deploy --config dist/server/wrangler.json` 成功
+- **线上版本 `da6e002c-ed2a-4118-9a0f-d53f2bd2df23`，部署自分支 `codex/fixed-oauth-origin` 的 commit `c729f29`**
+  - 回滚点：改动前的生产版本 `45f99cf0-d326-449d-90f1-356c7ec2c870`（Phase 9 部署）→ `npx wrangler rollback`
+  - 注意 `main` 仍是 `277517b`（PR #18 未合），本次是分支预览部署；`c729f29` 之后的提交若只改文档/测试，生产代码内容与分支 HEAD 一致
+- 绑定确认：`env.APP_ORIGIN ("https://app.all-bill.com")` 已随部署生效；D1/R2/Images/Assets/Cron 均保留
+- 线上冒烟（`https://app.all-bill.com`）：`/login` 200、`/dashboard` 200、`/api/push/public-key` 200、未登录 RPC POST **401**、伪造未签名 cookie 返回 `user:null`（验签仍生效）、错误凭据登录 **401**、`/api/sql-proxy` 与 `/api/db-proxy` 均 **404**（旧桥保持删除）
+- OAuth 起始跳转：自定义域名与旧 workers.dev 入口都生成 `redirect_uri=https://app.all-bill.com/api/auth/google/callback`（workers.dev 入口现在也归一化到规范域名）
+
+### ⚠️ 本次部署对 app.all-bill.com 并未修复登录
+
+部署前后，`https://app.all-bill.com/api/auth/google/start` 生成的 `redirect_uri` **完全相同**（都是 `https://app.all-bill.com/api/auth/google/callback`）——因为该路径下 `url.origin` 本来就等于 `APP_ORIGIN`。所以本次部署改变的是**入口无关性**：
+
+- 从 `worldcredit.hubo1989.workers.dev` 进入时，回调不再落到 workers.dev（此前会把 `wc_user` cookie 种在那里，再跳 `/dashboard` 反而没有登录态），而是统一拉到规范域名，即「只需在 Google Console 登记一个回调地址」
+- 前面加代理/CDN 导致 `request.url` 变形时，回调地址不再随之漂移
+
+`app.all-bill.com` 恢复登录的唯一前置条件仍是人工在 Google Console 登记 `https://app.all-bill.com/api/auth/google/callback`（部署后探针复测仍为 mismatch=3）。
 
 ## 更新后的下一步
 
