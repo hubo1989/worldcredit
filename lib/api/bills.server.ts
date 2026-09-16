@@ -1,6 +1,12 @@
 import { query, queryOne, execute, batch, uuid, now, today } from '../db'
 import type { Bill, Payment, CreditCard, CardProduct } from '../types'
-import { getDueDate, getLoanNextDueDate } from '../utils'
+import {
+  getDueDate,
+  getLoanNextDueDate,
+  effectiveBillAmount,
+  nextBillingDateOf,
+} from '../utils'
+import { format } from 'date-fns'
 
 export type BillDashboardItem = Bill & {
   card: CreditCard & { card_product: CardProduct }
@@ -48,7 +54,9 @@ function daysUntil(date: string): number {
 
 function computeStatus(bill: Bill, paidAmount: number): Bill['status'] {
   if (bill.status === 'paid') return 'paid'
-  const amount = Number(bill.bill_amount) || 0
+  // 一律用生效金额：用户手填值优先，否则已还金额会跟展示的金额对不上
+  // （屏幕上写着 800、状态却按导入的 1200 判定部分还款）。
+  const amount = effectiveBillAmount(bill)
   if (amount <= 0 || paidAmount >= amount) return 'paid'
   if (paidAmount > 0) return 'partial'
   if (daysUntil(bill.due_date) < 0) return 'overdue'
@@ -66,6 +74,7 @@ interface BillJoinRow extends Record<string, unknown> {
   statement_end: string | null
   statement_date: string | null
   bill_amount: number
+  bill_amount_override: number | null
   min_payment: number | null
   due_date: string
   status: Bill['status']
@@ -110,7 +119,12 @@ function mapJoinRowToDashboard(
     statement_start: row.statement_start || undefined,
     statement_end: row.statement_end || undefined,
     statement_date: row.statement_date || undefined,
-    bill_amount: row.bill_amount,
+    // 读边界统一把 bill_amount 归一化为「生效金额」（手填值优先）。
+    // 让每个消费方自己调用 effectiveBillAmount 是行不通的——本文件与
+    // analytics/holders/cards/cron 共有二十多处读取点，漏一处就会两处显示不一致。
+    bill_amount: row.bill_amount_override != null ? row.bill_amount_override : row.bill_amount,
+    // 手填值原样带出：界面要能显示「已手动设定」并允许改回，
+    bill_amount_override: row.bill_amount_override != null ? row.bill_amount_override : undefined,
     min_payment: row.min_payment || undefined,
     due_date: row.due_date,
     status: row.status,
@@ -156,13 +170,14 @@ function mapJoinRowToDashboard(
     card_product: product,
   }
   const paidAmount = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0)
+  const amount = effectiveBillAmount(bill)
   return {
     ...bill,
     card,
     payments,
     attachments,
     paid_amount: paidAmount,
-    remaining_amount: Math.max(0, Number(bill.bill_amount || 0) - paidAmount),
+    remaining_amount: Math.max(0, amount - paidAmount),
     days_until_due: daysUntil(bill.due_date),
     interest_free_days_left: Math.max(0, daysUntil(bill.due_date)),
     computed_status: computeStatus(bill, paidAmount),
@@ -384,7 +399,7 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
     })
     const unpaidBills = historyBills.filter(b => b.computed_status !== 'paid')
     const activeBill = unpaidBills.length > 0 ? unpaidBills[0] : (historyBills[0] || null)
-    const unpaidAmount = unpaidBills.reduce((sum, b) => sum + (b.remaining_amount > 0 ? b.remaining_amount : Number(b.bill_amount || 0)), 0)
+    const unpaidAmount = unpaidBills.reduce((sum, b) => sum + (b.remaining_amount > 0 ? b.remaining_amount : effectiveBillAmount(b)), 0)
     let status: CardWithBillsSummary['status'] = 'unissued'
     if (unpaidBills.some(b => b.computed_status === 'overdue' || (b.days_until_due < 0 && b.computed_status !== 'paid'))) {
       status = 'overdue'
@@ -469,6 +484,8 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
 
   const row = billRow as Record<string, unknown>
   const bill = row as unknown as BillDetail['bill']
+  // b.* 里带的是导入的原始金额；展示与还款校验必须用生效金额。
+  bill.bill_amount = effectiveBillAmount(bill)
   if (row.c_id) {
     const card: CreditCard & {
       card_product?: CardProduct
@@ -525,6 +542,7 @@ export interface UnpaidBillLite {
   id: string
   bill_month: string
   bill_amount: number
+  bill_amount_override: number | null
   status: string
   due_date: string
 }
@@ -537,22 +555,25 @@ export async function getUnpaidBills(limit = 50, holderIds?: string[]): Promise<
   if (holderIds && holderIds.length > 0) {
     const placeholders = holderIds.map(() => "?").join(",")
     sql =
-      'SELECT b.id, b.bill_month, b.bill_amount, b.status, b.due_date FROM bills b ' +
+      'SELECT b.id, b.bill_month, b.bill_amount, b.bill_amount_override, b.status, b.due_date FROM bills b ' +
       'JOIN credit_cards cc ON b.card_id = cc.id ' +
       `WHERE b.status != 'paid' AND cc.holder_id IN (` + placeholders + `) ORDER BY b.due_date ASC LIMIT ?`
     params = [...holderIds, limit]
   } else {
-    sql = `SELECT id, bill_month, bill_amount, status, due_date FROM bills WHERE status != 'paid' ORDER BY due_date ASC LIMIT ?`
+    sql = `SELECT id, bill_month, bill_amount, bill_amount_override, status, due_date FROM bills WHERE status != 'paid' ORDER BY due_date ASC LIMIT ?`
     params = [limit]
   }
   const { data, error } = await query<UnpaidBillLite>(sql, params)
   if (error) throw new Error(error.message)
-  return data || []
+  // 这两个投影专门喂给「选择账单 / 还款 / 表单回填」，用的都是生效金额，
+  // 所以直接把 bill_amount 归一化为生效值，调用方无需各自记得合成。
+  return (data || []).map(row => ({ ...row, bill_amount: effectiveBillAmount(row) }))
 }
 
 export interface BillLiteForForm {
   id: string
   bill_amount: number
+  bill_amount_override: number | null
   min_payment: number | null
   statement_date: string | null
   due_date: string
@@ -564,11 +585,11 @@ export async function getBillByCardMonth(
   billMonth: string
 ): Promise<BillLiteForForm | null> {
   const { data, error } = await queryOne<BillLiteForForm>(
-    'SELECT id, bill_amount, min_payment, statement_date, due_date FROM bills WHERE card_id = ? AND bill_month = ? LIMIT 1',
+    'SELECT id, bill_amount, bill_amount_override, min_payment, statement_date, due_date FROM bills WHERE card_id = ? AND bill_month = ? LIMIT 1',
     [cardId, billMonth]
   )
   if (error) throw new Error(error.message)
-  return data ?? null
+  return data ? { ...data, bill_amount: effectiveBillAmount(data) } : null
 }
 
 /** Total paid amount across all payments of one bill. */
@@ -607,6 +628,95 @@ export async function updateBillStatus(id: string, status: Bill['status']): Prom
   const updated = await getBillById(id)
   if (!updated) throw new Error('账单更新失败')
   return updated as unknown as Bill
+}
+
+/**
+ * 设置/清除账单的人工金额。
+ *
+ * `amount = null` 表示撤销手填、回落到导入值。写入成功后 imported（bill_amount）
+ * 保持不动，因此撤销是可逆的——这也正是把覆盖值单独存一列的原因。
+ */
+export async function setBillAmountOverride(billId: string, amount: number | null): Promise<Bill> {
+  if (amount !== null) {
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new Error('账单金额必须是不小于 0 的数字')
+    }
+  }
+  const { error } = await execute('UPDATE bills SET bill_amount_override = ? WHERE id = ?', [
+    amount,
+    billId,
+  ])
+  if (error) throw new Error(error.message)
+  const updated = await getBillById(billId)
+  if (!updated) throw new Error('账单不存在')
+  return updated as unknown as Bill
+}
+
+/**
+ * 按「卡 + 当前账期」设置人工金额，账单尚未生成时先建一条再钉住。
+ *
+ * 账单日临近时（见 canManuallySetBillAmount）账单往往还没出，此时没有 bill 行
+ * 可以改，所以这里需要 upsert。账期由卡的生效账单日推算，与账单页排序同一口径。
+ */
+export async function setCardManualBillAmount(cardId: string, amount: number): Promise<Bill> {
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error('账单金额必须是不小于 0 的数字')
+  }
+
+  const { data: row, error } = await queryOne<{
+    id: string
+    billing_day: number
+    override_billing_day: number | null
+    card_type: string
+    loan_due_day: number | null
+    card_product_id: string
+    p_payment_due_type: string | null
+    p_payment_due_value: number | null
+  }>(
+    `SELECT cc.id, cc.billing_day, cc.override_billing_day, cc.card_type, cc.loan_due_day,
+            cc.card_product_id, cp.payment_due_type AS p_payment_due_type,
+            cp.payment_due_value AS p_payment_due_value
+     FROM credit_cards cc LEFT JOIN card_products cp ON cc.card_product_id = cp.id
+     WHERE cc.id = ?`,
+    [cardId]
+  )
+  if (error) throw new Error(error.message)
+  if (!row) throw new Error('卡片不存在')
+
+  // 账期取「下一次账单日」所在月：今天已过账单日就落在下月，否则本月。
+  const billingDay = Number(row.override_billing_day ?? row.billing_day ?? 10)
+  const billMonth = format(nextBillingDateOf(billingDay), 'yyyy-MM')
+
+  const existing = await queryOne<{ id: string }>(
+    'SELECT id FROM bills WHERE card_id = ? AND bill_month = ? LIMIT 1',
+    [cardId, billMonth]
+  )
+
+  let billId = existing.data?.id
+  if (!billId) {
+    const product = {
+      payment_due_type: (row.p_payment_due_type || 'after_billing') as CardProduct['payment_due_type'],
+      payment_due_value: row.p_payment_due_value ?? 20,
+    } as CardProduct
+    const card = {
+      billing_day: Number(row.billing_day),
+      override_billing_day: row.override_billing_day ?? undefined,
+      override_due_type: undefined,
+      override_due_value: undefined,
+      card_type: row.card_type,
+      loan_due_day: row.loan_due_day ?? undefined,
+    } as unknown as CreditCard
+    const dueDate = format(getDueDate(card, product, new Date(`${billMonth}-01T00:00:00`)), 'yyyy-MM-dd')
+    billId = uuid()
+    const { error: insertError } = await execute(
+      `INSERT INTO bills (id, card_id, bill_month, bill_amount, due_date, status)
+       VALUES (?, ?, ?, 0, ?, 'unpaid')`,
+      [billId, cardId, billMonth, dueDate]
+    )
+    if (insertError) throw new Error(insertError.message)
+  }
+
+  return setBillAmountOverride(billId, amount)
 }
 
 export async function getBillsByHolder(holderId: string): Promise<BillWithCard[]> {
@@ -676,7 +786,7 @@ export async function markBillAsPaid(billId: string, amount: number, note = '一
 
   if (bill.status === 'paid') throw new Error('该账单已结清，无需重复还款')
 
-  const billAmount = Number(bill.bill_amount) || 0
+  const billAmount = effectiveBillAmount(bill)
   const alreadyPaid = await getPaymentTotal(billId)
   const remaining = Math.max(0, billAmount - alreadyPaid)
   if (remaining <= 0) throw new Error('该账单已无应还金额，无需重复还款')

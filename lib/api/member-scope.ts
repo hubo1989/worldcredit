@@ -58,6 +58,16 @@ export async function assertBillAccess(billId: unknown, ctx: MemberContext): Pro
   memberAssert(!!data && ctx.holderIds.includes(data.holder_id), '无权访问其他成员的账单')
 }
 
+/** 周期应付（房租/贷款）归属：按 created_by 判定，成员只能碰自己创建的记录。 */
+export async function assertPayableAccess(payableId: unknown, ctx: MemberContext): Promise<void> {
+  memberAssert(typeof payableId === 'string', '参数必须是应付事项 ID')
+  const { data } = await queryOne<{ created_by: string }>(
+    'SELECT created_by FROM recurring_payables WHERE id = ?',
+    [payableId]
+  )
+  memberAssert(!!data && data.created_by === ctx.userId, '无权访问其他成员的应付事项')
+}
+
 export async function assertBenefitAccess(benefitId: unknown, ctx: MemberContext): Promise<void> {
   memberAssert(typeof benefitId === 'string', '参数必须是权益 ID')
   const { data } = await queryOne<{ holder_id: string }>(

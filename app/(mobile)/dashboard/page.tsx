@@ -670,7 +670,9 @@ export default function DashboardPage() {
             sx={{
               fontSize: 22,
               fontWeight: 700,
-              color: 'var(--gold-500)',
+              // 白卡上的金额是正文级信息，gold-500 只有 2.42:1（连 3:1 的大字号门槛都不到），
+              // 用 gold-700（4.90:1）。gold-500 只留给深蓝底上的金色强调。
+              color: 'var(--gold-700)',
               lineHeight: 1.2,
             }}
           >
@@ -1101,7 +1103,7 @@ export default function DashboardPage() {
                         py: 0.25,
                         borderRadius: 'var(--radius-pill)',
                         bgcolor: 'rgba(207,46,46,0.10)',
-                        color: 'var(--danger)',
+                        color: 'var(--danger-ink)',
                         fontSize: 'var(--type-body-size)',
                         lineHeight: 'var(--type-body-line)',
                         letterSpacing: 'var(--type-body-tracking)',
@@ -1127,7 +1129,7 @@ export default function DashboardPage() {
                         sx={{
                           fontSize: 18,
                           fontWeight: 700,
-                          color: 'var(--danger)',
+                          color: 'var(--danger-ink)',
                         }}
                       >
                         {formatMoney(remaining, billCurrency(bill, displayCurrency))}

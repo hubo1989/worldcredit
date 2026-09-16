@@ -105,6 +105,8 @@ export interface BillRow {
   statement_end: string | null
   statement_date: string | null
   bill_amount: number
+  /** 用户手填的金额（优先级高于一切导入来源）。非空时即为「人工钉住」。 */
+  bill_amount_override?: number
   min_payment: number | null
   due_date: string
   status: 'unpaid' | 'partial' | 'paid' | 'overdue'

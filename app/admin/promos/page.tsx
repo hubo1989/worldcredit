@@ -154,7 +154,7 @@ export default function PromosPage() {
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
-          sx={{ bgcolor: '#818cf8', '&:hover': { bgcolor: '#4338ca' }, textTransform: 'none', borderRadius: 2, px: 3 }}
+          sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, textTransform: 'none', borderRadius: 2, px: 3 }}
         >
           发布新活动
         </Button>
@@ -294,7 +294,7 @@ export default function PromosPage() {
         </DialogContent>
         <DialogActions sx={{ p: 3 }}>
           <Button onClick={() => setDialogOpen(false)} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: '#818cf8', '&:hover': { bgcolor: '#4338ca' }, px: 4, borderRadius: 2 }}>确定</Button>
+          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, px: 4, borderRadius: 2 }}>确定</Button>
         </DialogActions>
       </Dialog>
     </Box>

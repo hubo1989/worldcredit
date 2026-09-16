@@ -21,6 +21,7 @@ import * as dashboardServer from './dashboard.server'
 import * as emailBillsServer from './emailBills.server'
 import * as gmailLedgerServer from './gmail-ledger.server'
 import * as holdersServer from './holders.server'
+import * as payablesServer from './payables.server'
 import * as preferencesServer from './preferences.server'
 import * as promosServer from './promos.server'
 import * as pushServer from './push.server'
@@ -37,6 +38,7 @@ import {
   assertHolderIdsAccess,
   assertLedgerAccess,
   assertRecordAccess,
+  assertPayableAccess,
   filterCardsByHolder,
   filterHolders,
   MemberScopeError,
@@ -152,6 +154,8 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     createBill: { impl: billsServer.createBill, bindField: { arg: 0, field: "created_by" }, memberGuard: guardObjField(0, "card_id", assertCardAccess) },
     updateBill: { impl: billsServer.updateBill, memberGuard: guardBill(0) },
     updateBillStatus: { impl: billsServer.updateBillStatus, memberGuard: guardBill(0) },
+    setBillAmountOverride: { impl: billsServer.setBillAmountOverride, memberGuard: guardBill(0) },
+    setCardManualBillAmount: { impl: billsServer.setCardManualBillAmount, memberGuard: guardCard(0) },
     createPayment: { impl: billsServer.createPayment, memberGuard: guardObjField(0, "bill_id", assertBillAccess) },
     markBillAsPaid: { impl: billsServer.markBillAsPaid, memberGuard: guardBill(0) },
     markAllOverdueBillsAsPaid: { impl: billsServer.markAllOverdueBillsAsPaid, bindUser: 0, memberGuard: (args, ctx) => assertBillListAccess(args[1], ctx) },
@@ -199,6 +203,20 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
   promos: {
     getPromosWithBanks: { impl: promosServer.getPromosWithBanks },
     createUserPromo: { impl: promosServer.createUserPromo, admin: true },
+  },
+  payables: {
+    // 周期应付（房租/贷款）：一律绑定会话用户，成员只能碰自己创建的记录。
+    getRecurringPayables: { impl: payablesServer.getRecurringPayables, bindUser: 0 },
+    createRecurringPayable: {
+      impl: payablesServer.createRecurringPayable,
+      bindField: { arg: 0, field: 'created_by' },
+      memberGuard: guardObjField(0, 'holder_id', async (holderId, ctx) => {
+        if (holderId) await assertHolderAccess(holderId, ctx)
+      }),
+    },
+    updateRecurringPayable: { impl: payablesServer.updateRecurringPayable, memberGuard: (args, ctx) => assertPayableAccess(args[0], ctx) },
+    deleteRecurringPayable: { impl: payablesServer.deleteRecurringPayable, memberGuard: (args, ctx) => assertPayableAccess(args[0], ctx) },
+    payRecurringPayable: { impl: payablesServer.payRecurringPayable, memberGuard: (args, ctx) => assertPayableAccess(args[0], ctx) },
   },
   push: {
     subscribePush: { impl: pushServer.subscribePush, bindUser: 1 },

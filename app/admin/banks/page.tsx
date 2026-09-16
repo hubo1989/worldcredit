@@ -227,8 +227,8 @@ export default function BanksPage() {
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
           sx={{
-            bgcolor: '#818cf8',
-            '&:hover': { bgcolor: '#4338ca' },
+            bgcolor: 'primary.main',
+            '&:hover': { bgcolor: 'primary.dark' },
             textTransform: 'none',
             borderRadius: 2,
             px: 3
@@ -466,7 +466,7 @@ export default function BanksPage() {
         </DialogContent>
         <DialogActions sx={{ p: 3 }}>
           <Button onClick={() => setDialogOpen(false)} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: '#818cf8', px: 4 }}>
+          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: 'primary.main', px: 4 }}>
             {submitting ? '保存中...' : '确定'}
           </Button>
         </DialogActions>
@@ -554,7 +554,7 @@ export default function BanksPage() {
         </DialogContent>
         <DialogActions sx={{ p: 3 }}>
           <Button onClick={() => setEnrichOpen(false)} disabled={submitting} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button onClick={handleApplyEnrichment} variant="contained" disabled={submitting} sx={{ bgcolor: '#818cf8', px: 4 }}>
+          <Button onClick={handleApplyEnrichment} variant="contained" disabled={submitting} sx={{ bgcolor: 'primary.main', px: 4 }}>
             {submitting ? '写入中...' : '写入已确认字段'}
           </Button>
         </DialogActions>

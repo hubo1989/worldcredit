@@ -180,6 +180,58 @@ export function formatCardTail(value: string | null | undefined): string {
   return digits.length >= 4 ? digits.slice(-4) : digits
 }
 
+// 账单的生效金额：用户手填值优先于一切导入来源。
+//
+// 导入方（邮件解析、Gmail 同步、LLM 抽取）只写 bill_amount；用户手填写
+// bill_amount_override。两者都存、读取时按优先级合成，导入因此可以继续更新
+// 「账单原始值」，而不会覆盖用户已经确认过的数字。
+export function effectiveBillAmount(bill: {
+  bill_amount?: number | null
+  bill_amount_override?: number | null
+}): number {
+  const override = bill.bill_amount_override
+  if (override !== null && override !== undefined) return Number(override)
+  return Number(bill.bill_amount || 0)
+}
+
+// 是否被用户手填值钉住（导入不得覆盖）。
+export function hasManualBillAmount(bill: {
+  bill_amount_override?: number | null
+}): boolean {
+  return bill.bill_amount_override !== null && bill.bill_amount_override !== undefined
+}
+
+// 账单日临近判定：距下一次账单日不足 days 天（含当天）时允许手填金额。
+// 用账单日而非到期日——出账前金额还是空的，正是需要用户先记一笔的时候。
+export function canManuallySetBillAmount(
+  billingDay: number,
+  today: Date = new Date(),
+  days = 5
+): boolean {
+  const remaining = daysUntilNextBilling(billingDay, today)
+  return remaining >= 0 && remaining < days
+}
+
+// ── 周期性固定支出（房租 / 贷款 / 其他按月应付） ────────────────────────────
+
+/**
+ * 某个应付事项在 today 所处的账期（'YYYY-MM'）。
+ *
+ * 账期按「应付日所在的那个月」定义，不做「过了应付日就算下期」的滚动：
+ * 房租 15 号到期，16 号仍然属于本月账期（只是已逾期），下个月才换期。
+ * 这样逾期才表达得出来——滚动口径会把「本月该付没付」直接抹掉。
+ */
+export function payablePeriodOf(today: Date = new Date()): string {
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+}
+
+/** 某账期内该应付事项的到期日（处理 due_day > 当月天数，如 31 日）。 */
+export function payableDueDate(dueDay: number, period: string): Date {
+  const [year, month] = period.split('-').map(Number)
+  const monthDate = new Date(year, month - 1, 1)
+  return getActualBillingDate(dueDay, monthDate)
+}
+
 /**
  * 账单页卡片排序分组：逾期(0) → 待还款(1) → 其他(2)。
  *

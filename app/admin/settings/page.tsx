@@ -128,7 +128,7 @@ export default function SettingsPage() {
           startIcon={<SaveIcon />}
           onClick={handleSaveAll}
           disabled={saving}
-          sx={{ bgcolor: '#818cf8', '&:hover': { bgcolor: '#4338ca' }, textTransform: 'none', borderRadius: 2, px: 3 }}
+          sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, textTransform: 'none', borderRadius: 2, px: 3 }}
         >
           {saving ? '保存中...' : '保存全部'}
         </Button>
@@ -181,7 +181,7 @@ export default function SettingsPage() {
                 <Switch
                   checked={settings.enableRegistration}
                   onChange={(e) => handleSave('enableRegistration', e.target.checked)}
-                  sx={{ '& .MuiSwitch-switchBase.Mui-checked': { color: '#818cf8' }, '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { bgcolor: '#818cf8' } }}
+                  sx={{ '& .MuiSwitch-switchBase.Mui-checked': { color: 'primary.main' }, '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { bgcolor: 'primary.main' } }}
                 />
               </Box>
 

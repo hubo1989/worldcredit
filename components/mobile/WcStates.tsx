@@ -120,7 +120,7 @@ export function WcErrorState({
         textAlign: 'center',
       }}
     >
-      <Typography className="type-body" sx={{ color: 'var(--danger)', mb: 1.5 }}>
+      <Typography className="type-body" sx={{ color: 'var(--danger-ink)', mb: 1.5 }}>
         {message}
       </Typography>
       {onRetry && (

@@ -151,7 +151,10 @@ async function getFilteredBills(filters: AnalyticsFilters): Promise<BillRow[]> {
   const fullWhere = `WHERE b.card_id IN (${cardPlaceholders})${where}`
 
   const { data, error } = await query<BillRow>(
-    `SELECT b.id, b.card_id, b.bill_month, b.bill_amount, b.status, b.due_date,
+    // 手填金额优先：统计口径必须与账单页一致，否则同一笔钱在两页显示不同
+    `SELECT b.id, b.card_id, b.bill_month,
+            COALESCE(b.bill_amount_override, b.bill_amount) AS bill_amount,
+            b.status, b.due_date,
             cc.holder_id, cp.bank_name, cp.card_name, cp.currency, cc.credit_limit,
             cc.status AS card_status
      FROM bills b

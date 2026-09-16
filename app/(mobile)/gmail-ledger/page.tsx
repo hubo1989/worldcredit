@@ -519,30 +519,30 @@ export default function GmailLedgerPage() {
                               lineHeight: 'var(--type-body-line)',
                               letterSpacing: 'var(--type-body-tracking)',
                               fontWeight: 700,
-                              color: isOverdue(entry.due_date) && !entry.completed ? 'var(--danger)' : 'var(--text)',
+                              color: isOverdue(entry.due_date) && !entry.completed ? 'var(--danger-ink)' : 'var(--text)',
                             }}
                           >
                             {entry.currency_symbol || '¥'}{Number(entry.statement_amount || 0).toLocaleString()}
                           </Typography>
                         ) : (
-                          <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', fontWeight: 700, color: 'var(--warn)' }}>
+                          <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', fontWeight: 700, color: 'var(--warning-ink)' }}>
                             金额待补录
                           </Typography>
                         )}
                         {entry.paid_amount > 0 && (
-                          <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--success)' }}>
+                          <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--success-ink)' }}>
                             (已还{entry.currency_symbol || '¥'}{Number(entry.paid_amount).toLocaleString()})
                           </Typography>
                         )}
                       </Stack>
                       <Stack direction="row" spacing={1} alignItems="center">
-                        <DateIcon sx={{ fontSize: 14, color: isDueToday(entry.due_date) ? 'var(--warn)' : isOverdue(entry.due_date) ? 'var(--danger)' : 'var(--strong)' }} />
+                        <DateIcon sx={{ fontSize: 14, color: isDueToday(entry.due_date) ? 'var(--warning-ink)' : isOverdue(entry.due_date) ? 'var(--danger-ink)' : 'var(--strong)' }} />
                         <Typography
                           sx={{
                             fontSize: 'var(--type-body-size)',
                             lineHeight: 'var(--type-body-line)',
                             letterSpacing: 'var(--type-body-tracking)',
-                            color: isDueToday(entry.due_date) && !entry.completed ? 'var(--warn)' : isOverdue(entry.due_date) && !entry.completed ? 'var(--danger)' : 'var(--muted)',
+                            color: isDueToday(entry.due_date) && !entry.completed ? 'var(--warning-ink)' : isOverdue(entry.due_date) && !entry.completed ? 'var(--danger-ink)' : 'var(--muted)',
                           }}
                         >
                           {!entry.completed && isDueToday(entry.due_date)
@@ -731,7 +731,7 @@ export default function GmailLedgerPage() {
             </Box>
             <Box>
               <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>已还金额</Typography>
-              <Typography className="num-tabular" sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--success)' }}>{selectedEntry?.currency_symbol || '¥'}{Number(selectedEntry?.paid_amount || 0).toLocaleString()}</Typography>
+              <Typography className="num-tabular" sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--success-ink)' }}>{selectedEntry?.currency_symbol || '¥'}{Number(selectedEntry?.paid_amount || 0).toLocaleString()}</Typography>
             </Box>
             <Divider sx={{ borderColor: 'var(--track)' }} />
             <TextField
@@ -793,14 +793,14 @@ export default function GmailLedgerPage() {
               <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: 'var(--muted)' }}>账单金额</Typography><Typography className="num-tabular" fontWeight={700}>{selectedEntry.currency_symbol || '¥'}{Number(selectedEntry.statement_amount).toLocaleString()}</Typography></Stack>
               <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: 'var(--muted)' }}>最低还款</Typography><Typography className="num-tabular">{selectedEntry.currency_symbol || '¥'}{Number(selectedEntry.minimum_payment).toLocaleString()}</Typography></Stack>
               {selectedEntry.loan_monthly_payment && (
-                <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: 'var(--muted)' }}>月供</Typography><Typography className="num-tabular" fontWeight={600} sx={{ color: 'var(--warn)' }}>{selectedEntry.currency_symbol || '¥'}{Number(selectedEntry.loan_monthly_payment).toLocaleString()}</Typography></Stack>
+                <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: 'var(--muted)' }}>月供</Typography><Typography className="num-tabular" fontWeight={600} sx={{ color: 'var(--warning-ink)' }}>{selectedEntry.currency_symbol || '¥'}{Number(selectedEntry.loan_monthly_payment).toLocaleString()}</Typography></Stack>
               )}
-              <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: 'var(--muted)' }}>到期日</Typography><Typography className="num-tabular" sx={{ color: isDueToday(selectedEntry.due_date) && !selectedEntry.completed ? 'var(--warn)' : isOverdue(selectedEntry.due_date) && !selectedEntry.completed ? 'var(--danger)' : 'var(--text)' }}>{selectedEntry.due_date}{!selectedEntry.completed && isDueToday(selectedEntry.due_date) ? ' (今天还款日)' : isOverdue(selectedEntry.due_date) && !selectedEntry.completed ? ` (已逾期${daysOverdue(selectedEntry.due_date)}天)` : ''}</Typography></Stack>
+                <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: 'var(--muted)' }}>到期日</Typography><Typography className="num-tabular" sx={{ color: isDueToday(selectedEntry.due_date) && !selectedEntry.completed ? 'var(--warning-ink)' : isOverdue(selectedEntry.due_date) && !selectedEntry.completed ? 'var(--danger-ink)' : 'var(--text)' }}>{selectedEntry.due_date}{!selectedEntry.completed && isDueToday(selectedEntry.due_date) ? ' (今天还款日)' : isOverdue(selectedEntry.due_date) && !selectedEntry.completed ? ` (已逾期${daysOverdue(selectedEntry.due_date)}天)` : ''}</Typography></Stack>
               <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: 'var(--muted)' }}>账单日</Typography><Typography className="num-tabular">{selectedEntry.statement_date}</Typography></Stack>
               <Divider sx={{ borderColor: 'var(--track)' }} />
               <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: 'var(--muted)' }}>还款状态</Typography>{statusChip(selectedEntry.payment_status)}</Stack>
-              <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: 'var(--muted)' }}>已还金额</Typography><Typography className="num-tabular" sx={{ color: 'var(--success)' }}>{selectedEntry.currency_symbol || '¥'}{Number(selectedEntry.paid_amount).toLocaleString()}</Typography></Stack>
-              <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: 'var(--muted)' }}>剩余金额</Typography><Typography className="num-tabular" sx={{ color: !selectedEntry.completed ? 'var(--warn)' : 'var(--text)' }}>{selectedEntry.currency_symbol || '¥'}{Number(selectedEntry.remaining_amount).toLocaleString()}</Typography></Stack>
+              <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: 'var(--muted)' }}>已还金额</Typography><Typography className="num-tabular" sx={{ color: 'var(--success-ink)' }}>{selectedEntry.currency_symbol || '¥'}{Number(selectedEntry.paid_amount).toLocaleString()}</Typography></Stack>
+              <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: 'var(--muted)' }}>剩余金额</Typography><Typography className="num-tabular" sx={{ color: !selectedEntry.completed ? 'var(--warning-ink)' : 'var(--text)' }}>{selectedEntry.currency_symbol || '¥'}{Number(selectedEntry.remaining_amount).toLocaleString()}</Typography></Stack>
               {selectedEntry.payment_note && (
                 <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: 'var(--muted)' }}>备注</Typography><Typography>{selectedEntry.payment_note}</Typography></Stack>
               )}

@@ -310,6 +310,59 @@ AI → 直连 OpenAI API (key 存 system_settings 表)
 
 - Phase 10 遗留的 `callback` 逻辑（查/建用户、签发 session）覆盖线上主路径，本轮以单测 + dev 链路验证，**尚未在本机真机走一次完整 Google 授权**（Console 已登记，具备条件）
 
+## Phase 11：四项界面反馈（颜色审计、卡片信息层级、手填金额、固定支出）✅（2026-09-16）
+
+### 1. 全站颜色审计（针对「系统管理员权限」卡片提出）
+
+审计发现的问题都是可测量的缺陷，不是审美分歧：
+
+- **P0 暗色世界用亮色 token**：`app/admin/page.tsx` 硬编码 `#030059` / `#636363` 落在 `#181a24` 上，实测 1.06:1 与 2.88:1 —— 标题几乎不可见。同页模块卡与 `StatCard` 也是「暗色世界里放白卡 + 亮色文字」。改为 `text.primary` / `text.secondary` / `background.paper`。
+- **P0 状态徽章彩色文字全部不达 AA**：语义本色压在自己 10~14% 的淡底上只有 2.66~4.18:1（`--success` 2.89、`--warning` 2.66、`--danger` 4.16、`--info` 4.49）。新增 `--success-ink/--warning-ink/--danger-ink/--info-ink` 四档文字色，徽章与正文一律下沉到 ink 档。
+- **语义色两套来源**：`globals.css` 另存 `#16A34A/#CF2E2E/#2563EB`，与 `lib/theme.ts` / Design.md 的 `#2e7d32/#d32f2f/#0277bd` 不是同一组。已对齐（`--warn` 作为深底琥珀保留，白底警示文字改走 `--warning-ink`）。
+- **P1 填充色误用**：`#818cf8`（admin-indigo 的**暗底文字/图标档**）被当按钮填充底，白字仅 2.98:1；11 处改为 `primary.main`（6.29:1）。
+- **P1 其他**：`gmail-ledger` 6 处把 legacy 黄 `#FCB900` 当警示文字（白底 1.74:1）；`dashboard` 白卡金额用 `--gold-500`（2.42:1，连 3:1 大字号门槛都不到）改 `--gold-700`；`settings` 管理员卡从 Tailwind indigo-900/800 收敛到声明的 `admin-indigo-deep → main`。
+- 新增 `lib/__tests__/color-contrast.test.ts`（17 例）：把「算得出」的对比度固化成断言（含 WCAG 计算函数），并锁住「语义本色压淡底确实不达 AA」这一前提——若哪天淡底变浅使该前提不成立，测试会提醒可以简化。
+
+### 2. 账单卡片信息层级：持卡人/银行优先于卡名
+
+- 原布局把卡产品名放主行（19/24 半粗体），持卡人与银行压成小 chip。同一持卡人在同一家银行常持有多张同名卡（如多张「普卡」），卡名区分度最低却最抢眼。
+- 改为：主行 = 持卡人（无持卡人时退化银行）；次行 = 银行 chip +「卡名 ····尾号」。尾号仍与卡名同排且不截断（同款两张卡时尾号是唯一识别信息）。
+
+### 3. 手填账单金额，优先级高于一切导入来源
+
+- 新增 `migrations/d1/0008_bills_amount_override.sql`：`bills.bill_amount_override`。手填值单独存列，**导入永远只写 `bill_amount`**，两者都保留 ⇒ 撤销手填可回落到最新导入值，也不会出现「导入时猜是不是人工填的」这类在某条路径上必失效的判断。
+- `lib/utils.ts`：`effectiveBillAmount` / `hasManualBillAmount` / `canManuallySetBillAmount`（账单日不足 5 天可填，与账单页排序同为 `daysUntilNextBilling` 口径）。
+- **读边界统一归一化**，避免 20+ 个读取点各自合成时漏掉一处：`bills.server` 映射层归一化，`cards.server` / `holders.server` / `analytics.server` / `worker/cron.ts` 在 SQL 层 `COALESCE(bill_amount_override, bill_amount)`。
+- 「生效金额」而不是「原始金额」参与状态判定、剩余应还与还款上限校验（否则屏幕上 800、拒绝理由却按 1200）。
+- 新增 `setBillAmountOverride` / `setCardManualBillAmount`（后者在账单尚未生成时先建当期再钉住），RPC 走 `guardBill` / `guardCard`；新增 `components/mobile/ManualBillAmountDialog.tsx`，入口贴在金额旁。
+- 新用户 `bill_amount_override` 恒为 NULL，导入行为与之前一致（无迁移风险）。
+
+### 4. 固定支出：手动添加房租、贷款等周期账单
+
+- 新增 `migrations/d1/0009_recurring_payables.sql`：`recurring_payables` + `recurring_payable_payments`。
+  - **刻意不复用 `credit_cards`**：`bills.card_id` 是 NOT NULL 外键，房租没有卡；家庭财务审计明确要求「不得为了复用现有表，把房租也伪装成信用卡产品」，否则会污染卡数/额度/免息期等一切口径。
+  - 账期按「应付日所在月」固定、不滚动：房租 15 号到期，16 号仍属本月（只是逾期），否则「本月该付没付」会被直接抹掉。
+  - 还款按 `(payable_id, period)` 唯一 ⇒ 重复登记天然幂等；`period` 由服务端按当天决定，客户端传账期就等于可以往任意月份记账。
+- 新增 `lib/api/payables.server.ts` / `payables.ts` / `payables.shared.ts`（纯标签函数放 `.shared`，避免把 D1 依赖带进浏览器包）、`components/mobile/PayableList.tsx` / `PayableForm.tsx`，账单页独立分节展示，**没有卡片时也能添加**。
+- 成员隔离：按 `created_by` 判定（`assertPayableAccess`），`createRecurringPayable` 的 `created_by` 由会话覆盖。
+- 本轮只做「每月固定一笔」最小闭环；期表拆分、提前还款重排、押金结算留给审计计划的 W15–W19。
+
+### 验证
+
+- 本地：`tsc --noEmit` 0 错误、`eslint --max-warnings=0` 通过、vitest **284 passed**（新增 color-contrast 17、bill-amount-override 22、recurring-payables 13）、`vite build` 成功
+- 迁移在完整 sqlite 链上冒烟：0008/0009 可重复执行；`UNIQUE(payable_id, period)` 与 `CHECK(category IN ...)` 实测生效
+- `vite dev` 真实链路（注册→登录→RPC）：
+  - 建固定支出时 `created_by` 伪装成 `attacker` → 落库为会话用户（身份绑定生效）
+  - 登记付款后 `status=paid`；重复登记返回「本期已登记还款」；**另一账号看不到、也删不掉**（403）
+  - 手填 800 → 导入写入 1500 → 读取**仍为 800**（导入落 `bill_amount`、手填落 `override`，两者并存）；撤销手填后回落 1500
+  - 新 RPC 未登录 401、未知函数 404（先鉴权再查 registry，避免端点枚举）
+- 探针数据与 dev server 已清理
+
+### 本轮未验证
+
+- 生产 D1 尚未执行 0008/0009（未部署）；Google OAuth 加固与本次改动均未上线
+- 未做真机视觉回归：颜色改动含 P0 级可读性修复（`/admin` 标题、全部状态徽章），建议部署后实际看一眼
+
 ## 更新后的下一步
 
 1. **登录态真机回归**：本轮未用真实账号做 Phase 6 式 17 路由 Chrome 爬测；登录走一遍核心页面，并在浏览器授权通知后调用 `POST /api/push/test` 验证端到端推送（cron `0 9 * * *` 定时推送可用 `wrangler tail` 观察）

@@ -141,6 +141,8 @@ export interface Bill {
   statement_end?: string
   statement_date?: string
   bill_amount: number
+  /** 用户手填的金额（优先级高于一切导入来源）。非空时即为「人工钉住」。 */
+  bill_amount_override?: number
   min_payment?: number
   due_date: string
   status: 'unpaid' | 'partial' | 'paid' | 'overdue'

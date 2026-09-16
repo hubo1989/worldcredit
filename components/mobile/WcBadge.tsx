@@ -8,15 +8,18 @@ import type { ReactNode } from 'react'
  * 状态四色：绿已还 / 黄部分 / 红逾期 / 蓝待还（§7.3）。
  */
 
-// 状态与来源徽章的颜色一律走语义令牌（--success/--warn/--danger/--info），
-// 只用 color-mix 生成淡底，不再散落字面色值。
+// 状态与来源徽章的颜色一律走语义令牌，只用 color-mix 生成淡底，不再散落字面色值。
+//
+// 文字用 `-ink` 档（语义色的深档）而不是语义色本色：本色压在自己 10~14% 的
+// 淡底上只有 2.66~4.18:1，全部不达 AA（实测 --success 本色 2.89:1、--info 4.49:1）。
+// 语义本色留给填充、描边和大字号，正文一律下沉到 ink 档。
 const tint = (token: string, pct: number) => `color-mix(in srgb, var(${token}) ${pct}%, transparent)`
 
 const STATUS_STYLES: Record<string, { bg: string; fg: string; label: string }> = {
-  paid:    { bg: tint('--success', 12), fg: 'var(--success)', label: '已还' },
+  paid:    { bg: tint('--success', 12), fg: 'var(--success-ink)', label: '已还' },
   partial: { bg: tint('--warn', 18),    fg: 'var(--gold-700)', label: '部分' },
-  overdue: { bg: tint('--danger', 12),  fg: 'var(--danger)', label: '逾期' },
-  unpaid:  { bg: tint('--info', 10),    fg: 'var(--info)', label: '待还' },
+  overdue: { bg: tint('--danger', 12),  fg: 'var(--danger-ink)', label: '逾期' },
+  unpaid:  { bg: tint('--info', 10),    fg: 'var(--info-ink)', label: '待还' },
 }
 
 export function StatusBadge({ status, label, size = 'sm' }: { status: string; label?: string; size?: 'sm' | 'md' }) {
@@ -47,7 +50,7 @@ export function StatusBadge({ status, label, size = 'sm' }: { status: string; la
 }
 
 const SOURCE_STYLES: Record<string, { bg: string; fg: string; label: string }> = {
-  email:  { bg: tint('--info', 10),   fg: 'var(--info)', label: '邮件' },
+  email:  { bg: tint('--info', 10),   fg: 'var(--info-ink)', label: '邮件' },
   manual: { bg: tint('--muted', 14),  fg: 'var(--muted)', label: '手动' },
   ai:     { bg: tint('--gold-500', 18), fg: 'var(--gold-700)', label: 'AI' },
 }

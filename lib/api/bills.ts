@@ -41,6 +41,12 @@ export function updateBill(...args: Parameters<typeof Server.updateBill>) {
 export function updateBillStatus(...args: Parameters<typeof Server.updateBillStatus>) {
   return callRpc<typeof Server.updateBillStatus>('bills', 'updateBillStatus', ...args)
 }
+export function setBillAmountOverride(...args: Parameters<typeof Server.setBillAmountOverride>) {
+  return callRpc<typeof Server.setBillAmountOverride>('bills', 'setBillAmountOverride', ...args)
+}
+export function setCardManualBillAmount(...args: Parameters<typeof Server.setCardManualBillAmount>) {
+  return callRpc<typeof Server.setCardManualBillAmount>('bills', 'setCardManualBillAmount', ...args)
+}
 export function createPayment(...args: Parameters<typeof Server.createPayment>) {
   return callRpc<typeof Server.createPayment>('bills', 'createPayment', ...args)
 }

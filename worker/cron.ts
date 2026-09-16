@@ -34,7 +34,9 @@ export async function handleScheduled(_event: ScheduledEvent, env: CronEnv, _ctx
 
   // 1. Get all unpaid/overdue bills with card + holder info
   const bills = await db.prepare(`
-    SELECT b.id, b.card_id, b.bill_month, b.bill_amount, b.min_payment, b.due_date, b.status,
+    SELECT b.id, b.card_id, b.bill_month,
+           COALESCE(b.bill_amount_override, b.bill_amount) AS bill_amount,
+           b.min_payment, b.due_date, b.status,
            ch.id AS holder_id, ch.created_by,
            cp.bank_name, cp.card_name, cc.name_override
     FROM bills b

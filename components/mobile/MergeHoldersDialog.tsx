@@ -327,7 +327,7 @@ export function MergeHoldersDialog({
               borderColor: 'color-mix(in srgb, var(--success) 28%, transparent)',
             }}
           >
-            <Typography className="type-section" sx={{ color: 'var(--success)', mb: 1 }}>
+            <Typography className="type-section" sx={{ color: 'var(--success-ink)', mb: 1 }}>
               🎯 合并生效预览
             </Typography>
             <Stack className="type-body" spacing={0.5}>

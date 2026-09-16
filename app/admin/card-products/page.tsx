@@ -157,8 +157,8 @@ export default function CardProductsPage() {
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
           sx={{
-            bgcolor: '#818cf8',
-            '&:hover': { bgcolor: '#4338ca' },
+            bgcolor: 'primary.main',
+            '&:hover': { bgcolor: 'primary.dark' },
             textTransform: 'none',
             borderRadius: 2,
             px: 3
@@ -498,7 +498,7 @@ export default function CardProductsPage() {
             onClick={handleSubmit}
             variant="contained"
             disabled={submitting}
-            sx={{ bgcolor: '#818cf8', '&:hover': { bgcolor: '#4338ca' }, px: 4, borderRadius: 2 }}
+            sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, px: 4, borderRadius: 2 }}
           >
             {submitting ? '保存中...' : '确定'}
           </Button>
