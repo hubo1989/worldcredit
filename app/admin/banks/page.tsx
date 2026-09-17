@@ -77,6 +77,7 @@ export default function BanksPage() {
             fetched: [],
             fetchErrors: [err instanceof Error ? err.message : '补全失败'],
             provenance: { full_name: 'none', customer_service_phone: 'none', website_url: 'none' },
+            thirdPartySources: [],
             domainConsistent: false,
           })
         }
@@ -89,26 +90,34 @@ export default function BanksPage() {
     }
   }
 
-  /** 写入只有「官网页面上直接读到」的字段，模型凭记忆给的候选一律不自动写。 */
+  /**
+   * 写入有依据的字段：`site`（官网页面直接读到）与 `thirdparty`（权威第三方来源）。
+   * 两者都在弹窗里标出来源并由人确认后写入；`model`（纯模型记忆）一律不自动写。
+   */
+  const groundedProvenance = (p: string) => p === 'site' || p === 'thirdparty'
+
   const handleApplyEnrichment = async () => {
     setSubmitting(true)
     try {
       let applied = 0
       for (const row of enrichRows) {
         const patch: Partial<Bank> = {}
-        if (row.provenance.full_name === 'site' && row.full_name) patch.full_name = row.full_name
-        if (row.provenance.customer_service_phone === 'site' && row.customer_service_phone) {
+        // 此前只认 `site`，结果是官网拒绝抓取的银行（民泰 412、建行/交行空壳页）
+        // 永远补不上——而它们的全称在维基条目里是明确可查的。
+        if (groundedProvenance(row.provenance.full_name) && row.full_name) patch.full_name = row.full_name
+        if (groundedProvenance(row.provenance.customer_service_phone) && row.customer_service_phone) {
           patch.customer_service_phone = row.customer_service_phone
         }
-        if (row.provenance.website_url === 'site' && row.website_url) patch.website_url = row.website_url
+        if (groundedProvenance(row.provenance.website_url) && row.website_url) patch.website_url = row.website_url
         if (Object.keys(patch).length === 0) continue
         await updateBank(row.id, patch)
         applied++
       }
       // 先统计再清空 enrichRows（清空后这份数据就没了）
-      const skipped = enrichRows.filter(r => r.provenance.full_name !== 'site'
-        && r.provenance.customer_service_phone !== 'site'
-        && r.provenance.website_url !== 'site').length
+      const skipped = enrichRows.filter(r =>
+        !groundedProvenance(r.provenance.full_name) &&
+        !groundedProvenance(r.provenance.customer_service_phone) &&
+        !groundedProvenance(r.provenance.website_url)).length
       setEnrichOpen(false)
       setEnrichRows([])
       // 用 fetchData 返回的新列表算「还剩多少」，不能读闭包里的 banks —— 那是写入前的旧值。
@@ -546,8 +555,9 @@ export default function BanksPage() {
         <DialogTitle>按真实内容补全（以官网页面为证）</DialogTitle>
         <DialogContent sx={{ bgcolor: '#1e2028' }}>
           <Typography sx={{ color: '#9ca3af', fontSize: 13, mb: 2 }}>
-            每行的「官网」域名来自模型提名，电话与全称只在该行官网页面上直接读到时才标为「官网」并会被写入；
-            标为「待确认」的是模型记忆里的候选，需要你人工核对后手动填写。未抓到页面的行不会写入任何内容。
+            来源标记：「官网」= 在该行官网页面上直接读到；「第三方」= 取自权威第三方来源
+            （Wikidata / 维基百科条目，用于官网拒绝抓取的银行）；「待确认」= 仅模型记忆，不写入，
+            需你核对后手动填写。写入时只取前两类。
           </Typography>
           <TableContainer component={Paper} sx={{ bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)' }}>
             <Table size="small">
@@ -562,9 +572,11 @@ export default function BanksPage() {
               </TableHead>
               <TableBody>
                 {enrichRows.map(row => {
-                  const tag = (p: 'site' | 'model' | 'none') =>
+                  const tag = (p: 'site' | 'thirdparty' | 'model' | 'none') =>
                     p === 'site' ? (
                       <Chip size="small" label="官网" sx={{ height: 18, fontSize: 11, bgcolor: 'rgba(74,222,128,0.15)', color: '#4ade80' }} />
+                    ) : p === 'thirdparty' ? (
+                      <Chip size="small" label="第三方" sx={{ height: 18, fontSize: 11, bgcolor: 'rgba(147,197,253,0.15)', color: '#93c5fd' }} />
                     ) : p === 'model' ? (
                       <Chip size="small" label="待确认" sx={{ height: 18, fontSize: 11, bgcolor: 'rgba(251,191,36,0.15)', color: '#fbbf24' }} />
                     ) : null
@@ -583,9 +595,11 @@ export default function BanksPage() {
                       <TableCell sx={{ color: '#9ca3af', fontSize: 11 }}>
                         {row.fetched.length > 0
                           ? `已抓 ${row.fetched.length} 页${row.domainConsistent ? '' : '（域名未能对上，请留意）'}`
-                          : row.fetchErrors.length > 0
-                            ? `未抓到：${row.fetchErrors[0]} `.slice(0, 60)
-                            : '无依据'}
+                          : row.thirdPartySources.length > 0
+                            ? '官网抓取失败，改用第三方来源'
+                            : row.fetchErrors.length > 0
+                              ? `未抓到：${row.fetchErrors[0]}`.slice(0, 60)
+                              : '无依据'}
                       </TableCell>
                     </TableRow>
                   )

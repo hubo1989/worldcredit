@@ -63,10 +63,26 @@ describe('按真实内容补全：必须分批且说清剩余', () => {
     expect(i).toBeLessThan(j)
   })
 
-  it('只有官网直接读到的字段才写入（模型候选不落库）', () => {
-    expect(page).toMatch(/row\.provenance\.full_name === 'site'/)
-    expect(page).toMatch(/row\.provenance\.customer_service_phone === 'site'/)
-    expect(page).toMatch(/row\.provenance\.website_url === 'site'/)
+  // 可写入的依据有两类：官网页面直接读到（site）、权威第三方来源（thirdparty）。
+  // 纯模型记忆（model）不写。第三方这一档是必需的：不少银行官网对抓取直接拒绝
+  // （实测民泰 412、建行/交行返回空壳），只认官网会让这些行永远补不上。
+  it('只写有依据的字段：官网或权威第三方，模型记忆不落库', () => {
+    expect(page).toMatch(/const groundedProvenance = \(p: string\) => p === 'site' \|\| p === 'thirdparty'/)
+    expect(page).toMatch(/groundedProvenance\(row\.provenance\.full_name\)/)
+    expect(page).toMatch(/groundedProvenance\(row\.provenance\.customer_service_phone\)/)
+    expect(page).toMatch(/groundedProvenance\(row\.provenance\.website_url\)/)
+    // 不能写成只认 site
+    expect(page).not.toMatch(/row\.provenance\.full_name === 'site'/)
+  })
+
+  it('第三方来源在界面上单独标注，不冒充官网', () => {
+    expect(page).toMatch(/label="第三方"/)
+    expect(page).toMatch(/label="官网"/)
+    expect(page).toMatch(/label="待确认"/)
+  })
+
+  it('官网抓取失败时说明「改用第三方来源」', () => {
+    expect(page).toMatch(/官网抓取失败，改用第三方来源/)
   })
 })
 

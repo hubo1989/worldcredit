@@ -354,16 +354,129 @@ export interface BankEnrichment {
   /** 抓取失败/无内容的地址及原因。 */
   fetchErrors: string[]
   /**
-   * 字段来源：`site` = 在该行官网页面上直接读到；
-   * `model` = 模型凭记忆给出的、未能在官网页面上佐证的候选，需人工确认。
+   * 字段来源，按可信度从高到低：
+   * - `site`       在该行官网页面上直接读到
+   * - `thirdparty` 来自权威第三方结构化来源（Wikidata / 维基百科条目）
+   * - `model`      模型凭记忆给出、未能在任何来源佐证，必须人工确认
+   * - `none`       无
+   *
+   * 为什么要有 `thirdparty` 这一档：不少银行官网对抓取直接拒绝
+   * （民泰 412、建行/交行返回空壳），把「官网」当成唯一证据会让这些行永远补不上。
+   * 官网抓不到时改用权威第三方来源，并如实标出来源，由人工在复核弹窗里判断。
    */
-  provenance: Record<'full_name' | 'customer_service_phone' | 'website_url', 'site' | 'model' | 'none'>
+  provenance: Record<'full_name' | 'customer_service_phone' | 'website_url', 'site' | 'thirdparty' | 'model' | 'none'>
+
+  /** 第三方来源 URL（Wikidata / 维基百科条目），用于交代依据。 */
+  thirdPartySources: string[]
+
   /** 官方域名是否与站点自身内容对得上（防止跳转到导流/聚合站）。 */
   domainConsistent: boolean
 }
 
 /** 常见「联系/关于」子页；客服电话多数不在首页。 */
 const CONTACT_PATHS = ['', '/contact', '/contactus', '/contact-us', '/gywm', '/lianxiwomen', '/about/contact']
+
+// ── 权威第三方来源 ────────────────────────────────────────────────────────────
+//
+// 部分银行官网对抓取直接拒绝（实测民泰 412、建行/交行返回空壳页），把「官网」
+// 当唯一证据会让这些行永远补不上。改为官网抓不到时退到权威第三方来源。
+//
+// 能拿到什么、拿不到什么（均已实测）：
+//   * Wikidata P856 给**官网**（连被 412 挡住的民泰也能给出），但基本没有客服电话
+//   * 中文维基条目正文能给**官方全称**（「XX银行股份有限公司」），覆盖不错
+//   * 中文维基正文里的 95xxx 号码**不可信**（实测中信银行条目里是 95032/95034，
+//     不是其真实客服 95558）——所以电话这一档绝不采信第三方，只认官网页面
+
+/** Wikidata 官网字段。实体先经 wbsearchentities 解析，避免猜 QID。 */
+async function lookupWikidataSite(name: string): Promise<{ site: string | null; source: string | null }> {
+  for (const lang of ['zh', 'en']) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const searchUrl =
+        'https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&limit=1' +
+        `&language=${lang}&search=${encodeURIComponent(name)}`
+      const res = await fetch(searchUrl, { headers: { Accept: 'application/json' } })
+      if (!res.ok) continue
+      const found = (await res.json()) as { search?: { id?: string }[] }
+      const qid = found.search?.[0]?.id
+      if (!qid) continue
+
+      const entityUrl = `https://www.wikidata.org/wiki/Special:EntityData/${qid}.json`
+      const entityRes = await fetch(entityUrl, { headers: { Accept: 'application/json' } })
+      if (!entityRes.ok) continue
+      const data = (await entityRes.json()) as {
+        entities?: Record<string, { claims?: Record<string, { mainsnak?: { datavalue?: { value?: unknown } } }[]> }>
+      }
+      const entity = Object.values(data.entities || {})[0]
+      const claims = entity?.claims?.P856 || []
+      for (const claim of claims) {
+        const value = claim.mainsnak?.datavalue?.value
+        if (typeof value === 'string' && /^https?:\/\//i.test(value)) {
+          return { site: value, source: `https://www.wikidata.org/wiki/${qid}` }
+        }
+      }
+      // 拿到实体但没有官网字段：不必重试
+      break
+    } catch {
+      // 第三方接口会有偶发失败/限流。重试一次，避免「静默丢字段」——
+      // 这类失败不会报错，只会让结果里少一项，正是最难察觉的一种。
+      await new Promise(r => setTimeout(r, 800))
+    }
+    }
+  }
+  return { site: null, source: null }
+}
+
+/** 维基百科条目正文（用于提取官方全称）。 */
+async function lookupWikipediaText(
+  name: string
+): Promise<{ text: string | null; source: string | null }> {
+  for (const lang of ['zh', 'en']) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const url =
+        `https://${lang}.wikipedia.org/w/api.php?action=query&prop=revisions&rvprop=content` +
+        `&rvslots=main&format=json&redirects=1&titles=${encodeURIComponent(name)}`
+      const res = await fetch(url, { headers: { Accept: 'application/json' } })
+      if (!res.ok) continue
+      const data = (await res.json()) as {
+        query?: { pages?: Record<string, { revisions?: { slots?: { main?: { '*'?: string } } }[] }> }
+      }
+      for (const page of Object.values(data.query?.pages || {})) {
+        const text = page.revisions?.[0]?.slots?.main?.['*']
+        if (text && text.length > 200) {
+          return { text, source: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(name)}` }
+        }
+      }
+      // 页面存在但内容过短：不必重试
+      break
+    } catch {
+      // 同上：偶发失败重试一次
+      await new Promise(r => setTimeout(r, 800))
+    }
+    }
+  }
+  return { text: null, source: null }
+}
+
+/**
+ * 从维基正文里取官方全称。
+ *
+ * 只认「<银行名>…股份有限公司」这种完整注册名形态；取不到就返回 null，
+ * 绝不用简称或模型猜的全称顶替。
+ */
+export function fullNameFromWikipedia(text: string, name: string): string | null {
+  const base = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const patterns = [
+    new RegExp(`(${base}[\\u4e00-\\u9fa5]{0,10}股份有限公司)`),
+    new RegExp(`([\\u4e00-\\u9fa5]{2,10}${base}[\\u4e00-\\u9fa5]{0,6}股份有限公司)`),
+  ]
+  for (const re of patterns) {
+    const hit = text.match(re)
+    if (hit) return hit[1].replace(/\s/g, '').slice(0, 40)
+  }
+  return null
+}
 
 /** 国内银行客服短号：95xxx / 96xxx。短号是**最稳定**的客服标识。 */
 const SHORT_PHONE_RE = /^(?:95\d{3}|96\d{3})$/
@@ -504,68 +617,94 @@ export async function enrichBankFromWeb(bank: {
     fetched: [],
     fetchErrors: [],
     provenance: { full_name: 'none', customer_service_phone: 'none', website_url: 'none' },
+    thirdPartySources: [],
     domainConsistent: false,
   }
 
-  // 1) 已填官网就先用它；否则让模型提名一个候选
+  // 1) 候选官网：用户已填 > Wikidata > 模型提名
+  //
+  // 顺序理由：Wikidata 是可核实、可追溯的结构化来源，模型提名只是记忆。
+  // 实测 Wikidata 的 P856 对银行命中率高（含被 412 挡住的民泰），且 wbsearchentities
+  // 的首条命中经抽查都指向正确的法人主体（招商/中信/上海/宁波/广发/兴业等）。
+  // 先取更可靠的来源，抓不到页面时也不会把「模型记的域名」当成已验证事实。
   let origin: string | null = null
+  let originFrom: 'existing' | 'model' | 'wikidata' = 'existing'
   const existing = typeof bank.website_url === 'string' ? bank.website_url : ''
   if (existing) {
     try { origin = new URL(existing).origin } catch { origin = null }
   }
   if (!origin) {
-    origin = await nominateWebsite(cfg, bank.name, bank.country || 'CN')
-    if (origin) result.provenance.website_url = 'model'
-  } else {
-    result.website_url = origin
-    result.provenance.website_url = 'site'
+    const wikidata = await lookupWikidataSite(bank.name)
+    if (wikidata.source) result.thirdPartySources.push(wikidata.source)
+    const normalized = wikidata.site ? normalizeOrigin(wikidata.site) : null
+    if (normalized) {
+      origin = normalized
+      originFrom = 'wikidata'
+    }
   }
-
   if (!origin) {
-    // 连候选域名都给不出来：如实返回空，交给人工
-    return result
+    origin = await nominateWebsite(cfg, bank.name, bank.country || 'CN')
+    if (origin) originFrom = 'model'
   }
 
   // 2) 抓官网真实内容
-  const evidence = await gatherSiteEvidence(origin)
-  result.fetched = evidence.fetched
-  result.fetchErrors = evidence.errors
+  if (origin) {
+    const evidence = await gatherSiteEvidence(origin)
+    result.fetched = evidence.fetched
+    result.fetchErrors = evidence.errors
 
-  if (!evidence.fetched.length) {
-    // 提名了域名但抓不到：保留域名候选，但标注为未验证
-    result.website_url = origin
-    return result
+    if (evidence.fetched.length) {
+      result.website_url = origin
+      result.provenance.website_url = 'site'
+
+      // 3) 域名一致性：以「重定向后的最终域名是否仍是提名的那家」为准。
+      //    之前写成「页面里出现过该域名」，那条件恒真——页面自己就含自己的域名，
+      //    等于没检查。真正要防的是提名结果指向导流站/聚合站，或站点把请求跳到别处。
+      const root = rootDomain(origin)
+      result.domainConsistent =
+        evidence.stayedOnOrigin && evidence.fetched.some(u => rootDomain(u) === root)
+
+      // 4) 电话只认官网页面。第三方来源的 95xxx 实测不可信
+      //    （中信银行维基条目里是 95032/95034，不是其真实客服 95558），故不采信。
+      const sitePhone = pickServicePhone(evidence.phones)
+      if (sitePhone) {
+        result.customer_service_phone = sitePhone
+        result.provenance.customer_service_phone = 'site'
+      }
+
+      // 5) 全称优先官网正文
+      const siteFull = fullNameFromSite(evidence.text, bank.name)
+      if (siteFull) {
+        result.full_name = siteFull
+        result.provenance.full_name = 'site'
+      }
+    } else {
+      // 抓不到页面（民泰 412、建行/交行空壳页）。保留域名候选但如实标注来源：
+      // 用户已填的不动、来自第三方的标 thirdparty、模型提名的标 model。
+      result.website_url = origin
+      result.provenance.website_url =
+        originFrom === 'model' ? 'model' : originFrom === 'wikidata' ? 'thirdparty' : 'none'
+    }
   }
 
-  result.website_url = origin
-  result.provenance.website_url = 'site'
+  // 6) 全称第三方兜底：官网抓不到或正文没写时，用维基条目的注册全称
+  if (!result.full_name) {
+    const wiki = await lookupWikipediaText(bank.name)
+    if (wiki.source) result.thirdPartySources.push(wiki.source)
+    const full = wiki.text ? fullNameFromWikipedia(wiki.text, bank.name) : null
+    if (full) {
+      result.full_name = full
+      result.provenance.full_name = 'thirdparty'
+    }
+  }
 
-  // 3) 域名一致性：以「重定向后的最终域名是否仍是提名的那家」为准。
-  //    之前写成「页面里出现过该域名」，那条件恒真——页面自己就含自己的域名，
-  //    等于没检查。真正要防的是模型提名了一个导流站/聚合站，或站点把请求跳到别处。
-  const root = rootDomain(origin)
-  result.domainConsistent =
-    evidence.stayedOnOrigin && evidence.fetched.some(u => rootDomain(u) === root)
-
-  // 4) 电话以官网页面为准
-  const sitePhone = pickServicePhone(evidence.phones)
-  if (sitePhone) {
-    result.customer_service_phone = sitePhone
-    result.provenance.customer_service_phone = 'site'
-  } else {
-    // 官网没写号码：退回模型候选，但标为未验证，由界面提示人工确认
+  // 7) 电话兜底：只接受模型候选并标 model（要求人工确认），不采信第三方号码
+  if (!result.customer_service_phone) {
     const spoken = await nominateWebsitePhone(cfg, bank.name)
     if (spoken) {
       result.customer_service_phone = spoken
       result.provenance.customer_service_phone = 'model'
     }
-  }
-
-  // 5) 全称以官网正文为准；取不到就留空（不猜）
-  const siteFull = fullNameFromSite(evidence.text, bank.name)
-  if (siteFull) {
-    result.full_name = siteFull
-    result.provenance.full_name = 'site'
   }
 
   return result
