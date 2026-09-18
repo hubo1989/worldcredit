@@ -220,10 +220,14 @@ export async function upsertBillForCard(
   options: UpsertBillOptions
 ): Promise<UpsertBillOutcome> {
   const billMonth = parsed.bill_month as string
-  const dueDate = parsed.due_date as string
   const amount = Number(parsed.bill_amount)
   const minPayment = parsed.min_payment != null ? Number(parsed.min_payment) : null
   const statementDate = parsed.statement_date ?? null
+  // 0 元账单的 due_date 兜底（bills.due_date NOT NULL）：缺省时用账单日或月末；
+  // 0 元新账单 status 直接置 paid（应还 0 元 = 已还清），与直发路径同口径。
+  const zeroBill = amount === 0
+  const dueDate = (parsed.due_date as string | null) ?? statementDate ?? (billMonth + '-28')
+  const initialStatus = zeroBill ? 'paid' : 'unpaid'
 
   const existing = await db.prepare(
     'SELECT id, status FROM bills WHERE card_id = ? AND bill_month = ?'
@@ -246,7 +250,7 @@ export async function upsertBillForCard(
   const billId = crypto.randomUUID()
   await db.prepare(
     'INSERT INTO bills (id, card_id, bill_month, bill_amount, min_payment, due_date, statement_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).bind(billId, cardId, billMonth, amount, minPayment, dueDate, statementDate, 'unpaid').run()
+  ).bind(billId, cardId, billMonth, amount, minPayment, dueDate, statementDate, initialStatus).run()
   return { billId, action: 'inserted', reason: null }
 }
 
@@ -321,7 +325,15 @@ export async function persistNestedBills(
     }
 
     // 转发包里混着「电子对账单已可查阅」这类通知和营销邮件，字段不全的一律跳过
-    if (parsed.is_bill === false || !parsed.bill_month || !parsed.due_date || !parsed.bill_amount) {
+    // 与直发路径同口径：0 元账单合法（== null 判空，不用 falsy）；
+    // 0 元时 due_date 可缺（无需还款就没有截止日）
+    const zeroBill = Number(parsed.bill_amount) === 0
+    if (
+      parsed.is_bill === false ||
+      !parsed.bill_month ||
+      parsed.bill_amount == null || Number.isNaN(Number(parsed.bill_amount)) ||
+      (!zeroBill && !parsed.due_date)
+    ) {
       skipped.push({ label: message.label, reason: '非账单或缺少必填字段' })
       continue
     }

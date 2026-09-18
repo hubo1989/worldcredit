@@ -14,7 +14,9 @@
 import type { Env, AiConfig, BillParseResult, EmailParseLogRow } from './types'
 import { parseRawMessage, streamToBytes } from './mime'
 import { buildBundleLogPayload, processForwardedBundle } from './forwarded'
-import { keepPaidStatus } from './bills'
+import { findOrCreateCardForHolder, keepPaidStatus, loadHolderScope } from './bills'
+import { extractHeaderDisplayName } from './mime'
+import { extractNameFromBody, resolveHolder } from './holders'
 
 export default {
   async email(
@@ -38,6 +40,20 @@ export default {
     const log: EmailParseLogRow = {
       user_id: userId, from_email: fromEmail, subject, bill_id: null,
       status: 'failed', error_msg: null, raw_ai_response: null,
+    }
+
+    // Gmail 转发验证邮件拦截：提取验证链接存入日志，避免正文丢弃后无法完成验证
+    if (fromEmail === 'forwarding-noreply@google.com') {
+      const raw = await streamToBytes(message.raw)
+      const parsed = parseRawMessage(raw)
+      const links = (parsed.text.match(/https:\/\/[^\s]+/g) ?? [])
+        .filter(u => u.includes('google'))
+      log.status = 'skipped'
+      log.error_msg = links.length > 0
+        ? `Gmail 转发验证链接: ${links[0]}`
+        : 'Gmail 验证邮件但未提取到链接，正文前 500 字: ' + parsed.text.slice(0, 500)
+      await writeLog(db, log)
+      return
     }
 
     try {
@@ -84,7 +100,16 @@ export default {
       const aiResult = await parseBillWithAI(aiConfig, emailBody)
       log.raw_ai_response = JSON.stringify(aiResult)
 
-      if (aiResult.is_bill === false || !aiResult.bill_month || !aiResult.due_date || !aiResult.bill_amount) {
+      // 0 元账单（本期已还清）是合法数据：bill_amount 用 == null 判空而不是 falsy，
+      // 否则 !0 会把应还 0 元的账单误判成缺字段跳过。due_date 同理——无需还款
+      // 就没有还款截止日，金额为 0 时放宽。
+      const zeroBill = Number(aiResult.bill_amount) === 0
+      if (
+        aiResult.is_bill === false ||
+        !aiResult.bill_month ||
+        aiResult.bill_amount == null || Number.isNaN(Number(aiResult.bill_amount)) ||
+        (!zeroBill && !aiResult.due_date)
+      ) {
         log.status = 'skipped'
         log.error_msg = 'Not a bill email or missing required fields'
         await writeLog(db, log)
@@ -92,19 +117,60 @@ export default {
       }
 
       // 6. Find matching credit_card
-      const cardId = await findCardId(db, userId, aiResult.card_last4 ?? null)
-      if (!cardId) {
-        log.status = 'failed'
-        log.error_msg = `未匹配到卡片（尾号：${aiResult.card_last4 || '未知'}）`
-        await writeLog(db, log)
-        return
+      // 持卡人识别 + 找卡/建卡，与转发包路径同口径：
+      //   To 头显示名 > 正文称呼 > 默认持卡人，识别出谁就在谁名下找卡；
+      //   找不到且（尾号 + 银行名能匹配卡产品）时自动建卡到该持卡人。
+      // 建卡前提缺一个都不硬造，否则美国卡会被挂到 CNY 产品上、无尾号邮件每次都造新卡。
+      let cardNote = ''
+      const scope = await loadHolderScope(db, userId)
+      const headerName = extractHeaderDisplayName(toHeader)
+      const bodyName = extractNameFromBody(emailBody)
+      const resolution = resolveHolder({
+        holders: scope.holders,
+        defaultHolderId: scope.defaultHolderId,
+        headerName,
+        bodyName,
+      })
+      if (!resolution.holderId) {
+          log.status = 'failed'
+          log.error_msg = '未找到持卡人，无法自动建卡，请先在界面添加持卡人'
+          await writeLog(db, log)
+          return
       }
+      let cardId: string | null = null
+      const created = await findOrCreateCardForHolder(db, {
+        holderId: resolution.holderId,
+        cardTail: aiResult.card_last4 ?? null,
+        bankName: aiResult.bank_name ?? null,
+        currency: aiResult.currency ?? null,
+        statementDate: aiResult.statement_date ?? null,
+      })
+      if (!created.ok) {
+          log.status = 'failed'
+          log.error_msg = created.reason
+          await writeLog(db, log)
+          return
+      }
+      cardId = created.cardId
+      cardNote = created.created ? `已自动创建卡片（尾号 ${aiResult.card_last4}，银行「${aiResult.bank_name}」）；` : ''
+      const sourceLabel: Record<string, string> = {
+        header_name: 'To 头显示名',
+        body_honorific: '正文称呼',
+        default_holder: '默认持卡人',
+      }
+     cardNote += `归属依据：${sourceLabel[resolution.source] ?? resolution.source}；`
 
       // 7. Upsert bill (idempotent: unique on card_id + bill_month)
       // 必须连 status 一起读：重发邮件不能把已还清的账单打回未还款
+      // 0 元账单的 due_date 兜底：无需还款就没有截止日，但 bills.due_date 是
+      // NOT NULL，缺省时用账单日（或月末）兜底；status 直接置 paid（应还 0 元 = 已还清）。
+      const effectiveDueDate = aiResult.due_date ?? aiResult.statement_date ?? (aiResult.bill_month + '-28')
       const existing = await db.prepare(
         'SELECT id, status FROM bills WHERE card_id = ? AND bill_month = ?'
       ).bind(cardId, aiResult.bill_month).first<{ id: string; status: string | null }>()
+
+      // 应还 0 元的账单天然是已还清状态，不能标 unpaid 进待还款统计
+      const initialStatus = zeroBill ? 'paid' : 'unpaid'
 
       let billId: string
       if (existing) {
@@ -114,7 +180,8 @@ export default {
         ).bind(
           Number(aiResult.bill_amount),
           aiResult.min_payment != null ? Number(aiResult.min_payment) : null,
-          aiResult.due_date, aiResult.statement_date ?? null, keepPaidStatus(existing.status), billId
+          effectiveDueDate, aiResult.statement_date ?? null,
+          zeroBill ? keepPaidStatus(existing.status) : initialStatus, billId
         ).run()
       } else {
         billId = crypto.randomUUID()
@@ -123,13 +190,14 @@ export default {
         ).bind(
           billId, cardId, aiResult.bill_month, Number(aiResult.bill_amount),
           aiResult.min_payment != null ? Number(aiResult.min_payment) : null,
-          aiResult.due_date, aiResult.statement_date ?? null, 'unpaid'
+          effectiveDueDate, aiResult.statement_date ?? null, initialStatus
         ).run()
       }
 
       // 8. Write success log
       log.bill_id = billId
       log.status = 'success'
+      if (cardNote) log.error_msg = cardNote + '账单已写入'
       await writeLog(db, log)
     } catch (err) {
       log.status = 'failed'
@@ -252,29 +320,6 @@ async function parseBillWithAI(config: AiConfig, emailBody: string): Promise<Bil
  * silently attach one account's bill to the other. An unmatched tail is worth
  * more than a wrong one, so this returns null and the caller logs the miss.
  */
-async function findCardId(db: D1Database, userId: string, cardTail: string | null): Promise<string | null> {
-  const holders = await db.prepare(
-    'SELECT id FROM card_holders WHERE created_by = ?'
-  ).bind(userId).all<{ id: string }>()
-  const holderIds = (holders.results || []).map(h => h.id)
-  if (!holderIds.length) return null
-
-  const placeholders = holderIds.map(() => '?').join(',')
-  const cards = await db.prepare(
-    `SELECT id, card_number_last4 FROM credit_cards WHERE holder_id IN (${placeholders})`
-  ).bind(...holderIds).all<{ id: string; card_number_last4: string | null }>()
-  const results = cards.results || []
-  if (!results.length) return null
-
-  const wanted = normalizeCardTail(cardTail)
-  if (wanted) {
-    const match = results.find(c => normalizeCardTail(c.card_number_last4) === wanted)
-    if (match) return match.id
-  }
-  if (results.length === 1) return results[0].id
-  return null
-}
-
 /** Card tails are digits only; keep leading zeros (Amex accounts like 01004). */
 function normalizeCardTail(value: string | null | undefined): string {
   return (value ?? '').replace(/\D/g, '')
