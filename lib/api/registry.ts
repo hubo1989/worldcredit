@@ -103,6 +103,7 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     deleteBenefit: { impl: adminServer.deleteBenefit, admin: true },
     getSystemSettings: { impl: adminServer.getSystemSettings, admin: true },
     updateSystemSettings: { impl: adminServer.updateSystemSettings, admin: true },
+    getEmailParseLogs: { impl: adminServer.getEmailParseLogs, admin: true },
   },
   ai: {
     aiComplete: { impl: aiServer.aiComplete },

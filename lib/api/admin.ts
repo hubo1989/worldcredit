@@ -53,6 +53,10 @@ export function deleteBenefit(...args: Parameters<typeof Server.deleteBenefit>) 
 export function getSystemSettings() {
   return callRpc<typeof Server.getSystemSettings>('admin', 'getSystemSettings')
 }
+
+export function getEmailParseLogs(...args: Parameters<typeof Server.getEmailParseLogs>) {
+  return callRpc<typeof Server.getEmailParseLogs>('admin', 'getEmailParseLogs', ...args)
+}
 export function updateSystemSettings(...args: Parameters<typeof Server.updateSystemSettings>) {
   return callRpc<typeof Server.updateSystemSettings>('admin', 'updateSystemSettings', ...args)
 }

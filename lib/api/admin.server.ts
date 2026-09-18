@@ -1,9 +1,39 @@
 import { query, queryOne, execute, uuid, now } from '../db'
-import { CardProduct, Promo, Benefit, Bank } from '../types'
+import { CardProduct, Promo, Benefit, Bank, EmailParseLog } from '../types'
 
 /**
  * 管理后台通用 API 封装
  */
+
+// --- 邮件解析日志 ---
+
+export async function getEmailParseLogs(opts: {
+  page?: number
+  pageSize?: number
+  status?: 'success' | 'failed' | 'skipped' | null
+  search?: string | null
+}) {
+  const page = Math.max(0, opts.page ?? 0)
+  const pageSize = Math.min(100, Math.max(10, opts.pageSize ?? 20))
+  const conditions: string[] = []
+  const params: unknown[] = []
+  if (opts.status) {
+    conditions.push('status = ?')
+    params.push(opts.status)
+  }
+  if (opts.search) {
+    conditions.push('(from_email LIKE ? OR subject LIKE ?)')
+    const like = `%${opts.search}%`
+    params.push(like, like)
+  }
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''
+  const countRow = await queryOne<{ cnt: number }>(`SELECT COUNT(*) as cnt FROM email_parse_logs ${where}`, params)
+  const rows = await query<EmailParseLog>(
+    `SELECT * FROM email_parse_logs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    [...params, pageSize, page * pageSize]
+  )
+  return { total: countRow.data?.cnt ?? 0, rows: (rows.data ?? []) as EmailParseLog[] }
+}
 
 // --- 银行管理 ---
 

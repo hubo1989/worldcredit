@@ -17,6 +17,7 @@ import {
   Menu as MenuIcon,
   ChevronLeft as ChevronLeftIcon,
   AccountBalance as BankIcon,
+  Email as EmailIcon,
   PhoneIphone as PhoneIphoneIcon
 } from '@mui/icons-material'
 import { useAuth } from '@/lib/auth'
@@ -29,6 +30,7 @@ const NAV_ITEMS = [
   { label: '卡产品管理', icon: <CardIcon />, path: '/admin/card-products' },
   { label: '优惠活动', icon: <PromoIcon />, path: '/admin/promos' },
   { label: '权益管理', icon: <BenefitIcon />, path: '/admin/benefits' },
+  { label: '邮件日志', icon: <EmailIcon />, path: '/admin/email-logs' },
   { label: '系统设置', icon: <SettingsIcon />, path: '/admin/settings' },
 ]
 
