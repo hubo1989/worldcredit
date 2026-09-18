@@ -6,7 +6,7 @@ import { Container, Box, Typography, Stack, IconButton, Paper, Dialog, DialogTit
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import EditIcon from '@mui/icons-material/Edit'
 import { format } from 'date-fns'
-import { getCardDetail, updateCard } from '@/lib/api/cards'
+import { getCardDetail, updateCard, getCardHolders } from '@/lib/api/cards'
 import { StatusBadge } from '@/components/mobile/WcBadge'
 import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import { ChevronRightIcon, ClockIcon } from '@/components/icons/WcIcon'
@@ -40,6 +40,8 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
   const [dueType, setDueType] = useState<'default' | 'after_billing' | 'fixed' | 'fixed_before_billing'>('default')
   const [dueValue, setDueValue] = useState('')
   const [annualFeeInput, setAnnualFeeInput] = useState('')
+  const [holders, setHolders] = useState<Array<{ id: string; name: string }>>([])
+  const [holderId, setHolderId] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -63,6 +65,11 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
 
   useEffect(() => { load() }, [load])
 
+  // 持卡人列表：编辑弹窗里转移归属用（邮件自动建卡挂错人时在这里修）
+  useEffect(() => {
+    getCardHolders().then(list => setHolders(list.map(h => ({ id: h.id, name: h.name })))).catch(() => {})
+  }, [])
+
   const openEdit = () => {
     if (!card) return
     const product = card.card_product
@@ -78,6 +85,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       ? String(card.override_due_value)
       : (card.override_due_type ? '' : String(due.value)))
     setAnnualFeeInput(card.annual_fee_override != null ? String(Number(card.annual_fee_override)) : '')
+    setHolderId(card.holder_id || '')
     setEditError(null)
     setEditOpen(true)
   }
@@ -112,6 +120,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
     setEditError(null)
     try {
       await updateCard(card.id, {
+        holder_id: holderId || undefined,
         // 卡片名称：留空恢复使用卡产品默认
         name_override: nameOverride.trim() || null,
         credit_limit: limitNum,
@@ -368,6 +377,20 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
         <DialogContent>
           {editError && <Alert severity="error" sx={{ mb: 2 }}>{editError}</Alert>}
           <Stack spacing={2} sx={{ mt: 0.5 }}>
+            {holders.length > 0 && (
+              <TextField
+                label="持卡人"
+                select
+                value={holderId}
+                onChange={e => setHolderId(e.target.value)}
+                helperText="邮件自动建卡挂错人时，在这里转移归属"
+                fullWidth
+              >
+                {holders.map(h => (
+                  <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>
+                ))}
+              </TextField>
+            )}
             <TextField
               label="卡片名称"
               placeholder={product?.card_name || '输入卡片名称'}

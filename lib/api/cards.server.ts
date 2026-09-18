@@ -283,6 +283,7 @@ export async function updateCard(
   const fields: string[] = []
   const params: unknown[] = []
   const fieldMap: Record<string, unknown> = {
+    holder_id: patch.holder_id,
     card_number_last4: patch.card_number_last4,
     credit_limit: patch.credit_limit,
     billing_day: patch.billing_day,
