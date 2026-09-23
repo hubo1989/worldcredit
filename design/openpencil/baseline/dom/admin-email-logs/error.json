@@ -1,0 +1,108 @@
+{
+  "route": "admin-email-logs",
+  "state": "error",
+  "url": "/admin/email-logs",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "rpc": [
+    "admin/getEmailParseLogs"
+  ],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+  ],
+  "title": "WorldCredit - 信用卡管理",
+  "headings": [
+    "WorldCredit",
+    "控制台",
+    "邮件日志"
+  ],
+  "texts": [
+    "W",
+    "WorldCredit",
+    "管理控制台",
+    "仪表盘",
+    "银行管理",
+    "卡产品管理",
+    "优惠活动",
+    "权益管理",
+    "邮件日志",
+    "系统设置",
+    "H",
+    "hubo1989@gmail.com",
+    "系统管理员",
+    "控制台",
+    "返回前台 App",
+    "2026年9月22日",
+    "每封收到的邮件及其处理结果（共",
+    "0",
+    "条）",
+    "全部",
+    "成功",
+    "失败",
+    "跳过",
+    "baseline-forced-error",
+    "暂无记录"
+  ],
+  "textsRaw": [
+    "W",
+    "WorldCredit",
+    "管理控制台",
+    "仪表盘",
+    "银行管理",
+    "卡产品管理",
+    "优惠活动",
+    "权益管理",
+    "邮件日志",
+    "系统设置",
+    "H",
+    "hubo1989@gmail.com",
+    "系统管理员",
+    "控制台",
+    "返回前台 App",
+    "2026年9月22日",
+    "邮件日志",
+    "每封收到的邮件及其处理结果（共",
+    "0",
+    "条）",
+    "全部",
+    "成功",
+    "失败",
+    "跳过",
+    "baseline-forced-error",
+    "暂无记录"
+  ],
+  "inputs": [
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "placeholder": "搜索发件人或主题",
+      "ariaLabel": null,
+      "value": ""
+    }
+  ],
+  "buttons": [
+    "仪表盘",
+    "银行管理",
+    "卡产品管理",
+    "优惠活动",
+    "权益管理",
+    "邮件日志",
+    "系统设置",
+    "返回前台 App",
+    "全部",
+    "成功",
+    "失败",
+    "跳过"
+  ],
+  "markers": {
+    "skeleton": 0,
+    "spinner": 0,
+    "alert": 1,
+    "dialog": 0
+  },
+  "bodyText": "W WorldCredit 管理控制台 仪表盘 银行管理 卡产品管理 优惠活动 权益管理 邮件日志 系统设置 H hubo1989@gmail.com 系统管理员 控制台 返回前台 App 2026年9月22日 邮件日志 每封收到的邮件及其处理结果（共 0 条） ​ ​ 全部 成功 失败 跳过 baseline-forced-error 暂无记录",
+  "htmlBytes": 15686
+}

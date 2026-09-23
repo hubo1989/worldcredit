@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一 PR 的新 push 取消旧运行，节省 runner
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 设计源质量门禁
+  #
+  # 只依赖 Python 标准库 + 仓库内的设计资产，不需要 OpenPencil 运行时：
+  #   - 字段对齐：.op 母版是否覆盖真实基线的结构元素
+  #   - 几何溢出：.op 内的绝对定位节点是否越界 / 重叠（便携版）
+  #
+  # 为什么不用 verify-batch.sh 的默认分支：
+  #   `op` 是 macOS 专属的 nanobrew formula，Linux runner 装不了。
+  #   入口在探测不到 OpenPencil 时自动回退到便携版几何检查，
+  #   因此这里可以直接调 verify-batch.sh --source-only。
+  # ---------------------------------------------------------------------------
+  design-source:
+    name: 设计源质量（字段对齐 + 几何溢出）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # 强制关闭 OpenPencil 探测：runner 上本就没有，显式声明避免依赖 PATH 差异
+      - name: 运行设计源验收
+        env:
+          WC_FORCE_NO_OPENPENCIL: '1'
+        run: bash design/openpencil/verify-batch.sh --source-only
+
+      - name: 上传验收报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: design-source-report
+          path: design/openpencil/batch-report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # 代码质量门禁
+  # ---------------------------------------------------------------------------
+  code-quality:
+    name: 代码质量（typecheck / lint / test / build）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: 单元测试
+        run: npm test
+
+      - name: 构建
+        run: npx vinext build
+        env:
+          # 构建期不需要真实密钥；仅提供占位以满足 required 校验
+          NEXT_PUBLIC_INSFORGE_URL: https://example.invalid
+          NEXT_PUBLIC_INSFORGE_ANON_KEY: ci-placeholder

@@ -1,0 +1,245 @@
+{
+  "count": 48,
+  "entries": [
+    {
+      "route": "dashboard",
+      "state": "default",
+      "bytes": 272400
+    },
+    {
+      "route": "dashboard",
+      "state": "loading",
+      "bytes": 81933
+    },
+    {
+      "route": "dashboard",
+      "state": "empty",
+      "bytes": 246516
+    },
+    {
+      "route": "dashboard",
+      "state": "error",
+      "bytes": 114229
+    },
+    {
+      "route": "bills",
+      "state": "default",
+      "bytes": 199095
+    },
+    {
+      "route": "bills",
+      "state": "loading",
+      "bytes": 96809
+    },
+    {
+      "route": "bills",
+      "state": "empty",
+      "bytes": 107047
+    },
+    {
+      "route": "bills",
+      "state": "error",
+      "bytes": 118163
+    },
+    {
+      "route": "card-detail",
+      "state": "default",
+      "bytes": 242633
+    },
+    {
+      "route": "card-detail",
+      "state": "loading",
+      "bytes": 70249
+    },
+    {
+      "route": "card-detail",
+      "state": "empty",
+      "bytes": 239914
+    },
+    {
+      "route": "card-detail",
+      "state": "error",
+      "bytes": 41338
+    },
+    {
+      "route": "analytics",
+      "state": "default",
+      "bytes": 124817
+    },
+    {
+      "route": "analytics",
+      "state": "loading",
+      "bytes": 45692
+    },
+    {
+      "route": "analytics",
+      "state": "empty",
+      "bytes": 89199
+    },
+    {
+      "route": "analytics",
+      "state": "error",
+      "bytes": 52396
+    },
+    {
+      "route": "login",
+      "state": "default",
+      "bytes": 212331
+    },
+    {
+      "route": "login",
+      "state": "loading",
+      "bytes": 220844
+    },
+    {
+      "route": "login",
+      "state": "empty",
+      "bytes": 212331
+    },
+    {
+      "route": "login",
+      "state": "error",
+      "bytes": 220785
+    },
+    {
+      "route": "admin-banks",
+      "state": "default",
+      "bytes": 229004
+    },
+    {
+      "route": "admin-banks",
+      "state": "loading",
+      "bytes": 149069
+    },
+    {
+      "route": "admin-banks",
+      "state": "empty",
+      "bytes": 152615
+    },
+    {
+      "route": "admin-banks",
+      "state": "error",
+      "bytes": 155753
+    },
+    {
+      "route": "bill-detail",
+      "state": "default",
+      "bytes": 135141
+    },
+    {
+      "route": "bill-detail",
+      "state": "loading",
+      "bytes": 65992
+    },
+    {
+      "route": "bill-detail",
+      "state": "empty",
+      "bytes": 135627
+    },
+    {
+      "route": "bill-detail",
+      "state": "error",
+      "bytes": 42580
+    },
+    {
+      "route": "benefits",
+      "state": "default",
+      "bytes": 76261
+    },
+    {
+      "route": "benefits",
+      "state": "loading",
+      "bytes": 50410
+    },
+    {
+      "route": "benefits",
+      "state": "empty",
+      "bytes": 76261
+    },
+    {
+      "route": "benefits",
+      "state": "error",
+      "bytes": 76261
+    },
+    {
+      "route": "gmail-ledger",
+      "state": "default",
+      "bytes": 161816
+    },
+    {
+      "route": "gmail-ledger",
+      "state": "loading",
+      "bytes": 69105
+    },
+    {
+      "route": "gmail-ledger",
+      "state": "empty",
+      "bytes": 73497
+    },
+    {
+      "route": "gmail-ledger",
+      "state": "error",
+      "bytes": 83935
+    },
+    {
+      "route": "settings",
+      "state": "default",
+      "bytes": 215881
+    },
+    {
+      "route": "settings",
+      "state": "loading",
+      "bytes": 215881
+    },
+    {
+      "route": "settings",
+      "state": "empty",
+      "bytes": 215881
+    },
+    {
+      "route": "settings",
+      "state": "error",
+      "bytes": 215881
+    },
+    {
+      "route": "admin-dashboard",
+      "state": "default",
+      "bytes": 319534
+    },
+    {
+      "route": "admin-dashboard",
+      "state": "loading",
+      "bytes": 84520
+    },
+    {
+      "route": "admin-dashboard",
+      "state": "empty",
+      "bytes": 235988
+    },
+    {
+      "route": "admin-dashboard",
+      "state": "error",
+      "bytes": 220742
+    },
+    {
+      "route": "admin-email-logs",
+      "state": "default",
+      "bytes": 174202
+    },
+    {
+      "route": "admin-email-logs",
+      "state": "loading",
+      "bytes": 114547
+    },
+    {
+      "route": "admin-email-logs",
+      "state": "empty",
+      "bytes": 115559
+    },
+    {
+      "route": "admin-email-logs",
+      "state": "error",
+      "bytes": 122678
+    }
+  ]
+}

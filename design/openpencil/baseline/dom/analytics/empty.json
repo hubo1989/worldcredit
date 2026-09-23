@@ -1,0 +1,101 @@
+{
+  "route": "analytics",
+  "state": "empty",
+  "url": "/analytics",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "rpc": [
+    "analytics/getAnalyticsSummary",
+    "analytics/getCategoryBreakdown",
+    "analytics/getMonthlyDebtTrend",
+    "holders/getHolders",
+    "preferences/getUserPreferences"
+  ],
+  "consoleErrors": [],
+  "title": "WorldCredit - 信用卡管理",
+  "headings": [
+    "消费与负债分析",
+    "¥0.00",
+    "¥0.00",
+    "¥0.00",
+    "0.0%"
+  ],
+  "texts": [
+    "消费与负债分析",
+    "时间范围",
+    "近 6 个月",
+    "持卡人",
+    "全部",
+    "金额已折算为",
+    "CNY",
+    "账单总额",
+    "¥0.00",
+    "待还金额",
+    "已还金额",
+    "额度使用率",
+    "0.0%",
+    "月度账单趋势",
+    "账单金额",
+    "分类详情",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "textsRaw": [
+    "消费与负债分析",
+    "时间范围",
+    "近 6 个月",
+    "持卡人",
+    "全部",
+    "金额已折算为",
+    "CNY",
+    "账单总额",
+    "¥0.00",
+    "待还金额",
+    "¥0.00",
+    "已还金额",
+    "¥0.00",
+    "额度使用率",
+    "0.0%",
+    "月度账单趋势",
+    "已还金额",
+    "账单金额",
+    "分类详情",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "inputs": [
+    {
+      "tag": "input",
+      "type": null,
+      "name": null,
+      "placeholder": null,
+      "ariaLabel": null,
+      "value": "6"
+    },
+    {
+      "tag": "input",
+      "type": null,
+      "name": null,
+      "placeholder": null,
+      "ariaLabel": null,
+      "value": "all"
+    }
+  ],
+  "buttons": [
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "markers": {
+    "skeleton": 0,
+    "spinner": 0,
+    "alert": 0,
+    "dialog": 0
+  },
+  "bodyText": "消费与负债分析 时间范围 近 6 个月 时间范围 持卡人 全部 持卡人 金额已折算为 CNY 账单总额 ¥0.00 待还金额 ¥0.00 已还金额 ¥0.00 额度使用率 0.0% 月度账单趋势 已还金额账单金额 分类详情 首页 账单 我的",
+  "htmlBytes": 14051
+}

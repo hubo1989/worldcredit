@@ -1,0 +1,254 @@
+{
+  "color.brand.navy800": {
+    "type": "color",
+    "value": "#0A1F44"
+  },
+  "color.brand.navy600": {
+    "type": "color",
+    "value": "#1E3A8A"
+  },
+  "color.brand.blue400": {
+    "type": "color",
+    "value": "#7AADFF"
+  },
+  "color.brand.gold500": {
+    "type": "color",
+    "value": "#C9A227"
+  },
+  "color.brand.gold700": {
+    "type": "color",
+    "value": "#8A6D1F"
+  },
+  "color.runtime.primary": {
+    "type": "color",
+    "value": "#1976D2"
+  },
+  "color.runtime.primaryDark": {
+    "type": "color",
+    "value": "#1565C0"
+  },
+  "color.runtime.secondary": {
+    "type": "color",
+    "value": "#030059"
+  },
+  "color.bg.canvas": {
+    "type": "color",
+    "value": "#F5F7FA"
+  },
+  "color.bg.surface": {
+    "type": "color",
+    "value": "#FFFFFF"
+  },
+  "color.bg.subtle": {
+    "type": "color",
+    "value": "#F5F8FF"
+  },
+  "color.bg.admin.canvas": {
+    "type": "color",
+    "value": "#0F1117"
+  },
+  "color.bg.admin.surface": {
+    "type": "color",
+    "value": "#181A24"
+  },
+  "color.bg.admin.panel": {
+    "type": "color",
+    "value": "#1E2028"
+  },
+  "color.text.primary": {
+    "type": "color",
+    "value": "#333333"
+  },
+  "color.text.secondary": {
+    "type": "color",
+    "value": "#636363"
+  },
+  "color.text.disabled": {
+    "type": "color",
+    "value": "#999999"
+  },
+  "color.text.onDark": {
+    "type": "color",
+    "value": "#FFFFFF"
+  },
+  "color.text.link": {
+    "type": "color",
+    "value": "#1565C0"
+  },
+  "color.border.default": {
+    "type": "color",
+    "value": "#DDDDDD"
+  },
+  "color.border.input": {
+    "type": "color",
+    "value": "#CCCCCC"
+  },
+  "color.border.onDark": {
+    "type": "color",
+    "value": "rgba(255,255,255,0.08)"
+  },
+  "color.status.success": {
+    "type": "color",
+    "value": "#16A34A"
+  },
+  "color.status.successDark": {
+    "type": "color",
+    "value": "#34D399"
+  },
+  "color.status.warning": {
+    "type": "color",
+    "value": "#FCB900"
+  },
+  "color.status.danger": {
+    "type": "color",
+    "value": "#CF2E2E"
+  },
+  "color.status.dangerDark": {
+    "type": "color",
+    "value": "#F87171"
+  },
+  "color.status.info": {
+    "type": "color",
+    "value": "#0277BD"
+  },
+  "font.family.body": {
+    "type": "string",
+    "value": "system-ui"
+  },
+  "font.family.amount": {
+    "type": "string",
+    "value": "Inter Tight"
+  },
+  "font.family.mono": {
+    "type": "string",
+    "value": "ui-monospace"
+  },
+  "font.size.display": {
+    "type": "number",
+    "value": 22
+  },
+  "font.size.title": {
+    "type": "number",
+    "value": 15
+  },
+  "font.size.body": {
+    "type": "number",
+    "value": 13.5
+  },
+  "font.size.caption": {
+    "type": "number",
+    "value": 11
+  },
+  "font.weight.regular": {
+    "type": "number",
+    "value": 400
+  },
+  "font.weight.semibold": {
+    "type": "number",
+    "value": 600
+  },
+  "font.weight.bold": {
+    "type": "number",
+    "value": 700
+  },
+  "font.lineHeight.body": {
+    "type": "number",
+    "value": 1.6
+  },
+  "font.lineHeight.caption": {
+    "type": "number",
+    "value": 1.5
+  },
+  "space.0": {
+    "type": "number",
+    "value": 0
+  },
+  "space.1": {
+    "type": "number",
+    "value": 4
+  },
+  "space.2": {
+    "type": "number",
+    "value": 8
+  },
+  "space.3": {
+    "type": "number",
+    "value": 12
+  },
+  "space.4": {
+    "type": "number",
+    "value": 16
+  },
+  "space.5": {
+    "type": "number",
+    "value": 24
+  },
+  "space.6": {
+    "type": "number",
+    "value": 32
+  },
+  "radius.card": {
+    "type": "number",
+    "value": 12
+  },
+  "radius.input": {
+    "type": "number",
+    "value": 8
+  },
+  "radius.pill": {
+    "type": "number",
+    "value": 999
+  },
+  "radius.sheet": {
+    "type": "number",
+    "value": 16
+  },
+  "shadow.card": {
+    "type": "string",
+    "value": "0 2px 8px rgba(10,31,68,0.06)"
+  },
+  "shadow.raised": {
+    "type": "string",
+    "value": "0 12px 40px rgba(6,18,43,0.16)"
+  },
+  "motion.fast": {
+    "type": "number",
+    "value": 150
+  },
+  "motion.enter": {
+    "type": "number",
+    "value": 250
+  },
+  "layout.mobile.width": {
+    "type": "number",
+    "value": 390
+  },
+  "layout.mobile.height": {
+    "type": "number",
+    "value": 844
+  },
+  "layout.mobile.widthLg": {
+    "type": "number",
+    "value": 430
+  },
+  "layout.admin.width": {
+    "type": "number",
+    "value": 1440
+  },
+  "layout.admin.height": {
+    "type": "number",
+    "value": 900
+  },
+  "layout.touch.min": {
+    "type": "number",
+    "value": 44
+  },
+  "layout.bottomnav.height": {
+    "type": "number",
+    "value": 56
+  },
+  "layout.navbar.height": {
+    "type": "number",
+    "value": 56
+  }
+}

@@ -25,8 +25,12 @@ describe('zero-amount bill semantics', () => {
   })
 
   it('null 和 undefined 才算缺失', () => {
-    expect(null == null).toBe(true)
-    expect(undefined == null).toBe(true)
+    // 用函数参数包一层，避免 lint 把字面量比较判为常量表达式；
+    // 语义与 `value == null` 完全一致（null 与 undefined 都算缺失）。
+    const isMissing = (value: unknown) => value == null
+    expect(isMissing(null)).toBe(true)
+    expect(isMissing(undefined)).toBe(true)
+    expect(isMissing(0)).toBe(false)
     expect(Number.isNaN(Number(null))).toBe(false) // Number(null)=0，所以 null 要用 ==null 判
     expect(Number.isNaN(Number('abc'))).toBe(true) // 非数字字符串才 NaN
   })

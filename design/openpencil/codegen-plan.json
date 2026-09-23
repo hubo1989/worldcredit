@@ -1,0 +1,25 @@
+{
+  "chunks": [
+    {
+      "id": "primitives",
+      "name": "Primitives",
+      "nodeIds": [],
+      "role": "shared",
+      "suggestedComponentName": "WcPrimitives",
+      "dependencies": []
+    }
+  ],
+  "sharedStyles": [
+    "color.bg.canvas",
+    "color.bg.surface",
+    "color.border.default",
+    "color.text.primary",
+    "color.text.secondary",
+    "color.runtime.primary",
+    "radius.card",
+    "radius.input",
+    "radius.pill"
+  ],
+  "rootLayout": { "direction": "column", "gap": 0, "responsive": true },
+  "_note": "nodeIds 在选定 Codegen 范围的母版节点后填入；本文件只用于展示组件，不用于覆盖 app/ 页面。"
+}

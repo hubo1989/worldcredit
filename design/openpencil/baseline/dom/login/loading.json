@@ -1,0 +1,81 @@
+{
+  "route": "login",
+  "state": "loading",
+  "url": "/login",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "interaction": "提交中：主按钮 loading",
+  "rpc": [],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "title": "WorldCredit - 信用卡管理",
+  "headings": [],
+  "texts": [
+    "WorldCredit",
+    "欢迎回来",
+    "创建账户",
+    "登录你的 WorldCredit 账户",
+    "使用 Google 账号登录",
+    "或使用邮箱登录",
+    "密码登录",
+    "验证码登录",
+    "邮箱不存在",
+    "邮箱地址",
+    "*",
+    "输入密码",
+    "登录系统",
+    "忘记密码？"
+  ],
+  "textsRaw": [
+    "WorldCredit",
+    "欢迎回来",
+    "创建账户",
+    "登录你的 WorldCredit 账户",
+    "使用 Google 账号登录",
+    "或使用邮箱登录",
+    "密码登录",
+    "验证码登录",
+    "邮箱不存在",
+    "邮箱地址",
+    "*",
+    "输入密码",
+    "*",
+    "登录系统",
+    "忘记密码？"
+  ],
+  "inputs": [
+    {
+      "tag": "input",
+      "type": "email",
+      "name": null,
+      "placeholder": "请输入邮箱地址",
+      "ariaLabel": null,
+      "value": "baseline@example.com"
+    },
+    {
+      "tag": "input",
+      "type": "password",
+      "name": null,
+      "placeholder": "请输入密码",
+      "ariaLabel": null,
+      "value": "baseline-password"
+    }
+  ],
+  "buttons": [
+    "创建账户",
+    "使用 Google 账号登录",
+    "登录系统@keyframes login-spin { to { transform: rotate(360deg); } }",
+    "忘记密码？"
+  ],
+  "markers": {
+    "skeleton": 0,
+    "spinner": 0,
+    "alert": 0,
+    "dialog": 0
+  },
+  "bodyText": "WorldCredit 欢迎回来 创建账户 登录你的 WorldCredit 账户 使用 Google 账号登录 或使用邮箱登录 密码登录 验证码登录 邮箱不存在 邮箱地址 * ​ 输入密码 * ​ 登录系统 忘记密码？",
+  "htmlBytes": 9671
+}

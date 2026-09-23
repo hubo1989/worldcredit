@@ -1,0 +1,130 @@
+{
+  "route": "admin-banks",
+  "state": "empty",
+  "url": "/admin/banks",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "rpc": [
+    "admin/getAdminBanks"
+  ],
+  "consoleErrors": [],
+  "title": "WorldCredit - 信用卡管理",
+  "headings": [
+    "WorldCredit",
+    "控制台",
+    "银行管理"
+  ],
+  "texts": [
+    "W",
+    "WorldCredit",
+    "管理控制台",
+    "仪表盘",
+    "银行管理",
+    "卡产品管理",
+    "优惠活动",
+    "权益管理",
+    "邮件日志",
+    "系统设置",
+    "H",
+    "hubo1989@gmail.com",
+    "系统管理员",
+    "控制台",
+    "返回前台 App",
+    "2026年9月22日",
+    "维护系统中支持的银行列表及所属国家",
+    "新增银行",
+    "按国家筛选",
+    "按真实内容补全 (0/0)",
+    "图标",
+    "银行名称",
+    "简称",
+    "国家",
+    "状态",
+    "操作",
+    "暂无银行数据",
+    "每页行数:",
+    "10",
+    "0–0 of 0"
+  ],
+  "textsRaw": [
+    "W",
+    "WorldCredit",
+    "管理控制台",
+    "仪表盘",
+    "银行管理",
+    "卡产品管理",
+    "优惠活动",
+    "权益管理",
+    "邮件日志",
+    "系统设置",
+    "H",
+    "hubo1989@gmail.com",
+    "系统管理员",
+    "控制台",
+    "返回前台 App",
+    "2026年9月22日",
+    "银行管理",
+    "维护系统中支持的银行列表及所属国家",
+    "新增银行",
+    "按国家筛选",
+    "按真实内容补全 (0/0)",
+    "图标",
+    "银行名称",
+    "简称",
+    "国家",
+    "状态",
+    "操作",
+    "暂无银行数据",
+    "每页行数:",
+    "10",
+    "0–0 of 0"
+  ],
+  "inputs": [
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "placeholder": "搜索银行名称...",
+      "ariaLabel": null,
+      "value": ""
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "placeholder": null,
+      "ariaLabel": null,
+      "value": "全部国家"
+    },
+    {
+      "tag": "input",
+      "type": null,
+      "name": null,
+      "placeholder": null,
+      "ariaLabel": null,
+      "value": "10"
+    }
+  ],
+  "buttons": [
+    "仪表盘",
+    "银行管理",
+    "卡产品管理",
+    "优惠活动",
+    "权益管理",
+    "邮件日志",
+    "系统设置",
+    "返回前台 App",
+    "新增银行",
+    "按真实内容补全 (0/0)"
+  ],
+  "markers": {
+    "skeleton": 0,
+    "spinner": 0,
+    "alert": 0,
+    "dialog": 0
+  },
+  "bodyText": "W WorldCredit 管理控制台 仪表盘 银行管理 卡产品管理 优惠活动 权益管理 邮件日志 系统设置 H hubo1989@gmail.com 系统管理员 控制台 返回前台 App 2026年9月22日 银行管理 维护系统中支持的银行列表及所属国家 新增银行 ​ ​ 按国家筛选 按国家筛选 按真实内容补全 (0/0) 图标 银行名称 简称 国家 状态 操作 暂无银行数据 每页行数: 10 0–0 of 0",
+  "htmlBytes": 20615
+}

@@ -1,0 +1,51 @@
+{
+  "route": "bills",
+  "state": "loading",
+  "url": "/bills",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "rpc": [
+    "bills/getCardsWithBillsSummary",
+    "holders/getHolders",
+    "preferences/getUserPreferences"
+  ],
+  "consoleErrors": [],
+  "title": "WorldCredit - 信用卡管理",
+  "headings": [
+    "卡片与账单"
+  ],
+  "texts": [
+    "卡片与账单",
+    "筛选",
+    "全部卡片 · 按持卡人 · 全部持卡人 · 逾期优先",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "textsRaw": [
+    "卡片与账单",
+    "筛选",
+    "全部卡片 · 按持卡人 · 全部持卡人 · 逾期优先",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "inputs": [],
+  "buttons": [
+    "@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }",
+    "筛选",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "markers": {
+    "skeleton": 3,
+    "spinner": 0,
+    "alert": 0,
+    "dialog": 0
+  },
+  "bodyText": "卡片与账单 筛选 全部卡片 · 按持卡人 · 全部持卡人 · 逾期优先 首页 账单 我的",
+  "htmlBytes": 6497
+}
