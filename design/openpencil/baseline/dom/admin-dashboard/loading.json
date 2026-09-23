@@ -1,0 +1,77 @@
+{
+  "route": "admin-dashboard",
+  "state": "loading",
+  "url": "/admin",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "rpc": [
+    "dashboard/getBenefitStats",
+    "dashboard/getCardProductStats",
+    "dashboard/getDashboardStats",
+    "dashboard/getPromoList",
+    "dashboard/getUserActivity"
+  ],
+  "consoleErrors": [],
+  "title": "WorldCredit - 信用卡管理",
+  "headings": [
+    "WorldCredit",
+    "控制台"
+  ],
+  "texts": [
+    "W",
+    "WorldCredit",
+    "管理控制台",
+    "仪表盘",
+    "银行管理",
+    "卡产品管理",
+    "优惠活动",
+    "权益管理",
+    "邮件日志",
+    "系统设置",
+    "H",
+    "hubo1989@gmail.com",
+    "系统管理员",
+    "控制台",
+    "返回前台 App",
+    "2026年9月22日"
+  ],
+  "textsRaw": [
+    "W",
+    "WorldCredit",
+    "管理控制台",
+    "仪表盘",
+    "银行管理",
+    "卡产品管理",
+    "优惠活动",
+    "权益管理",
+    "邮件日志",
+    "系统设置",
+    "H",
+    "hubo1989@gmail.com",
+    "系统管理员",
+    "控制台",
+    "返回前台 App",
+    "2026年9月22日"
+  ],
+  "inputs": [],
+  "buttons": [
+    "仪表盘",
+    "银行管理",
+    "卡产品管理",
+    "优惠活动",
+    "权益管理",
+    "邮件日志",
+    "系统设置",
+    "返回前台 App"
+  ],
+  "markers": {
+    "skeleton": 6,
+    "spinner": 0,
+    "alert": 0,
+    "dialog": 0
+  },
+  "bodyText": "W WorldCredit 管理控制台 仪表盘 银行管理 卡产品管理 优惠活动 权益管理 邮件日志 系统设置 H hubo1989@gmail.com 系统管理员 控制台 返回前台 App 2026年9月22日",
+  "htmlBytes": 12350
+}

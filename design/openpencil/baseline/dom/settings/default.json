@@ -1,0 +1,130 @@
+{
+  "route": "settings",
+  "state": "default",
+  "url": "/settings",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "rpc": [
+    "preferences/getUserPreferences"
+  ],
+  "consoleErrors": [],
+  "title": "WorldCredit - 信用卡管理",
+  "headings": [
+    "我的",
+    "系统管理员权限"
+  ],
+  "texts": [
+    "我的",
+    "hubo1989@gmail.com",
+    "系统管理员权限",
+    "管理全平台银行、卡产品、公共权益与 AI 配置",
+    "进入后台",
+    "家庭管理",
+    "持卡人与卡片管理",
+    "优惠活动",
+    "可用优惠",
+    "我的权益",
+    "权益使用进度",
+    "邮箱账单导入",
+    "专属地址直传，免登记来源邮箱",
+    "专属就绪",
+    "提醒偏好",
+    "还款提醒通道与节点",
+    "设置",
+    "界面显示偏好与隐私模式",
+    "退出登录",
+    "首页",
+    "账单"
+  ],
+  "textsRaw": [
+    "我的",
+    "hubo1989@gmail.com",
+    "系统管理员权限",
+    "管理全平台银行、卡产品、公共权益与 AI 配置",
+    "进入后台",
+    "家庭管理",
+    "持卡人与卡片管理",
+    "优惠活动",
+    "可用优惠",
+    "我的权益",
+    "权益使用进度",
+    "邮箱账单导入",
+    "专属地址直传，免登记来源邮箱",
+    "专属就绪",
+    "提醒偏好",
+    "还款提醒通道与节点",
+    "设置",
+    "界面显示偏好与隐私模式",
+    "退出登录",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "inputs": [
+    {
+      "tag": "input",
+      "type": "time",
+      "name": null,
+      "placeholder": null,
+      "ariaLabel": null,
+      "value": "22:00"
+    },
+    {
+      "tag": "input",
+      "type": "time",
+      "name": null,
+      "placeholder": null,
+      "ariaLabel": null,
+      "value": "08:00"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": null,
+      "placeholder": null,
+      "ariaLabel": null,
+      "value": "on"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": null,
+      "placeholder": null,
+      "ariaLabel": null,
+      "value": "on"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": null,
+      "placeholder": null,
+      "ariaLabel": null,
+      "value": "on"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": null,
+      "placeholder": null,
+      "ariaLabel": null,
+      "value": "on"
+    }
+  ],
+  "buttons": [
+    "进入后台",
+    "退出登录",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "markers": {
+    "skeleton": 0,
+    "spinner": 0,
+    "alert": 1,
+    "dialog": 0
+  },
+  "bodyText": "我的 hubo1989@gmail.com 系统管理员权限 管理全平台银行、卡产品、公共权益与 AI 配置 进入后台 家庭管理 持卡人与卡片管理 优惠活动 可用优惠 我的权益 权益使用进度 邮箱账单导入 专属地址直传，免登记来源邮箱 专属就绪 提醒偏好 还款提醒通道与节点 开始时间结束时间 设置 界面显示偏好与隐私模式 退出登录 首页 账单 我的",
+  "htmlBytes": 26977
+}

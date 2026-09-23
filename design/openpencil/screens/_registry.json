@@ -1,0 +1,374 @@
+{
+  "version": 1,
+  "updatedAt": "2026-09-21",
+  "surfaces": {
+    "public": {
+      "page": "20 · Auth & Public",
+      "shell": null
+    },
+    "auth": {
+      "page": "20 · Auth & Public",
+      "shell": "auth-shell"
+    },
+    "mobile": {
+      "page": "10-12 · Mobile",
+      "shell": "mobile-shell"
+    },
+    "admin": {
+      "page": "30 · Admin",
+      "shell": "admin-shell"
+    }
+  },
+  "screens": [
+    {
+      "key": "screen.public.landing",
+      "route": "/",
+      "surface": "public",
+      "master": null,
+      "batch": "B4",
+      "states": [
+        "default"
+      ]
+    },
+    {
+      "key": "screen.auth.login",
+      "route": "/login",
+      "surface": "auth",
+      "master": "auth",
+      "batch": "B4",
+      "states": [
+        "default",
+        "loading",
+        "error",
+        "oauth-callback"
+      ]
+    },
+    {
+      "key": "screen.auth.register",
+      "route": "/register",
+      "surface": "auth",
+      "master": "auth",
+      "batch": "B4",
+      "states": [
+        "default",
+        "loading",
+        "error",
+        "verify-code"
+      ]
+    },
+    {
+      "key": "screen.mobile.dashboard",
+      "route": "/dashboard",
+      "surface": "mobile",
+      "master": "mobile-dashboard",
+      "batch": "B1",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "quick-action-sheet"
+      ]
+    },
+    {
+      "key": "screen.mobile.bills",
+      "route": "/bills",
+      "surface": "mobile",
+      "master": "aggregated-list",
+      "batch": "B1",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "group-by-holder",
+        "group-by-bank",
+        "batch-select"
+      ]
+    },
+    {
+      "key": "screen.mobile.bill-detail",
+      "route": "/bills/[id]",
+      "surface": "mobile",
+      "master": "detail",
+      "batch": "B2",
+      "states": [
+        "default",
+        "loading",
+        "error",
+        "partial-payment",
+        "overdue",
+        "attachments"
+      ]
+    },
+    {
+      "key": "screen.mobile.card-detail",
+      "route": "/cards/[id]",
+      "surface": "mobile",
+      "master": "detail",
+      "batch": "B2",
+      "states": [
+        "default",
+        "loading",
+        "error",
+        "no-statement",
+        "source-email",
+        "source-ai"
+      ]
+    },
+    {
+      "key": "screen.mobile.holders",
+      "route": "/holders",
+      "surface": "mobile",
+      "master": "catalog",
+      "batch": "B2",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "merge-dialog"
+      ]
+    },
+    {
+      "key": "screen.mobile.holder-detail",
+      "route": "/holders/[id]",
+      "surface": "mobile",
+      "master": "detail",
+      "batch": "B2",
+      "states": [
+        "default",
+        "loading",
+        "error"
+      ]
+    },
+    {
+      "key": "screen.mobile.holder-stats",
+      "route": "/holders/[id]/stats",
+      "surface": "mobile",
+      "master": "analytics",
+      "batch": "B2",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "missing-fx-rate"
+      ]
+    },
+    {
+      "key": "screen.mobile.analytics",
+      "route": "/analytics",
+      "surface": "mobile",
+      "master": "analytics",
+      "batch": "B3",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "missing-fx-rate"
+      ]
+    },
+    {
+      "key": "screen.mobile.benefits",
+      "route": "/benefits",
+      "surface": "mobile",
+      "master": "catalog",
+      "batch": "B3",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "usage-dialog",
+        "edit-dialog"
+      ]
+    },
+    {
+      "key": "screen.mobile.promos",
+      "route": "/promos",
+      "surface": "mobile",
+      "master": "catalog",
+      "batch": "B3",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "expired"
+      ]
+    },
+    {
+      "key": "screen.mobile.gmail-ledger",
+      "route": "/gmail-ledger",
+      "surface": "mobile",
+      "master": "ledger",
+      "batch": "B3",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "syncing",
+        "recognize-failed",
+        "batch-approve"
+      ]
+    },
+    {
+      "key": "screen.mobile.settings",
+      "route": "/settings",
+      "surface": "mobile",
+      "master": "settings",
+      "batch": "B3",
+      "states": [
+        "default",
+        "loading",
+        "error",
+        "push-denied"
+      ]
+    },
+    {
+      "key": "screen.mobile.ai",
+      "route": "/ai",
+      "surface": "mobile",
+      "master": null,
+      "batch": "IA",
+      "states": [
+        "default",
+        "loading",
+        "error"
+      ],
+      "note": "入口是否保留属信息架构决策，先做现状基线不动"
+    },
+    {
+      "key": "screen.admin.dashboard",
+      "route": "/admin",
+      "surface": "admin",
+      "master": "admin-dashboard",
+      "batch": "B5",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error"
+      ]
+    },
+    {
+      "key": "screen.admin.banks",
+      "route": "/admin/banks",
+      "surface": "admin",
+      "master": "admin-crud",
+      "batch": "B5",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "create",
+        "edit",
+        "delete-confirm",
+        "enrich-preview"
+      ]
+    },
+    {
+      "key": "screen.admin.card-products",
+      "route": "/admin/card-products",
+      "surface": "admin",
+      "master": "admin-crud",
+      "batch": "B5",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "create",
+        "edit",
+        "delete-confirm"
+      ]
+    },
+    {
+      "key": "screen.admin.benefits",
+      "route": "/admin/benefits",
+      "surface": "admin",
+      "master": "admin-crud",
+      "batch": "B5",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "create",
+        "edit",
+        "delete-confirm"
+      ]
+    },
+    {
+      "key": "screen.admin.promos",
+      "route": "/admin/promos",
+      "surface": "admin",
+      "master": "admin-crud",
+      "batch": "B5",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "create",
+        "edit",
+        "delete-confirm"
+      ]
+    },
+    {
+      "key": "screen.admin.email-logs",
+      "route": "/admin/email-logs",
+      "surface": "admin",
+      "master": "admin-ledger",
+      "batch": "B5",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "detail-drawer",
+        "filtered"
+      ]
+    },
+    {
+      "key": "screen.admin.settings",
+      "route": "/admin/settings",
+      "surface": "admin",
+      "master": "settings",
+      "batch": "B5",
+      "states": [
+        "default",
+        "loading",
+        "error",
+        "save-success"
+      ]
+    }
+  ],
+  "baselineAlignment": {
+    "status": "全部 11 个母版已按真实基线重画",
+    "source": "design/openpencil/baseline/dom/*/default.json",
+    "verifiedBy": [
+      "design/openpencil/baseline/check-master-fields.py",
+      "design/openpencil/scripts/check-overflow.py"
+    ],
+    "updatedAt": "2026-09-22",
+    "masters": [
+      "mobile-dashboard",
+      "aggregated-list",
+      "detail",
+      "analytics",
+      "catalog(benefits)",
+      "ledger(gmail)",
+      "settings",
+      "auth",
+      "admin-dashboard",
+      "admin-crud",
+      "admin-ledger"
+    ],
+    "pending": []
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "route": "dashboard",
+  "state": "loading",
+  "url": "/dashboard",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "rpc": [
+    "bills/getBillDashboardItems",
+    "holders/getHolders",
+    "preferences/getUserPreferences"
+  ],
+  "consoleErrors": [],
+  "title": "WorldCredit - 信用卡管理",
+  "headings": [],
+  "texts": [
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "textsRaw": [
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "inputs": [],
+  "buttons": [
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "markers": {
+    "skeleton": 10,
+    "spinner": 0,
+    "alert": 0,
+    "dialog": 0
+  },
+  "bodyText": "首页 账单 我的",
+  "htmlBytes": 4789
+}

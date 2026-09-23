@@ -320,11 +320,6 @@ async function parseBillWithAI(config: AiConfig, emailBody: string): Promise<Bil
  * silently attach one account's bill to the other. An unmatched tail is worth
  * more than a wrong one, so this returns null and the caller logs the miss.
  */
-/** Card tails are digits only; keep leading zeros (Amex accounts like 01004). */
-function normalizeCardTail(value: string | null | undefined): string {
-  return (value ?? '').replace(/\D/g, '')
-}
-
 // ─── Log writer ───────────────────────────────────────────────────────────────
 
 async function writeLog(db: D1Database, log: EmailParseLogRow): Promise<void> {

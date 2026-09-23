@@ -72,3 +72,31 @@ Icon
 
 # Local verification artifacts (Playwright CLI traces/screenshots)
 .playwright-cli/
+
+# ---------------------------------------------------------------------------
+# OpenPencil 设计资产：入库「源」与「判断产物」，忽略「可精确重建的产物」
+#
+# 入库：.op（唯一设计真源）、vars/、scripts/、screens/、DESIGN.md、README.md、
+#       verify-batch.sh、baseline/dom/（字段真源，检查脚本依赖）、
+#       baseline/seed/（种子数据）、baseline/approved/（视觉回归基线，判断产物）
+#
+# 忽略：以下都可从上面的源精确重建，入库只会带来体积与 diff 噪声
+# ---------------------------------------------------------------------------
+
+# 差异叠加图：每次比对重新生成
+design/openpencil/baseline/diff/
+
+# 实拍截图：capture.py 重新拍即可；视觉基线在 baseline/approved/
+design/openpencil/baseline/shots/
+
+# 母版导帧：export-all.sh 从 .op 重新导出
+design/openpencil/exports/current/
+
+# 运行报告：每次运行带新时间戳与耗时，入库会产生无意义 diff（CI 里走 artifact）
+design/openpencil/batch-report.json
+design/openpencil/baseline/visual-report.json
+design/openpencil/baseline/index.json
+design/openpencil/baseline/manifest.json
+
+# OpenPencil 运行时产物
+design/openpencil/**/.DS_Store

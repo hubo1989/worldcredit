@@ -1,0 +1,76 @@
+{
+  "route": "bills",
+  "state": "error",
+  "url": "/bills",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "rpc": [
+    "bills/getCardsWithBillsSummary",
+    "holders/getHolders",
+    "preferences/getUserPreferences"
+  ],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load user preferences: Error: baseline-forced-error\n    at $ (http://127.0.0.1:8787/assets/worker-entry-Ckvls98M.js:283:13381)\n    at async http://127.0.0.1:8787/assets/worker-entry-Ckvls98M.js:309:12192",
+    "Error: baseline-forced-error\n    at $ (http://127.0.0.1:8787/assets/worker-entry-Ckvls98M.js:283:13381)\n    at async Promise.all (index 0)\n    at async http://127.0.0.1:8787/assets/worker-entry-Ckvls98M.js:309:74774",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+  ],
+  "title": "WorldCredit - 信用卡管理",
+  "headings": [
+    "卡片与账单"
+  ],
+  "texts": [
+    "卡片与账单",
+    "筛选",
+    "全部卡片 · 按持卡人 · 全部持卡人 · 逾期优先",
+    "baseline-forced-error",
+    "重试",
+    "固定支出",
+    "添加",
+    "还没有固定支出。房租、贷款这类每月固定要付的可以加在这里。",
+    "没有找到卡片记录",
+    "可以手动录入卡片或导入邮箱账单",
+    "立即同步",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "textsRaw": [
+    "卡片与账单",
+    "筛选",
+    "全部卡片 · 按持卡人 · 全部持卡人 · 逾期优先",
+    "baseline-forced-error",
+    "重试",
+    "固定支出",
+    "添加",
+    "还没有固定支出。房租、贷款这类每月固定要付的可以加在这里。",
+    "没有找到卡片记录",
+    "可以手动录入卡片或导入邮箱账单",
+    "立即同步",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "inputs": [],
+  "buttons": [
+    "@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }",
+    "筛选",
+    "重试",
+    "添加",
+    "立即同步",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "markers": {
+    "skeleton": 0,
+    "spinner": 0,
+    "alert": 0,
+    "dialog": 0
+  },
+  "bodyText": "卡片与账单 筛选 全部卡片 · 按持卡人 · 全部持卡人 · 逾期优先 baseline-forced-error 重试 固定支出 添加 还没有固定支出。房租、贷款这类每月固定要付的可以加在这里。 没有找到卡片记录 可以手动录入卡片或导入邮箱账单 立即同步 首页 账单 我的",
+  "htmlBytes": 9114
+}

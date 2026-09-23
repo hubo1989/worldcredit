@@ -1,0 +1,50 @@
+{
+  "route": "bill-detail",
+  "state": "error",
+  "url": "/bills/e0000004-0000-4000-8000-000000000004",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "rpc": [
+    "bills/getBillDetail"
+  ],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+  ],
+  "title": "WorldCredit - 信用卡管理",
+  "headings": [
+    "账单详情"
+  ],
+  "texts": [
+    "账单详情",
+    "baseline-forced-error",
+    "重试",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "textsRaw": [
+    "账单详情",
+    "baseline-forced-error",
+    "重试",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "inputs": [],
+  "buttons": [
+    "重试",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "markers": {
+    "skeleton": 0,
+    "spinner": 0,
+    "alert": 0,
+    "dialog": 0
+  },
+  "bodyText": "账单详情 baseline-forced-error 重试 首页 账单 我的",
+  "htmlBytes": 5479
+}

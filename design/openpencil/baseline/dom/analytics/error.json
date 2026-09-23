@@ -1,0 +1,85 @@
+{
+  "route": "analytics",
+  "state": "error",
+  "url": "/analytics",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "rpc": [
+    "analytics/getAnalyticsSummary",
+    "analytics/getCategoryBreakdown",
+    "analytics/getMonthlyDebtTrend",
+    "holders/getHolders",
+    "preferences/getUserPreferences"
+  ],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load user preferences: Error: baseline-forced-error\n    at $ (http://127.0.0.1:8787/assets/worker-entry-Ckvls98M.js:283:13381)\n    at async http://127.0.0.1:8787/assets/worker-entry-Ckvls98M.js:309:12192",
+    "Failed to load holders: Error: baseline-forced-error\n    at $ (http://127.0.0.1:8787/assets/worker-entry-Ckvls98M.js:283:13381)\n    at async http://127.0.0.1:8787/assets/worker-entry-Ckvls98M.js:309:13459"
+  ],
+  "title": "WorldCredit - 信用卡管理",
+  "headings": [
+    "消费与负债分析"
+  ],
+  "texts": [
+    "消费与负债分析",
+    "时间范围",
+    "近 6 个月",
+    "持卡人",
+    "全部",
+    "baseline-forced-error",
+    "重试",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "textsRaw": [
+    "消费与负债分析",
+    "时间范围",
+    "近 6 个月",
+    "持卡人",
+    "全部",
+    "baseline-forced-error",
+    "重试",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "inputs": [
+    {
+      "tag": "input",
+      "type": null,
+      "name": null,
+      "placeholder": null,
+      "ariaLabel": null,
+      "value": "6"
+    },
+    {
+      "tag": "input",
+      "type": null,
+      "name": null,
+      "placeholder": null,
+      "ariaLabel": null,
+      "value": "all"
+    }
+  ],
+  "buttons": [
+    "重试",
+    "首页",
+    "账单",
+    "我的"
+  ],
+  "markers": {
+    "skeleton": 0,
+    "spinner": 0,
+    "alert": 1,
+    "dialog": 0
+  },
+  "bodyText": "消费与负债分析 时间范围 近 6 个月 时间范围 持卡人 全部 持卡人 baseline-forced-error 重试 首页 账单 我的",
+  "htmlBytes": 8102
+}
