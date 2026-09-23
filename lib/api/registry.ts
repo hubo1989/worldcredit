@@ -104,6 +104,9 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     getSystemSettings: { impl: adminServer.getSystemSettings, admin: true },
     updateSystemSettings: { impl: adminServer.updateSystemSettings, admin: true },
     getEmailParseLogs: { impl: adminServer.getEmailParseLogs, admin: true },
+    getEmailParseLogHolders: { impl: adminServer.getEmailParseLogHolders, admin: true },
+    discardEmailParseLog: { impl: adminServer.discardEmailParseLog, admin: true },
+    createCardFromEmailParseLog: { impl: adminServer.createCardFromEmailParseLog, admin: true },
   },
   ai: {
     aiComplete: { impl: aiServer.aiComplete },

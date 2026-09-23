@@ -57,6 +57,15 @@ export function getSystemSettings() {
 export function getEmailParseLogs(...args: Parameters<typeof Server.getEmailParseLogs>) {
   return callRpc<typeof Server.getEmailParseLogs>('admin', 'getEmailParseLogs', ...args)
 }
+export function getEmailParseLogHolders(...args: Parameters<typeof Server.getEmailParseLogHolders>) {
+  return callRpc<typeof Server.getEmailParseLogHolders>('admin', 'getEmailParseLogHolders', ...args)
+}
+export function discardEmailParseLog(...args: Parameters<typeof Server.discardEmailParseLog>) {
+  return callRpc<typeof Server.discardEmailParseLog>('admin', 'discardEmailParseLog', ...args)
+}
+export function createCardFromEmailParseLog(...args: Parameters<typeof Server.createCardFromEmailParseLog>) {
+  return callRpc<typeof Server.createCardFromEmailParseLog>('admin', 'createCardFromEmailParseLog', ...args)
+}
 export function updateSystemSettings(...args: Parameters<typeof Server.updateSystemSettings>) {
   return callRpc<typeof Server.updateSystemSettings>('admin', 'updateSystemSettings', ...args)
 }

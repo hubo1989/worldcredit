@@ -5,10 +5,15 @@ import {
   Typography, Paper, Box, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, TablePagination, TextField, InputAdornment,
   IconButton, Chip, Collapse, CircularProgress, ToggleButtonGroup, ToggleButton,
-  Tooltip, Alert
+  Tooltip, Alert, Dialog, DialogTitle, DialogContent, DialogActions, Button, Stack, MenuItem
 } from '@mui/material'
 import { Search as SearchIcon, Refresh as RefreshIcon, KeyboardArrowDown, KeyboardArrowUp } from '@mui/icons-material'
-import { getEmailParseLogs } from '@/lib/api/admin'
+import {
+  getEmailParseLogs,
+  getEmailParseLogHolders,
+  discardEmailParseLog,
+  createCardFromEmailParseLog,
+} from '@/lib/api/admin'
 
 /** RFC 2047 解码：把 =?UTF-8?B?...?= 这类编码主题还原成可读文本 */
 function decodeMimeSubject(raw: string | null): string {
@@ -42,6 +47,40 @@ const STATUS_LABEL: Record<string, string> = {
   skipped: '跳过',
 }
 
+interface ParsedEmailBill {
+  is_bill?: boolean
+  bank_name?: string
+  card_last4?: string | null
+  bill_amount?: number | null
+  min_payment?: number | null
+  due_date?: string
+  bill_month?: string
+  statement_date?: string | null
+  currency?: string
+  confidence?: number
+}
+
+interface EmailLogHolderOption {
+  id: string
+  name: string
+}
+
+function parseEmailBill(text: string | null | undefined): ParsedEmailBill | null {
+  if (!text) return null
+  try {
+    const parsed = JSON.parse(text) as ParsedEmailBill
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function needsManualBankCard(row: LogRow): boolean {
+  if (row.status !== 'failed') return false
+  const message = row.error_msg ?? ''
+  return message.includes('未匹配到银行「') && message.includes('请在界面手动添加该卡')
+}
+
 interface LogRow {
   id: string
   user_id: string
@@ -71,7 +110,18 @@ function formatJson(text: string): string {
   }
 }
 
-function LogRowDetail({ row }: { row: LogRow }) {
+function LogRowDetail({
+  row,
+  resolving,
+  onDiscard,
+  onCreate,
+}: {
+  row: LogRow
+  resolving: boolean
+  onDiscard: (row: LogRow) => void
+  onCreate: (row: LogRow) => void
+}) {
+  const parsed = parseEmailBill(row.raw_ai_response)
   return (
     <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
       <Typography variant="body2" color="text.secondary" gutterBottom>
@@ -90,6 +140,25 @@ function LogRowDetail({ row }: { row: LogRow }) {
           错误/说明：{row.error_msg}
         </Typography>
       )}
+      {needsManualBankCard(row) && parsed?.bank_name && (
+        <Alert
+          severity="warning"
+          sx={{ mt: 2 }}
+          action={
+            <Stack direction="row" spacing={1} sx={{ pt: 0.5 }}>
+              <Button size="small" color="inherit" disabled={resolving} onClick={() => onDiscard(row)}>
+                丢弃
+              </Button>
+              <Button size="small" variant="contained" disabled={resolving} onClick={() => onCreate(row)}>
+                新建银行和卡片
+              </Button>
+            </Stack>
+          }
+        >
+          这封账单已解析出银行「{parsed.bank_name}」和尾号「{parsed.card_last4 ?? '—'}」，但产品目录没有匹配项。
+          请选择丢弃这条待处理记录，或确认信息后新建银行/卡片并导入账单。
+        </Alert>
+      )}
       {row.raw_ai_response && (
         <>
           <Typography variant="body2" sx={{ mt: 2, fontWeight: 600 }}>
@@ -104,7 +173,17 @@ function LogRowDetail({ row }: { row: LogRow }) {
   )
 }
 
-function Row({ row }: { row: LogRow }) {
+function Row({
+  row,
+  resolving,
+  onDiscard,
+  onCreate,
+}: {
+  row: LogRow
+  resolving: boolean
+  onDiscard: (row: LogRow) => void
+  onCreate: (row: LogRow) => void
+}) {
   const [open, setOpen] = useState(false)
   return (
     <>
@@ -133,7 +212,12 @@ function Row({ row }: { row: LogRow }) {
       <TableRow>
         <TableCell sx={{ pb: 1, pt: 1, border: 0 }} colSpan={6}>
           <Collapse in={open} timeout="auto" unmountOnExit>
-            <LogRowDetail row={row} />
+            <LogRowDetail
+              row={row}
+              resolving={resolving}
+              onDiscard={onDiscard}
+              onCreate={onCreate}
+            />
           </Collapse>
         </TableCell>
       </TableRow>
@@ -151,6 +235,17 @@ export default function EmailLogsPage() {
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [resolutionLog, setResolutionLog] = useState<LogRow | null>(null)
+  const [resolutionOpen, setResolutionOpen] = useState(false)
+  const [resolutionLoading, setResolutionLoading] = useState(false)
+  const [resolving, setResolving] = useState(false)
+  const [resolutionError, setResolutionError] = useState<string | null>(null)
+  const [holders, setHolders] = useState<EmailLogHolderOption[]>([])
+  const [holderId, setHolderId] = useState('')
+  const [bankName, setBankName] = useState('')
+  const [cardName, setCardName] = useState('')
+  const [currency, setCurrency] = useState('CNY')
+  const [country, setCountry] = useState('CN')
 
   const loadLogs = useCallback(async () => {
     try {
@@ -172,6 +267,69 @@ export default function EmailLogsPage() {
   }, [page, rowsPerPage, statusFilter, search])
 
   useEffect(() => { void loadLogs() }, [loadLogs])
+
+  const openResolution = useCallback(async (row: LogRow) => {
+    const parsed = parseEmailBill(row.raw_ai_response)
+    if (!parsed?.bank_name) {
+      setResolutionError('AI 解析结果缺少银行名称')
+      return
+    }
+    setResolutionLog(row)
+    setResolutionOpen(true)
+    setResolutionError(null)
+    setResolutionLoading(true)
+    setBankName(parsed.bank_name)
+    setCardName(`${parsed.bank_name}信用卡`)
+    setCurrency((parsed.currency ?? 'CNY').toUpperCase())
+    setCountry(parsed.currency?.toUpperCase() === 'CNY' ? 'CN' : '')
+    try {
+      const options = await getEmailParseLogHolders(row.id)
+      setHolders(options)
+      setHolderId(options[0]?.id ?? '')
+      if (options.length === 0) setResolutionError('该用户还没有持卡人，请先创建持卡人')
+    } catch (err) {
+      setResolutionError(err instanceof Error ? err.message : '获取持卡人失败')
+    } finally {
+      setResolutionLoading(false)
+    }
+  }, [])
+
+  const handleDiscard = useCallback(async (row: LogRow) => {
+    try {
+      setResolving(true)
+      setResolutionError(null)
+      await discardEmailParseLog(row.id)
+      await loadLogs()
+    } catch (err) {
+      setResolutionError(err instanceof Error ? err.message : '丢弃失败')
+    } finally {
+      setResolving(false)
+    }
+  }, [loadLogs])
+
+  const submitResolution = useCallback(async () => {
+    if (!resolutionLog) return
+    try {
+      setResolving(true)
+      setResolutionError(null)
+      await createCardFromEmailParseLog({
+        logId: resolutionLog.id,
+        holderId,
+        bankName,
+        cardName,
+        currency,
+        country,
+      })
+      setResolutionOpen(false)
+      setResolutionLog(null)
+      await loadLogs()
+    } catch (err) {
+      setResolutionError(err instanceof Error ? err.message : '新建失败')
+    } finally {
+      setResolving(false)
+    }
+  }, [bankName, cardName, country, currency, holderId, loadLogs, resolutionLog])
+
 
   return (
     <Box sx={{ p: 3 }}>
@@ -210,6 +368,9 @@ export default function EmailLogsPage() {
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>
       )}
+      {resolutionError && !resolutionOpen && (
+        <Alert severity="error" sx={{ mb: 2 }}>{resolutionError}</Alert>
+      )}
 
       <Paper>
         {loading ? (
@@ -235,7 +396,15 @@ export default function EmailLogsPage() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {rows.map(r => <Row key={r.id} row={r} />)}
+                  {rows.map(r => (
+                    <Row
+                      key={r.id}
+                      row={r}
+                      resolving={resolving}
+                      onDiscard={row => void handleDiscard(row)}
+                      onCreate={row => void openResolution(row)}
+                    />
+                  ))}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -251,6 +420,111 @@ export default function EmailLogsPage() {
           </>
         )}
       </Paper>
+
+      <Dialog
+        open={resolutionOpen && !!resolutionLog}
+        onClose={() => setResolutionOpen(false)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>新建银行和卡片</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            将按以下信息补齐银行目录、卡产品和卡片，并把原邮件中的账单写入账本；同名且同币种的产品、同持卡人同尾号卡片会直接复用。
+          </Typography>
+          {resolutionError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {resolutionError}
+            </Alert>
+          )}
+          {resolutionLoading ? (
+            <Stack alignItems="center" sx={{ py: 4 }}>
+              <CircularProgress size={24} />
+            </Stack>
+          ) : (
+            <Stack spacing={2} sx={{ pt: 1 }}>
+              <TextField
+                select
+                required
+                label="持卡人"
+                value={holderId}
+                onChange={(e) => setHolderId(e.target.value)}
+                disabled={resolving}
+              >
+                {holders.map((holder) => (
+                  <MenuItem key={holder.id} value={holder.id}>
+                    {holder.name}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <TextField
+                required
+                label="银行名称"
+                value={bankName}
+                onChange={(e) => setBankName(e.target.value)}
+                disabled={resolving}
+              />
+              <TextField
+                required
+                label="卡片名称"
+                value={cardName}
+                onChange={(e) => setCardName(e.target.value)}
+                disabled={resolving}
+              />
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                <TextField
+                  required
+                  label="币种"
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+                  disabled={resolving}
+                />
+                <TextField
+                  required
+                  label="国家/地区"
+                  value={country}
+                  onChange={(e) => setCountry(e.target.value.toUpperCase())}
+                  disabled={resolving}
+                />
+              </Stack>
+              {resolutionLog && (
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                  <TextField
+                    label="卡尾号"
+                    value={parseEmailBill(resolutionLog.raw_ai_response)?.card_last4 ?? ''}
+                    disabled
+                  />
+                  <TextField
+                    label="账单金额"
+                    value={parseEmailBill(resolutionLog.raw_ai_response)?.bill_amount ?? ''}
+                    disabled
+                  />
+                </Stack>
+              )}
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setResolutionOpen(false)} disabled={resolving}>
+            取消
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void submitResolution()}
+            disabled={
+              resolving ||
+              resolutionLoading ||
+              !holderId ||
+              !bankName.trim() ||
+              !cardName.trim() ||
+              !currency.trim() ||
+              !country.trim()
+            }
+          >
+            新建并导入账单
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
