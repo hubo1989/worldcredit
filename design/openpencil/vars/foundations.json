@@ -31,6 +31,14 @@
     "type": "color",
     "value": "#030059"
   },
+  "color.runtime.adminPrimary": {
+    "type": "color",
+    "value": "#4F46E5"
+  },
+  "color.runtime.adminAccent": {
+    "type": "color",
+    "value": "#818CF8"
+  },
   "color.bg.canvas": {
     "type": "color",
     "value": "#F5F7FA"
@@ -42,6 +50,10 @@
   "color.bg.subtle": {
     "type": "color",
     "value": "#F5F8FF"
+  },
+  "color.bg.skeleton": {
+    "type": "color",
+    "value": "#E8EDF5"
   },
   "color.bg.admin.canvas": {
     "type": "color",
@@ -57,15 +69,23 @@
   },
   "color.text.primary": {
     "type": "color",
-    "value": "#333333"
+    "value": "#0A1F44"
   },
   "color.text.secondary": {
     "type": "color",
-    "value": "#636363"
+    "value": "#5B6478"
   },
   "color.text.disabled": {
     "type": "color",
-    "value": "#999999"
+    "value": "#A0A8B8"
+  },
+  "color.text.adminMuted": {
+    "type": "color",
+    "value": "#9CA3AF"
+  },
+  "color.text.adminFaint": {
+    "type": "color",
+    "value": "#6B7280"
   },
   "color.text.onDark": {
     "type": "color",
@@ -89,7 +109,15 @@
   },
   "color.status.success": {
     "type": "color",
-    "value": "#16A34A"
+    "value": "#2E7D32"
+  },
+  "color.status.successInk": {
+    "type": "color",
+    "value": "#1B5E20"
+  },
+  "color.status.successSoft": {
+    "type": "color",
+    "value": "#E6EFE6"
   },
   "color.status.successDark": {
     "type": "color",
@@ -99,9 +127,29 @@
     "type": "color",
     "value": "#FCB900"
   },
+  "color.status.warningInk": {
+    "type": "color",
+    "value": "#92400E"
+  },
+  "color.status.warningSoft": {
+    "type": "color",
+    "value": "#FEF2D1"
+  },
   "color.status.danger": {
     "type": "color",
-    "value": "#CF2E2E"
+    "value": "#D32F2F"
+  },
+  "color.status.dangerInk": {
+    "type": "color",
+    "value": "#B71C1C"
+  },
+  "color.status.dangerSoft": {
+    "type": "color",
+    "value": "#FAE6E6"
+  },
+  "color.status.dangerOnDark": {
+    "type": "color",
+    "value": "#FF9B9B"
   },
   "color.status.dangerDark": {
     "type": "color",
@@ -111,21 +159,37 @@
     "type": "color",
     "value": "#0277BD"
   },
+  "color.status.infoInk": {
+    "type": "color",
+    "value": "#01579B"
+  },
+  "color.status.infoSoft": {
+    "type": "color",
+    "value": "#E6F1F8"
+  },
+  "color.brand.goldSoft": {
+    "type": "color",
+    "value": "#F5EED8"
+  },
   "font.family.body": {
     "type": "string",
-    "value": "system-ui"
+    "value": "\"Noto Sans SC\", \"PingFang SC\", \"Microsoft YaHei\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif"
   },
   "font.family.amount": {
     "type": "string",
-    "value": "Inter Tight"
+    "value": "\"Inter Tight\", \"Noto Sans SC\", \"PingFang SC\", \"Microsoft YaHei\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif"
   },
   "font.family.mono": {
     "type": "string",
-    "value": "ui-monospace"
+    "value": "\"JetBrains Mono\", ui-monospace, SFMono-Regular, Menlo, monospace"
   },
   "font.size.display": {
     "type": "number",
     "value": 22
+  },
+  "font.size.section": {
+    "type": "number",
+    "value": 19
   },
   "font.size.title": {
     "type": "number",
@@ -133,7 +197,7 @@
   },
   "font.size.body": {
     "type": "number",
-    "value": 13.5
+    "value": 14.5
   },
   "font.size.caption": {
     "type": "number",
@@ -181,7 +245,7 @@
   },
   "space.5": {
     "type": "number",
-    "value": 24
+    "value": 20
   },
   "space.6": {
     "type": "number",
@@ -243,12 +307,20 @@
     "type": "number",
     "value": 44
   },
+  "layout.statusbar.height": {
+    "type": "number",
+    "value": 48
+  },
+  "layout.safearea.bottom": {
+    "type": "number",
+    "value": 34
+  },
   "layout.bottomnav.height": {
     "type": "number",
     "value": 56
   },
   "layout.navbar.height": {
     "type": "number",
-    "value": 56
+    "value": 64
   }
 }

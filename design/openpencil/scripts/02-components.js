@@ -46,7 +46,7 @@ const labeled = (parent, label, nodeFn) => {
 const b = board('WorldCredit · Component Masters', '组件先于页面：页面通过 ref 实例化，禁止在页面里复制粘贴卡片再逐个微调。');
 
 // ---------- Button ----------
-const btnG = group(b, 'Button', '高度 40 · 圆角 8 · fontSize 14 / 600 · 无阴影 · focus-visible 有 2px 外描边');
+const btnG = group(b, 'Button', '高度 40 · 圆角 8 · fontSize 14 / 600 · 无阴影 · hover 描边加深 · pressed 实底加深 · focus 2px 外描边');
 const btnRow = row(btnG, 16);
 const button = (parent, label, kind) => labeled(parent, label, (c) => {
   const styles = {
@@ -63,6 +63,27 @@ const button = (parent, label, kind) => labeled(parent, label, (c) => {
   I(el, { type: 'text', content: label, fontSize: 14, fontWeight: 600, fill: s(styles.text) });
 });
 for (const [l, k] of [['主要操作', 'primary'], ['强调', 'secondary'], ['次要', 'outline'], ['文字按钮', 'ghost'], ['危险操作', 'danger'], ['禁用', 'disabled']]) button(btnRow, l, k);
+// 交互态实体（B0-1 补缺口）：hover / pressed / focus 必须有可审查的画法
+const btnStateRow = row(btnG, 16);
+const stateButton = (parent, label, kind) => labeled(parent, label, (c) => {
+  if (kind === 'focus') {
+    const ring = I(c, { type: 'frame', name: 'Button / ' + label + ' ring', width: 134, height: 46, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 10, stroke: { thickness: 2, fill: s(C.primary) } });
+    const el = I(ring, { type: 'frame', name: 'Button / ' + label, width: 126, height: 38, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 8, fill: s(C.primary) });
+    I(el, { type: 'text', content: '主要操作', fontSize: 14, fontWeight: 600, fill: s(C.onDark) });
+    return;
+  }
+  const styles = {
+    hover: { fill: s(C.primary), stroke: { thickness: 1, fill: s(C.primaryDark) } },
+    pressed: { fill: s(C.primaryDark), stroke: null },
+  }[kind];
+  const node = { type: 'frame', name: 'Button / ' + label, width: 128, height: 40, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 8, fill: styles.fill };
+  if (styles.stroke) node.stroke = styles.stroke;
+  const el = I(c, node);
+  I(el, { type: 'text', content: '主要操作', fontSize: 14, fontWeight: 600, fill: s(C.onDark) });
+});
+stateButton(btnStateRow, '悬停 hover', 'hover');
+stateButton(btnStateRow, '按下 pressed', 'pressed');
+stateButton(btnStateRow, '聚焦 focus', 'focus');
 
 // ---------- Input ----------
 const inputG = group(b, 'Input', '高度 40 · 圆角 8 · label 常驻左上（不做浮动 label）· 校验 on blur');
@@ -73,23 +94,33 @@ const inputCell = (label, value, state) => labeled(inputRow, state, (c) => {
   const strokeColor = state === 'error' ? C.danger : state === 'focus' ? C.primary : C.borderInput;
   const box = I(wrap, {
     type: 'frame', name: 'input', width: 'fill_container', height: 40, layout: 'horizontal', alignItems: 'center',
-    padding: [8, 12], cornerRadius: 8, fill: s(C.surface), stroke: { thickness: state === 'focus' ? 2 : 1, fill: s(strokeColor) },
+    padding: [8, 12], cornerRadius: 8, fill: s(state === 'disabled' ? C.subtle : C.surface), stroke: { thickness: state === 'focus' ? 2 : 1, fill: s(strokeColor) },
   });
-  I(box, { type: 'text', content: value, fontSize: 14, fill: s(value === placeholder ? C.text2 : C.text), textGrowth: 'fixed-width' });
+  I(box, { type: 'text', content: value, fontSize: 14, fill: s(value === placeholder || state === 'disabled' ? C.text2 : C.text), textGrowth: 'fixed-width' });
   if (state === 'error') I(wrap, { type: 'text', content: '必填项', fontSize: 11, fill: s(C.danger), textGrowth: 'fixed-width' });
 });
 const placeholder = '请输入';
 inputCell('持卡人', placeholder, 'default');
 inputCell('卡号后四位', '4821', 'focus');
 inputCell('账单金额', placeholder, 'error');
+inputCell('备注', '不可编辑', 'disabled');
 
 // ---------- Badge ----------
-const badgeG = group(b, 'Status Badge', '全圆角胶囊 · 12/700 · 四色状态：已还 / 部分 / 逾期 / 待还');
+const badgeG = group(b, 'Status Badge', '淡底 + ink 文字（B0 决策 1，与 app WcBadge 同配方）· success 12% / warn 18% / danger 12% / info 10% / gold 18%');
 const badgeRow = row(badgeG, 12);
-const badgeTextOn = (color) => (color === C.warning || color === C.gold) ? C.navy : C.onDark;
-for (const [label, color] of [['已还清', C.success], ['部分还款', C.warning], ['已逾期', C.danger], ['待还', C.info], ['AI 识别', C.gold], ['邮件来源', C.navy600]]) {
-  const el = I(badgeRow, { type: 'frame', name: 'Badge / ' + label, layout: 'horizontal', padding: [4, 12], cornerRadius: 999, fill: s(color) });
-  I(el, { type: 'text', content: label, fontSize: 12, fontWeight: 700, fill: s(badgeTextOn(color)) });
+// soft 底 = color-mix 等价字面值；文字用 ink 档（AI 徽章用 navy，gold700 压金底 4.22 不达 AA）。
+const badgeStyle = (label) => ({
+  '已还清': { bg: '$color.status.successSoft', fg: '$color.status.successInk' },
+  '部分还款': { bg: '$color.status.warningSoft', fg: '$color.status.warningInk' },
+  '已逾期': { bg: '$color.status.dangerSoft', fg: '$color.status.dangerInk' },
+  '待还': { bg: '$color.status.infoSoft', fg: '$color.status.infoInk' },
+  'AI 识别': { bg: '$color.brand.goldSoft', fg: C.navy },
+  '邮件来源': { bg: '$color.status.infoSoft', fg: '$color.status.infoInk' },
+}[label]);
+for (const label of ['已还清', '部分还款', '已逾期', '待还', 'AI 识别', '邮件来源']) {
+  const st = badgeStyle(label);
+  const el = I(badgeRow, { type: 'frame', name: 'Badge / ' + label, layout: 'horizontal', padding: [4, 12], cornerRadius: 999, fill: s(st.bg) });
+  I(el, { type: 'text', content: label, fontSize: 12, fontWeight: 700, fill: s(st.fg) });
 }
 
 // ---------- Metric Card ----------
@@ -114,11 +145,11 @@ const billCard = I(listG, {
 const bcTop = row(billCard, 12);
 const bcLeft = I(bcTop, { type: 'frame', name: 'left', width: 'fill_container', layout: 'vertical', gap: 4 });
 I(bcLeft, { type: 'text', content: '招商银行 · 经典白金', fontSize: 15, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
-I(bcLeft, { type: 'text', content: '尾号 4821 · 持卡人 胡波', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
+I(bcLeft, { type: 'text', content: '尾号 4821 · 持卡人 呼博', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
 const bcRight = I(bcTop, { type: 'frame', name: 'right', layout: 'vertical', gap: 4, alignItems: 'end' });
 I(bcRight, { type: 'text', content: '¥8,640.50', fontSize: 18, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(C.text), textGrowth: 'fixed-width' });
-const bcBadge = I(bcRight, { type: 'frame', name: 'badge', layout: 'horizontal', padding: [2, 10], cornerRadius: 999, fill: s(C.info) });
-I(bcBadge, { type: 'text', content: '待还', fontSize: 11, fontWeight: 700, fill: s(C.onDark) });
+const bcBadge = I(bcRight, { type: 'frame', name: 'badge', layout: 'horizontal', padding: [2, 10], cornerRadius: 999, fill: s('$color.status.infoSoft') });
+I(bcBadge, { type: 'text', content: '待还', fontSize: 11, fontWeight: 700, fill: s('$color.status.infoInk') });
 I(billCard, { type: 'rectangle', width: 'fill_container', height: 1, fill: s(C.border) });
 const bcSub = row(billCard, 16);
 I(bcSub, { type: 'text', content: '账单日 09-05', fontSize: 11, fill: s(C.text2) });
@@ -134,7 +165,7 @@ const listRow = (parent, label, value, chevron) => {
   if (chevron) I(right, { type: 'icon_font', iconFontName: 'chevron-right', width: 16, height: 16, fill: s(C.text2) });
   return r;
 };
-listRow(listG2, '默认持卡人', '胡波', true);
+listRow(listG2, '默认持卡人', '呼博', true);
 I(listG2, { type: 'rectangle', width: 'fill_container', height: 1, fill: s(C.border) });
 listRow(listG2, '账单币种', 'CNY', true);
 I(listG2, { type: 'rectangle', width: 'fill_container', height: 1, fill: s(C.border) });
@@ -147,11 +178,11 @@ const stateCol = (kind) => labeled(stateRow, kind, (c) => {
   const box = I(c, {
     type: 'frame', name: 'StateHolder / ' + kind, width: 300, height: 180, layout: 'vertical', gap: 12,
     padding: [20, 20], justifyContent: 'center', alignItems: 'center',
-    cornerRadius: 12, fill: s(kind === '错误' ? '#FEF2F2' : C.surface),
+    cornerRadius: 12, fill: s(kind === '错误' ? '$color.status.dangerSoft' : C.surface),
     stroke: { thickness: 1, fill: s(kind === '错误' ? C.danger : C.border) },
   });
   if (kind === '加载') {
-    for (const w of [180, 240, 140]) I(box, { type: 'rectangle', width: w, height: 14, cornerRadius: 999, fill: s('#E8EDF5') });
+    for (const w of [180, 240, 140]) I(box, { type: 'rectangle', width: w, height: 14, cornerRadius: 999, fill: s('$color.bg.skeleton') });
   } else {
     I(box, { type: 'icon_font', iconFontName: kind === '空态' ? 'inbox' : 'alert-circle', width: 32, height: 32, fill: s(kind === '空态' ? C.text2 : C.danger) });
     I(box, { type: 'text', content: kind === '空态' ? '还没有账单' : '加载失败', fontSize: 15, fontWeight: 600, fill: s(C.text) });

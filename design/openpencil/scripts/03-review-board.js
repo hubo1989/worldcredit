@@ -37,7 +37,7 @@ const longCard = I(longRow, {
   padding: [16, 16], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) },
 });
 I(longCard, { type: 'text', content: '中国工商银行·宇宙星座信用卡（白金卡等级）', fontSize: 15, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
-I(longCard, { type: 'text', content: '尾号 8842 · 持卡人 胡波 · 本期含境外消费与分期本金', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
+I(longCard, { type: 'text', content: '尾号 8842 · 持卡人 呼博 · 本期含境外消费与分期本金', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
 const longAmt = I(longRow, { type: 'frame', name: 'amount', layout: 'vertical', gap: 4, alignItems: 'end' });
 I(longAmt, { type: 'text', content: '¥128,400.00', fontSize: 18, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(C.text), textGrowth: 'fixed-width' });
 const longBadge = I(longAmt, { type: 'frame', name: 'badge', layout: 'horizontal', padding: [2, 10], cornerRadius: 999, fill: s(C.warning) });
@@ -79,7 +79,7 @@ const status = I(phone, { type: 'frame', name: 'status bar', width: 'fill_contai
 I(status, { type: 'text', content: '9:41', fontSize: 11, fontWeight: 600, fill: s(C.text) });
 I(status, { type: 'icon_font', iconFontName: 'battery-full', width: 14, height: 14, fill: s(C.text) });
 const body = I(phone, { type: 'frame', name: 'content', width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 12, padding: [12, 16] });
-for (const w of [120, 180, 90]) I(body, { type: 'rectangle', width: w, height: 12, cornerRadius: 999, fill: s('#E8EDF5') });
+for (const w of [120, 180, 90]) I(body, { type: 'rectangle', width: w, height: 12, cornerRadius: 999, fill: s('$color.bg.skeleton') });
 const nav = I(phone, { type: 'frame', name: 'bottom nav', width: 'fill_container', height: 56, layout: 'horizontal', justifyContent: 'space_around', alignItems: 'center', fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
 for (const [icon, label, active] of [['home', '首页', true], ['receipt', '账单', false], ['user', '我的', false]]) {
   const t = I(nav, { type: 'frame', name: 'tab / ' + label, layout: 'vertical', gap: 4, alignItems: 'center' });

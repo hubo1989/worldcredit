@@ -95,7 +95,7 @@ const loginError = () => {
   I(brand, { type: 'text', content: 'WorldCredit', fontSize: 26, fontWeight: 700, fill: s(C.navy), textGrowth: 'fixed-width' });
 
   const alert = I(p, { type: 'frame', name: 'error alert', x: 0, y: 250, width: W, layout: 'horizontal', gap: 10, alignItems: 'start', padding: [12, 14] });
-  const inner = I(alert, { type: 'frame', name: 'inner', width: 'fill_container', layout: 'horizontal', gap: 10, alignItems: 'start', padding: [12, 14], cornerRadius: 10, fill: '#FEF2F2', stroke: { thickness: 1, fill: s(C.danger) } });
+  const inner = I(alert, { type: 'frame', name: 'inner', width: 'fill_container', layout: 'horizontal', gap: 10, alignItems: 'start', padding: [12, 14], cornerRadius: 10, fill: '$color.status.dangerSoft', stroke: { thickness: 1, fill: s(C.danger) } });
   I(inner, { type: 'icon_font', iconFontName: 'alert-circle', width: 18, height: 18, fill: s(C.danger) });
   const txt = I(inner, { type: 'frame', name: 'text', width: 'fill_container', layout: 'vertical', gap: 3 });
   I(txt, { type: 'text', content: '登录失败', fontSize: 12, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });

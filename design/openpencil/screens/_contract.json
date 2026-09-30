@@ -1,0 +1,318 @@
+{
+  "version": 1,
+  "reviewStatus": "proposed",
+  "updatedAt": "2026-09-23",
+  "note": "P0-1 提案：Current/Candidate/Approved 共用的字段与动作语义契约。判据以结构节点为主、文案为辅助；禁止写入个人数据或具体金额。批准前不接入 verify-batch.sh / CI。",
+  "rolePrefix": {
+    "current": "screen.",
+    "candidate": "candidate.",
+    "approved": "approved."
+  },
+  "defaults": {
+    "applyTo": ["current", "candidate", "approved"],
+    "requiredRoles": ["current"],
+    "min": 1
+  },
+  "screens": [
+    {
+      "id": "mobile.dashboard",
+      "key": "screen.mobile.dashboard",
+      "registryKey": "screen.mobile.dashboard",
+      "batch": "B1",
+      "fields": [
+        {
+          "id": "hero.pending",
+          "kind": "field",
+          "markers": [{ "node": "hero / total pending" }],
+          "allMarkers": [{ "label": ["总待还款", "待还总额"] }]
+        },
+        {
+          "id": "hero.incl_overdue",
+          "kind": "field",
+          "markers": [{ "node": "kv / 含逾期" }],
+          "allMarkers": [{ "label": ["含逾期"] }]
+        },
+        {
+          "id": "hero.next7",
+          "kind": "field",
+          "markers": [{ "node": "kv / 未来 7 天" }],
+          "allMarkers": [{ "label": ["未来 7 天", "未来7天"] }]
+        },
+        {
+          "id": "metric.overdue",
+          "kind": "field",
+          "markers": [{ "node": "metric / 已逾期" }],
+          "allMarkers": [{ "label": ["已逾期"] }]
+        },
+        {
+          "id": "metric.future",
+          "kind": "field",
+          "markers": [{ "node": "metric / 未来待还" }],
+          "allMarkers": [{ "label": ["未来待还"] }]
+        },
+        {
+          "id": "metric.total_debt",
+          "kind": "field",
+          "markers": [{ "node": "metric / 总欠款" }],
+          "allMarkers": [{ "label": ["总欠款"] }]
+        },
+        {
+          "id": "metric.unbilled",
+          "kind": "field",
+          "markers": [{ "node": "metric / 未出账单" }],
+          "allMarkers": [{ "label": ["未出账单"] }]
+        },
+        {
+          "id": "metric.unbilled_copy",
+          "kind": "field",
+          "markers": [
+            { "within": "metric / 未出账单", "label": ["暂无数据", "邮件解析待接入", "暂无账单"] }
+          ]
+        },
+        {
+          "id": "range.tabs",
+          "kind": "field",
+          "allMarkers": [
+            { "node": "tab / 7天" },
+            { "node": "tab / 14天" },
+            { "node": "tab / 30天" }
+          ]
+        },
+        {
+          "id": "holder.filters",
+          "kind": "field",
+          "markers": [{ "node": "holder filters" }],
+          "allMarkers": [{ "within": "holder filters", "nodePrefix": "pill /", "min": 2 }]
+        },
+        {
+          "id": "account.section",
+          "kind": "field",
+          "markers": [{ "node": "account header" }],
+          "allMarkers": [{ "label": ["账户"] }]
+        },
+        {
+          "id": "quick.actions",
+          "kind": "field",
+          "markers": [{ "node": "quick actions" }],
+          "allMarkers": [{ "nodePrefix": "quick /", "min": 4 }]
+        },
+        {
+          "id": "overdue.section",
+          "kind": "field",
+          "markers": [{ "node": "overdue header" }],
+          "allMarkers": [{ "label": ["逾期明细"] }]
+        },
+        {
+          "id": "bill.amount_label",
+          "kind": "field",
+          "markers": [{ "within": "overdue bill row", "textNode": ["待还金额", "当前待还金额"] }]
+        },
+        {
+          "id": "money.format",
+          "kind": "field",
+          "markers": [{ "within": "content", "pattern": "[¥￥]|[A-Za-z]{2}\\$" }]
+        },
+        {
+          "id": "bottom_nav",
+          "kind": "field",
+          "allMarkers": [
+            { "node": "tab / 首页" },
+            { "node": "tab / 账单" },
+            { "node": "tab / 我的" }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "id": "action.repay_all",
+          "kind": "action",
+          "markers": [{ "node": "btn / 一键全部还款" }],
+          "allMarkers": [{ "label": ["一键全部还款", "全部还款"] }]
+        },
+        {
+          "id": "action.repay_single",
+          "kind": "action",
+          "markers": [{ "node": "btn / 全额结清" }],
+          "allMarkers": [{ "label": ["全额结清", "全额还款"] }]
+        },
+        {
+          "id": "action.view_all_overdue",
+          "kind": "action",
+          "markers": [{ "textNode": ["查看全部", "查看全部逾期"] }]
+        },
+        {
+          "id": "action.quick_record",
+          "kind": "action",
+          "markers": [{ "node": "quick / 记一笔" }],
+          "allMarkers": [{ "label": ["记一笔"] }]
+        },
+        {
+          "id": "action.nav_bills",
+          "kind": "action",
+          "markers": [{ "node": "tab / 账单" }]
+        }
+      ]
+    },
+    {
+      "id": "mobile.bills",
+      "key": "screen.mobile.bills",
+      "registryKey": "screen.mobile.bills",
+      "batch": "B1",
+      "fields": [
+        {
+          "id": "header.title",
+          "kind": "field",
+          "markers": [{ "within": "page header", "textNode": ["卡片与账单", "卡片账单"] }]
+        },
+        {
+          "id": "header.refresh",
+          "kind": "field",
+          "markers": [{ "node": "btn / refresh" }]
+        },
+        {
+          "id": "banner.overdue",
+          "kind": "field",
+          "markers": [{ "node": "overdue banner" }],
+          "allMarkers": [{ "pattern": "存在\\d+笔历史逾期账单未结清" }]
+        },
+        {
+          "id": "filter.trigger",
+          "kind": "field",
+          "markers": [{ "node": "filter trigger" }],
+          "allMarkers": [{ "label": ["筛选"] }]
+        },
+        {
+          "id": "filter.dimensions",
+          "kind": "field",
+          "allMarkers": [
+            { "within": "filter bar", "label": ["按持卡人"] },
+            { "within": "filter bar", "label": ["逾期优先"] }
+          ]
+        },
+        {
+          "id": "payables.section",
+          "kind": "field",
+          "markers": [{ "node": "payables header" }],
+          "allMarkers": [{ "label": ["固定支出"] }]
+        },
+        {
+          "id": "payables.empty",
+          "kind": "field",
+          "markers": [{ "node": "payables empty" }]
+        },
+        {
+          "id": "bill.cards",
+          "kind": "field",
+          "markers": [{ "nodePrefix": "bill card /", "min": 1 }]
+        },
+        {
+          "id": "bill.status_nodes",
+          "kind": "field",
+          "markers": [{ "nodePrefix": "status /", "min": 4 }]
+        },
+        {
+          "id": "bill.status_labels",
+          "kind": "field",
+          "markers": [
+            { "textNode": ["逾期", "部分还款", "待还款", "未出账单"], "min": 4 }
+          ]
+        },
+        {
+          "id": "bill.amount_label",
+          "kind": "field",
+          "markers": [{ "textNode": ["当前待还金额", "待还金额"] }]
+        },
+        {
+          "id": "bill.amount_override",
+          "kind": "field",
+          "markers": [{ "textNode": ["修改金额", "手动修改"] }]
+        },
+        {
+          "id": "bill.date_block",
+          "kind": "field",
+          "markers": [
+            { "within": "date block", "label": ["账单日"] },
+            { "within": "date block", "label": ["还款日"] }
+          ]
+        },
+        {
+          "id": "bill.history",
+          "kind": "field",
+          "markers": [{ "node": "history toggle" }],
+          "allMarkers": [{ "label": ["历史账单明细"] }]
+        },
+        {
+          "id": "bill.unbilled_amount",
+          "kind": "field",
+          "markers": [{ "textNode": ["填写金额", "录入金额"] }]
+        },
+        {
+          "id": "money.format",
+          "kind": "field",
+          "markers": [{ "within": "content", "pattern": "[¥￥]|[A-Za-z]{2}\\$" }]
+        },
+        {
+          "id": "bottom_nav",
+          "kind": "field",
+          "allMarkers": [
+            { "node": "tab / 首页" },
+            { "node": "tab / 账单" },
+            { "node": "tab / 我的" }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "id": "action.repay_all",
+          "kind": "action",
+          "markers": [{ "node": "btn / 一键还清" }],
+          "allMarkers": [{ "label": ["一键还清", "一键全部还清"] }]
+        },
+        {
+          "id": "action.filter_open",
+          "kind": "action",
+          "markers": [{ "node": "filter trigger" }]
+        },
+        {
+          "id": "action.add_payable",
+          "kind": "action",
+          "markers": [{ "node": "btn / 添加" }],
+          "allMarkers": [{ "label": ["添加", "新增"] }]
+        },
+        {
+          "id": "action.register_payment",
+          "kind": "action",
+          "markers": [{ "nodePrefix": "btn / 登记还款", "min": 1 }],
+          "allMarkers": [{ "label": ["登记还款"] }]
+        },
+        {
+          "id": "action.amount_override",
+          "kind": "action",
+          "markers": [{ "textNode": ["修改金额", "手动修改"] }]
+        },
+        {
+          "id": "action.unbilled_amount",
+          "kind": "action",
+          "markers": [{ "textNode": ["填写金额", "录入金额"] }]
+        },
+        {
+          "id": "action.nav_home",
+          "kind": "action",
+          "markers": [{ "node": "tab / 首页" }]
+        }
+      ]
+    }
+  ],
+  "uncovered": [
+    { "key": "screen.mobile.bill-detail", "reason": "P0-1 只覆盖 B1 两屏，后续批次补契约" },
+    { "key": "screen.mobile.card-detail", "reason": "P0-1 只覆盖 B1 两屏，后续批次补契约" },
+    { "key": "screen.mobile.analytics", "reason": "P0-1 只覆盖 B1 两屏，后续批次补契约" },
+    { "key": "screen.mobile.benefits", "reason": "P0-1 只覆盖 B1 两屏，后续批次补契约" },
+    { "key": "screen.mobile.gmail-ledger", "reason": "P0-1 只覆盖 B1 两屏，后续批次补契约" },
+    { "key": "screen.mobile.settings", "reason": "P0-1 只覆盖 B1 两屏，后续批次补契约" },
+    { "key": "screen.auth.login", "reason": "P0-1 只覆盖 B1 两屏，后续批次补契约" },
+    { "key": "screen.admin.dashboard", "reason": "P0-1 只覆盖 B1 两屏，后续批次补契约" },
+    { "key": "screen.admin.crud", "reason": "P0-1 只覆盖 B1 两屏，后续批次补契约" },
+    { "key": "screen.admin.ledger", "reason": "P0-1 只覆盖 B1 两屏，后续批次补契约" }
+  ]
+}

@@ -24,6 +24,13 @@
 - `color.status.warning` (#FCB900) **不得作为浅底上的文字色**，需用 `color.brand.gold700` (#8A6D1F)。
 - 黄底 / 金底徽章的文字用 `color.brand.navy800`，不要用白色。
 - 深色后台底为 `#0F1117`，面板 `#181A24`，边框 `rgba(255,255,255,0.08)`。
+- 语义本色压在自己 10~14% 的淡底上不达 AA（实测 danger 4.16、success 4.36），
+  文字一律下沉到 `*Ink` 档：`successInk` `#1B5E20`、`warningInk` `#92400E`、
+  `dangerInk` `#B71C1C`、`infoInk` `#01579B`。本色只用于填充、描边与大字号。
+
+> 2026-09-23：设计源曾与实现漂移（旧值 `#16A34A` / `#CF2E2E`，app 已替换为
+> `#2E7D32` / `#D32F2F`）。已同步，并补上 app 已有的 `*Ink` 档。
+> 漂移与映射由 `scripts/check-token-drift.py` 守护，详见 `screens/TOKEN_DRIFT.md`。
 
 字体：正文用系统无衬线栈；金额用 `Inter Tight` 并启用 `tabular-nums`。不引用未安装字体，避免渲染回退。
 
@@ -155,4 +162,3 @@ Dashboard 与 Bills 母版已按真实基线重画，依据
 1. **字段完整性**：脚本内文案与 `baseline/dom/*/default.json` 的关键字段清单比对。
 2. **视觉回归**：`baseline/verify.sh` 监控实现是否漂移；
    母版改动本身不进回归（回归对象是 `app/` 产物）。
-

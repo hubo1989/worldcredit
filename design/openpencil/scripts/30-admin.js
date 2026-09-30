@@ -7,8 +7,8 @@
 const s = (c) => [{ type: 'solid', color: c }];
 const A = {
   canvas: '$color.bg.admin.canvas', surface: '$color.bg.admin.surface', panel: '$color.bg.admin.panel',
-  border: '$color.border.onDark', text: '$color.text.onDark', text2: '#9CA3AF', text3: '#6B7280',
-  primary: '#4F46E5', primaryLight: '#818CF8',
+  border: '$color.border.onDark', text: '$color.text.onDark', text2: '$color.text.adminMuted', text3: '$color.text.adminFaint',
+  primary: '$color.runtime.adminPrimary', primaryLight: '$color.runtime.adminAccent',
   success: '$color.status.successDark', warning: '$color.status.warning', danger: '$color.status.dangerDark',
 };
 const W = 1440, H = 900, SIDEBAR = 236, TOPBAR = 64, PAD = 24;

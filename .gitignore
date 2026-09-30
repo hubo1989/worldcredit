@@ -34,6 +34,10 @@
 .zencoder
 .github/copilot*
 
+# Python（design/openpencil 的检查脚本与自测）
+__pycache__/
+*.py[cod]
+
 # Node.js
 node_modules
 .env
