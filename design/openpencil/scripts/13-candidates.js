@@ -62,13 +62,13 @@ const candidateDashboard = (w, h) => {
   const phone = I(null, { type: 'frame', name: 'candidate.mobile.dashboard · ' + w + '×' + h, width: w, height: h, layout: 'none', clipContent: true, fill: s(C.canvas) });
   statusBar(phone, w);
 
-  // 页头：与 Current 同构（概览 + 头像），克制处理
+  // 页头保留运行时金额隐私开关；当前展示金额，eye-off 表示可将其隐藏。
   const header = I(phone, { type: 'frame', name: 'page header', x: 0, y: SB_H, width: w, height: 64, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, PAD] });
   const hl = I(header, { type: 'frame', name: 'heading', layout: 'vertical', gap: 2 });
   I(hl, { type: 'text', content: '概览', fontSize: 20, fontWeight: 700, fill: s(C.navy), textGrowth: 'fixed-width' });
   I(hl, { type: 'text', content: '管控信用卡资产与还款日程', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
-  const avatar = I(header, { type: 'frame', name: 'avatar pill', width: 40, height: 40, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
-  I(avatar, { type: 'text', content: '呼', fontSize: 15, fontWeight: 700, fill: s(C.navy) });
+  const privacy = I(header, { type: 'frame', name: 'btn / toggle amount visibility', width: 44, height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  I(privacy, { type: 'icon_font', name: 'hide visible amounts', iconFontName: 'eye-off', width: 18, height: 18, fill: s(C.navy) });
 
   const content = I(phone, {
     type: 'frame', name: 'content', x: 0, y: SB_H + 64, width: w, height: h - SB_H - 64 - NAV_H,
@@ -81,7 +81,7 @@ const candidateDashboard = (w, h) => {
   const riskTxt = I(risk, { type: 'frame', name: 'risk text', width: 'fill_container', layout: 'vertical', gap: 2 });
   I(riskTxt, { type: 'text', content: '2 笔账单已逾期', fontSize: 12, fontWeight: 700, fill: s(C.dangerInk), textGrowth: 'fixed-width' });
   I(riskTxt, { type: 'text', content: '待还合计 ¥7,361.1 · 建议今日处理', fontSize: 11, fill: s(C.dangerInk), textGrowth: 'fixed-width' });
-  const repayAll = I(risk, { type: 'frame', name: 'btn / 一键全部还款', layout: 'horizontal', padding: [8, 14], cornerRadius: 999, fill: s(C.dangerInk) });
+  const repayAll = I(risk, { type: 'frame', name: 'btn / 一键全部还款', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 14], cornerRadius: 999, fill: s(C.dangerInk) });
   I(repayAll, { type: 'text', content: '一键全部还款', fontSize: 12, fontWeight: 600, fill: s(C.onDark) });
 
   // ② 持卡人筛选
@@ -167,7 +167,7 @@ const candidateDashboard = (w, h) => {
   const brAmt = I(brBottom, { type: 'frame', name: 'amount', layout: 'vertical', gap: 2 });
   I(brAmt, { type: 'text', content: '待还金额', fontSize: 10, fill: s(C.text2), textGrowth: 'fixed-width' });
   I(brAmt, { type: 'text', content: '¥3,680.55', fontSize: 17, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(C.dangerInk), textGrowth: 'fixed-width' });
-  const settle = I(brBottom, { type: 'frame', name: 'btn / 全额结清', layout: 'horizontal', padding: [8, 16], cornerRadius: 999, fill: s(C.primary) });
+  const settle = I(brBottom, { type: 'frame', name: 'btn / 全额结清', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 16], cornerRadius: 999, fill: s(C.primary) });
   I(settle, { type: 'text', content: '全额结清', fontSize: 12, fontWeight: 600, fill: s(C.onDark) });
 
   bottomNav(phone, w, h, '首页');

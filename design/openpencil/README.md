@@ -13,7 +13,9 @@
 | `screens/_registry.json` | `screen key → route → 状态覆盖` 注册表 |
 | `scripts/*.js` | 重建脚本，`op design @scripts/x.js` 幂等重放 |
 | `codegen-plan.json` | Codegen 分块计划（只用于展示组件，不覆盖页面逻辑） |
-| `exports/current/` | 当前 `.op` 的导帧，用于评审 |
+| `exports/current/` | Current 母版导帧，用于评审 |
+| `exports/candidate/` | Candidate 候选稿导帧，与 Current 隔离 |
+| `exports/comparisons/` | 对比板页面导帧 |
 | `exports/approved/` | 已确认的母版导帧，作为实现基线 |
 
 ## 约定
@@ -39,7 +41,9 @@ op design @design/openpencil/scripts/10-mobile-core.js
 
 # 校验与导帧
 op design:lint
-op export-frames --output-dir design/openpencil/exports/current --format png
+bash design/openpencil/scripts/export-all.sh
+# 隔离导出（例如测试）
+OPENPENCIL_EXPORT_ROOT="$(mktemp -d)" bash design/openpencil/scripts/export-all.sh
 ```
 
 ## 边界

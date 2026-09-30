@@ -50,6 +50,8 @@ build "13 · Candidates"     13-candidates.js
 build "20 · Auth & Public"   20-auth-public.js
 build "30 · Admin"           30-admin.js
 build "90 · Comparisons"     90-comparisons.js
+echo "  -> attach Candidate sample preview"
+bash "$S/attach-candidate-preview.sh"
 echo "saving $OP_FILE"
 op save_document filePath="$OP_FILE" >/dev/null
 echo "done"

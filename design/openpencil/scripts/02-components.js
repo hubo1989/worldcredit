@@ -6,7 +6,7 @@ const s = (c) => [{ type: 'solid', color: c }];
 const C = {
   canvas: '$color.bg.canvas', surface: '$color.bg.surface', subtle: '$color.bg.subtle',
   navy: '$color.brand.navy800', navy600: '$color.brand.navy600', gold: '$color.brand.gold500', gold700: '$color.brand.gold700',
-  primary: '$color.runtime.primary', primaryDark: '$color.runtime.primaryDark',
+  primary: '$color.runtime.primary', primaryDark: '$color.runtime.primaryDark', secondary: '$color.runtime.secondary',
   border: '$color.border.default', borderInput: '$color.border.input',
   text: '$color.text.primary', text2: '$color.text.secondary', onDark: '$color.text.onDark',
   success: '$color.status.success', warning: '$color.status.warning', danger: '$color.status.danger', info: '$color.status.info',
@@ -67,8 +67,8 @@ for (const [l, k] of [['主要操作', 'primary'], ['强调', 'secondary'], ['�
 const btnStateRow = row(btnG, 16);
 const stateButton = (parent, label, kind) => labeled(parent, label, (c) => {
   if (kind === 'focus') {
-    const ring = I(c, { type: 'frame', name: 'Button / ' + label + ' ring', width: 134, height: 46, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 10, stroke: { thickness: 2, fill: s(C.primary) } });
-    const el = I(ring, { type: 'frame', name: 'Button / ' + label, width: 126, height: 38, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 8, fill: s(C.primary) });
+    const ring = I(c, { type: 'frame', name: 'Button / ' + label + ' ring', width: 136, height: 48, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 10, stroke: { thickness: 2, fill: s(C.secondary) } });
+    const el = I(ring, { type: 'frame', name: 'Button / ' + label, width: 128, height: 40, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 8, fill: s(C.primary) });
     I(el, { type: 'text', content: '主要操作', fontSize: 14, fontWeight: 600, fill: s(C.onDark) });
     return;
   }

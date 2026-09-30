@@ -2,22 +2,25 @@
 # ============================================================================
 # WorldCredit 批次验收入口
 #
-# 一次跑完三道检查，输出统一汇总，按最严重结果返回退出码。
+# 一次跑完源代码、契约、token、回归与视觉检查，输出统一汇总，按最严重结果返回退出码。
 #
 #   1. 字段对齐   baseline/check-master-fields.py   母版是否覆盖真实基线的结构元素
 #   2. 几何溢出   scripts/check-overflow.py         母版元素是否越出视口
-#   3. 视觉回归   baseline/capture.py + visual-diff.py   实拍产物是否偏离已批准基线
+#   3. Frame 契约 scripts/check-frame-contract.py   frame / 字段 / 动作契约
+#   4. Token 漂移 scripts/check-token-drift.py      设计源与运行时 token / 对比度
+#   5. Python 回归 tests/test_{frame_contract,token_drift,p02_candidate_track,export_roles}.py
+#   6. 视觉回归   baseline/capture.py + visual-diff.py   实拍产物是否偏离已批准基线
 #
 # 用法:
 #   bash design/openpencil/verify-batch.sh                  # 全部（视觉回归按服务可达性自动决定）
-#   bash design/openpencil/verify-batch.sh --source-only    # 只跑设计与母版检查（不需要服务）
+#   bash design/openpencil/verify-batch.sh --source-only    # 运行全部源检查与 Python 回归（不需要服务）
 #   bash design/openpencil/verify-batch.sh --visual-only    # 只跑视觉回归
 #   bash design/openpencil/verify-batch.sh --only dashboard bills    # 视觉回归限定路由
 #   bash design/openpencil/verify-batch.sh --threshold 0.01          # 放宽视觉差异阈值
 #
 # 退出码:
 #   0  全部通过
-#   1  存在失败（字段缺失 / 溢出 / 视觉差异）
+#   1  存在失败（字段缺失 / 溢出 / 契约 / token / 测试 / 视觉差异）
 #   2  前置条件缺失（OpenPencil 不可达 / 缺基线 / 服务不可达且显式要求视觉回归）
 #
 # 前置条件:
@@ -80,7 +83,7 @@ app_reachable() {
 # 检查 1：字段对齐
 # ============================================================================
 run_fields() {
-  banner "1/3 字段对齐（母版 .op vs 真实基线）"
+  banner "1/6 字段对齐（母版 .op vs 真实基线）"
   # 字段检查直接解析 .op 产物，不需要 OpenPencil 运行时，CI 可跑。
   local out rc
   out="$(python3 "$BASE/check-master-fields.py" 2>&1)"; rc=$?
@@ -99,7 +102,7 @@ run_fields() {
 # 检查 2：几何溢出
 # ============================================================================
 run_overflow() {
-  banner "2/3 几何溢出（元素是否越出视口）"
+  banner "2/6 几何溢出（元素是否越出视口）"
   local out rc mode
   if opencil_reachable; then
     # 本地：用引擎版，能算布局容器内的子节点坐标
@@ -122,10 +125,54 @@ run_overflow() {
 }
 
 # ============================================================================
-# 检查 3：视觉回归（实拍 + 比对）
+# 检查 3-5：契约 / token / Python 回归（无 OpenPencil 或服务依赖）
+# ============================================================================
+run_frame_contract() {
+  banner "3/6 Frame 契约（.op frame / 字段 / 动作）"
+  local out rc
+  out="$(python3 "$SCRIPTS/check-frame-contract.py" 2>&1)"; rc=$?
+  echo "$out"
+  if [ "$rc" -eq 0 ]; then
+    record "Frame 契约" "PASS" "真实 .op 与 _contract.json 覆盖通过"
+  else
+    record "Frame 契约" "FAIL" "check-frame-contract.py 退出码 $rc"
+  fi
+}
+
+run_token_drift() {
+  banner "4/6 Token 漂移与对比度"
+  local out rc
+  out="$(python3 "$SCRIPTS/check-token-drift.py" 2>&1)"; rc=$?
+  echo "$out"
+  if [ "$rc" -eq 0 ]; then
+    record "Token 漂移" "PASS" "映射与对比度检查通过"
+  else
+    record "Token 漂移" "FAIL" "check-token-drift.py 退出码 $rc"
+  fi
+}
+
+run_python_tests() {
+  banner "5/6 Python 回归（Frame / Token / Candidate / 导出分流）"
+  local out rc summary
+  out="$(cd "$REPO" && python3 -m unittest -v \
+    design.openpencil.tests.test_frame_contract \
+    design.openpencil.tests.test_token_drift \
+    design.openpencil.tests.test_p02_candidate_track \
+    design.openpencil.tests.test_export_roles 2>&1)"; rc=$?
+  echo "$out"
+  if [ "$rc" -eq 0 ]; then
+    summary="$(printf '%s\n' "$out" | grep -E '^Ran [0-9]+ tests' | tail -n 1)"
+    record "Python 回归" "PASS" "${summary:-四个测试模块通过}"
+  else
+    record "Python 回归" "FAIL" "Frame / Token / Candidate / export role 测试失败"
+  fi
+}
+
+# ============================================================================
+# 检查 6：视觉回归（实拍 + 比对）
 # ============================================================================
 run_visual() {
-  banner "3/3 视觉回归（实拍产物 vs 已批准基线）"
+  banner "6/6 视觉回归（实拍产物 vs 已批准基线）"
   if ! app_reachable; then
     echo "本地服务不可达 ($APP_URL)"
     if [ "$MODE" = "visual-only" ]; then
@@ -169,8 +216,8 @@ echo "  服务: $APP_URL ($(app_reachable && echo 可达 || echo 不可达))"
 echo "  OpenPencil: $(opencil_reachable && echo 可达 || echo 不可达)"
 
 case "$MODE" in
-  all)         run_fields; run_overflow; run_visual ;;
-  source-only) run_fields; run_overflow ;;
+  all)         run_fields; run_overflow; run_frame_contract; run_token_drift; run_python_tests; run_visual ;;
+  source-only) run_fields; run_overflow; run_frame_contract; run_token_drift; run_python_tests ;;
   visual-only) run_visual ;;
 esac
 

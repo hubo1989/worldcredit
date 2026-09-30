@@ -26,6 +26,11 @@ REPO = Path(__file__).resolve().parents[3]
 OP_PATH = REPO / "design" / "openpencil" / "worldcredit-redesign.op"
 CONTRACT_PATH = REPO / "design" / "openpencil" / "screens" / "_contract.json"
 CHECKER_PATH = REPO / "design" / "openpencil" / "scripts" / "check-frame-contract.py"
+CANDIDATE_SCRIPT = REPO / "design" / "openpencil" / "scripts" / "13-candidates.js"
+COMPONENT_SCRIPT = REPO / "design" / "openpencil" / "scripts" / "02-components.js"
+COMPARISON_SCRIPT = REPO / "design" / "openpencil" / "scripts" / "90-comparisons.js"
+BUILD_SCRIPT = REPO / "design" / "openpencil" / "scripts" / "build-all.sh"
+ATTACH_SCRIPT = REPO / "design" / "openpencil" / "scripts" / "attach-candidate-preview.sh"
 
 CANDIDATE_HEAD = "candidate.mobile.dashboard"
 CURRENT_HEAD = "screen.mobile.dashboard"
@@ -119,6 +124,46 @@ class CandidateTrack(unittest.TestCase):
         self.assertEqual(code, 0, summary["failures"])
         self.assertEqual(entry_for(summary, CANDIDATE_HEAD)["status"], "SKIP")
         self.assertEqual(entry_for(summary, CURRENT_HEAD)["status"], "OK")
+
+    def test_candidate_keeps_privacy_control_and_44px_repayment_actions(self):
+        source = CANDIDATE_SCRIPT.read_text(encoding="utf-8")
+        self.assertRegex(
+            source,
+            r"name: 'btn / toggle amount visibility', width: 44, height: 44",
+        )
+        self.assertIn("iconFontName: 'eye-off'", source)
+        for action in ("一键全部还款", "全额结清"):
+            with self.subTest(action=action):
+                self.assertRegex(
+                    source,
+                    rf"name: 'btn / {action}', width: 'fit_content', height: 44",
+                )
+
+    def test_focus_button_uses_normal_control_with_visible_outer_ring(self):
+        source = COMPONENT_SCRIPT.read_text(encoding="utf-8")
+        self.assertRegex(
+            source,
+            r"name: 'Button / ' \+ label \+ ' ring', width: 136, height: 48",
+        )
+        self.assertIn("secondary: '$color.runtime.secondary'", source)
+        self.assertRegex(source, r"stroke: \{ thickness: 2, fill: s\(C\.secondary\) \}")
+        self.assertRegex(
+            source,
+            r"name: 'Button / ' \+ label, width: 128, height: 40",
+        )
+
+    def test_candidate_preview_is_attached_after_comparison_page_rebuild(self):
+        build = BUILD_SCRIPT.read_text(encoding="utf-8")
+        attach = ATTACH_SCRIPT.read_text(encoding="utf-8")
+        comparison = COMPARISON_SCRIPT.read_text(encoding="utf-8")
+        comparison_build = build.index('build "90 · Comparisons"')
+        attachment = build.index('bash "$S/attach-candidate-preview.sh"')
+        self.assertLess(comparison_build, attachment)
+        self.assertIn("candidate.mobile.dashboard · 390×844", attach)
+        self.assertIn("slot / Candidate", attach)
+        self.assertIn('op copy "$candidate_frame" --parent "$candidate_slot"', attach)
+        self.assertIn("comparison.preview · candidate.mobile.dashboard · 390×844", attach)
+        self.assertIn("if (title !== 'Candidate')", comparison)
 
 
 if __name__ == "__main__":

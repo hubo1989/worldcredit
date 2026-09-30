@@ -30,18 +30,20 @@ const column = (parent, title, note, accent) => {
   I(ch, { type: 'text', content: title, fontSize: 14, fontWeight: 700, fill: s(accent), textGrowth: 'fixed-width' });
   I(ch, { type: 'text', content: note, fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
   const slot = I(col, {
-    type: 'frame', name: 'slot', width: 'fill_container', height: 320, layout: 'horizontal',
+    type: 'frame', name: 'slot / ' + title, width: 'fill_container', height: 844, layout: 'horizontal',
     justifyContent: 'center', alignItems: 'center', cornerRadius: 8,
     fill: s(C.subtle), stroke: { thickness: 2, fill: s(C.border), dashPattern: [6, 4] },
   });
-  I(slot, { type: 'text', content: '导入基线或接入导帧', fontSize: 11, fill: s(C.text2) });
+  if (title !== 'Candidate') {
+    I(slot, { type: 'text', content: '导入基线或接入导帧', fontSize: 11, fill: s(C.text2) });
+  }
   return col;
 };
 
 const b = board('90 · Comparisons · screen.mobile.dashboard', '每个母版留三栏：现状 / 候选 / Approved；Approved 后把对应导帧复制到 exports/approved。');
 const cols = I(b, { type: 'frame', name: 'columns', width: 'fill_container', layout: 'horizontal', gap: 16, alignItems: 'start' });
 column(cols, 'Current', '线上现状（截图 / import:html 基线）', C.text2);
-column(cols, 'Candidate', 'OpenPencil 候选稿（可多稿并列）', C.warning);
+column(cols, 'Candidate', '可重建样例：candidate.mobile.dashboard · 390×844', C.warning);
 column(cols, 'Approved', '已确认，作为实现基线', C.success);
 
 const checklist = I(b, {

@@ -30,7 +30,7 @@ const navBar = (p, w, title, rightIcon) => {
   if (rightIcon) I(n, { type: 'icon_font', iconFontName: rightIcon, width: 20, height: 20, fill: s(C.navy) });
 };
 const bottomNav = (p, w, h, active) => {
-  const nav = I(p, { type: 'frame', name: 'bottom nav', x: 0, y: h - NAV_H, width: w, height: NAV_H, layout: 'horizontal', justifyContent: 'space_around', alignItems: 'center', fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  const nav = I(p, { type: 'frame', name: 'bottom nav', x: 0, y: h - NAV_H, width: w, height: NAV_H, layout: 'vertical', justifyContent: 'space_around', alignItems: 'center', fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
   const tabs = I(nav, { type: 'frame', name: 'nav tabs', width: 'fill_container', height: NAV_CONTENT_H, layout: 'horizontal', justifyContent: 'space_around', alignItems: 'center' });
   for (const [icon, label] of [['home', '首页'], ['receipt', '账单'], ['user', '我的']]) {
     const a = label === active;
@@ -114,7 +114,7 @@ const billDetail = () => {
   // 数据来源
   const src = I(c, { type: 'frame', name: 'source', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [12, 16], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
   I(src, { type: 'text', content: '数据来源', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
-  const srcBadge = I(src, { type: 'frame', name: 'source badge', layout: 'horizontal', padding: [3, 10], cornerRadius: 999, fill: '$color.bg.skeleton' });
+  const srcBadge = I(src, { type: 'frame', name: 'source badge', layout: 'horizontal', padding: [3, 10], cornerRadius: 999, fill: s(C.subtle) });
   I(srcBadge, { type: 'text', content: '手动', fontSize: 11, fontWeight: 700, fill: s(C.navy) });
 
   // 还款记录空态
@@ -179,7 +179,7 @@ const cardDetail = () => {
   I(c, { type: 'text', content: '最近账单', fontSize: 15, fontWeight: 600, fill: s(C.navy), textGrowth: 'fixed-width' });
   const recent = card(c, 'recent bills', 8);
   const emptyBox = I(recent, { type: 'frame', name: 'empty', width: 'fill_container', layout: 'vertical', gap: 6, alignItems: 'center', padding: [20, 0] });
-  const circle = I(emptyBox, { type: 'frame', name: 'icon circle', width: 56, height: 56, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: '$color.bg.skeleton' });
+  const circle = I(emptyBox, { type: 'frame', name: 'icon circle', width: 56, height: 56, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: s(C.subtle) });
   I(circle, { type: 'icon_font', iconFontName: 'home', width: 26, height: 26, fill: s(C.navy) });
   I(emptyBox, { type: 'text', content: '暂无账单', fontSize: 14, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
   I(emptyBox, { type: 'text', content: '这张卡还没有录入账单', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });

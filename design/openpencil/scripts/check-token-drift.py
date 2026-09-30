@@ -93,7 +93,7 @@ def load_css_tokens(path: Path) -> dict[str, str]:
     return out
 
 
-def load_theme_tokens(path: Path) -> dict[str, str]:
+def load_theme_tokens(path: Path, css: dict[str, str] | None = None) -> dict[str, str]:
     """lib/theme.ts 的 createTheme 块 -> {world.path: #hex}。
 
     世界标签由 createTheme 前的 export const 名推断：
@@ -125,14 +125,15 @@ def load_theme_tokens(path: Path) -> dict[str, str]:
         if m:
             out.setdefault(f"{world}.background.default", m.group(1).lower())
             out.setdefault(f"{world}.background.paper", m.group(2).lower())
-        m = re.search(
-            r"text:\s*\{\s*primary:\s*'(#[0-9A-Fa-f]{6})',\s*secondary:\s*'(#[0-9A-Fa-f]{6})',"
-            r"\s*disabled:\s*'(#[0-9A-Fa-f]{6})'",
-            body,
-        )
+        m = re.search(r"text:\s*\{([^{}]*)\}", body)
         if m:
-            for key, value in zip(("primary", "secondary", "disabled"), m.groups()):
-                out.setdefault(f"{world}.text.{key}", value.lower())
+            for key, raw_value in re.findall(r"(primary|secondary|disabled):\s*'([^']+)'", m.group(1)):
+                value = raw_value.lower()
+                variable = re.fullmatch(r"var\((--[\w-]+)\)", value)
+                if variable:
+                    value = (css or {}).get(variable.group(1), "").lower()
+                if HEX_RE.fullmatch(value):
+                    out.setdefault(f"{world}.text.{key}", value)
         m = re.search(r"divider:\s*'(#[0-9A-Fa-f]{6})'", body)
         if m:
             out.setdefault(f"{world}.divider", m.group(1).lower())
@@ -462,7 +463,9 @@ def check(
         if fg is None or base is None:
             failures.append(f"contrast-unresolved {item['id']}: 无法解析前景或底色")
             continue
-        bg = tint(base, float(item["bg"].get("pct", 0)) / 100, item["bg"].get("over", "#FFFFFF"))
+        bg = base
+        if "pct" in item["bg"]:
+            bg = tint(base, float(item["bg"]["pct"]) / 100, item["bg"].get("over", "#FFFFFF"))
         r = contrast(fg, bg)
         ok = r >= min_
         summary["contrast"].append({"id": item["id"], "fg": fg, "bg": bg,
@@ -517,7 +520,7 @@ def main(argv: list[str] | None = None) -> int:
         design = load_design_tokens(Path(args.design))
         op = load_op_tokens(Path(args.op))
         css = load_css_tokens(Path(args.css))
-        theme = load_theme_tokens(Path(args.theme))
+        theme = load_theme_tokens(Path(args.theme), css)
         design_num, design_str = load_design_scalars(Path(args.design))
         op_num, op_str = load_op_scalars(Path(args.op))
         css_num, css_str = load_css_scalars(Path(args.css))
