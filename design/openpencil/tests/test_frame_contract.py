@@ -523,11 +523,27 @@ class RealSourceIntegration(unittest.TestCase):
         self.assertEqual(code, 0, failure_text(summary))
         self.assertGreater(summary["frameCount"], 0)
         ok_entries = [e for e in summary["screens"] if e["status"] == "OK"]
-        self.assertEqual(len(ok_entries), 2, lines)
+        # P0-2 起真实源含 candidate.mobile.dashboard 样例帧：
+        # Current 两屏 + Candidate dashboard 一帧按同一契约通过。
+        self.assertEqual(
+            sorted((e["head"], e["role"]) for e in ok_entries),
+            [
+                ("candidate.mobile.dashboard", "candidate"),
+                ("screen.mobile.bills", "current"),
+                ("screen.mobile.dashboard", "current"),
+            ],
+            lines,
+        )
 
     def test_candidate_not_required_by_default(self):
         """Candidate 尚未开画时，契约不得因为缺 candidate 而失败。"""
-        code, _, summary = CHK.check_doc(real_doc(), real_contract(), None)
+        doc = real_doc()
+        for page in doc["pages"]:
+            page["children"] = [
+                n for n in page.get("children") or []
+                if not str(n.get("name") or "").startswith("candidate.")
+            ]
+        code, _, summary = CHK.check_doc(doc, real_contract(), None)
         self.assertEqual(code, 0)
         skipped = [e for e in summary["screens"] if e["status"] == "SKIP"]
         self.assertEqual(len(skipped), 4, summary["screens"])

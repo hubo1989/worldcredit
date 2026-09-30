@@ -7,7 +7,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 OP_FILE="$REPO/design/openpencil/worldcredit-redesign.op"
 S="$REPO/design/openpencil/scripts"
 
-PAGES=("00 · Foundations" "01 · Components" "10 · Mobile Core" "11 · Mobile Details" "12 · Mobile Extended" "20 · Auth & Public" "30 · Admin" "90 · Comparisons")
+PAGES=("00 · Foundations" "01 · Components" "10 · Mobile Core" "11 · Mobile Details" "12 · Mobile Extended" "13 · Candidates" "20 · Auth & Public" "30 · Admin" "90 · Comparisons")
 
 index_of() {
   for i in "${!PAGES[@]}"; do
@@ -46,6 +46,7 @@ build "01 · Components"      02-components.js 03-review-board.js
 build "10 · Mobile Core"     10-mobile-core.js
 build "11 · Mobile Details"  11-mobile-details.js
 build "12 · Mobile Extended" 12-mobile-extended.js
+build "13 · Candidates"     13-candidates.js
 build "20 · Auth & Public"   20-auth-public.js
 build "30 · Admin"           30-admin.js
 build "90 · Comparisons"     90-comparisons.js

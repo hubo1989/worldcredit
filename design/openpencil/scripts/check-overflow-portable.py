@@ -31,8 +31,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 OP_FILE = REPO / "design" / "openpencil" / "worldcredit-redesign.op"
 
-# 屏母版 frame 名称形如 `screen.mobile.dashboard · 390×844`
-SCREEN_NAME = re.compile(r"^screen\.(?P<surface>[\w]+)\.(?P<key>[\w-]+)(?P<suffix>.*)$")
+# 受管屏 frame 名称形如 `screen.mobile.dashboard · 390×844`；
+# P0-2 起 candidate.* 候选帧同样纳入几何检查（Current 与 Candidate 双轨同规则）。
+SCREEN_NAME = re.compile(r"^(?:screen|candidate)\.(?P<role>[\w]+)\.(?P<key>[\w-]+)(?P<suffix>.*)$")
 SIZE_IN_NAME = re.compile(r"(?P<w>\d{3,4})[×x](?P<h>\d{3,4})")
 
 TOLERANCE = 2.0
@@ -142,7 +143,7 @@ def main() -> int:
             all_issues.extend(check_frame(n))
 
     if not screen_count:
-        print("未找到任何 screen.* 母版 frame，检查设计源是否损坏", file=sys.stderr)
+        print("未找到任何 screen.*/candidate.* 屏 frame，检查设计源是否损坏", file=sys.stderr)
         return 2
 
     print(f"检查 {screen_count} 个屏母版（便携版，不依赖 OpenPencil 运行时）")
