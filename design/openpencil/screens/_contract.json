@@ -304,10 +304,10 @@
     }
   ],
     "uncovered": [
-    {"key": "candidate.wireframe.dashboard", "reason": "B0-2 低保真信息层级图（评审用，无字段契约；几何检查覆盖）"},
-    {"key": "candidate.state.dashboard-loading", "reason": "B0-2 状态样例：加载骨架（评审用，无字段契约；几何检查覆盖）"},
-    {"key": "candidate.state.dashboard-empty", "reason": "B0-2 状态样例：空态（评审用，无字段契约；几何检查覆盖）"},
-    {"key": "candidate.state.dashboard-error", "reason": "B0-2 状态样例：错误态（评审用，无字段契约；几何检查覆盖）"},
+  {"key": "candidate.wireframe.dashboard", "reason": "B0-2 低保真信息层级图（评审用，无字段契约；几何检查覆盖）"},
+  {"key": "candidate.state.dashboard-loading", "reason": "B0-2 状态样例：加载骨架（评审用，无字段契约；几何检查覆盖）"},
+  {"key": "candidate.state.dashboard-empty", "reason": "B0-2 状态样例：空态（评审用，无字段契约；几何检查覆盖）"},
+  {"key": "candidate.state.dashboard-error", "reason": "B0-2 状态样例：错误态（评审用，无字段契约；几何检查覆盖）"},
     { "key": "screen.mobile.bill-detail", "reason": "P0-1 只覆盖 B1 两屏，后续批次补契约" },
     { "key": "screen.mobile.card-detail", "reason": "P0-1 只覆盖 B1 两屏，后续批次补契约" },
     { "key": "screen.mobile.analytics", "reason": "P0-1 只覆盖 B1 两屏，后续批次补契约" },

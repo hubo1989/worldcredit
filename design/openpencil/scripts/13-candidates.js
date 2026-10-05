@@ -211,8 +211,8 @@ candidateDashboard(430, 932);
 // ============================================================
 // B0-2 状态样例（独立 head + uncovered 登记：几何检查覆盖、字段契约豁免）
 // ============================================================
-const stateShell = (name, w, h) => {
-  const phone = I(null, { type: 'frame', name, width: w, height: h, layout: 'none', clipContent: true, fill: s(C.canvas) });
+const stateShell = (base, w, h) => {
+  const phone = I(null, { type: 'frame', name: base + ' · ' + w + '×' + h, width: w, height: h, layout: 'none', clipContent: true, fill: s(C.canvas) });
   statusBar(phone, w);
   const header = I(phone, { type: 'frame', name: 'page header', x: 0, y: SB_H, width: w, height: 64, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, PAD] });
   const hl = I(header, { type: 'frame', name: 'heading', layout: 'vertical', gap: 2 });
@@ -227,7 +227,7 @@ const stateShell = (name, w, h) => {
 };
 
 // 加载：骨架占位（skeleton token）
-const loading = stateShell('candidate.state.dashboard-loading · 390×844', 390, 844);
+const loading = stateShell('candidate.state.dashboard-loading', 390, 844);
 const loadBox = I(loading, { type: 'frame', name: 'loading block', width: 'fill_container', layout: 'vertical', gap: 12, padding: [16, 16], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
 I(loadBox, { type: 'rectangle', name: 'skeleton title', width: 120, height: 14, cornerRadius: 999, fill: s('$color.bg.skeleton') });
 for (const bw of [280, 240, 260, 180]) {
@@ -236,7 +236,7 @@ for (const bw of [280, 240, 260, 180]) {
 I(loadBox, { type: 'text', content: '正在同步账单…', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
 
 // 空态：引导记一笔
-const empty = stateShell('candidate.state.dashboard-empty · 390×844', 390, 844);
+const empty = stateShell('candidate.state.dashboard-empty', 390, 844);
 const emptyBox = I(empty, { type: 'frame', name: 'empty block', width: 'fill_container', layout: 'vertical', gap: 10, alignItems: 'center', padding: [24, 20], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
 I(emptyBox, { type: 'icon_font', iconFontName: 'inbox', width: 32, height: 32, fill: s(C.text2) });
 I(emptyBox, { type: 'text', content: '还没有账单', fontSize: 15, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
@@ -245,7 +245,7 @@ const emptyCta = I(emptyBox, { type: 'frame', name: 'cta', layout: 'horizontal',
 I(emptyCta, { type: 'text', content: '记一笔', fontSize: 13, fontWeight: 600, fill: s(C.onDark) });
 
 // 错误：可重试
-const err = stateShell('candidate.state.dashboard-error · 390×844', 390, 844);
+const err = stateShell('candidate.state.dashboard-error', 390, 844);
 const errBox = I(err, { type: 'frame', name: 'error block', width: 'fill_container', layout: 'vertical', gap: 10, alignItems: 'center', padding: [24, 20], cornerRadius: 12, fill: s(C.dangerSoft), stroke: { thickness: 1, fill: s(C.dangerSoft) } });
 I(errBox, { type: 'icon_font', iconFontName: 'alert-circle', width: 32, height: 32, fill: s(C.dangerInk) });
 I(errBox, { type: 'text', content: '加载失败', fontSize: 15, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
