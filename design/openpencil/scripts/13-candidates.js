@@ -11,15 +11,17 @@
 
 const s = (c) => [{ type: 'solid', color: c }];
 const C = {
-  canvas: '$color.bg.canvas', surface: '$color.bg.surface', subtle: '$color.bg.subtle', neutral: '$color.bg.neutral',
-  navy: '$color.brand.navy800', navy600: '$color.brand.navy600', blue400: '$color.brand.blue400',
-  gold: '$color.brand.gold500', gold700: '$color.brand.gold700', goldSoft: '$color.brand.goldSoft',
-  primary: '$color.runtime.primary', primaryDark: '$color.runtime.primaryDark',
-  border: '$color.border.default', text: '$color.text.primary', text2: '$color.text.secondary', onDark: '$color.text.onDark',
-  successInk: '$color.status.successInk', warningInk: '$color.status.warningInk',
-  dangerInk: '$color.status.dangerInk', infoInk: '$color.status.infoInk',
-  successSoft: '$color.status.successSoft', warningSoft: '$color.status.warningSoft',
-  dangerSoft: '$color.status.dangerSoft', infoSoft: '$color.status.infoSoft',
+  // 方向 D 暗色探索用字面值（Nickelfox 风格）；批准后正式 token 化并进漂移门禁
+  canvas: '#0A0F1E', surface: '#131A2A', subtle: '#1A2334', neutral: '#1A2334',
+  navy: '#F5F7FA', navy600: '#5B8DEF', blue400: '#7AADFF',
+  gold: '#F0C75E', gold700: '#D9A93F', goldSoft: '#332A14',
+  primary: '#5B8DEF', primaryDark: '#7AADFF',
+  border: '#26304A', text: '#F5F7FA', text2: '#9AA6BC', onDark: '#FFFFFF',
+  success: '#34D399', successInk: '#6EE7A0', successSoft: '#12271C',
+  warningInk: '#FFC46B', warningSoft: '#33270F',
+  dangerInk: '#FF8A8A', dangerSoft: '#331720', dangerOnDark: '#FF9B9B',
+  infoInk: '#7CB8FF', infoSoft: '#122438',
+  skeleton: '#1A2334',
 };
 const SB_H = 48, NAV_H = 90, NAV_CONTENT_H = 56, SAFE_H = 34, PAD = 20;
 
