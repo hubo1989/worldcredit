@@ -13,7 +13,7 @@ const C = {
   border: '$color.border.default', text: '$color.text.primary', text2: '$color.text.secondary', onDark: '$color.text.onDark',
   success: '$color.status.success', warning: '$color.status.warning', danger: '$color.status.danger', info: '$color.status.info',
 };
-const SB_H = 48, NAV_H = 64, PAD = 20, W = 390, H = 844;
+const SB_H = 48, NAV_H = 90, NAV_CONTENT_H = 56, SAFE_H = 34, PAD = 20, W = 390, H = 844;
 
 const statusBar = (p, w) => {
   const sb = I(p, { type: 'frame', name: 'status bar', x: 0, y: 0, width: w, height: SB_H, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, PAD] });
@@ -31,16 +31,19 @@ const navBar = (p, w, title, rightIcon) => {
 };
 const bottomNav = (p, w, h, active) => {
   const nav = I(p, { type: 'frame', name: 'bottom nav', x: 0, y: h - NAV_H, width: w, height: NAV_H, layout: 'horizontal', justifyContent: 'space_around', alignItems: 'center', fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  const tabs = I(nav, { type: 'frame', name: 'nav tabs', width: 'fill_container', height: NAV_CONTENT_H, layout: 'horizontal', justifyContent: 'space_around', alignItems: 'center' });
   for (const [icon, label] of [['home', '首页'], ['receipt', '账单'], ['user', '我的']]) {
     const a = label === active;
-    const t = I(nav, { type: 'frame', name: 'tab / ' + label, layout: 'vertical', gap: 4, alignItems: 'center', padding: [8, 16] });
+    const t = I(tabs, { type: 'frame', name: 'tab / ' + label, layout: 'vertical', gap: 4, alignItems: 'center', padding: [8, 16] });
     if (a) I(t, { type: 'rectangle', width: 20, height: 2, cornerRadius: 999, fill: s(C.gold) });
     I(t, { type: 'icon_font', iconFontName: icon, width: 22, height: 22, fill: s(a ? C.navy : C.text2) });
     I(t, { type: 'text', content: label, fontSize: 11, fontWeight: a ? 700 : 400, fill: s(a ? C.navy : C.text2) });
   }
+  I(nav, { type: 'rectangle', name: 'safe area', width: 'fill_container', height: SAFE_H, fill: s(C.surface) });
 };
 const statusPill = (parent, label) => {
-  const map = { '待还': { bg: '#DBEAFE', fg: C.primaryDark }, '逾期': { bg: '#FEE2E2', fg: C.danger }, '部分还款': { bg: '#FEF3C7', fg: C.gold700 }, '已还': { bg: '#DCFCE7', fg: '#166534' } };
+  // 淡底 + ink 档（B0 决策 1），soft 底为 color-mix 等价字面值。
+  const map = { '待还': { bg: '$color.status.infoSoft', fg: '$color.status.infoInk' }, '逾期': { bg: '$color.status.dangerSoft', fg: '$color.status.dangerInk' }, '部分还款': { bg: '$color.status.warningSoft', fg: '$color.status.warningInk' }, '已还': { bg: '$color.status.successSoft', fg: '$color.status.successInk' } };
   const st = map[label] || { bg: '#E5E7EB', fg: C.text2 };
   const el = I(parent, { type: 'frame', name: 'status / ' + label, layout: 'horizontal', padding: [3, 10], cornerRadius: 999, fill: s(st.bg) });
   I(el, { type: 'text', content: label, fontSize: 11, fontWeight: 700, fill: s(st.fg) });
@@ -111,7 +114,7 @@ const billDetail = () => {
   // 数据来源
   const src = I(c, { type: 'frame', name: 'source', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [12, 16], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
   I(src, { type: 'text', content: '数据来源', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
-  const srcBadge = I(src, { type: 'frame', name: 'source badge', layout: 'horizontal', padding: [3, 10], cornerRadius: 999, fill: '#E8EDF5' });
+  const srcBadge = I(src, { type: 'frame', name: 'source badge', layout: 'horizontal', padding: [3, 10], cornerRadius: 999, fill: '$color.bg.skeleton' });
   I(srcBadge, { type: 'text', content: '手动', fontSize: 11, fontWeight: 700, fill: s(C.navy) });
 
   // 还款记录空态
@@ -176,7 +179,7 @@ const cardDetail = () => {
   I(c, { type: 'text', content: '最近账单', fontSize: 15, fontWeight: 600, fill: s(C.navy), textGrowth: 'fixed-width' });
   const recent = card(c, 'recent bills', 8);
   const emptyBox = I(recent, { type: 'frame', name: 'empty', width: 'fill_container', layout: 'vertical', gap: 6, alignItems: 'center', padding: [20, 0] });
-  const circle = I(emptyBox, { type: 'frame', name: 'icon circle', width: 56, height: 56, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: '#E8EDF5' });
+  const circle = I(emptyBox, { type: 'frame', name: 'icon circle', width: 56, height: 56, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: '$color.bg.skeleton' });
   I(circle, { type: 'icon_font', iconFontName: 'home', width: 26, height: 26, fill: s(C.navy) });
   I(emptyBox, { type: 'text', content: '暂无账单', fontSize: 14, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
   I(emptyBox, { type: 'text', content: '这张卡还没有录入账单', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
@@ -203,7 +206,7 @@ const analytics = () => {
   }
 
   // 风险提示
-  const risk = I(c, { type: 'frame', name: 'risk notice', width: 'fill_container', layout: 'horizontal', gap: 10, alignItems: 'start', padding: [12, 14], cornerRadius: 10, fill: '#FFFBEB', stroke: { thickness: 1, fill: s(C.gold) } });
+  const risk = I(c, { type: 'frame', name: 'risk notice', width: 'fill_container', layout: 'horizontal', gap: 10, alignItems: 'start', padding: [12, 14], cornerRadius: 10, fill: '$color.status.warningSoft', stroke: { thickness: 1, fill: s(C.gold) } });
   I(risk, { type: 'icon_font', iconFontName: 'alert-triangle', width: 18, height: 18, fill: s(C.gold700) });
   const rTxt = I(risk, { type: 'frame', name: 'text', width: 'fill_container', layout: 'vertical', gap: 3 });
   I(rTxt, { type: 'text', content: '风险提示', fontSize: 12, fontWeight: 700, fill: s(C.text), textGrowth: 'fixed-width' });

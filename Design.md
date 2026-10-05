@@ -9,9 +9,9 @@ colors:
   gradient-purple: "#9c27b0"
   mist-bg: "#F5F8FF"
   surface: "#FFFFFF"
-  text-body: "#333333"
-  text-secondary: "#636363"
-  text-disabled: "#999999"
+  text-body: "#0A1F44"
+  text-secondary: "#5B6478"
+  text-disabled: "#A0A8B8"
   border-light: "#DDDDDD"
   success: "#2e7d32"
   warning: "#ed6c02"
@@ -144,7 +144,11 @@ WorldCredit 是家庭自用的信用卡管理工具：一个管理员在手机 P
 - **渐变紫 Gradient Purple** (#9c27b0)：唯一装饰色，只出现在落地页标题渐变（`90deg, #1976d2 → #9c27b0`）的尾端。
 
 ### Neutral
-- **雾底 Mist** (#F5F8FF)：全局背景；**面板白 Surface** (#FFFFFF)：卡片、输入框、底栏；**正文灰 Text Body** (#333333)：主文字；**次级灰 Text Secondary** (#636363)：说明文字（白底 6.0:1 ✓）；**分隔线 Border Light** (#DDDDDD)：1px 边框与分隔。
+- **雾底 Mist** (#F5F8FF)：全局背景；**面板白 Surface** (#FFFFFF)：卡片、输入框、底栏；**主文本 Text Body** (#0A1F44，即品牌深藏青)：主文字（白底 16.2:1）；**次级文本 Text Secondary** (#5B6478)：说明文字（白底 5.9:1 ✓）；**分隔线 Border Light** (#DDDDDD)：1px 边框与分隔。
+
+> 2026-09-24：文本色统一到 phone 体系（`globals.css` 的 `--text-primary` / `--text-secondary` / `--text-disabled`）。
+> 旧值 `#333333` / `#636363` / `#999999` 曾在 `theme.ts` 里另存一套，导致同屏出现两种「正文色」；
+> 现已收敛为单一来源。禁用态 `#A0A8B8` 属 WCAG 豁免。
 
 ### Semantic / Status
 - **成功绿** (#2e7d32，白字 5.1:1)：已结清、权益已用尽、开关开启
@@ -282,7 +286,7 @@ phone 版本的主操作是 **38–46px 圆形**（`--button-size` = 42px），�
 - **Focus:** 主色描边 + 3px rgba(25,118,210,0.15) 光晕；管理端走暗色主题默认
 
 ### Navigation
-- **移动端底部 TabBar:** 白底，激活 #030059，未激活 #636363
+- **移动端底部 TabBar:** 白底，激活 #030059，未激活 #5B6478
 - **管理端:** 藏青 #030059 侧边栏，选中项 #4f46e5 底白字；顶栏 background.paper + text.primary
 
 ### 信用卡视觉（Signature）

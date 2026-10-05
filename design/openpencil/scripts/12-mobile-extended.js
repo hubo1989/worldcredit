@@ -12,7 +12,7 @@ const C = {
   border: '$color.border.default', text: '$color.text.primary', text2: '$color.text.secondary', onDark: '$color.text.onDark',
   success: '$color.status.success', warning: '$color.status.warning', danger: '$color.status.danger', info: '$color.status.info',
 };
-const SB_H = 48, NAV_H = 64, PAD = 20, W = 390, H = 844;
+const SB_H = 48, NAV_H = 90, NAV_CONTENT_H = 56, SAFE_H = 34, PAD = 20, W = 390, H = 844;
 
 const statusBar = (p, w) => {
   const sb = I(p, { type: 'frame', name: 'status bar', x: 0, y: 0, width: w, height: SB_H, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, PAD] });
@@ -22,13 +22,15 @@ const statusBar = (p, w) => {
 };
 const bottomNav = (p, w, h, active) => {
   const nav = I(p, { type: 'frame', name: 'bottom nav', x: 0, y: h - NAV_H, width: w, height: NAV_H, layout: 'horizontal', justifyContent: 'space_around', alignItems: 'center', fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  const tabs = I(nav, { type: 'frame', name: 'nav tabs', width: 'fill_container', height: NAV_CONTENT_H, layout: 'horizontal', justifyContent: 'space_around', alignItems: 'center' });
   for (const [icon, label] of [['home', '首页'], ['receipt', '账单'], ['user', '我的']]) {
     const a = label === active;
-    const t = I(nav, { type: 'frame', name: 'tab / ' + label, layout: 'vertical', gap: 4, alignItems: 'center', padding: [8, 16] });
+    const t = I(tabs, { type: 'frame', name: 'tab / ' + label, layout: 'vertical', gap: 4, alignItems: 'center', padding: [8, 16] });
     if (a) I(t, { type: 'rectangle', width: 20, height: 2, cornerRadius: 999, fill: s(C.gold) });
     I(t, { type: 'icon_font', iconFontName: icon, width: 22, height: 22, fill: s(a ? C.navy : C.text2) });
     I(t, { type: 'text', content: label, fontSize: 11, fontWeight: a ? 700 : 400, fill: s(a ? C.navy : C.text2) });
   }
+  I(nav, { type: 'rectangle', name: 'safe area', width: 'fill_container', height: SAFE_H, fill: s(C.surface) });
 };
 const pageHeader = (p, w, title, subtitle, icons) => {
   const h = I(p, { type: 'frame', name: 'page header', x: 0, y: SB_H, width: w, height: 64, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, PAD] });
@@ -113,15 +115,15 @@ const ledger = () => {
   }
 
   // tabs
-  const tabs = I(c, { type: 'frame', name: 'tabs', width: 'fill_container', height: 40, layout: 'horizontal', gap: 6, padding: 4, cornerRadius: 999, fill: '#E8EDF5' });
+  const tabs = I(c, { type: 'frame', name: 'tabs', width: 'fill_container', height: 40, layout: 'horizontal', gap: 6, padding: 4, cornerRadius: 999, fill: '$color.bg.skeleton' });
   for (const [label, active] of [['全部(2)', true], ['未还(2)', false], ['部分(0)', false], ['已清(0)', false]]) {
-    const t = I(tabs, { type: 'frame', name: 'tab / ' + label, width: 'fill_container', layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: s(active ? C.navy : '#E8EDF5') });
+    const t = I(tabs, { type: 'frame', name: 'tab / ' + label, width: 'fill_container', layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: s(active ? C.navy : '$color.bg.skeleton') });
     I(t, { type: 'text', content: label, fontSize: 11, fontWeight: active ? 600 : 400, fill: s(active ? C.onDark : C.text2) });
   }
 
   // 待补金额 + 全选
   const bulk = I(c, { type: 'frame', name: 'bulk bar', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center' });
-  const pending = I(bulk, { type: 'frame', name: 'pending chip', layout: 'horizontal', gap: 5, alignItems: 'center', padding: [5, 12], cornerRadius: 999, fill: '#FEF3C7' });
+  const pending = I(bulk, { type: 'frame', name: 'pending chip', layout: 'horizontal', gap: 5, alignItems: 'center', padding: [5, 12], cornerRadius: 999, fill: '$color.status.warningSoft' });
   I(pending, { type: 'text', content: '待补金额(3)', fontSize: 11, fontWeight: 600, fill: s(C.gold700) });
   const sel = I(bulk, { type: 'frame', name: 'select all', layout: 'horizontal', gap: 6, alignItems: 'center' });
   I(sel, { type: 'frame', name: 'checkbox', width: 16, height: 16, cornerRadius: 4, fill: s(C.surface), stroke: { thickness: 2, fill: C.primary } });
@@ -138,7 +140,7 @@ const ledger = () => {
     I(meta, { type: 'text', content: '**** ' + tail, fontSize: 10, fontFamily: '$font.family.mono', fill: s(C.text2), textGrowth: 'fixed-width' });
     I(meta, { type: 'text', content: '呼博', fontSize: 10, fill: s(C.text2), textGrowth: 'fixed-width' });
     const rSide = I(top, { type: 'frame', name: 'right', layout: 'vertical', gap: 4, alignItems: 'end' });
-    const st = I(rSide, { type: 'frame', name: 'status', layout: 'horizontal', padding: [2, 9], cornerRadius: 999, fill: '#FEE2E2' });
+    const st = I(rSide, { type: 'frame', name: 'status', layout: 'horizontal', padding: [2, 9], cornerRadius: 999, fill: '$color.status.dangerSoft' });
     I(st, { type: 'text', content: '未还款', fontSize: 10, fontWeight: 700, fill: s(C.danger) });
     I(rSide, { type: 'text', content: amount, fontSize: 15, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(C.text), textGrowth: 'fixed-width' });
     const od = I(r, { type: 'frame', name: 'overdue', layout: 'horizontal', gap: 5, alignItems: 'center' });
@@ -196,8 +198,8 @@ const settings = () => {
       I(l, { type: 'text', content: title, fontSize: 13, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
       I(l, { type: 'text', content: desc, fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
       if (badge) {
-        const b = I(r, { type: 'frame', name: 'badge', layout: 'horizontal', padding: [2, 9], cornerRadius: 999, fill: '#DCFCE7' });
-        I(b, { type: 'text', content: badge, fontSize: 10, fontWeight: 700, fill: s('#166534') });
+        const b = I(r, { type: 'frame', name: 'badge', layout: 'horizontal', padding: [2, 9], cornerRadius: 999, fill: '$color.status.successSoft' });
+        I(b, { type: 'text', content: badge, fontSize: 10, fontWeight: 700, fill: s('$color.status.successInk') });
       }
       I(r, { type: 'icon_font', iconFontName: 'chevron-right', width: 16, height: 16, fill: s(C.text2) });
       if (i < items.length - 1) I(box, { type: 'rectangle', width: 'fill_container', height: 1, fill: s(C.border) });

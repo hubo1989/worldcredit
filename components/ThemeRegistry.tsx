@@ -15,7 +15,9 @@ export function ThemeRegistry({ children }: { children: ReactNode }) {
       <GlobalStyles styles={{
         body: {
           backgroundColor: '#F5F8FF',
-          color: '#333333',
+          // 文本色统一到 .phone 体系（--text-primary #0A1F44）；
+          // 不再用 #333333，避免 body 继承色与 .phone 内的正文色不一致。
+          color: '#0A1F44',
           fontFamily: lightTheme.typography.fontFamily,
         },
         h1: { color: '#030059', fontWeight: 600 },
@@ -33,7 +35,7 @@ export function ThemeRegistry({ children }: { children: ReactNode }) {
         },
         '.info-box': {
           backgroundColor: '#F5F8FF',
-          color: '#333333',
+          color: '#0A1F44',
           padding: '20px 24px',
           borderRadius: 8,
           border: '1px solid rgba(25, 118, 210, 0.35)',

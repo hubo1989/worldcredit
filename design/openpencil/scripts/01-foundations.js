@@ -69,18 +69,21 @@ const colorGroup = (title, tokens) => {
   return g;
 };
 colorGroup('Brand', ['color.brand.navy800', 'color.brand.navy600', 'color.brand.blue400', 'color.brand.gold500', 'color.brand.gold700']);
-colorGroup('Runtime', ['color.runtime.primary', 'color.runtime.primaryDark', 'color.runtime.secondary']);
-colorGroup('Background', ['color.bg.canvas', 'color.bg.surface', 'color.bg.subtle', 'color.bg.admin.canvas', 'color.bg.admin.surface', 'color.bg.admin.panel']);
-colorGroup('Text', ['color.text.primary', 'color.text.secondary', 'color.text.disabled', 'color.text.link', 'color.text.onDark']);
-colorGroup('Border', ['color.border.default', 'color.border.input']);
+colorGroup('Runtime', ['color.runtime.primary', 'color.runtime.primaryDark', 'color.runtime.secondary', 'color.runtime.adminPrimary', 'color.runtime.adminAccent']);
+colorGroup('Background', ['color.bg.canvas', 'color.bg.surface', 'color.bg.subtle', 'color.bg.skeleton', 'color.bg.admin.canvas', 'color.bg.admin.surface', 'color.bg.admin.panel']);
+colorGroup('Text', ['color.text.primary', 'color.text.secondary', 'color.text.disabled', 'color.text.adminMuted', 'color.text.adminFaint', 'color.text.link', 'color.text.onDark']);
+colorGroup('Border', ['color.border.default', 'color.border.input', 'color.border.onDark']);
 colorGroup('Status', ['color.status.success', 'color.status.warning', 'color.status.danger', 'color.status.info', 'color.status.successDark', 'color.status.dangerDark']);
+colorGroup('Status Ink', ['color.status.successInk', 'color.status.warningInk', 'color.status.dangerInk', 'color.status.infoInk']);
+colorGroup('Status Soft', ['color.status.successSoft', 'color.status.warningSoft', 'color.status.dangerSoft', 'color.status.infoSoft', 'color.brand.goldSoft', 'color.status.dangerOnDark']);
 
 // ---------- 字体 ----------
-const typeSection = section('Typography', '正文 Noto Sans SC · 金额 Inter Tight (tabular-nums) · 代码 JetBrains Mono；字重仅 400/600/700');
+const typeSection = section('Typography', '正文 Noto Sans SC 栈（--font-sans） · 金额 Inter Tight · 代码 JetBrains Mono；字重仅 400/600/700');
 const ramp = [
   ['Display', 22, 700, 'Inter Tight'],
+  ['Section', 19, 600, 'Inter Tight'],
   ['Card title', 15, 600, 'Inter Tight'],
-  ['Body', 13.5, 400, undefined],
+  ['Body', 14.5, 400, undefined],
   ['Caption', 11, 400, undefined],
   ['Amount', 22, 700, 'Inter Tight'],
   ['Mono', 13, 400, 'Inter Tight'],
@@ -96,9 +99,9 @@ for (const [label, size, weight, family] of ramp) {
 }
 
 // ---------- 间距 / 圆角 ----------
-const spaceSection = section('Spacing & Radius', '间距 4px 基准：4/8/12/16/24/32 · 卡片 12px · 输入 8px · 胶囊 999px · 底部弹层 16px');
+const spaceSection = section('Spacing & Radius', '间距 4px 基准：4/8/12/16/20/32（space.5 与 app --sp-5 对齐为 20） · 卡片 12px · 输入 8px · 胶囊 999px · 底部弹层 16px');
 const spaceRow = I(spaceSection, { type: 'frame', name: 'space scale', width: 'fill_container', layout: 'horizontal', gap: 16, alignItems: 'end' });
-for (const [t, px] of [['space.1', 4], ['space.2', 8], ['space.3', 12], ['space.4', 16], ['space.5', 24], ['space.6', 32]]) {
+for (const [t, px] of [['space.1', 4], ['space.2', 8], ['space.3', 12], ['space.4', 16], ['space.5', 20], ['space.6', 32]]) {
   const cell = I(spaceRow, { type: 'frame', name: 'space / ' + t, layout: 'vertical', gap: 8, alignItems: 'center' });
   I(cell, { type: 'rectangle', width: px + 16, height: px + 16, fill: s('$color.brand.navy600'), cornerRadius: 2 });
   I(cell, { type: 'text', content: t + ' = ' + px, fontSize: 10, fill: s(T.textSecondary) });
@@ -127,7 +130,7 @@ for (const [label, token] of [['Card', 'shadow.card'], ['Raised', 'shadow.raised
 }
 
 // ---------- 布局 ----------
-const layoutSection = section('Layout', '移动 390×844 / 430×932 · 后台 1440×900 · 触控 ≥44 · 底部导航 56 · 顶栏 56');
+const layoutSection = section('Layout', '移动 390×844 / 430×932 · 后台 1440×900 · 触控 ≥44 · 状态栏 48 · 页面头 64 · 底部导航 56 + 安全区 34');
 const layoutRow = I(layoutSection, { type: 'frame', name: 'layout specs', width: 'fill_container', layout: 'horizontal', gap: 24 });
 for (const [label, w, h] of [['Mobile', 390, 844], ['Mobile LG', 430, 932], ['Admin', 1440, 900]]) {
   const scale = label === 'Admin' ? 0.18 : 0.16;
