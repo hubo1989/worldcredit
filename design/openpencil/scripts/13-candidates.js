@@ -35,17 +35,20 @@ const statusBar = (parent, w) => {
 const bottomNav = (parent, w, h, active) => {
   const nav = I(parent, {
     type: 'frame', name: 'bottom nav', x: 0, y: h - NAV_H, width: w, height: NAV_H,
-    layout: 'vertical', fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) },
+    layout: 'vertical', fill: s('#10162A'), stroke: { thickness: 1, fill: s('#1C2438') },
   });
   const tabs = I(nav, { type: 'frame', name: 'nav tabs', width: 'fill_container', height: NAV_CONTENT_H, layout: 'horizontal', justifyContent: 'space_around', alignItems: 'center' });
+  const center = I(tabs, { type: 'frame', name: 'nav center action', width: 44, height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: s('#3B6FE0'), effects: [{ type: 'shadow', offsetX: 0, offsetY: 4, blur: 16, spread: 0, color: 'rgba(59,111,224,0.45)' }] });
+  I(center, { type: 'icon_font', iconFontName: 'plus', width: 20, height: 20, fill: s('#FFFFFF') });
   for (const [icon, label] of [['home', '首页'], ['receipt', '账单'], ['user', '我的']]) {
     const isActive = label === active;
-    const tab = I(tabs, { type: 'frame', name: 'tab / ' + label, layout: 'vertical', gap: 4, alignItems: 'center', padding: [8, 16] });
+    const tab = I(tabs, { type: 'frame', name: 'tab / ' + label, layout: 'vertical', gap: 4, alignItems: 'center', padding: [8, 12] });
     if (isActive) I(tab, { type: 'rectangle', name: 'active indicator', width: 20, height: 2, cornerRadius: 999, fill: s(C.gold) });
-    I(tab, { type: 'icon_font', iconFontName: icon, width: 22, height: 22, fill: s(isActive ? C.navy : C.text2) });
-    I(tab, { type: 'text', content: label, fontSize: 11, fontWeight: isActive ? 700 : 400, fill: s(isActive ? C.navy : C.text2) });
+    I(tab, { type: 'icon_font', iconFontName: icon, width: 22, height: 22, fill: s(isActive ? C.blue400 : C.text2) });
+    I(tab, { type: 'text', content: label, fontSize: 11, fontWeight: isActive ? 700 : 400, fill: s(isActive ? C.blue400 : C.text2) });
   }
-  I(nav, { type: 'rectangle', name: 'safe area', width: 'fill_container', height: SAFE_H, fill: s(C.surface) });
+  I(nav, { type: 'rectangle', name: 'safe area', width: 'fill_container', height: SAFE_H, fill: s('#10162A') });
+  return nav;
 };
 
 const statusPill = (parent, label) => {
@@ -64,122 +67,126 @@ const candidateDashboard = (w, h) => {
   const phone = I(null, { type: 'frame', name: 'candidate.mobile.dashboard · ' + w + '×' + h, width: w, height: h, layout: 'none', clipContent: true, fill: s(C.canvas) });
   statusBar(phone, w);
 
-  // 页头保留运行时金额隐私开关；当前展示金额，eye-off 表示可将其隐藏。
-  const header = I(phone, { type: 'frame', name: 'page header', x: 0, y: SB_H, width: w, height: 64, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, PAD] });
-  const hl = I(header, { type: 'frame', name: 'heading', layout: 'vertical', gap: 2 });
-  I(hl, { type: 'text', content: '概览', fontSize: 20, fontWeight: 700, fill: s(C.navy), textGrowth: 'fixed-width' });
-  I(hl, { type: 'text', content: '管控信用卡资产与还款日程', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
+  // 页头：头像 + 问候 + 隐私开关（44 触控，方向 D 的 gear 位）
+  const header = I(phone, { type: 'frame', name: 'page header', x: 0, y: SB_H, width: w, height: 64, layout: 'horizontal', alignItems: 'center', gap: 12, padding: [0, PAD] });
+  const avatar = I(header, { type: 'frame', name: 'avatar', width: 40, height: 40, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: s(C.primary) });
+  I(avatar, { type: 'text', content: '呼', fontSize: 15, fontWeight: 700, fill: s('#FFFFFF') });
+  const hl = I(header, { type: 'frame', name: 'heading', width: 'fill_container', layout: 'vertical', gap: 2 });
+  I(hl, { type: 'text', content: '概览', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
+  I(hl, { type: 'text', content: '呼博', fontSize: 15, fontWeight: 700, fill: s(C.text), textGrowth: 'fixed-width' });
   const privacy = I(header, { type: 'frame', name: 'btn / toggle amount visibility', width: 44, height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
-  I(privacy, { type: 'icon_font', name: 'hide visible amounts', iconFontName: 'eye-off', width: 18, height: 18, fill: s(C.navy) });
+  I(privacy, { type: 'icon_font', name: 'hide visible amounts', iconFontName: 'eye-off', width: 18, height: 18, fill: s(C.text) });
 
   const content = I(phone, {
     type: 'frame', name: 'content', x: 0, y: SB_H + 64, width: w, height: h - SB_H - 64 - NAV_H,
-    layout: 'vertical', gap: 14, padding: [0, PAD], clipContent: true, fill: s(C.canvas),
+    layout: 'vertical', gap: 12, padding: [0, PAD], clipContent: true, fill: s(C.canvas),
   });
 
-  // ① 逾期风险条（候选新增构图）：先回答「现在有何风险、下一步做什么」
-  const risk = I(content, { type: 'frame', name: 'risk strip', width: 'fill_container', layout: 'horizontal', gap: 10, alignItems: 'center', padding: [12, 14], cornerRadius: 12, fill: s(C.dangerSoft), stroke: { thickness: 1, fill: s(C.dangerSoft) } });
+  // ① 居中大余额（方向 D 视觉主角）+ 涨跌曲线点缀
+  const hero = I(content, { type: 'frame', name: 'hero / total pending', width: 'fill_container', layout: 'vertical', alignItems: 'center', gap: 8 });
+  I(hero, { type: 'text', content: '总待还款', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
+  const amountRow = I(hero, { type: 'frame', name: 'amount row', layout: 'horizontal', gap: 14, alignItems: 'center' });
+  I(amountRow, { type: 'icon_font', iconFontName: 'chevron-left', width: 16, height: 16, fill: s(C.text2) });
+  I(amountRow, { type: 'text', content: '¥47,317.21', fontSize: 34, fontWeight: 700, fontFamily: '$font.family.amount', fill: s('#FFFFFF') });
+  I(amountRow, { type: 'icon_font', iconFontName: 'chevron-right', width: 16, height: 16, fill: s(C.text2) });
+  const heroSub = I(hero, { type: 'frame', name: 'hero sub', layout: 'horizontal', gap: 24, alignItems: 'center' });
+  const kv1 = I(heroSub, { type: 'frame', name: 'kv / 含逾期', layout: 'horizontal', gap: 6, alignItems: 'center' });
+  I(kv1, { type: 'text', content: '含逾期', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
+  I(kv1, { type: 'text', content: '¥7,361.1', fontSize: 13, fontWeight: 600, fontFamily: '$font.family.amount', fill: s(C.dangerInk), textGrowth: 'fixed-width' });
+  const kv2 = I(heroSub, { type: 'frame', name: 'kv / 未来 7 天', layout: 'horizontal', gap: 6, alignItems: 'center' });
+  I(kv2, { type: 'text', content: '未来 7 天', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
+  I(kv2, { type: 'text', content: '¥12,804.98', fontSize: 13, fontWeight: 600, fontFamily: '$font.family.amount', fill: s(C.text), textGrowth: 'fixed-width' });
+  const dots = I(hero, { type: 'frame', name: 'chart dots', layout: 'horizontal', gap: 12, alignItems: 'end', padding: [4, 24, 0, 24] });
+  for (const [dh, dc] of [[8, C.blue400], [16, '#E5484D'], [26, C.blue400], [12, '#E5484D'], [30, C.blue400], [10, '#E5484D'], [22, C.blue400], [28, '#E5484D'], [12, C.blue400], [20, '#E5484D']]) {
+    I(dots, { type: 'rectangle', width: 5, height: dh, cornerRadius: 999, fill: s(dc) });
+  }
+
+  // ② 逾期风险条（暗色危险面板）
+  const risk = I(content, { type: 'frame', name: 'risk strip', width: 'fill_container', layout: 'horizontal', gap: 10, alignItems: 'center', padding: [10, 14], cornerRadius: 12, fill: s(C.dangerSoft) });
   I(risk, { type: 'icon_font', iconFontName: 'alert-triangle', width: 18, height: 18, fill: s(C.dangerInk) });
   const riskTxt = I(risk, { type: 'frame', name: 'risk text', width: 'fill_container', layout: 'vertical', gap: 2 });
   I(riskTxt, { type: 'text', content: '2 笔账单已逾期', fontSize: 12, fontWeight: 700, fill: s(C.dangerInk), textGrowth: 'fixed-width' });
-  I(riskTxt, { type: 'text', content: '待还合计 ¥7,361.1 · 建议今日处理', fontSize: 11, fill: s(C.dangerInk), textGrowth: 'fixed-width' });
-  const repayAll = I(risk, { type: 'frame', name: 'btn / 一键全部还款', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 14], cornerRadius: 999, fill: s(C.dangerInk) });
-  I(repayAll, { type: 'text', content: '一键全部还款', fontSize: 12, fontWeight: 600, fill: s(C.onDark) });
+  I(riskTxt, { type: 'text', content: '待还合计 ¥7,361.1 · 建议今日处理', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
+  const repayAll = I(risk, { type: 'frame', name: 'btn / 一键全部还款', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 14], cornerRadius: 999, fill: s('#E5484D') });
+  I(repayAll, { type: 'text', content: '一键全部还款', fontSize: 12, fontWeight: 600, fill: s('#FFFFFF') });
 
-  // ①b 当天需还款（B0-2 修订需求）：今日到期单独成板块，金色=临期语义
-  const dueToday = I(content, { type: 'frame', name: 'due today block', width: 'fill_container', layout: 'vertical', gap: 10, padding: [14, 14], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 2, fill: s(C.gold) } });
+  // ③ 当天需还款（B0-2 修订需求）：金=临期语义
+  const dueToday = I(content, { type: 'frame', name: 'due today block', width: 'fill_container', layout: 'vertical', gap: 10, padding: [14, 14], cornerRadius: 14, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.gold700) }, effects: [{ type: 'shadow', offsetX: 0, offsetY: 6, blur: 18, spread: 0, color: 'rgba(0,0,0,0.35)' }] });
   const dueHead = I(dueToday, { type: 'frame', name: 'due head', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center' });
-  I(dueHead, { type: 'text', content: '今天需还款 · 09-30', fontSize: 13, fontWeight: 700, fill: s(C.navy), textGrowth: 'fixed-width' });
-  I(dueHead, { type: 'text', content: '1 笔', fontSize: 11, fontWeight: 600, fill: s(C.gold700), textGrowth: 'fixed-width' });
+  I(dueHead, { type: 'text', content: '今天需还款 09-30', fontSize: 13, fontWeight: 700, fill: s(C.text), textGrowth: 'fixed-width' });
+  I(dueHead, { type: 'text', content: '1 笔', fontSize: 11, fontWeight: 600, fill: s(C.gold), textGrowth: 'fixed-width' });
   const dueRow = I(dueToday, { type: 'frame', name: 'due row', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', gap: 10 });
   const dueL = I(dueRow, { type: 'frame', name: 'due left', layout: 'vertical', gap: 3 });
   I(dueL, { type: 'text', content: '中国建设银行 · 尾号 9003', fontSize: 13, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
-  I(dueL, { type: 'text', content: '本期还款日 今天 · ¥8,000.00', fontSize: 11, fill: s(C.gold700), textGrowth: 'fixed-width' });
-  const dueBtn = I(dueRow, { type: 'frame', name: 'btn / 结清今日', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 16], cornerRadius: 999, fill: s(C.gold700) });
-  I(dueBtn, { type: 'text', content: '立即还款', fontSize: 12, fontWeight: 600, fill: s(C.onDark) });
+  I(dueL, { type: 'text', content: '本期还款日 今天 · ¥8,000.00', fontSize: 11, fill: s(C.gold), textGrowth: 'fixed-width' });
+  const dueBtn = I(dueRow, { type: 'frame', name: 'btn / 结清今日', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 16], cornerRadius: 999, fill: s(C.gold) });
+  I(dueBtn, { type: 'text', content: '立即还款', fontSize: 12, fontWeight: 600, fill: s('#0A0F1E') });
 
-  // ①c 当天可享优惠（B0-2 修订需求）：统计 + 入口
-  const offers = I(content, { type: 'frame', name: 'offers today block', width: 'fill_container', layout: 'horizontal', gap: 12, alignItems: 'center', padding: [14, 16], cornerRadius: 12, fill: s(C.subtle), stroke: { thickness: 1, fill: s(C.border) } });
-  I(offers, { type: 'icon_font', iconFontName: 'tag', width: 20, height: 20, fill: s(C.gold700) });
+  // ④ 今日可享优惠（B0-2 修订需求）：统计 + 入口
+  const offers = I(content, { type: 'frame', name: 'offers today block', width: 'fill_container', layout: 'horizontal', gap: 12, alignItems: 'center', padding: [14, 16], cornerRadius: 14, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  const offIc = I(offers, { type: 'frame', name: 'offers icon', width: 40, height: 40, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 12, fill: s(C.goldSoft) });
+  I(offIc, { type: 'icon_font', iconFontName: 'tag', width: 20, height: 20, fill: s(C.gold) });
   const offTxt = I(offers, { type: 'frame', name: 'offers text', width: 'fill_container', layout: 'vertical', gap: 2 });
-  I(offTxt, { type: 'text', content: '今日可享优惠', fontSize: 13, fontWeight: 700, fill: s(C.navy), textGrowth: 'fixed-width' });
+  I(offTxt, { type: 'text', content: '今日可享优惠', fontSize: 13, fontWeight: 700, fill: s(C.text), textGrowth: 'fixed-width' });
   I(offTxt, { type: 'text', content: '3 张卡可享 · 5 项优惠有效期内', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
-  I(offers, { type: 'text', content: '查看优惠', fontSize: 12, fontWeight: 600, fill: s(C.primaryDark), textGrowth: 'fixed-width' });
+  I(offers, { type: 'icon_font', iconFontName: 'chevron-right', width: 16, height: 16, fill: s(C.text2) });
 
-  // ② 持卡人筛选
+  // ⑤ 持卡人筛选
   const filters = I(content, { type: 'frame', name: 'holder filters', width: 'fill_container', layout: 'horizontal', gap: 8, alignItems: 'center' });
   for (const [label, active] of [['全部', true], ['呼', false]]) {
-    const p = I(filters, { type: 'frame', name: 'pill / ' + label, layout: 'horizontal', padding: [7, 18], cornerRadius: 999, fill: s(active ? C.navy : C.surface), stroke: { thickness: 1, fill: s(active ? C.navy : C.border) } });
-    I(p, { type: 'text', content: label, fontSize: 13, fontWeight: active ? 600 : 400, fill: s(active ? C.onDark : C.text2) });
+    const p = I(filters, { type: 'frame', name: 'pill / ' + label, layout: 'horizontal', padding: [7, 18], cornerRadius: 999, fill: s(active ? C.primary : C.surface), stroke: { thickness: 1, fill: s(active ? C.primary : C.border) } });
+    I(p, { type: 'text', content: label, fontSize: 13, fontWeight: active ? 600 : 400, fill: s(active ? '#FFFFFF' : C.text2) });
   }
 
-  // ③ Hero：白底 + 品牌左侧描边（替代深蓝大块），金额仍是第一视觉
-  const hero = I(content, { type: 'frame', name: 'hero / total pending', width: 'fill_container', layout: 'horizontal', gap: 14, padding: [18, 18], cornerRadius: 18, fill: s(C.navy) });
-  I(hero, { type: 'rectangle', name: 'hero accent', width: 4, height: 72, cornerRadius: 2, fill: s(C.blue400) });
-  I(hero, { type: 'rectangle', name: 'hero deco 1', width: 88, height: 88, cornerRadius: 999, fill: s('#1A3A6B') });
-  I(hero, { type: 'rectangle', name: 'hero deco 2', width: 56, height: 56, cornerRadius: 999, fill: s('#24478A') });
-  const heroMain = I(hero, { type: 'frame', name: 'hero main', width: 'fill_container', layout: 'vertical', gap: 10 });
-  I(heroMain, { type: 'text', content: '总待还款', fontSize: 12, fill: s(C.blue400), textGrowth: 'fixed-width' });
-  I(heroMain, { type: 'text', content: '¥47,317.21', fontSize: 32, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(C.onDark), textGrowth: 'fixed-width' });
-  const heroSub = I(heroMain, { type: 'frame', name: 'hero sub', width: 'fill_container', layout: 'horizontal', gap: 28 });
-  for (const [label, value, color] of [['含逾期', '¥7,361.1', C.blue400], ['未来 7 天', '¥12,804.98', C.onDark]]) {
-    const kv = I(heroSub, { type: 'frame', name: 'kv / ' + label, layout: 'vertical', gap: 3 });
-    I(kv, { type: 'text', content: label, fontSize: 11, fill: s(C.blue400), textGrowth: 'fixed-width' });
-    I(kv, { type: 'text', content: value, fontSize: 15, fontWeight: 600, fontFamily: '$font.family.amount', fill: s(color), textGrowth: 'fixed-width' });
-  }
-
-  // ④ 指标 2×2（与 Current 同字段，样式走新 token）
+  // ⑥ 指标 2×2（My Assets 式暗卡）
   const metrics = I(content, { type: 'frame', name: 'metrics grid', width: 'fill_container', layout: 'vertical', gap: 12 });
   const mr1 = I(metrics, { type: 'frame', name: 'metrics row 1', width: 'fill_container', layout: 'horizontal', gap: 12 });
-  const overdue = I(mr1, { type: 'frame', name: 'metric / 已逾期', width: 'fill_container', layout: 'vertical', gap: 6, padding: [14, 14], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  const overdue = I(mr1, { type: 'frame', name: 'metric / 已逾期', width: 'fill_container', layout: 'vertical', gap: 6, padding: [14, 14], cornerRadius: 14, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
   I(overdue, { type: 'text', content: '已逾期', fontSize: 11, fill: s(C.dangerInk), textGrowth: 'fixed-width' });
-  I(overdue, { type: 'text', content: '¥7,361.1', fontSize: 19, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(C.dangerInk), textGrowth: 'fixed-width' });
+  I(overdue, { type: 'text', content: '¥7,361.1', fontSize: 19, fontWeight: 700, fontFamily: '$font.family.amount', fill: s('#FFFFFF'), textGrowth: 'fixed-width' });
   I(overdue, { type: 'text', content: '2 笔待处理', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
-  const future = I(mr1, { type: 'frame', name: 'metric / 未来待还', width: 'fill_container', layout: 'vertical', gap: 6, padding: [14, 14], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  const future = I(mr1, { type: 'frame', name: 'metric / 未来待还', width: 'fill_container', layout: 'vertical', gap: 6, padding: [14, 14], cornerRadius: 14, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
   const fHead = I(future, { type: 'frame', name: 'future head', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center' });
   I(fHead, { type: 'text', content: '未来待还', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
   const tabs = I(fHead, { type: 'frame', name: 'range tabs', layout: 'horizontal', gap: 4 });
   for (const [label, active] of [['7天', true], ['14天', false], ['30天', false]]) {
-    const t = I(tabs, { type: 'frame', name: 'tab / ' + label, layout: 'horizontal', padding: [2, 7], cornerRadius: 999, fill: s(active ? C.warningSoft : C.subtle) });
-    I(t, { type: 'text', content: label, fontSize: 9, fontWeight: active ? 700 : 400, fill: s(active ? C.warningInk : C.text2) });
+    const t = I(tabs, { type: 'frame', name: 'tab / ' + label, layout: 'horizontal', padding: [3, 8], cornerRadius: 999, fill: s(active ? C.goldSoft : C.subtle) });
+    I(t, { type: 'text', content: label, fontSize: 9, fontWeight: active ? 700 : 400, fill: s(active ? C.gold : C.text2) });
   }
-  I(future, { type: 'text', content: '¥12,804.98', fontSize: 19, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(C.navy), textGrowth: 'fixed-width' });
+  I(future, { type: 'text', content: '¥12,804.98', fontSize: 19, fontWeight: 700, fontFamily: '$font.family.amount', fill: s('#FFFFFF'), textGrowth: 'fixed-width' });
   I(future, { type: 'text', content: '7 天内到期合计', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
-
   const mr2 = I(metrics, { type: 'frame', name: 'metrics row 2', width: 'fill_container', layout: 'horizontal', gap: 12 });
-  const debt = I(mr2, { type: 'frame', name: 'metric / 总欠款', width: 'fill_container', layout: 'vertical', gap: 6, padding: [14, 14], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  const debt = I(mr2, { type: 'frame', name: 'metric / 总欠款', width: 'fill_container', layout: 'vertical', gap: 6, padding: [14, 14], cornerRadius: 14, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
   const dHead = I(debt, { type: 'frame', name: 'debt head', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center' });
   I(dHead, { type: 'text', content: '总欠款', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
   I(dHead, { type: 'icon_font', iconFontName: 'chevron-down', width: 16, height: 16, fill: s(C.text2) });
-  I(debt, { type: 'text', content: '¥47,317.21', fontSize: 19, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(C.navy), textGrowth: 'fixed-width' });
-  const unissued = I(mr2, { type: 'frame', name: 'metric / 未出账单', width: 'fill_container', layout: 'vertical', gap: 6, padding: [14, 14], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  I(debt, { type: 'text', content: '¥47,317.21', fontSize: 19, fontWeight: 700, fontFamily: '$font.family.amount', fill: s('#FFFFFF'), textGrowth: 'fixed-width' });
+  const unissued = I(mr2, { type: 'frame', name: 'metric / 未出账单', width: 'fill_container', layout: 'vertical', gap: 6, padding: [14, 14], cornerRadius: 14, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
   I(unissued, { type: 'text', content: '未出账单', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
   I(unissued, { type: 'text', content: '暂无数据', fontSize: 19, fontWeight: 700, fill: s(C.text2), textGrowth: 'fixed-width' });
   I(unissued, { type: 'text', content: '邮件解析待接入', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
 
-  // ⑤ 账户 + 金刚区
+  // ⑦ 账户 + 金刚区
   const acctHead = I(content, { type: 'frame', name: 'account header', width: 'fill_container', layout: 'horizontal', alignItems: 'center', gap: 10 });
-  I(acctHead, { type: 'text', content: '账户', fontSize: 15, fontWeight: 600, fill: s(C.navy), textGrowth: 'fixed-width' });
+  I(acctHead, { type: 'text', content: '账户', fontSize: 15, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
   const acctPills = I(acctHead, { type: 'frame', name: 'account pills', layout: 'horizontal', gap: 8 });
   for (const [label, active] of [['31 张', true], ['呼博', false]]) {
-    const p = I(acctPills, { type: 'frame', name: 'pill / ' + label, layout: 'horizontal', padding: [4, 12], cornerRadius: 999, fill: s(active ? C.navy : C.surface), stroke: { thickness: 1, fill: s(active ? C.navy : C.border) } });
-    I(p, { type: 'text', content: label, fontSize: 11, fontWeight: active ? 600 : 400, fill: s(active ? C.onDark : C.text2) });
+    const p2 = I(acctPills, { type: 'frame', name: 'pill / ' + label, layout: 'horizontal', padding: [4, 12], cornerRadius: 999, fill: s(active ? C.primary : C.surface), stroke: { thickness: 1, fill: s(active ? C.primary : C.border) } });
+    I(p2, { type: 'text', content: label, fontSize: 11, fontWeight: active ? 600 : 400, fill: s(active ? '#FFFFFF' : C.text2) });
   }
-
-  const quick = I(content, { type: 'frame', name: 'quick actions', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', padding: [16, 12], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  const quick = I(content, { type: 'frame', name: 'quick actions', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', padding: [16, 12], cornerRadius: 14, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
   for (const [icon, label] of [['pencil', '记一笔'], ['tag', '优惠'], ['award', '权益'], ['mail', '邮箱账单']]) {
     const cell = I(quick, { type: 'frame', name: 'quick / ' + label, layout: 'vertical', gap: 6, alignItems: 'center', padding: [4, 8] });
     const ic = I(cell, { type: 'frame', name: 'icon bg', width: 40, height: 40, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 12, fill: s(C.subtle) });
-    I(ic, { type: 'icon_font', iconFontName: icon, width: 20, height: 20, fill: s(C.navy) });
+    I(ic, { type: 'icon_font', iconFontName: icon, width: 20, height: 20, fill: s(C.blue400) });
     I(cell, { type: 'text', content: label, fontSize: 11, fill: s(C.text), textGrowth: 'fixed-width' });
   }
 
-  // ⑥ 逾期明细：标题 + 查看全部 + 一行样例（全额结清锚点）
+  // ⑧ 逾期明细
   const overdueHead = I(content, { type: 'frame', name: 'overdue header', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center' });
-  I(overdueHead, { type: 'text', content: '逾期明细', fontSize: 15, fontWeight: 600, fill: s(C.navy), textGrowth: 'fixed-width' });
-  I(overdueHead, { type: 'text', content: '查看全部', fontSize: 11, fill: s(C.primaryDark), textGrowth: 'fixed-width' });
-
-  const billRow = I(content, { type: 'frame', name: 'overdue bill row', width: 'fill_container', layout: 'vertical', gap: 10, padding: [14, 14], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) }, effects: [{ type: 'shadow', offsetX: 0, offsetY: 2, blur: 8, spread: 0, color: 'rgba(10,31,68,0.06)' }] });
+  I(overdueHead, { type: 'text', content: '逾期明细', fontSize: 15, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
+  I(overdueHead, { type: 'text', content: '查看全部', fontSize: 12, fontWeight: 600, fill: s(C.blue400), textGrowth: 'fixed-width' });
+  const billRow = I(content, { type: 'frame', name: 'overdue bill row', width: 'fill_container', layout: 'vertical', gap: 10, padding: [14, 14], cornerRadius: 14, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
   const brTop = I(billRow, { type: 'frame', name: 'top', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'start', gap: 12 });
   const brL = I(brTop, { type: 'frame', name: 'left', width: 'fill_container', layout: 'vertical', gap: 3 });
   I(brL, { type: 'text', content: '中国农业银行', fontSize: 14, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
@@ -191,8 +198,8 @@ const candidateDashboard = (w, h) => {
   const brAmt = I(brBottom, { type: 'frame', name: 'amount', layout: 'vertical', gap: 2 });
   I(brAmt, { type: 'text', content: '待还金额', fontSize: 10, fill: s(C.text2), textGrowth: 'fixed-width' });
   I(brAmt, { type: 'text', content: '¥3,680.55', fontSize: 17, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(C.dangerInk), textGrowth: 'fixed-width' });
-  const settle = I(brBottom, { type: 'frame', name: 'btn / 全额结清', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 16], cornerRadius: 999, fill: s(C.primary) });
-  I(settle, { type: 'text', content: '全额结清', fontSize: 12, fontWeight: 600, fill: s(C.onDark) });
+  const settle = I(brBottom, { type: 'frame', name: 'btn / 全额结清', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 16], cornerRadius: 999, fill: s('#3B6FE0') });
+  I(settle, { type: 'text', content: '全额结清', fontSize: 12, fontWeight: 600, fill: s('#FFFFFF') });
 
   bottomNav(phone, w, h, '首页');
   return phone;

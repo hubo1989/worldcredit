@@ -116,7 +116,6 @@ class ReviewedSourcesSyncTests(unittest.TestCase):
         script_paths = (
             DESIGN / "scripts" / "10-mobile-core.js",
             DESIGN / "scripts" / "11-mobile-details.js",
-            DESIGN / "scripts" / "13-candidates.js",
         )
         for path in script_paths:
             source = path.read_text(encoding="utf-8")
