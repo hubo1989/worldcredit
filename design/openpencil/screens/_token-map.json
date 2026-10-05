@@ -1,7 +1,7 @@
 {
   "version": 1,
   "reviewStatus": "proposed",
- "updatedAt": "2026-09-29",
+ "updatedAt": "2026-09-30",
   "note": "设计源 token 与运行时 token（app/globals.css 亮色 :root + lib/theme.ts lightTheme）的映射。漂移必须在 knownDrift 逐条登记；登记值一旦与实测不符即失败，因此白名单不能掩盖回归。由 verify-batch.sh --source-only 与 CI 执行。",
   "worlds": {
     "design": "design/openpencil/vars/foundations.json",
@@ -40,6 +40,7 @@
   "color.text.link",
   "color.border.default",
   "color.border.input",
+  "color.bg.neutral",
   "color.bg.skeleton",
   "color.text.adminFaint",
   "color.bg.admin.canvas",

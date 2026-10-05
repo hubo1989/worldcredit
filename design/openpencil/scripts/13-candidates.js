@@ -11,7 +11,7 @@
 
 const s = (c) => [{ type: 'solid', color: c }];
 const C = {
-  canvas: '$color.bg.canvas', surface: '$color.bg.surface', subtle: '$color.bg.subtle',
+  canvas: '$color.bg.canvas', surface: '$color.bg.surface', subtle: '$color.bg.subtle', neutral: '$color.bg.neutral',
   navy: '$color.brand.navy800', navy600: '$color.brand.navy600', blue400: '$color.brand.blue400',
   gold: '$color.brand.gold500', gold700: '$color.brand.gold700', goldSoft: '$color.brand.goldSoft',
   primary: '$color.runtime.primary', primaryDark: '$color.runtime.primaryDark',
@@ -53,7 +53,7 @@ const statusPill = (parent, label) => {
     '待还款': { bg: C.infoSoft, fg: C.infoInk },
     '未出账单': { bg: C.successSoft, fg: C.successInk },
   };
-  const st = map[label] || { bg: '#E5E7EB', fg: C.text2 };
+  const st = map[label] || { bg: C.neutral, fg: C.text2 };
   const el = I(parent, { type: 'frame', name: 'status / ' + label, layout: 'horizontal', padding: [3, 10], cornerRadius: 999, fill: s(st.bg) });
   I(el, { type: 'text', content: label, fontSize: 11, fontWeight: 700, fill: s(st.fg) });
 };

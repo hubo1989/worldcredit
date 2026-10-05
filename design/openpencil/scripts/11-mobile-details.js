@@ -6,7 +6,7 @@
 
 const s = (c) => [{ type: 'solid', color: c }];
 const C = {
-  canvas: '$color.bg.canvas', surface: '$color.bg.surface', subtle: '$color.bg.subtle',
+  canvas: '$color.bg.canvas', surface: '$color.bg.surface', subtle: '$color.bg.subtle', neutral: '$color.bg.neutral',
   navy: '$color.brand.navy800', navy600: '$color.brand.navy600', blue400: '$color.brand.blue400',
   gold: '$color.brand.gold500', gold700: '$color.brand.gold700',
   primary: '$color.runtime.primary', primaryDark: '$color.runtime.primaryDark',
@@ -44,7 +44,7 @@ const bottomNav = (p, w, h, active) => {
 const statusPill = (parent, label) => {
   // 淡底 + ink 档（B0 决策 1），soft 底为 color-mix 等价字面值。
   const map = { '待还': { bg: '$color.status.infoSoft', fg: '$color.status.infoInk' }, '逾期': { bg: '$color.status.dangerSoft', fg: '$color.status.dangerInk' }, '部分还款': { bg: '$color.status.warningSoft', fg: '$color.status.warningInk' }, '已还': { bg: '$color.status.successSoft', fg: '$color.status.successInk' } };
-  const st = map[label] || { bg: '#E5E7EB', fg: C.text2 };
+  const st = map[label] || { bg: C.neutral, fg: C.text2 };
   const el = I(parent, { type: 'frame', name: 'status / ' + label, layout: 'horizontal', padding: [3, 10], cornerRadius: 999, fill: s(st.bg) });
   I(el, { type: 'text', content: label, fontSize: 11, fontWeight: 700, fill: s(st.fg) });
 };

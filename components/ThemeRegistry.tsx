@@ -14,10 +14,9 @@ export function ThemeRegistry({ children }: { children: ReactNode }) {
       <CssBaseline />
       <GlobalStyles styles={{
         body: {
-          backgroundColor: '#F5F8FF',
-          // 文本色统一到 .phone 体系（--text-primary #0A1F44）；
-          // 不再用 #333333，避免 body 继承色与 .phone 内的正文色不一致。
-          color: '#0A1F44',
+          backgroundColor: 'var(--bg)',
+          // 正文颜色统一继承 .phone 使用的 CSS token，避免主题间正文色漂移。
+          color: 'var(--text-primary)',
           fontFamily: lightTheme.typography.fontFamily,
         },
         h1: { color: '#030059', fontWeight: 600 },
@@ -34,11 +33,11 @@ export function ThemeRegistry({ children }: { children: ReactNode }) {
           transition: 'filter 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
         },
         '.info-box': {
-          backgroundColor: '#F5F8FF',
-          color: '#0A1F44',
-          padding: '20px 24px',
-          borderRadius: 8,
-          border: '1px solid rgba(25, 118, 210, 0.35)',
+          backgroundColor: 'color-mix(in srgb, var(--info) 10%, var(--paper))',
+          color: 'var(--info-ink)',
+          padding: 'var(--sp-5) var(--sp-6)',
+          borderRadius: 'var(--radius-sm)',
+          border: '1px solid color-mix(in srgb, var(--info) 35%, transparent)',
         },
         // 尊重系统减弱动态偏好：状态变化仍即时呈现，仅移除过渡动画
         '@media (prefers-reduced-motion: reduce)': {

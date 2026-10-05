@@ -68,14 +68,15 @@ const colorGroup = (title, tokens) => {
   for (const t of tokens) swatch(row, t.split('.').slice(-1)[0], t);
   return g;
 };
-colorGroup('Brand', ['color.brand.navy800', 'color.brand.navy600', 'color.brand.blue400', 'color.brand.gold500', 'color.brand.gold700']);
+colorGroup('Brand', ['color.brand.navy800', 'color.brand.navy600', 'color.brand.blue400', 'color.brand.gold500', 'color.brand.gold700', 'color.brand.goldSoft']);
 colorGroup('Runtime', ['color.runtime.primary', 'color.runtime.primaryDark', 'color.runtime.secondary', 'color.runtime.adminPrimary', 'color.runtime.adminAccent']);
-colorGroup('Background', ['color.bg.canvas', 'color.bg.surface', 'color.bg.subtle', 'color.bg.skeleton', 'color.bg.admin.canvas', 'color.bg.admin.surface', 'color.bg.admin.panel']);
+colorGroup('Background', ['color.bg.canvas', 'color.bg.surface', 'color.bg.subtle', 'color.bg.neutral', 'color.bg.skeleton', 'color.bg.admin.canvas', 'color.bg.admin.surface', 'color.bg.admin.panel']);
 colorGroup('Text', ['color.text.primary', 'color.text.secondary', 'color.text.disabled', 'color.text.adminMuted', 'color.text.adminFaint', 'color.text.link', 'color.text.onDark']);
 colorGroup('Border', ['color.border.default', 'color.border.input', 'color.border.onDark']);
 colorGroup('Status', ['color.status.success', 'color.status.warning', 'color.status.danger', 'color.status.info', 'color.status.successDark', 'color.status.dangerDark']);
 colorGroup('Status Ink', ['color.status.successInk', 'color.status.warningInk', 'color.status.dangerInk', 'color.status.infoInk']);
-colorGroup('Status Soft', ['color.status.successSoft', 'color.status.warningSoft', 'color.status.dangerSoft', 'color.status.infoSoft', 'color.brand.goldSoft', 'color.status.dangerOnDark']);
+colorGroup('Status Soft', ['color.status.successSoft', 'color.status.warningSoft', 'color.status.dangerSoft', 'color.status.infoSoft']);
+colorGroup('Status on Dark', ['color.status.dangerOnDark']);
 
 // ---------- 字体 ----------
 const typeSection = section('Typography', '正文 Noto Sans SC 栈（--font-sans） · 金额 Inter Tight · 代码 JetBrains Mono；字重仅 400/600/700');

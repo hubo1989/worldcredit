@@ -8,7 +8,7 @@
 #   2. 几何溢出   scripts/check-overflow.py         母版元素是否越出视口
 #   3. Frame 契约 scripts/check-frame-contract.py   frame / 字段 / 动作契约
 #   4. Token 漂移 scripts/check-token-drift.py      设计源与运行时 token / 对比度
-#   5. Python 回归 tests/test_{frame_contract,token_drift,p02_candidate_track,export_roles}.py
+#   5. Python 回归 tests/test_{frame_contract,token_drift,p02_candidate_track,export_roles,reviewed_sources_sync}.py
 #   6. 视觉回归   baseline/capture.py + visual-diff.py   实拍产物是否偏离已批准基线
 #
 # 用法:
@@ -158,11 +158,12 @@ run_python_tests() {
     design.openpencil.tests.test_frame_contract \
     design.openpencil.tests.test_token_drift \
     design.openpencil.tests.test_p02_candidate_track \
-    design.openpencil.tests.test_export_roles 2>&1)"; rc=$?
+    design.openpencil.tests.test_export_roles \
+    design.openpencil.tests.test_reviewed_sources_sync 2>&1)"; rc=$?
   echo "$out"
   if [ "$rc" -eq 0 ]; then
     summary="$(printf '%s\n' "$out" | grep -E '^Ran [0-9]+ tests' | tail -n 1)"
-    record "Python 回归" "PASS" "${summary:-四个测试模块通过}"
+    record "Python 回归" "PASS" "${summary:-五个测试模块通过}"
   else
     record "Python 回归" "FAIL" "Frame / Token / Candidate / export role 测试失败"
   fi

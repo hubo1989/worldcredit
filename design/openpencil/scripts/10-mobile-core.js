@@ -9,7 +9,7 @@
 
 const s = (c) => [{ type: 'solid', color: c }];
 const C = {
-  canvas: '$color.bg.canvas', surface: '$color.bg.surface', subtle: '$color.bg.subtle',
+  canvas: '$color.bg.canvas', surface: '$color.bg.surface', subtle: '$color.bg.subtle', neutral: '$color.bg.neutral',
   navy: '$color.brand.navy800', navy600: '$color.brand.navy600', blue400: '$color.brand.blue400',
   gold: '$color.brand.gold500', gold700: '$color.brand.gold700',
   primary: '$color.runtime.primary', primaryDark: '$color.runtime.primaryDark',
@@ -18,7 +18,7 @@ const C = {
 };
 // Shell 尺寸与 token 对齐：状态栏 48（layout.statusbar.height）、
 // 页面头 64（layout.navbar.height）、底部导航 56 + 安全区 34（layout.safearea.bottom）。
-const SB_H = 48, NAV_H = 90, NAV_CONTENT_H = 56, SAFE_H = 34, PAD = 20;
+const SB_H = 48, HEADER_H = 64, NAV_H = 90, NAV_CONTENT_H = 56, SAFE_H = 34, PAD = 20;
 
 const statusBar = (parent, w) => {
   const sb = I(parent, { type: 'frame', name: 'status bar', x: 0, y: 0, width: w, height: SB_H, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, PAD] });
@@ -53,7 +53,7 @@ const statusStyle = (label) => ({
   '部分还款': { bg: '$color.status.warningSoft', fg: '$color.status.warningInk' },
   '待还款': { bg: '$color.status.infoSoft', fg: '$color.status.infoInk' },
   '未出账单': { bg: '$color.status.successSoft', fg: '$color.status.successInk' },
-}[label] || { bg: '#E5E7EB', fg: C.text2 });
+}[label] || { bg: C.neutral, fg: C.text2 });
 
 const statusPill = (parent, label) => {
   const st = statusStyle(label);
@@ -78,7 +78,7 @@ const dashboard = (w, h) => {
   const phone = shell('screen.mobile.dashboard · ' + w + '×' + h, w, h);
 
   // 页头：真实实现右侧是用户头像 pill（不是铃铛/设置）
-  const header = I(phone, { type: 'frame', name: 'page header', x: 0, y: SB_H, width: w, height: 64, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, PAD] });
+  const header = I(phone, { type: 'frame', name: 'page header', x: 0, y: SB_H, width: w, height: HEADER_H, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, PAD] });
   const hl = I(header, { type: 'frame', name: 'heading', layout: 'vertical', gap: 2 });
   I(hl, { type: 'text', content: '概览', fontSize: 20, fontWeight: 700, fill: s(C.navy), textGrowth: 'fixed-width' });
   I(hl, { type: 'text', content: '管控信用卡资产与还款日程', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
@@ -86,7 +86,7 @@ const dashboard = (w, h) => {
   I(avatar, { type: 'text', content: '呼', fontSize: 15, fontWeight: 700, fill: s(C.navy) });
 
   const content = I(phone, {
-    type: 'frame', name: 'content', x: 0, y: SB_H + 64, width: w, height: h - SB_H - 64 - NAV_H,
+    type: 'frame', name: 'content', x: 0, y: SB_H + HEADER_H, width: w, height: h - SB_H - HEADER_H - NAV_H,
     layout: 'vertical', gap: 16, padding: [0, PAD], clipContent: true, fill: s(C.canvas),
   });
 
@@ -200,13 +200,13 @@ const dashboard = (w, h) => {
 const bills = (w, h) => {
   const phone = shell('screen.mobile.bills · ' + w + '×' + h, w, h);
 
-  const header = I(phone, { type: 'frame', name: 'page header', x: 0, y: SB_H, width: w, height: 64, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, PAD] });
+  const header = I(phone, { type: 'frame', name: 'page header', x: 0, y: SB_H, width: w, height: HEADER_H, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, PAD] });
   I(header, { type: 'text', content: '卡片与账单', fontSize: 20, fontWeight: 700, fill: s(C.navy), textGrowth: 'fixed-width' });
   const refresh = I(header, { type: 'frame', name: 'btn / refresh', width: 44, height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: s(C.primary) });
   I(refresh, { type: 'icon_font', iconFontName: 'refresh-cw', width: 20, height: 20, fill: s(C.onDark) });
 
   const content = I(phone, {
-    type: 'frame', name: 'content', x: 0, y: SB_H + 64, width: w, height: h - SB_H - 64 - NAV_H,
+    type: 'frame', name: 'content', x: 0, y: SB_H + HEADER_H, width: w, height: h - SB_H - HEADER_H - NAV_H,
     layout: 'vertical', gap: 14, padding: [0, PAD], clipContent: true, fill: s(C.canvas),
   });
 
