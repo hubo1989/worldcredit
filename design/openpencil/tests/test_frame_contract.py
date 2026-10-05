@@ -524,11 +524,12 @@ class RealSourceIntegration(unittest.TestCase):
         self.assertEqual(code, 0, failure_text(summary))
         self.assertGreater(summary["frameCount"], 0)
         ok_entries = [e for e in summary["screens"] if e["status"] == "OK"]
-        # P0-2 起真实源含 candidate.mobile.dashboard 样例帧：
-        # Current 两屏 + Candidate dashboard 一帧按同一契约通过。
+        # B0-2 起真实源含 candidate.mobile.dashboard 与 candidate.mobile.bills：
+        # Current 两屏 + Candidate 两屏按同一契约通过。
         self.assertEqual(
             sorted((e["head"], e["role"]) for e in ok_entries),
             [
+                ("candidate.mobile.bills", "candidate"),
                 ("candidate.mobile.dashboard", "candidate"),
                 ("screen.mobile.bills", "current"),
                 ("screen.mobile.dashboard", "current"),

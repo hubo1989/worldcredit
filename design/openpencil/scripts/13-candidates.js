@@ -273,4 +273,97 @@ wireBox(wire, '金刚区: 记一笔 / 优惠 / 权益 / 邮箱账单', 12, 562, 
 wireBox(wire, '逾期明细: 标题 + 查看全部 + 账单行(金额 / 全额结清)', 12, 642, 366, 96);
 wireBox(wire, '底部导航 56 + 安全区 34', 0, 754, 390, 90);
 
-console.log('candidate set built: 390/430 hi-fi + loading/empty/error + wireframe');
+// ============ B0-2b: candidate.mobile.bills 方向 D 暗色候选稿 ============
+const billsDark = (w, h) => {
+  const phone = I(null, { type: 'frame', name: 'candidate.mobile.bills · ' + w + '×' + h, width: w, height: h, layout: 'none', clipContent: true, fill: s(C.canvas) });
+  statusBar(phone, w);
+  const header = I(phone, { type: 'frame', name: 'page header', x: 0, y: SB_H, width: w, height: 64, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, PAD] });
+  I(header, { type: 'text', content: '卡片与账单', fontSize: 20, fontWeight: 700, fill: s(C.text), textGrowth: 'fixed-width' });
+  const refresh = I(header, { type: 'frame', name: 'btn / refresh', width: 44, height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  I(refresh, { type: 'icon_font', iconFontName: 'refresh-cw', width: 20, height: 20, fill: s(C.blue400) });
+  const content = I(phone, {
+    type: 'frame', name: 'content', x: 0, y: SB_H + 64, width: w, height: h - SB_H - 64 - NAV_H,
+    layout: 'vertical', gap: 12, padding: [0, PAD], clipContent: true, fill: s(C.canvas),
+  });
+  const banner = I(content, { type: 'frame', name: 'overdue banner', width: 'fill_container', layout: 'horizontal', gap: 10, alignItems: 'center', padding: [12, 14], cornerRadius: 14, fill: s(C.dangerSoft) });
+  I(banner, { type: 'icon_font', iconFontName: 'alert-triangle', width: 18, height: 18, fill: s(C.dangerInk) });
+  const bTxt = I(banner, { type: 'frame', name: 'text', width: 'fill_container', layout: 'vertical', gap: 2 });
+  I(bTxt, { type: 'text', content: '存在 2 笔历史逾期账单未结清', fontSize: 12, fontWeight: 700, fill: s(C.dangerInk), textGrowth: 'fixed-width' });
+  I(bTxt, { type: 'text', content: '待还合计：¥7,361.1', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
+  const payAll = I(banner, { type: 'frame', name: 'btn / 一键还清', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 16], cornerRadius: 12, fill: s('#E5484D') });
+  I(payAll, { type: 'text', content: '一键还清', fontSize: 12, fontWeight: 600, fill: s('#FFFFFF') });
+  const filterBar = I(content, { type: 'frame', name: 'filter bar', width: 'fill_container', height: 40, layout: 'horizontal', alignItems: 'center', gap: 10, padding: [0, 14], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  const fLeft = I(filterBar, { type: 'frame', name: 'filter trigger', layout: 'horizontal', gap: 6, alignItems: 'center' });
+  I(fLeft, { type: 'icon_font', iconFontName: 'sliders-horizontal', width: 16, height: 16, fill: s(C.blue400) });
+  I(fLeft, { type: 'text', content: '筛选', fontSize: 13, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
+  I(fLeft, { type: 'icon_font', iconFontName: 'chevron-down', width: 14, height: 14, fill: s(C.text2) });
+  I(filterBar, { type: 'rectangle', width: 1, height: 18, fill: s(C.border) });
+  I(filterBar, { type: 'text', content: '全部卡片 · 按持卡人 · 全部持卡人 · 逾期优先', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
+  const payHead = I(content, { type: 'frame', name: 'payables header', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center' });
+  I(payHead, { type: 'text', content: '固定支出', fontSize: 15, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
+  const addPay = I(payHead, { type: 'frame', name: 'btn / 添加', layout: 'horizontal', gap: 4, alignItems: 'center' });
+  I(addPay, { type: 'icon_font', iconFontName: 'plus', width: 16, height: 16, fill: s(C.blue400) });
+  I(addPay, { type: 'text', content: '添加', fontSize: 13, fill: s(C.blue400), textGrowth: 'fixed-width' });
+  const payEmpty = I(content, { type: 'frame', name: 'payables empty', width: 'fill_container', padding: [16, 16], cornerRadius: 14, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  I(payEmpty, { type: 'text', content: '还没有固定支出。房租、贷款这类每月固定要付的可以加在这里。', fontSize: 12, fill: s(C.text2), textAlign: 'center', textGrowth: 'fixed-width' });
+  const billCard = (opts) => {
+    const bank = opts.bank, cardName = opts.cardName, tail = opts.tail, status = opts.status;
+    const amountLabel = opts.amountLabel, amount = opts.amount, currency = opts.currency;
+    const dueLine = opts.dueLine, distanceLine = opts.distanceLine;
+    const hasHistory = opts.hasHistory, amountEditable = opts.amountEditable, interestFree = opts.interestFree;
+    const card = I(content, { type: 'frame', name: 'bill card / ' + bank, width: 'fill_container', layout: 'vertical', gap: 10, padding: [14, 14], cornerRadius: 14, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) }, effects: [{ type: 'shadow', offsetX: 0, offsetY: 4, blur: 14, spread: 0, color: 'rgba(0,0,0,0.35)' }] });
+    const top = I(card, { type: 'frame', name: 'top', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center' });
+    const holder = I(top, { type: 'frame', name: 'holder', layout: 'horizontal', gap: 6, alignItems: 'center' });
+    I(holder, { type: 'icon_font', iconFontName: 'user', width: 15, height: 15, fill: s(C.text2) });
+    I(holder, { type: 'text', content: '呼博', fontSize: 14, fontWeight: 700, fill: s(C.text), textGrowth: 'fixed-width' });
+    if (status) statusPill(top, status);
+    const bankRow = I(card, { type: 'frame', name: 'bank row', width: 'fill_container', layout: 'horizontal', gap: 8, alignItems: 'center' });
+    const bankBadge = I(bankRow, { type: 'frame', name: 'bank badge', layout: 'horizontal', gap: 4, alignItems: 'center', padding: [3, 8], cornerRadius: 999, fill: s(C.subtle) });
+    I(bankBadge, { type: 'icon_font', iconFontName: 'landmark', width: 12, height: 12, fill: s(C.blue400) });
+    I(bankBadge, { type: 'text', content: bank, fontSize: 11, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
+    I(bankRow, { type: 'text', content: cardName, fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
+    I(bankRow, { type: 'text', content: '**** ' + tail, fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
+    const amtRow = I(card, { type: 'frame', name: 'amount row', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center' });
+    const amtLeft = I(amtRow, { type: 'frame', name: 'amount left', layout: 'vertical', gap: 3 });
+    I(amtLeft, { type: 'text', content: amountLabel, fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
+    const amtLine = I(amtLeft, { type: 'frame', name: 'amount line', layout: 'horizontal', gap: 6, alignItems: 'center' });
+    const amtColor = status === '逾期' ? C.dangerInk : status === '部分还款' ? C.gold : C.text;
+    I(amtLine, { type: 'text', content: (currency || '¥') + amount, fontSize: 21, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(amtColor), textGrowth: 'fixed-width' });
+    if (amountEditable) I(amtLine, { type: 'text', content: '修改金额', fontSize: 11, fill: s(C.blue400), textGrowth: 'fixed-width' });
+    if (status && status !== '未出账单') {
+      const payBtn = I(amtRow, { type: 'frame', name: 'btn / 登记还款', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 16], cornerRadius: 12, fill: s('#3B6FE0') });
+      I(payBtn, { type: 'text', content: '登记还款', fontSize: 12, fontWeight: 600, fill: s('#FFFFFF') });
+    } else if (status === '未出账单') {
+      I(amtRow, { type: 'text', content: '填写金额', fontSize: 12, fontWeight: 600, fill: s(C.blue400), textGrowth: 'fixed-width' });
+    }
+    const dateBox = I(card, { type: 'frame', name: 'date block', width: 'fill_container', layout: 'vertical', gap: 4, padding: [10, 12], cornerRadius: 10, fill: s(C.subtle) });
+    I(dateBox, { type: 'text', content: dueLine, fontSize: 11, fill: s(C.text), textGrowth: 'fixed-width' });
+    if (distanceLine) {
+      const dist = I(dateBox, { type: 'frame', name: 'distance', layout: 'horizontal', gap: 5, alignItems: 'center' });
+      I(dist, { type: 'icon_font', iconFontName: status === '逾期' ? 'alert-circle' : 'clock', width: 13, height: 13, fill: s(status === '逾期' ? C.dangerInk : C.text2) });
+      I(dist, { type: 'text', content: distanceLine, fontSize: 11, fontWeight: 600, fill: s(status === '逾期' ? C.dangerInk : C.text2), textGrowth: 'fixed-width' });
+    }
+    if (interestFree) I(dateBox, { type: 'text', content: interestFree, fontSize: 11, fontWeight: 600, fill: s(C.successInk), textGrowth: 'fixed-width' });
+    if (hasHistory) {
+      I(card, { type: 'rectangle', width: 'fill_container', height: 1, fill: s(C.border) });
+      const hist = I(card, { type: 'frame', name: 'history toggle', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center' });
+      const hl2 = I(hist, { type: 'frame', name: 'label', layout: 'horizontal', gap: 6, alignItems: 'center' });
+      I(hl2, { type: 'icon_font', iconFontName: 'history', width: 14, height: 14, fill: s(C.text2) });
+      I(hl2, { type: 'text', content: '历史账单明细 (1 期)', fontSize: 12, fill: s(C.text), textGrowth: 'fixed-width' });
+      I(hist, { type: 'icon_font', iconFontName: 'chevron-down', width: 16, height: 16, fill: s(C.text2) });
+    }
+    return card;
+  };
+  billCard({ bank: '中国农业银行', cardName: '尊然白金信用卡（精粹版）', tail: '2016', status: '逾期', amountLabel: '当前待还金额', amount: '3,680.55', dueLine: '账单日 每月 29 日 · 本期还款日 09-08', distanceLine: '逾期 14 日', hasHistory: true });
+  billCard({ bank: '中国建设银行', cardName: '龙卡全球支付', tail: '9003', status: '逾期', amountLabel: '当前待还金额', amount: '3,680.55', dueLine: '账单日 每月 20 日 · 本期还款日 09-08', distanceLine: '逾期 14 日', hasHistory: true });
+  billCard({ bank: '汇丰银行', cardName: 'Visa Signature', tail: '9002', status: '部分还款', amountLabel: '当前待还金额', amount: '15,000', currency: 'HK$', dueLine: '账单日 每月 12 日 · 本期还款日 09-28', distanceLine: '距离还款日 6 日', hasHistory: true });
+  billCard({ bank: 'American Express', cardName: 'Platinum Card', tail: '9001', status: '待还款', amountLabel: '当前待还金额', amount: '2,860', currency: 'US$', dueLine: '账单日 每月 8 日 · 本期还款日 10-10', distanceLine: '距离还款日 18 日', hasHistory: true });
+  billCard({ bank: '交通银行', cardName: '标准白金卡', tail: '9004', status: '待还款', amountLabel: '当前待还金额', amount: '8,000', dueLine: '账单日 每月 5 日 · 本期还款日 11-06', distanceLine: '距离还款日 45 日', hasHistory: true, amountEditable: true });
+  billCard({ bank: '中国邮政储蓄银行', cardName: '普卡', tail: '3293', status: '未出账单', amountLabel: '本期待还', amount: '0', dueLine: '账单日 每月 22 日 · 下期还款约 10-12', interestFree: '今日刷卡免息 20 天' });
+  bottomNav(phone, w, h, '账单');
+  return phone;
+};
+billsDark(390, 844);
+billsDark(430, 932);
+
+console.log('candidate set built: dashboard 390/430 + states + wireframe + bills 390/430');
