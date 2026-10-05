@@ -84,6 +84,26 @@ const candidateDashboard = (w, h) => {
   const repayAll = I(risk, { type: 'frame', name: 'btn / 一键全部还款', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 14], cornerRadius: 999, fill: s(C.dangerInk) });
   I(repayAll, { type: 'text', content: '一键全部还款', fontSize: 12, fontWeight: 600, fill: s(C.onDark) });
 
+  // ①b 当天需还款（B0-2 修订需求）：今日到期单独成板块，金色=临期语义
+  const dueToday = I(content, { type: 'frame', name: 'due today block', width: 'fill_container', layout: 'vertical', gap: 10, padding: [14, 14], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 2, fill: s(C.gold) } });
+  const dueHead = I(dueToday, { type: 'frame', name: 'due head', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center' });
+  I(dueHead, { type: 'text', content: '今天需还款 · 09-30', fontSize: 13, fontWeight: 700, fill: s(C.navy), textGrowth: 'fixed-width' });
+  I(dueHead, { type: 'text', content: '1 笔', fontSize: 11, fontWeight: 600, fill: s(C.gold700), textGrowth: 'fixed-width' });
+  const dueRow = I(dueToday, { type: 'frame', name: 'due row', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', gap: 10 });
+  const dueL = I(dueRow, { type: 'frame', name: 'due left', layout: 'vertical', gap: 3 });
+  I(dueL, { type: 'text', content: '中国建设银行 · 尾号 9003', fontSize: 13, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
+  I(dueL, { type: 'text', content: '本期还款日 今天 · ¥8,000.00', fontSize: 11, fill: s(C.gold700), textGrowth: 'fixed-width' });
+  const dueBtn = I(dueRow, { type: 'frame', name: 'btn / 结清今日', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 16], cornerRadius: 999, fill: s(C.gold700) });
+  I(dueBtn, { type: 'text', content: '立即还款', fontSize: 12, fontWeight: 600, fill: s(C.onDark) });
+
+  // ①c 当天可享优惠（B0-2 修订需求）：统计 + 入口
+  const offers = I(content, { type: 'frame', name: 'offers today block', width: 'fill_container', layout: 'horizontal', gap: 12, alignItems: 'center', padding: [14, 16], cornerRadius: 12, fill: s(C.subtle), stroke: { thickness: 1, fill: s(C.border) } });
+  I(offers, { type: 'icon_font', iconFontName: 'tag', width: 20, height: 20, fill: s(C.gold700) });
+  const offTxt = I(offers, { type: 'frame', name: 'offers text', width: 'fill_container', layout: 'vertical', gap: 2 });
+  I(offTxt, { type: 'text', content: '今日可享优惠', fontSize: 13, fontWeight: 700, fill: s(C.navy), textGrowth: 'fixed-width' });
+  I(offTxt, { type: 'text', content: '3 张卡可享 · 5 项优惠有效期内', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
+  I(offers, { type: 'text', content: '查看优惠', fontSize: 12, fontWeight: 600, fill: s(C.primaryDark), textGrowth: 'fixed-width' });
+
   // ② 持卡人筛选
   const filters = I(content, { type: 'frame', name: 'holder filters', width: 'fill_container', layout: 'horizontal', gap: 8, alignItems: 'center' });
   for (const [label, active] of [['全部', true], ['呼', false]]) {
@@ -92,15 +112,17 @@ const candidateDashboard = (w, h) => {
   }
 
   // ③ Hero：白底 + 品牌左侧描边（替代深蓝大块），金额仍是第一视觉
-  const hero = I(content, { type: 'frame', name: 'hero / total pending', width: 'fill_container', layout: 'horizontal', gap: 14, padding: [18, 18], cornerRadius: 14, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
-  I(hero, { type: 'rectangle', name: 'hero accent', width: 4, height: 64, cornerRadius: 2, fill: s(C.navy) });
+  const hero = I(content, { type: 'frame', name: 'hero / total pending', width: 'fill_container', layout: 'horizontal', gap: 14, padding: [18, 18], cornerRadius: 18, fill: s(C.navy) });
+  I(hero, { type: 'rectangle', name: 'hero accent', width: 4, height: 72, cornerRadius: 2, fill: s(C.blue400) });
+  I(hero, { type: 'rectangle', name: 'hero deco 1', width: 88, height: 88, cornerRadius: 999, fill: s('#1A3A6B') });
+  I(hero, { type: 'rectangle', name: 'hero deco 2', width: 56, height: 56, cornerRadius: 999, fill: s('#24478A') });
   const heroMain = I(hero, { type: 'frame', name: 'hero main', width: 'fill_container', layout: 'vertical', gap: 10 });
-  I(heroMain, { type: 'text', content: '总待还款', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
-  I(heroMain, { type: 'text', content: '¥47,317.21', fontSize: 32, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(C.navy), textGrowth: 'fixed-width' });
+  I(heroMain, { type: 'text', content: '总待还款', fontSize: 12, fill: s(C.blue400), textGrowth: 'fixed-width' });
+  I(heroMain, { type: 'text', content: '¥47,317.21', fontSize: 32, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(C.onDark), textGrowth: 'fixed-width' });
   const heroSub = I(heroMain, { type: 'frame', name: 'hero sub', width: 'fill_container', layout: 'horizontal', gap: 28 });
-  for (const [label, value, color] of [['含逾期', '¥7,361.1', C.dangerInk], ['未来 7 天', '¥12,804.98', C.navy]]) {
+  for (const [label, value, color] of [['含逾期', '¥7,361.1', C.blue400], ['未来 7 天', '¥12,804.98', C.onDark]]) {
     const kv = I(heroSub, { type: 'frame', name: 'kv / ' + label, layout: 'vertical', gap: 3 });
-    I(kv, { type: 'text', content: label, fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
+    I(kv, { type: 'text', content: label, fontSize: 11, fill: s(C.blue400), textGrowth: 'fixed-width' });
     I(kv, { type: 'text', content: value, fontSize: 15, fontWeight: 600, fontFamily: '$font.family.amount', fill: s(color), textGrowth: 'fixed-width' });
   }
 
@@ -235,7 +257,7 @@ wireBox(wire, '状态栏', 0, 0, 390, 48);
 wireBox(wire, '页头: 概览 + 头像', 0, 48, 390, 64);
 wireBox(wire, '逾期风险条 + 一键全部还款(有逾期时)', 12, 120, 366, 52);
 wireBox(wire, '持卡人筛选 pills', 12, 180, 366, 40);
-wireBox(wire, '总待还款 hero(含逾期 / 未来 7 天)', 12, 228, 366, 120);
+wireBox(wire, '总待还款 hero(含逾期 / 未来 7 天) · 当天需还款 · 今日优惠入口', 12, 228, 366, 120);
 wireBox(wire, '指标 2x2: 已逾期 / 未来待还(7/14/30) / 总欠款 / 未出账单', 12, 356, 366, 150);
 wireBox(wire, '账户 + 持卡人 pills', 12, 514, 366, 40);
 wireBox(wire, '金刚区: 记一笔 / 优惠 / 权益 / 邮箱账单', 12, 562, 366, 72);
