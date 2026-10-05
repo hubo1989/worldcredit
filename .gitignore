@@ -94,7 +94,7 @@ design/openpencil/baseline/diff/
 design/openpencil/baseline/shots/
 
 # 母版导帧：export-all.sh 从 .op 重新导出
-design/openpencil/exports/current/
+design/openpencil/exports/
 
 # 运行报告：每次运行带新时间戳与耗时，入库会产生无意义 diff（CI 里走 artifact）
 design/openpencil/batch-report.json

@@ -8,7 +8,7 @@ const C = {
   navy: '$color.brand.navy800', navy600: '$color.brand.navy600', gold: '$color.brand.gold500', gold700: '$color.brand.gold700',
   primary: '$color.runtime.primary', primaryDark: '$color.runtime.primaryDark', secondary: '$color.runtime.secondary',
   border: '$color.border.default', borderInput: '$color.border.input',
-  text: '$color.text.primary', text2: '$color.text.secondary', onDark: '$color.text.onDark',
+  text: '$color.text.primary', text2: '$color.text.secondary', textDisabled: '$color.text.disabled', onDark: '$color.text.onDark',
   success: '$color.status.success', warning: '$color.status.warning', danger: '$color.status.danger', info: '$color.status.info',
 };
 
@@ -55,8 +55,9 @@ const button = (parent, label, kind) => labeled(parent, label, (c) => {
     outline: { fill: s(C.surface), text: C.primaryDark, stroke: { thickness: 1, fill: s(C.primaryDark) } },
     ghost: { fill: s(C.surface), text: C.primaryDark, stroke: null },
     danger: { fill: s(C.danger), text: C.onDark, stroke: null },
-    disabled: { fill: s(C.subtle), text: C.text2, stroke: { thickness: 1, fill: s(C.border) } },
+    disabled: { fill: s(C.subtle), text: C.textDisabled, stroke: { thickness: 1, fill: s(C.border) } },
   }[kind];
+  if (!styles) throw new Error(`Unsupported button kind: ${kind}`);
   const node = { type: 'frame', name: 'Button / ' + label, width: 128, height: 40, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 8, fill: styles.fill };
   if (styles.stroke) node.stroke = styles.stroke;
   const el = I(c, node);
@@ -76,6 +77,7 @@ const stateButton = (parent, label, kind) => labeled(parent, label, (c) => {
     hover: { fill: s(C.primary), stroke: { thickness: 1, fill: s(C.primaryDark) } },
     pressed: { fill: s(C.primaryDark), stroke: null },
   }[kind];
+  if (!styles) throw new Error(`Unsupported button state kind: ${kind}`);
   const node = { type: 'frame', name: 'Button / ' + label, width: 128, height: 40, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 8, fill: styles.fill };
   if (styles.stroke) node.stroke = styles.stroke;
   const el = I(c, node);
@@ -96,7 +98,8 @@ const inputCell = (label, value, state) => labeled(inputRow, state, (c) => {
     type: 'frame', name: 'input', width: 'fill_container', height: 40, layout: 'horizontal', alignItems: 'center',
     padding: [8, 12], cornerRadius: 8, fill: s(state === 'disabled' ? C.subtle : C.surface), stroke: { thickness: state === 'focus' ? 2 : 1, fill: s(strokeColor) },
   });
-  I(box, { type: 'text', content: value, fontSize: 14, fill: s(value === placeholder || state === 'disabled' ? C.text2 : C.text), textGrowth: 'fixed-width' });
+  const valueColor = state === 'disabled' ? C.textDisabled : value === placeholder ? C.text2 : C.text;
+  I(box, { type: 'text', content: value, fontSize: 14, fill: s(valueColor), textGrowth: 'fixed-width' });
   if (state === 'error') I(wrap, { type: 'text', content: '必填项', fontSize: 11, fill: s(C.danger), textGrowth: 'fixed-width' });
 });
 const placeholder = '请输入';

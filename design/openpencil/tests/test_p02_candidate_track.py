@@ -161,7 +161,10 @@ class CandidateTrack(unittest.TestCase):
         self.assertLess(comparison_build, attachment)
         self.assertIn("candidate.mobile.dashboard · 390×844", attach)
         self.assertIn("slot / Candidate", attach)
-        self.assertIn('op copy "$candidate_frame" --parent "$candidate_slot"', attach)
+        # attach 脚本已从跨页 op copy 演进为：读回完整子树 -> 剥离 editor id ->
+        # op insert 序列化重建 -> 回读目标槽逐节点比对。断言插入与验证两个锚点。
+        self.assertIn('op insert', attach)
+        self.assertIn('expected exactly one inserted Candidate preview', attach)
         self.assertIn("comparison.preview · candidate.mobile.dashboard · 390×844", attach)
         self.assertIn("if (title !== 'Candidate')", comparison)
 

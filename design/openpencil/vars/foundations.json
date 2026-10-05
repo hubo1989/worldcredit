@@ -51,6 +51,10 @@
     "type": "color",
     "value": "#F5F8FF"
   },
+  "color.bg.neutral": {
+    "type": "color",
+    "value": "#E5E7EB"
+  },
   "color.bg.skeleton": {
     "type": "color",
     "value": "#E8EDF5"
