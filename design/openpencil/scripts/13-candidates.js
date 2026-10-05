@@ -107,7 +107,7 @@ const candidateDashboard = (w, h) => {
   const riskTxt = I(risk, { type: 'frame', name: 'risk text', width: 'fill_container', layout: 'vertical', gap: 2 });
   I(riskTxt, { type: 'text', content: '2 笔账单已逾期', fontSize: 12, fontWeight: 700, fill: s(C.dangerInk), textGrowth: 'fixed-width' });
   I(riskTxt, { type: 'text', content: '待还合计 ¥7,361.1 · 建议今日处理', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
-  const repayAll = I(risk, { type: 'frame', name: 'btn / 一键全部还款', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 14], cornerRadius: 999, fill: s('#E5484D') });
+  const repayAll = I(risk, { type: 'frame', name: 'btn / 一键全部还款', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 16], cornerRadius: 12, fill: s('#E5484D') });
   I(repayAll, { type: 'text', content: '一键全部还款', fontSize: 12, fontWeight: 600, fill: s('#FFFFFF') });
 
   // ③ 当天需还款（B0-2 修订需求）：金=临期语义
@@ -119,7 +119,7 @@ const candidateDashboard = (w, h) => {
   const dueL = I(dueRow, { type: 'frame', name: 'due left', layout: 'vertical', gap: 3 });
   I(dueL, { type: 'text', content: '中国建设银行 · 尾号 9003', fontSize: 13, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
   I(dueL, { type: 'text', content: '本期还款日 今天 · ¥8,000.00', fontSize: 11, fill: s(C.gold), textGrowth: 'fixed-width' });
-  const dueBtn = I(dueRow, { type: 'frame', name: 'btn / 结清今日', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 16], cornerRadius: 999, fill: s(C.gold) });
+  const dueBtn = I(dueRow, { type: 'frame', name: 'btn / 结清今日', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 18], cornerRadius: 12, fill: s(C.gold) });
   I(dueBtn, { type: 'text', content: '立即还款', fontSize: 12, fontWeight: 600, fill: s('#0A0F1E') });
 
   // ④ 今日可享优惠（B0-2 修订需求）：统计 + 入口
@@ -198,7 +198,7 @@ const candidateDashboard = (w, h) => {
   const brAmt = I(brBottom, { type: 'frame', name: 'amount', layout: 'vertical', gap: 2 });
   I(brAmt, { type: 'text', content: '待还金额', fontSize: 10, fill: s(C.text2), textGrowth: 'fixed-width' });
   I(brAmt, { type: 'text', content: '¥3,680.55', fontSize: 17, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(C.dangerInk), textGrowth: 'fixed-width' });
-  const settle = I(brBottom, { type: 'frame', name: 'btn / 全额结清', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 16], cornerRadius: 999, fill: s('#3B6FE0') });
+  const settle = I(brBottom, { type: 'frame', name: 'btn / 全额结清', width: 'fit_content', height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', padding: [0, 18], cornerRadius: 12, fill: s('#3B6FE0') });
   I(settle, { type: 'text', content: '全额结清', fontSize: 12, fontWeight: 600, fill: s('#FFFFFF') });
 
   bottomNav(phone, w, h, '首页');
@@ -241,7 +241,7 @@ const emptyBox = I(empty, { type: 'frame', name: 'empty block', width: 'fill_con
 I(emptyBox, { type: 'icon_font', iconFontName: 'inbox', width: 32, height: 32, fill: s(C.text2) });
 I(emptyBox, { type: 'text', content: '还没有账单', fontSize: 15, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
 I(emptyBox, { type: 'text', content: '同步邮箱或手动记一笔', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
-const emptyCta = I(emptyBox, { type: 'frame', name: 'cta', layout: 'horizontal', padding: [10, 20], cornerRadius: 999, fill: s(C.primary) });
+const emptyCta = I(emptyBox, { type: 'frame', name: 'cta', layout: 'horizontal', padding: [10, 20], cornerRadius: 12, fill: s(C.primary) });
 I(emptyCta, { type: 'text', content: '记一笔', fontSize: 13, fontWeight: 600, fill: s(C.onDark) });
 
 // 错误：可重试
@@ -250,7 +250,7 @@ const errBox = I(err, { type: 'frame', name: 'error block', width: 'fill_contain
 I(errBox, { type: 'icon_font', iconFontName: 'alert-circle', width: 32, height: 32, fill: s(C.dangerInk) });
 I(errBox, { type: 'text', content: '加载失败', fontSize: 15, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
 I(errBox, { type: 'text', content: '网络异常，请重试', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
-const retryCta = I(errBox, { type: 'frame', name: 'cta', layout: 'horizontal', padding: [10, 20], cornerRadius: 999, fill: s(C.dangerInk) });
+const retryCta = I(errBox, { type: 'frame', name: 'cta', layout: 'horizontal', padding: [10, 20], cornerRadius: 12, fill: s(C.dangerInk) });
 I(retryCta, { type: 'text', content: '重试', fontSize: 13, fontWeight: 600, fill: s(C.onDark) });
 
 // ============================================================
