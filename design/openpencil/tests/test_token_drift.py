@@ -55,7 +55,7 @@ MAPF = json.loads(MAP_PATH.read_text(encoding="utf-8"))
 DESIGN = CHK.load_design_tokens(DESIGN_PATH)
 OP = CHK.load_op_tokens(OP_PATH)
 CSS = CHK.load_css_tokens(CSS_PATH)
-THEME = CHK.load_theme_tokens(THEME_PATH)
+THEME = CHK.load_theme_tokens(THEME_PATH, CSS)
 
 
 def run(mapf: dict | None = None):
@@ -234,6 +234,21 @@ class ContrastGate(unittest.TestCase):
         code, _, summary = run(m)
         self.assertEqual(code, 0, summary["failures"])
 
+    def test_background_without_pct_uses_resolved_color(self):
+        """省略 pct 时验证原色，不应把背景意外 tint 到白色。"""
+        m = copy.deepcopy(MAPF)
+        m["contrastChecks"] = [{
+            "id": "raw-background",
+            "fg": {"literal": "#000000"},
+            "bg": {"css": "--success"},
+            "min": 4.5,
+        }]
+        code, _, summary = run(m)
+        check = summary["contrast"][0]
+        self.assertEqual(check["bg"], CSS["--success"])
+        self.assertEqual(code, 1, summary["failures"])
+        self.assertTrue(fails(summary, "contrast-fail"))
+
 
 # ---------------------------------------------------------------------------
 # 6. 文档化前提
@@ -351,6 +366,30 @@ class ParserAndRepo(unittest.TestCase):
     def test_op_tokens_are_normalized(self):
         self.assertEqual(OP["color.status.danger"], "#d32f2f")
         self.assertEqual(OP["color.status.success"], "#2e7d32")
+
+    def test_theme_text_css_variables_resolve_from_css_source(self):
+        altered_css = dict(CSS)
+        altered_css["--text-primary"] = "#010203"
+        theme = CHK.load_theme_tokens(THEME_PATH, altered_css)
+        self.assertEqual(theme["light.text.primary"], "#010203")
+
+    def test_light_text_mappings_cover_runtime_theme_tokens(self):
+        """light.text 三个状态必须同时映射到 lib/theme.ts。"""
+        by_id = {entry["id"]: entry for entry in MAPF["mappings"]}
+        for mapping_id, design_token, theme_token, css_var in (
+            ("text.primary", "color.text.primary", "light.text.primary", "--text-primary"),
+            ("text.secondary", "color.text.secondary", "light.text.secondary", "--text-secondary"),
+            ("text.disabled", "color.text.disabled", "light.text.disabled", "--text-disabled"),
+        ):
+            with self.subTest(mapping=mapping_id):
+                entry = by_id[mapping_id]
+                self.assertEqual(entry.get("theme"), theme_token)
+                resolved = CHK.resolve(entry, DESIGN, OP, CSS, THEME)
+                self.assertEqual(resolved["design"], DESIGN[design_token])
+                self.assertEqual(resolved["op"], OP[design_token])
+                self.assertEqual(resolved["css"], CSS[css_var])
+                self.assertEqual(resolved["theme"], THEME[theme_token])
+                self.assertEqual(len(set(resolved.values())), 1, resolved)
 
     def test_ink_mappings_resolve_across_sources(self):
         """新增的 ink 档在三个源里必须一致。"""

@@ -113,7 +113,9 @@ private 仓库下可接受，保持基线忠实。**若将来转公开必须先�
 |---|---|
 | `baseline/shots/` | `capture.py` 重新实拍 |
 | `baseline/diff/` | 每次比对重新生成 |
-| `exports/current/` | `export-all.sh` 从 `.op` 导出 |
+| `exports/current/` | Current 帧，由 `export-all.sh` 从 `.op` 导出 |
+| `exports/candidate/` | Candidate 帧，与 Current 隔离 |
+| `exports/comparisons/` | 对比板页面导帧 |
 | `batch-report.json` `visual-report.json` `index.json` `manifest.json` | 含时间戳，CI 走 artifact |
 
 ---

@@ -21,13 +21,15 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 
-# 每个设计页 id → 视口宽度（与 capture.py 的 viewport 对齐）
+# 设计页名 → 视口宽度（与 capture.py 的 viewport 对齐）。
+# 按页名（而非页 id）解析：build-all 清页重建后 id 会漂移，名字是稳定标识。
 PAGES = {
-    "n14": ("10 · Mobile Core", 390, 430),
-    "n16": ("11 · Mobile Details", 390),
-    "n18": ("12 · Mobile Extended", 390),
-    "n20": ("20 · Auth & Public", 390),
-    "n22": ("30 · Admin", 1440),
+    "10 · Mobile Core": (390, 430),
+    "11 · Mobile Details": (390,),
+    "12 · Mobile Extended": (390,),
+    "13 · Candidates": (390,),
+    "20 · Auth & Public": (390,),
+    "30 · Admin": (1440,),
 }
 
 TOLERANCE = 2  # 浮点与描边造成的亚像素误差
@@ -37,10 +39,10 @@ def op(*args: str) -> str:
     return subprocess.run(["op", *args], cwd=str(REPO), capture_output=True, text=True).stdout
 
 
-def page_index(page_id: str) -> int | None:
+def page_index(page_name: str) -> int | None:
     try:
         d = json.loads(op("page", "list"))
-        return next(i for i, p in enumerate(d["pages"]) if p["id"] == page_id)
+        return next(i for i, p in enumerate(d["pages"]) if p["name"] == page_name)
     except Exception:
         return None
 
@@ -96,12 +98,12 @@ def check_page(page_id: str, label: str, widths: tuple[int, ...]) -> list[dict]:
 
 def main() -> int:
     all_issues: list[dict] = []
-    for page_id, (label, *widths) in PAGES.items():
-        found = check_page(page_id, label, tuple(widths))
+    for page_name, widths in PAGES.items():
+        found = check_page(page_name, page_name, tuple(widths))
         errs = [f for f in found if "error" in f]
         over = [f for f in found if f.get("kind")]
         status = "FAIL" if (errs or over) else "OK  "
-        print(f"{status}{label}")
+        print(f"{status}{page_name}")
         for e in errs:
             print(f"       {e['error']}")
         for o in over:

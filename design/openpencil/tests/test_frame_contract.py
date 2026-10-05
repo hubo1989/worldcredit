@@ -24,6 +24,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -523,11 +524,27 @@ class RealSourceIntegration(unittest.TestCase):
         self.assertEqual(code, 0, failure_text(summary))
         self.assertGreater(summary["frameCount"], 0)
         ok_entries = [e for e in summary["screens"] if e["status"] == "OK"]
-        self.assertEqual(len(ok_entries), 2, lines)
+        # P0-2 起真实源含 candidate.mobile.dashboard 样例帧：
+        # Current 两屏 + Candidate dashboard 一帧按同一契约通过。
+        self.assertEqual(
+            sorted((e["head"], e["role"]) for e in ok_entries),
+            [
+                ("candidate.mobile.dashboard", "candidate"),
+                ("screen.mobile.bills", "current"),
+                ("screen.mobile.dashboard", "current"),
+            ],
+            lines,
+        )
 
     def test_candidate_not_required_by_default(self):
         """Candidate 尚未开画时，契约不得因为缺 candidate 而失败。"""
-        code, _, summary = CHK.check_doc(real_doc(), real_contract(), None)
+        doc = real_doc()
+        for page in doc["pages"]:
+            page["children"] = [
+                n for n in page.get("children") or []
+                if not str(n.get("name") or "").startswith("candidate.")
+            ]
+        code, _, summary = CHK.check_doc(doc, real_contract(), None)
         self.assertEqual(code, 0)
         skipped = [e for e in summary["screens"] if e["status"] == "SKIP"]
         self.assertEqual(len(skipped), 4, summary["screens"])
@@ -544,6 +561,75 @@ class RealSourceIntegration(unittest.TestCase):
         registry_keys = {s["key"] for s in registry["screens"]}
         for screen in real_contract()["screens"]:
             self.assertIn(screen["registryKey"], registry_keys)
+
+
+class MobileDesignSourceContracts(unittest.TestCase):
+    """Detail screens keep the 56px tabs and 34px safe area vertically stacked."""
+
+    def test_bottom_nav_stacks_tabs_and_safe_area_in_both_scripts(self):
+        scripts = REPO / "design" / "openpencil" / "scripts"
+        for filename in ("11-mobile-details.js", "12-mobile-extended.js"):
+            with self.subTest(script=filename):
+                source = (scripts / filename).read_text(encoding="utf-8")
+                function = re.search(
+                    r"const bottomNav = .*?=> \{(?P<body>.*?)\n\};",
+                    source,
+                    flags=re.DOTALL,
+                )
+                self.assertIsNotNone(function, f"{filename}: bottomNav helper missing")
+                body = function.group("body")
+                parent = next(
+                    (line for line in body.splitlines() if "const nav = I(p," in line),
+                    None,
+                )
+                self.assertIsNotNone(parent, f"{filename}: bottom nav parent missing")
+                self.assertRegex(parent, r"layout:\s*'vertical'")
+                self.assertRegex(
+                    source,
+                    r"NAV_H\s*=\s*90\s*,\s*NAV_CONTENT_H\s*=\s*56\s*,\s*SAFE_H\s*=\s*34",
+                )
+                self.assertRegex(body, r"name:\s*'nav tabs'[^}]*height:\s*NAV_CONTENT_H")
+                self.assertRegex(body, r"name:\s*'safe area'[^}]*height:\s*SAFE_H")
+                self.assertLess(body.index("name: 'nav tabs'"), body.index("name: 'safe area'"))
+
+    def test_soft_badge_text_uses_status_ink_tokens(self):
+        source = (
+            REPO / "design" / "openpencil" / "scripts" / "12-mobile-extended.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("warningInk: '$color.status.warningInk'", source)
+        self.assertIn("dangerInk: '$color.status.dangerInk'", source)
+        self.assertRegex(
+            source,
+            r"const pending = I\(bulk, \{[^}]*fill: '\$color\.status\.warningSoft'\s*\}\s*\);\s*"
+            r"I\(pending, \{[^}]*fill: s\(C\.warningInk\)\s*\}",
+        )
+        self.assertRegex(
+            source,
+            r"const st = I\(rSide, \{[^}]*fill: '\$color\.status\.dangerSoft'\s*\}\s*\);\s*"
+            r"I\(st, \{[^}]*fill: s\(C\.dangerInk\)\s*\}",
+        )
+
+
+class SourceOnlyGateIntegration(unittest.TestCase):
+    def test_ci_source_only_gate_runs_contract_token_and_python_checks(self):
+        verify = (REPO / "design" / "openpencil" / "verify-batch.sh").read_text(
+            encoding="utf-8"
+        )
+        source_only = next(
+            line.strip() for line in verify.splitlines()
+            if line.strip().startswith("source-only)")
+        )
+        for check in (
+            "run_frame_contract",
+            "run_token_drift",
+            "run_python_tests",
+        ):
+            self.assertIn(check, source_only)
+
+        workflow = (REPO / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("bash design/openpencil/verify-batch.sh --source-only", workflow)
 
 
 if __name__ == "__main__":

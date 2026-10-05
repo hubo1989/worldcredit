@@ -249,7 +249,7 @@ const bills = (w, h) => {
     if (status) statusPill(top, status);
     // 银行徽章 + 卡名 + 尾号
     const bankRow = I(card, { type: 'frame', name: 'bank row', width: 'fill_container', layout: 'horizontal', gap: 8, alignItems: 'center' });
-    const bankBadge = I(bankRow, { type: 'frame', name: 'bank badge', layout: 'horizontal', gap: 4, alignItems: 'center', padding: [3, 8], cornerRadius: 999, fill: '$color.bg.skeleton' });
+    const bankBadge = I(bankRow, { type: 'frame', name: 'bank badge', layout: 'horizontal', gap: 4, alignItems: 'center', padding: [3, 8], cornerRadius: 999, fill: s(C.subtle) });
     I(bankBadge, { type: 'icon_font', iconFontName: 'landmark', width: 12, height: 12, fill: s(C.navy) });
     I(bankBadge, { type: 'text', content: bank, fontSize: 11, fontWeight: 600, fill: s(C.navy), textGrowth: 'fixed-width' });
     I(bankRow, { type: 'text', content: cardName, fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });

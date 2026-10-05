@@ -10,7 +10,8 @@ const C = {
   gold: '$color.brand.gold500', gold700: '$color.brand.gold700',
   primary: '$color.runtime.primary', primaryDark: '$color.runtime.primaryDark',
   border: '$color.border.default', text: '$color.text.primary', text2: '$color.text.secondary', onDark: '$color.text.onDark',
-  success: '$color.status.success', warning: '$color.status.warning', danger: '$color.status.danger', info: '$color.status.info',
+  success: '$color.status.success', warning: '$color.status.warning', warningInk: '$color.status.warningInk',
+  danger: '$color.status.danger', dangerInk: '$color.status.dangerInk', info: '$color.status.info',
 };
 const SB_H = 48, NAV_H = 90, NAV_CONTENT_H = 56, SAFE_H = 34, PAD = 20, W = 390, H = 844;
 
@@ -21,7 +22,7 @@ const statusBar = (p, w) => {
   for (const i of ['signal', 'wifi', 'battery-full']) I(r, { type: 'icon_font', iconFontName: i, width: 15, height: 15, fill: s(C.text) });
 };
 const bottomNav = (p, w, h, active) => {
-  const nav = I(p, { type: 'frame', name: 'bottom nav', x: 0, y: h - NAV_H, width: w, height: NAV_H, layout: 'horizontal', justifyContent: 'space_around', alignItems: 'center', fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+  const nav = I(p, { type: 'frame', name: 'bottom nav', x: 0, y: h - NAV_H, width: w, height: NAV_H, layout: 'vertical', justifyContent: 'space_around', alignItems: 'center', fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
   const tabs = I(nav, { type: 'frame', name: 'nav tabs', width: 'fill_container', height: NAV_CONTENT_H, layout: 'horizontal', justifyContent: 'space_around', alignItems: 'center' });
   for (const [icon, label] of [['home', '首页'], ['receipt', '账单'], ['user', '我的']]) {
     const a = label === active;
@@ -115,16 +116,16 @@ const ledger = () => {
   }
 
   // tabs
-  const tabs = I(c, { type: 'frame', name: 'tabs', width: 'fill_container', height: 40, layout: 'horizontal', gap: 6, padding: 4, cornerRadius: 999, fill: '$color.bg.skeleton' });
+  const tabs = I(c, { type: 'frame', name: 'tabs', width: 'fill_container', height: 40, layout: 'horizontal', gap: 6, padding: 4, cornerRadius: 999, fill: s(C.subtle) });
   for (const [label, active] of [['全部(2)', true], ['未还(2)', false], ['部分(0)', false], ['已清(0)', false]]) {
-    const t = I(tabs, { type: 'frame', name: 'tab / ' + label, width: 'fill_container', layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: s(active ? C.navy : '$color.bg.skeleton') });
+    const t = I(tabs, { type: 'frame', name: 'tab / ' + label, width: 'fill_container', layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 999, fill: s(active ? C.navy : C.subtle) });
     I(t, { type: 'text', content: label, fontSize: 11, fontWeight: active ? 600 : 400, fill: s(active ? C.onDark : C.text2) });
   }
 
   // 待补金额 + 全选
   const bulk = I(c, { type: 'frame', name: 'bulk bar', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center' });
   const pending = I(bulk, { type: 'frame', name: 'pending chip', layout: 'horizontal', gap: 5, alignItems: 'center', padding: [5, 12], cornerRadius: 999, fill: '$color.status.warningSoft' });
-  I(pending, { type: 'text', content: '待补金额(3)', fontSize: 11, fontWeight: 600, fill: s(C.gold700) });
+  I(pending, { type: 'text', content: '待补金额(3)', fontSize: 11, fontWeight: 600, fill: s(C.warningInk) });
   const sel = I(bulk, { type: 'frame', name: 'select all', layout: 'horizontal', gap: 6, alignItems: 'center' });
   I(sel, { type: 'frame', name: 'checkbox', width: 16, height: 16, cornerRadius: 4, fill: s(C.surface), stroke: { thickness: 2, fill: C.primary } });
   I(sel, { type: 'text', content: '全选 (2 条未还)', fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
@@ -141,7 +142,7 @@ const ledger = () => {
     I(meta, { type: 'text', content: '呼博', fontSize: 10, fill: s(C.text2), textGrowth: 'fixed-width' });
     const rSide = I(top, { type: 'frame', name: 'right', layout: 'vertical', gap: 4, alignItems: 'end' });
     const st = I(rSide, { type: 'frame', name: 'status', layout: 'horizontal', padding: [2, 9], cornerRadius: 999, fill: '$color.status.dangerSoft' });
-    I(st, { type: 'text', content: '未还款', fontSize: 10, fontWeight: 700, fill: s(C.danger) });
+    I(st, { type: 'text', content: '未还款', fontSize: 10, fontWeight: 700, fill: s(C.dangerInk) });
     I(rSide, { type: 'text', content: amount, fontSize: 15, fontWeight: 700, fontFamily: '$font.family.amount', fill: s(C.text), textGrowth: 'fixed-width' });
     const od = I(r, { type: 'frame', name: 'overdue', layout: 'horizontal', gap: 5, alignItems: 'center' });
     I(od, { type: 'icon_font', iconFontName: 'alert-circle', width: 12, height: 12, fill: s(C.danger) });

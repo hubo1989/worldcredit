@@ -53,9 +53,9 @@ export const lightTheme = createTheme({
       paper: '#FFFFFF',
     },
     text: {
-      primary: '#0A1F44',
-      secondary: '#5B6478',
-      disabled: '#A0A8B8',
+      primary: 'var(--text-primary)',
+      secondary: 'var(--text-secondary)',
+      disabled: 'var(--text-disabled)',
     },
     divider: '#DDDDDD',
   },
@@ -66,10 +66,10 @@ export const lightTheme = createTheme({
     h3: { fontSize: '16px', fontWeight: 600, lineHeight: 1.5, color: '#030059' },
     // 文本色统一到 .phone 体系（globals.css --text-primary/--text-secondary），
     // 不再另存一套 #333333/#636363：否则同屏会出现两种「正文色」。
-    subtitle1: { fontSize: '18px', fontWeight: 500, lineHeight: 1.6, color: '#0A1F44' },
-    subtitle2: { fontSize: '14px', fontWeight: 700, lineHeight: 1.5, color: '#0A1F44' },
-    body1: { fontSize: '16px', fontWeight: 400, lineHeight: 1.6, color: '#0A1F44' },
-    body2: { fontSize: '14px', fontWeight: 400, lineHeight: 1.5, color: '#5B6478' },
+    subtitle1: { fontSize: '18px', fontWeight: 500, lineHeight: 1.6, color: 'var(--text-primary)' },
+    subtitle2: { fontSize: '14px', fontWeight: 700, lineHeight: 1.5, color: 'var(--text-primary)' },
+    body1: { fontSize: '16px', fontWeight: 400, lineHeight: 1.6, color: 'var(--text-primary)' },
+    body2: { fontSize: '14px', fontWeight: 400, lineHeight: 1.5, color: 'var(--text-secondary)' },
     button: { fontSize: '14px', fontWeight: 600, textTransform: 'none' },
   },
   shape: {
@@ -111,7 +111,7 @@ export const lightTheme = createTheme({
           // 两者叠加会让每张卡左右各多出 24px（实测 40–44px），窄屏下
           // 直接把 140px 的小卡内容压到 ~60px，金额与标签被裁。
           // 内距交由 CardContent（16/24px）或各页面显式控制。
-          color: '#0A1F44',
+          color: 'var(--text-primary)',
         },
       },
     },
@@ -122,7 +122,7 @@ export const lightTheme = createTheme({
           borderRadius: 5,
           height: 40,
           fontSize: 16,
-          color: '#0A1F44',
+          color: 'var(--text-primary)',
           '& .MuiOutlinedInput-notchedOutline': {
             borderColor: '#CCCCCC',
           },
@@ -140,7 +140,7 @@ export const lightTheme = createTheme({
         input: {
           padding: '8px 12px',
           '&::placeholder': {
-            color: '#5B6478',
+            color: 'var(--text-secondary)',
             opacity: 0.8,
           },
         },
@@ -151,7 +151,7 @@ export const lightTheme = createTheme({
         root: {
           fontWeight: 600,
           fontSize: 16,
-          color: '#0A1F44',
+          color: 'var(--text-primary)',
           marginBottom: 8,
           position: 'relative',
           transform: 'none',

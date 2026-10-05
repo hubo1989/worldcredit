@@ -20,8 +20,9 @@ jobs:
   # 设计源质量门禁
   #
   # 只依赖 Python 标准库 + 仓库内的设计资产，不需要 OpenPencil 运行时：
-  #   - 字段对齐：.op 母版是否覆盖真实基线的结构元素
-  #   - 几何溢出：.op 内的绝对定位节点是否越界 / 重叠（便携版）
+  #   - 字段对齐与几何溢出（便携版）
+  #   - Frame 契约、Token 漂移 / 对比度检查
+  #   - Frame / Token / Candidate / 导出分流 Python 回归测试
   #
   # 为什么不用 verify-batch.sh 的默认分支：
   #   `op` 是 macOS 专属的 nanobrew formula，Linux runner 装不了。
@@ -29,7 +30,7 @@ jobs:
   #   因此这里可以直接调 verify-batch.sh --source-only。
   # ---------------------------------------------------------------------------
   design-source:
-    name: 设计源质量（字段对齐 + 几何溢出）
+    name: 设计源质量（字段 / 几何 / Frame / Token / Candidate / 导出 / Python 回归）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

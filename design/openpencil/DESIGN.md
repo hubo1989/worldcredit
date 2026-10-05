@@ -86,14 +86,15 @@
 # 重建全部设计（幂等）
 bash design/openpencil/scripts/build-all.sh
 
-# 导出全部母版到 exports/current
+# 按 Current / Candidate / Comparisons 角色分目录导出
 bash design/openpencil/scripts/export-all.sh
+# 可设置 OPENPENCIL_EXPORT_ROOT 将导出定向到隔离目录
 
 # 校验
 op design:lint
 ```
 
-`op` 需要 OpenPencil 在运行（`op start --file ...` 或 headless）。OpenPencil server 对工作区只读，导出脚本会先写临时目录再拷回仓库。
+`op` 需要 OpenPencil 在运行（`op start --file ...` 或 headless）。OpenPencil server 对工作区只读，导出脚本会先写临时目录再拷回仓库；Current、Candidate、Comparisons 分别写入 `exports/current`、`exports/candidate`、`exports/comparisons`，不清理既有 PNG。可用 `OPENPENCIL_EXPORT_ROOT` 指定隔离根目录。
 ## 9. 基线对齐（2026-09-22）
 
 Dashboard 与 Bills 母版已按真实基线重画，依据
