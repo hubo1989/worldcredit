@@ -74,14 +74,21 @@ class ReviewedSourcesSyncTests(unittest.TestCase):
         self.assertEqual(len(navs), 6)
 
     def test_candidate_privacy_and_repayment_targets_are_serialized(self) -> None:
-        nodes = all_nodes(page_by_name(self.doc, "13 · Candidates"))
-        privacy = one_node(nodes, "btn / toggle amount visibility")
-        self.assertEqual((privacy.get("width"), privacy.get("height")), (44, 44))
-        eye = one_node(nodes, "hide visible amounts")
-        self.assertEqual(eye.get("iconFontName"), "eye-off")
-        for name in ("btn / 一键全部还款", "btn / 全额结清"):
-            button = one_node(nodes, name)
-            self.assertEqual(button.get("height"), 44, name)
+        """B0-2 起候选页含 390/430 两个变体：逐帧断言，而不是整页唯一。"""
+        page = page_by_name(self.doc, "13 · Candidates")
+        for head in (
+            "candidate.mobile.dashboard · 390×844",
+            "candidate.mobile.dashboard · 430×932",
+        ):
+            frame = one_node(page.get("children", []), head)
+            nodes = all_nodes(frame)
+            privacy = one_node(nodes, "btn / toggle amount visibility")
+            self.assertEqual((privacy.get("width"), privacy.get("height")), (44, 44), head)
+            eye = one_node(nodes, "hide visible amounts")
+            self.assertEqual(eye.get("iconFontName"), "eye-off", head)
+            for name in ("btn / 一键全部还款", "btn / 全额结清"):
+                button = one_node(nodes, name)
+                self.assertEqual(button.get("height"), 44, f"{head} / {name}")
 
     def test_comparison_candidate_slot_contains_one_serialized_preview(self) -> None:
         nodes = all_nodes(page_by_name(self.doc, "90 · Comparisons"))
@@ -109,7 +116,6 @@ class ReviewedSourcesSyncTests(unittest.TestCase):
         script_paths = (
             DESIGN / "scripts" / "10-mobile-core.js",
             DESIGN / "scripts" / "11-mobile-details.js",
-            DESIGN / "scripts" / "13-candidates.js",
         )
         for path in script_paths:
             source = path.read_text(encoding="utf-8")

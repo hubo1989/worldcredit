@@ -220,3 +220,23 @@ frame 名完整形态：
   在没有 `exports/approved/` 导帧前，Candidate 没有任何像素级门禁。
 - `429×932` 等宽屏变体、超长中文与超大金额仍靠人工与后续实现阶段验证。
 - 设计源与运行时 token 的漂移已由 `scripts/check-token-drift.py` 覆盖（见 `TOKEN_DRIFT.md`），但间距 / 圆角 / 字号 / 字重与暗色世界仍未纳入。
+
+## 8. B0-2 采纳的补充约定（2026-10-05，随候选样例批次）
+
+- `candidate.<surface>.<key>` 的 surface 可扩展为 `state` / `wireframe`：
+  状态样例（loading / empty / error）与低保真层级图用**独立 head**
+  （如 `candidate.state.dashboard-loading`、`candidate.wireframe.dashboard`），
+  登记进 `_contract.json` 的 `uncovered`——几何/命名检查覆盖，字段契约豁免。
+  原因：字段契约要求同 head 所有变体满足全部锚点，与"骨架/空态天然缺字段"冲突。
+- `· <variant> · W×H` 的 variant 语法仍保留给**满足完整契约的状态无关变体**
+  （如 430 宽屏默认态）。
+- 状态样例转正（进入 B1 实现契约）时，应升格为独立 screens 条目或带状态维度的
+  契约扩展，不应长期停留在 uncovered。
+
+### 2026-10-05 决策（Hubert）
+
+1. 第 5 节对照表：**全部字段/动作保留**，无可删 / 可并入项。
+2. `check-frame-contract.py` 已接入 verify-batch（第 3 道设计源检查），CI 已绿——本条已落地。
+3. 几何检查已扩到 `candidate.*`（P0-2）；`approved.*` 待首批批准帧出现时一行正则补上。
+4. `check-master-fields.py` 子串匹配已改精确 head 匹配（诱饵帧判别实验：旧算法被串到 exit 1，新算法 11/11 exit 0）。
+5. 契约覆盖：认可「随批次补」节奏；requiredRoles 收紧采用屏级覆盖机制（checker 已支持），dashboard 的 candidate 待 Bills 候选落地后一并激活（避免 bills 因缺帧误报）。
