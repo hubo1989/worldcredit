@@ -232,3 +232,11 @@ frame 名完整形态：
   （如 430 宽屏默认态）。
 - 状态样例转正（进入 B1 实现契约）时，应升格为独立 screens 条目或带状态维度的
   契约扩展，不应长期停留在 uncovered。
+
+### 2026-10-05 决策（Hubert）
+
+1. 第 5 节对照表：**全部字段/动作保留**，无可删 / 可并入项。
+2. `check-frame-contract.py` 已接入 verify-batch（第 3 道设计源检查），CI 已绿——本条已落地。
+3. 几何检查已扩到 `candidate.*`（P0-2）；`approved.*` 待首批批准帧出现时一行正则补上。
+4. `check-master-fields.py` 子串匹配已改精确 head 匹配（诱饵帧判别实验：旧算法被串到 exit 1，新算法 11/11 exit 0）。
+5. 契约覆盖：认可「随批次补」节奏；requiredRoles 收紧采用屏级覆盖机制（checker 已支持），dashboard 的 candidate 待 Bills 候选落地后一并激活（避免 bills 因缺帧误报）。

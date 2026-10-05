@@ -133,3 +133,9 @@ design / css / theme 三个源最多各取一个声明值，取值不全相同�
 - 不校验 app 目录里散落的字面色值；只比对三个 token 源。
 - 不校验间距 / 圆角 / 字号 / 字重的漂移（font.size.* / space.* / radius.* 尚未纳入映射）。
 - 暗色世界的漂移未纳入（adminDarkTheme 与 color.bg.admin.* 已解析但未做映射比对）。
+
+### 2026-10-05 决策（Hubert）
+
+- 漂移检查已接入 verify-batch（第 4 道设计源检查），CI 已绿——本条已落地。
+- 历史登记的 5 条漂移已在 token 统一轮**全部修齐**，knownDrift 现为空（零容忍政策：漂移一律失败，不设白名单）。
+- documentedFailures（ink 档前提）继续由检查器单独守护，前提失效即报错。

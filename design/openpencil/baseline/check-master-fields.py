@@ -174,7 +174,10 @@ def main() -> int:
         def find_and_collect(node):
             if isinstance(node, dict):
                 nm = str(node.get("name") or "")
-                if needle in nm and node.get("type") == "frame":
+                # 2026-10-05 批准：子串匹配改精确 head 匹配。
+                # frame 名格式 `<head>[ · <variant>] · <W>×<H>`，head 段与 needle 全等才算命中，
+                # 防止 `screen.mobile.dashboard-xxx` 之类的近似名借走母版文本。
+                if nm.split(" · ")[0] == needle and node.get("type") == "frame":
                     collect_texts(node, found)
                     return True
                 for c in node.get("children") or []:
