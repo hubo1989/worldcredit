@@ -45980,6 +45980,2112 @@
               ]
             }
           ]
+        },
+        {
+          "type": "frame",
+          "id": "n91961",
+          "name": "MUI vs ObsidianUI",
+          "width": 940.0,
+          "height": 980.0,
+          "layout": "none",
+          "fill": [
+            {
+              "type": "solid",
+              "color": "#1B1D26"
+            }
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "n91962",
+              "name": "t1",
+              "x": 40.0,
+              "y": 20.0,
+              "width": "fit_content",
+              "height": "fit_content",
+              "content": "MUI（现状组件体系 · Material 暗色）",
+              "fontSize": 15.0,
+              "fontWeight": 700,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#E0E0E0"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "n91963",
+              "name": "t2",
+              "x": 490.0,
+              "y": 20.0,
+              "width": "fit_content",
+              "height": "fit_content",
+              "content": "ObsidianUI（Tailwind · 玻璃拟态暗色）",
+              "fontSize": 15.0,
+              "fontWeight": 700,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#7AADFF"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n91964",
+              "name": "phone mui",
+              "x": 40.0,
+              "y": 60.0,
+              "width": 390.0,
+              "height": 844.0,
+              "layout": "none",
+              "clipContent": true,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#121212"
+                }
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "n91965",
+                  "name": "appbar",
+                  "x": 0.0,
+                  "y": 0.0,
+                  "width": 390.0,
+                  "height": 56.0,
+                  "layout": "horizontal",
+                  "padding": [
+                    0.0,
+                    16.0
+                  ],
+                  "alignItems": "center",
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#1E1E1E"
+                    }
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n91966",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "WorldCredit",
+                      "fontFamily": "Roboto",
+                      "fontSize": 16.0,
+                      "fontWeight": 500,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n91967",
+                  "name": "balance card",
+                  "x": 16.0,
+                  "y": 72.0,
+                  "width": 358.0,
+                  "height": 120.0,
+                  "layout": "vertical",
+                  "gap": 8.0,
+                  "padding": [
+                    16.0,
+                    16.0
+                  ],
+                  "cornerRadius": 4.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#1E1E1E"
+                    }
+                  ],
+                  "effects": [
+                    {
+                      "type": "shadow",
+                      "offsetX": 0.0,
+                      "offsetY": 2.0,
+                      "blur": 6.0,
+                      "spread": 0.0,
+                      "color": "rgba(0,0,0,0.6)"
+                    }
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n91968",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "总待还款",
+                      "fontFamily": "Roboto",
+                      "fontSize": 12.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#9AA6BC"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "n91969",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "¥47,317.21",
+                      "fontFamily": "Roboto",
+                      "fontSize": 28.0,
+                      "fontWeight": 700,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n91970",
+                      "name": "linear progress track",
+                      "width": "fill_container",
+                      "height": 6.0,
+                      "cornerRadius": 3.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#4A4A4A"
+                        }
+                      ],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n91971",
+                  "name": "due card",
+                  "x": 16.0,
+                  "y": 204.0,
+                  "width": 358.0,
+                  "height": 96.0,
+                  "layout": "vertical",
+                  "gap": 8.0,
+                  "padding": [
+                    16.0,
+                    16.0
+                  ],
+                  "cornerRadius": 4.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#1E1E1E"
+                    }
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n91972",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "今天需还款 09-30",
+                      "fontFamily": "Roboto",
+                      "fontSize": 13.0,
+                      "fontWeight": 500,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "n91973",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "建设银行 · 尾号 9003 · ¥8,000.00",
+                      "fontFamily": "Roboto",
+                      "fontSize": 12.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#9AA6BC"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n91974",
+                      "name": "contained button",
+                      "width": 120.0,
+                      "height": 36.0,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "cornerRadius": 4.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#90CAF9"
+                        }
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n91975",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "立即还款",
+                          "fontFamily": "Roboto",
+                          "fontSize": 13.0,
+                          "fontWeight": 500,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#121212"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n91976",
+                  "name": "assets list",
+                  "x": 16.0,
+                  "y": 312.0,
+                  "width": 358.0,
+                  "height": 210.0,
+                  "layout": "vertical",
+                  "cornerRadius": 4.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#1E1E1E"
+                    }
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n91977",
+                      "name": "row / 已逾期",
+                      "width": "fill_container",
+                      "height": 70.0,
+                      "layout": "horizontal",
+                      "gap": 12.0,
+                      "padding": [
+                        0.0,
+                        16.0
+                      ],
+                      "alignItems": "center",
+                      "stroke": {
+                        "thickness": 1.0,
+                        "fill": [
+                          {
+                            "type": "solid",
+                            "color": "#2C2C2C"
+                          }
+                        ]
+                      },
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "n91978",
+                          "name": "avatar / 已逾期",
+                          "width": 40.0,
+                          "height": 40.0,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "cornerRadius": 999.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#333333"
+                            }
+                          ],
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "n91979",
+                              "iconFontName": "credit-card",
+                              "width": 18.0,
+                              "height": 18.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#9AA6BC"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "n91980",
+                          "name": "col / 已逾期",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2.0,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "n91981",
+                              "width": "fit_content",
+                              "height": "fit_content",
+                              "content": "已逾期",
+                              "fontFamily": "Roboto",
+                              "fontSize": 14.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#FFFFFF"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "n91982",
+                              "width": "fit_content",
+                              "height": "fit_content",
+                              "content": "2 笔待处理",
+                              "fontFamily": "Roboto",
+                              "fontSize": 11.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#9AA6BC"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n91983",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "¥7,361.1",
+                          "fontFamily": "Roboto",
+                          "fontSize": 14.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#FFFFFF"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n91984",
+                      "name": "row / 未来待还",
+                      "width": "fill_container",
+                      "height": 70.0,
+                      "layout": "horizontal",
+                      "gap": 12.0,
+                      "padding": [
+                        0.0,
+                        16.0
+                      ],
+                      "alignItems": "center",
+                      "stroke": {
+                        "thickness": 1.0,
+                        "fill": [
+                          {
+                            "type": "solid",
+                            "color": "#2C2C2C"
+                          }
+                        ]
+                      },
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "n91985",
+                          "name": "avatar / 未来待还",
+                          "width": 40.0,
+                          "height": 40.0,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "cornerRadius": 999.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#333333"
+                            }
+                          ],
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "n91986",
+                              "iconFontName": "credit-card",
+                              "width": 18.0,
+                              "height": 18.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#9AA6BC"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "n91987",
+                          "name": "col / 未来待还",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2.0,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "n91988",
+                              "width": "fit_content",
+                              "height": "fit_content",
+                              "content": "未来待还",
+                              "fontFamily": "Roboto",
+                              "fontSize": 14.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#FFFFFF"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "n91989",
+                              "width": "fit_content",
+                              "height": "fit_content",
+                              "content": "7 天内到期",
+                              "fontFamily": "Roboto",
+                              "fontSize": 11.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#9AA6BC"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n91990",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "¥12,804.98",
+                          "fontFamily": "Roboto",
+                          "fontSize": 14.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#FFFFFF"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n91991",
+                      "name": "row / 总欠款",
+                      "width": "fill_container",
+                      "height": 70.0,
+                      "layout": "horizontal",
+                      "gap": 12.0,
+                      "padding": [
+                        0.0,
+                        16.0
+                      ],
+                      "alignItems": "center",
+                      "stroke": {
+                        "thickness": 1.0,
+                        "fill": [
+                          {
+                            "type": "solid",
+                            "color": "#2C2C2C"
+                          }
+                        ]
+                      },
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "n91992",
+                          "name": "avatar / 总欠款",
+                          "width": 40.0,
+                          "height": 40.0,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "cornerRadius": 999.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#333333"
+                            }
+                          ],
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "n91993",
+                              "iconFontName": "credit-card",
+                              "width": 18.0,
+                              "height": 18.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#9AA6BC"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "n91994",
+                          "name": "col / 总欠款",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2.0,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "n91995",
+                              "width": "fit_content",
+                              "height": "fit_content",
+                              "content": "总欠款",
+                              "fontFamily": "Roboto",
+                              "fontSize": 14.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#FFFFFF"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "n91996",
+                              "width": "fit_content",
+                              "height": "fit_content",
+                              "content": "含未出账单",
+                              "fontFamily": "Roboto",
+                              "fontSize": 11.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#9AA6BC"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n91997",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "¥47,317.21",
+                          "fontFamily": "Roboto",
+                          "fontSize": 14.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#FFFFFF"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n91998",
+                  "name": "switch row",
+                  "x": 16.0,
+                  "y": 534.0,
+                  "width": 358.0,
+                  "height": 40.0,
+                  "layout": "horizontal",
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n91999",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "隐藏金额",
+                      "fontFamily": "Roboto",
+                      "fontSize": 13.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#9AA6BC"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92000",
+                      "name": "switch",
+                      "width": 40.0,
+                      "height": 20.0,
+                      "cornerRadius": 999.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#90CAF9"
+                        }
+                      ],
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "id": "n92001",
+                          "name": "knob",
+                          "width": 16.0,
+                          "height": 16.0,
+                          "cornerRadius": 999.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#121212"
+                            }
+                          ],
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n92002",
+                  "name": "fab",
+                  "x": 306.0,
+                  "y": 736.0,
+                  "width": 56.0,
+                  "height": 56.0,
+                  "layout": "horizontal",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "cornerRadius": 16.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#90CAF9"
+                    }
+                  ],
+                  "effects": [
+                    {
+                      "type": "shadow",
+                      "offsetX": 0.0,
+                      "offsetY": 4.0,
+                      "blur": 10.0,
+                      "spread": 0.0,
+                      "color": "rgba(0,0,0,0.6)"
+                    }
+                  ],
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "n92003",
+                      "iconFontName": "plus",
+                      "width": 22.0,
+                      "height": 22.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#121212"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n92004",
+                  "name": "nav bar",
+                  "x": 0.0,
+                  "y": 788.0,
+                  "width": 390.0,
+                  "height": 56.0,
+                  "layout": "horizontal",
+                  "justifyContent": "space_around",
+                  "alignItems": "center",
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#1E1E1E"
+                    }
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n92005",
+                      "name": "ntab / 首页",
+                      "layout": "vertical",
+                      "gap": 3.0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "n92006",
+                          "iconFontName": "home",
+                          "width": 20.0,
+                          "height": 20.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#90CAF9"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92007",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "首页",
+                          "fontFamily": "Roboto",
+                          "fontSize": 10.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#90CAF9"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92008",
+                      "name": "ntab / 账单",
+                      "layout": "vertical",
+                      "gap": 3.0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "n92009",
+                          "iconFontName": "receipt",
+                          "width": 20.0,
+                          "height": 20.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#9AA6BC"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92010",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "账单",
+                          "fontFamily": "Roboto",
+                          "fontSize": 10.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#9AA6BC"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92011",
+                      "name": "ntab / 我的",
+                      "layout": "vertical",
+                      "gap": 3.0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "n92012",
+                          "iconFontName": "user",
+                          "width": 20.0,
+                          "height": 20.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#9AA6BC"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92013",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "我的",
+                          "fontFamily": "Roboto",
+                          "fontSize": 10.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#9AA6BC"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "n92014",
+              "name": "phone obsidian",
+              "x": 490.0,
+              "y": 60.0,
+              "width": 390.0,
+              "height": 844.0,
+              "layout": "none",
+              "clipContent": true,
+              "fill": [
+                {
+                  "type": "solid",
+                  "color": "#0A0F1E"
+                }
+              ],
+              "children": [
+                {
+                  "type": "rectangle",
+                  "id": "n92015",
+                  "name": "glow bg",
+                  "x": 40.0,
+                  "y": 60.0,
+                  "width": 320.0,
+                  "height": 220.0,
+                  "cornerRadius": 160.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#12203A"
+                    }
+                  ],
+                  "children": []
+                },
+                {
+                  "type": "frame",
+                  "id": "n92016",
+                  "name": "header",
+                  "x": 0.0,
+                  "y": 24.0,
+                  "width": 390.0,
+                  "layout": "horizontal",
+                  "gap": 12.0,
+                  "padding": [
+                    0.0,
+                    20.0
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n92017",
+                      "name": "avatar",
+                      "width": 40.0,
+                      "height": 40.0,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "cornerRadius": 999.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#3B6FE0"
+                        }
+                      ],
+                      "effects": [
+                        {
+                          "type": "shadow",
+                          "offsetX": 0.0,
+                          "offsetY": 0.0,
+                          "blur": 18.0,
+                          "spread": 0.0,
+                          "color": "rgba(59,111,224,0.5)"
+                        }
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n92018",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "呼",
+                          "fontSize": 15.0,
+                          "fontWeight": 700,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#FFFFFF"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92019",
+                      "name": "heading",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2.0,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n92020",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "概览",
+                          "fontSize": 11.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#9AA6BC"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92021",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "呼博",
+                          "fontSize": 15.0,
+                          "fontWeight": 700,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#F5F7FA"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92022",
+                      "name": "privacy",
+                      "width": 44.0,
+                      "height": 44.0,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "cornerRadius": 999.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#131A2A"
+                        }
+                      ],
+                      "stroke": {
+                        "thickness": 1.0,
+                        "fill": [
+                          {
+                            "type": "solid",
+                            "color": "#26304A"
+                          }
+                        ]
+                      },
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "n92023",
+                          "iconFontName": "eye-off",
+                          "width": 18.0,
+                          "height": 18.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#F5F7FA"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n92024",
+                  "name": "hero",
+                  "x": 0.0,
+                  "y": 92.0,
+                  "width": 390.0,
+                  "layout": "vertical",
+                  "gap": 10.0,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n92025",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "总待还款",
+                      "fontSize": 12.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#9AA6BC"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92026",
+                      "name": "amount row",
+                      "layout": "horizontal",
+                      "gap": 14.0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "n92027",
+                          "iconFontName": "chevron-left",
+                          "width": 16.0,
+                          "height": 16.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#9AA6BC"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92028",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "¥47,317.21",
+                          "fontFamily": "$font.family.amount",
+                          "fontSize": 36.0,
+                          "fontWeight": 700,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#FFFFFF"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "icon_font",
+                          "id": "n92029",
+                          "iconFontName": "chevron-right",
+                          "width": 16.0,
+                          "height": 16.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#9AA6BC"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "n92030",
+                      "name": "dot",
+                      "x": 40.0,
+                      "y": 229.0,
+                      "width": 6.0,
+                      "height": 6.0,
+                      "cornerRadius": 999.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#5B8DEF"
+                        }
+                      ],
+                      "children": []
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "n92031",
+                      "name": "dot",
+                      "x": 90.0,
+                      "y": 216.0,
+                      "width": 6.0,
+                      "height": 6.0,
+                      "cornerRadius": 999.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#E5484D"
+                        }
+                      ],
+                      "children": []
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "n92032",
+                      "name": "dot",
+                      "x": 140.0,
+                      "y": 203.0,
+                      "width": 6.0,
+                      "height": 6.0,
+                      "cornerRadius": 999.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#5B8DEF"
+                        }
+                      ],
+                      "children": []
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "n92033",
+                      "name": "dot",
+                      "x": 190.0,
+                      "y": 227.0,
+                      "width": 6.0,
+                      "height": 6.0,
+                      "cornerRadius": 999.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#E5484D"
+                        }
+                      ],
+                      "children": []
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "n92034",
+                      "name": "dot",
+                      "x": 240.0,
+                      "y": 214.0,
+                      "width": 6.0,
+                      "height": 6.0,
+                      "cornerRadius": 999.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#5B8DEF"
+                        }
+                      ],
+                      "children": []
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "n92035",
+                      "name": "dot",
+                      "x": 290.0,
+                      "y": 201.0,
+                      "width": 6.0,
+                      "height": 6.0,
+                      "cornerRadius": 999.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#E5484D"
+                        }
+                      ],
+                      "children": []
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "n92036",
+                      "name": "dot",
+                      "x": 330.0,
+                      "y": 198.0,
+                      "width": 6.0,
+                      "height": 6.0,
+                      "cornerRadius": 999.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#5B8DEF"
+                        }
+                      ],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n92037",
+                  "name": "due card",
+                  "x": 20.0,
+                  "y": 288.0,
+                  "width": 350.0,
+                  "layout": "vertical",
+                  "gap": 10.0,
+                  "padding": [
+                    16.0,
+                    16.0
+                  ],
+                  "cornerRadius": 16.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#131A2A"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#26304A"
+                      }
+                    ]
+                  },
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n92038",
+                      "name": "head",
+                      "width": "fill_container",
+                      "layout": "horizontal",
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n92039",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "今天需还款 09-30",
+                          "fontSize": 13.0,
+                          "fontWeight": 700,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#F5F7FA"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92040",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "1 笔",
+                          "fontSize": 11.0,
+                          "fontWeight": 600,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#F0C75E"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92041",
+                      "name": "row",
+                      "width": "fill_container",
+                      "layout": "horizontal",
+                      "gap": 10.0,
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "n92042",
+                          "name": "left",
+                          "layout": "vertical",
+                          "gap": 3.0,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "n92043",
+                              "width": "fit_content",
+                              "height": "fit_content",
+                              "content": "建设银行 · 尾号 9003",
+                              "fontSize": 13.0,
+                              "fontWeight": 600,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F5F7FA"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "n92044",
+                              "width": "fit_content",
+                              "height": "fit_content",
+                              "content": "本期还款日 今天 · ¥8,000.00",
+                              "fontSize": 11.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#F0C75E"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "n92045",
+                          "name": "discover button",
+                          "width": "fit_content",
+                          "height": 44.0,
+                          "layout": "horizontal",
+                          "padding": [
+                            0.0,
+                            18.0
+                          ],
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "cornerRadius": 14.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#3B6FE0"
+                            }
+                          ],
+                          "effects": [
+                            {
+                              "type": "shadow",
+                              "offsetX": 0.0,
+                              "offsetY": 4.0,
+                              "blur": 18.0,
+                              "spread": 0.0,
+                              "color": "rgba(59,111,224,0.5)"
+                            }
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "n92046",
+                              "width": "fit_content",
+                              "height": "fit_content",
+                              "content": "立即还款",
+                              "fontSize": 12.0,
+                              "fontWeight": 600,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#FFFFFF"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n92047",
+                  "name": "offers card",
+                  "x": 20.0,
+                  "y": 448.0,
+                  "width": 350.0,
+                  "layout": "horizontal",
+                  "gap": 12.0,
+                  "padding": [
+                    14.0,
+                    16.0
+                  ],
+                  "alignItems": "center",
+                  "cornerRadius": 16.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#FFFFFF0F"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#FFFFFF1A"
+                      }
+                    ]
+                  },
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n92048",
+                      "name": "icon",
+                      "width": 40.0,
+                      "height": 40.0,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "cornerRadius": 12.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#332A14"
+                        }
+                      ],
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "n92049",
+                          "iconFontName": "tag",
+                          "width": 20.0,
+                          "height": 20.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#F0C75E"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92050",
+                      "name": "text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2.0,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n92051",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "今日可享优惠",
+                          "fontSize": 13.0,
+                          "fontWeight": 700,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#F5F7FA"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92052",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "3 张卡可享 · 5 项有效",
+                          "fontSize": 11.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#9AA6BC"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon_font",
+                      "id": "n92053",
+                      "iconFontName": "chevron-right",
+                      "width": 16.0,
+                      "height": 16.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#9AA6BC"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n92054",
+                  "name": "status bar card",
+                  "x": 20.0,
+                  "y": 556.0,
+                  "width": 350.0,
+                  "layout": "vertical",
+                  "gap": 10.0,
+                  "padding": [
+                    16.0,
+                    16.0
+                  ],
+                  "cornerRadius": 16.0,
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#131A2A"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#26304A"
+                      }
+                    ]
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "n92055",
+                      "width": "fit_content",
+                      "height": "fit_content",
+                      "content": "本月额度已用 62%",
+                      "fontSize": 12.0,
+                      "fontWeight": 600,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#F5F7FA"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92056",
+                      "name": "track",
+                      "width": "fill_container",
+                      "height": 8.0,
+                      "cornerRadius": 999.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#1A2334"
+                        }
+                      ],
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "id": "n92057",
+                          "name": "fill",
+                          "width": 197.0,
+                          "height": 8.0,
+                          "cornerRadius": 999.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#5B8DEF"
+                            }
+                          ],
+                          "effects": [
+                            {
+                              "type": "shadow",
+                              "offsetX": 0.0,
+                              "offsetY": 0.0,
+                              "blur": 10.0,
+                              "spread": 0.0,
+                              "color": "rgba(91,141,239,0.6)"
+                            }
+                          ],
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n92058",
+                  "name": "assets",
+                  "x": 20.0,
+                  "y": 660.0,
+                  "width": 350.0,
+                  "layout": "vertical",
+                  "gap": 10.0,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n92059",
+                      "name": "arow / 已逾期",
+                      "width": "fill_container",
+                      "height": 52.0,
+                      "layout": "horizontal",
+                      "gap": 12.0,
+                      "padding": [
+                        0.0,
+                        14.0
+                      ],
+                      "alignItems": "center",
+                      "cornerRadius": 14.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#131A2A"
+                        }
+                      ],
+                      "stroke": {
+                        "thickness": 1.0,
+                        "fill": [
+                          {
+                            "type": "solid",
+                            "color": "#26304A"
+                          }
+                        ]
+                      },
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "n92060",
+                          "name": "ric / 已逾期",
+                          "width": 32.0,
+                          "height": 32.0,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "cornerRadius": 10.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#1A2334"
+                            }
+                          ],
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "n92061",
+                              "iconFontName": "alert-circle",
+                              "width": 15.0,
+                              "height": 15.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#7AADFF"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92062",
+                          "width": "fill_container",
+                          "height": "fit_content",
+                          "content": "已逾期",
+                          "fontSize": 13.0,
+                          "fontWeight": 600,
+                          "textGrowth": "fixed-width",
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#F5F7FA"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92063",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "¥7,361.1",
+                          "fontFamily": "$font.family.amount",
+                          "fontSize": 13.0,
+                          "fontWeight": 600,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#F5F7FA"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92064",
+                      "name": "arow / 未来待还",
+                      "width": "fill_container",
+                      "height": 52.0,
+                      "layout": "horizontal",
+                      "gap": 12.0,
+                      "padding": [
+                        0.0,
+                        14.0
+                      ],
+                      "alignItems": "center",
+                      "cornerRadius": 14.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#131A2A"
+                        }
+                      ],
+                      "stroke": {
+                        "thickness": 1.0,
+                        "fill": [
+                          {
+                            "type": "solid",
+                            "color": "#26304A"
+                          }
+                        ]
+                      },
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "n92065",
+                          "name": "ric / 未来待还",
+                          "width": 32.0,
+                          "height": 32.0,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "cornerRadius": 10.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#1A2334"
+                            }
+                          ],
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "n92066",
+                              "iconFontName": "clock",
+                              "width": 15.0,
+                              "height": 15.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#7AADFF"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92067",
+                          "width": "fill_container",
+                          "height": "fit_content",
+                          "content": "未来待还",
+                          "fontSize": 13.0,
+                          "fontWeight": 600,
+                          "textGrowth": "fixed-width",
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#F5F7FA"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92068",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "¥12,804.98",
+                          "fontFamily": "$font.family.amount",
+                          "fontSize": 13.0,
+                          "fontWeight": 600,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#F5F7FA"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92069",
+                      "name": "arow / 总欠款",
+                      "width": "fill_container",
+                      "height": 52.0,
+                      "layout": "horizontal",
+                      "gap": 12.0,
+                      "padding": [
+                        0.0,
+                        14.0
+                      ],
+                      "alignItems": "center",
+                      "cornerRadius": 14.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#131A2A"
+                        }
+                      ],
+                      "stroke": {
+                        "thickness": 1.0,
+                        "fill": [
+                          {
+                            "type": "solid",
+                            "color": "#26304A"
+                          }
+                        ]
+                      },
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "n92070",
+                          "name": "ric / 总欠款",
+                          "width": 32.0,
+                          "height": 32.0,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "cornerRadius": 10.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#1A2334"
+                            }
+                          ],
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "n92071",
+                              "iconFontName": "wallet",
+                              "width": 15.0,
+                              "height": 15.0,
+                              "fill": [
+                                {
+                                  "type": "solid",
+                                  "color": "#7AADFF"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92072",
+                          "width": "fill_container",
+                          "height": "fit_content",
+                          "content": "总欠款",
+                          "fontSize": 13.0,
+                          "fontWeight": 600,
+                          "textGrowth": "fixed-width",
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#F5F7FA"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92073",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "¥47,317.21",
+                          "fontFamily": "$font.family.amount",
+                          "fontSize": 13.0,
+                          "fontWeight": 600,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#F5F7FA"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n92074",
+                  "name": "nav",
+                  "x": 0.0,
+                  "y": 788.0,
+                  "width": 390.0,
+                  "height": 56.0,
+                  "layout": "horizontal",
+                  "justifyContent": "space_around",
+                  "alignItems": "center",
+                  "fill": [
+                    {
+                      "type": "solid",
+                      "color": "#10162A"
+                    }
+                  ],
+                  "stroke": {
+                    "thickness": 1.0,
+                    "fill": [
+                      {
+                        "type": "solid",
+                        "color": "#1C2438"
+                      }
+                    ]
+                  },
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n92075",
+                      "name": "center fab",
+                      "width": 44.0,
+                      "height": 44.0,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "cornerRadius": 999.0,
+                      "fill": [
+                        {
+                          "type": "solid",
+                          "color": "#3B6FE0"
+                        }
+                      ],
+                      "effects": [
+                        {
+                          "type": "shadow",
+                          "offsetX": 0.0,
+                          "offsetY": 4.0,
+                          "blur": 18.0,
+                          "spread": 0.0,
+                          "color": "rgba(59,111,224,0.5)"
+                        }
+                      ],
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "n92076",
+                          "iconFontName": "plus",
+                          "width": 20.0,
+                          "height": 20.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#FFFFFF"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92077",
+                      "name": "ntab / 首页",
+                      "layout": "vertical",
+                      "gap": 3.0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "n92078",
+                          "iconFontName": "home",
+                          "width": 20.0,
+                          "height": 20.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#7AADFF"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92079",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "首页",
+                          "fontSize": 10.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#7AADFF"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92080",
+                      "name": "ntab / 账单",
+                      "layout": "vertical",
+                      "gap": 3.0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "n92081",
+                          "iconFontName": "receipt",
+                          "width": 20.0,
+                          "height": 20.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#9AA6BC"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92082",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "账单",
+                          "fontSize": 10.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#9AA6BC"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n92083",
+                      "name": "ntab / 我的",
+                      "layout": "vertical",
+                      "gap": 3.0,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "n92084",
+                          "iconFontName": "user",
+                          "width": 20.0,
+                          "height": 20.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#9AA6BC"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "n92085",
+                          "width": "fit_content",
+                          "height": "fit_content",
+                          "content": "我的",
+                          "fontSize": 10.0,
+                          "fill": [
+                            {
+                              "type": "solid",
+                              "color": "#9AA6BC"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     }

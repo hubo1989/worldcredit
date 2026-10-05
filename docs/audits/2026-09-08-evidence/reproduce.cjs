@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const vm = require('node:vm');
 const { createRequire } = require('node:module');
-const root = '/Users/hubo/Projects/worldcredit';
+const root = '/Volumes/external/Projects/worldcredit';
 const req = createRequire(root + '/package.json');
 const ts = req('typescript');
 function load(file, deps = {}, extra = '') {

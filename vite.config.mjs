@@ -3,6 +3,7 @@ import { defineConfig, loadEnv } from "vite";
 import vinext from "vinext";
 import { VitePWA } from "vite-plugin-pwa";
 import { cloudflare } from "@cloudflare/vite-plugin";
+import tailwindcss from "@tailwindcss/vite";
 
 const requiredPublicEnv = [];
 
@@ -58,6 +59,7 @@ export default defineConfig(({ mode, isSsrBuild }) => {
     ),
     plugins: [
       vinext(),
+      tailwindcss(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
       }),
