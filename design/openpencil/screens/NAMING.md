@@ -220,3 +220,15 @@ frame 名完整形态：
   在没有 `exports/approved/` 导帧前，Candidate 没有任何像素级门禁。
 - `429×932` 等宽屏变体、超长中文与超大金额仍靠人工与后续实现阶段验证。
 - 设计源与运行时 token 的漂移已由 `scripts/check-token-drift.py` 覆盖（见 `TOKEN_DRIFT.md`），但间距 / 圆角 / 字号 / 字重与暗色世界仍未纳入。
+
+## 8. B0-2 采纳的补充约定（2026-10-05，随候选样例批次）
+
+- `candidate.<surface>.<key>` 的 surface 可扩展为 `state` / `wireframe`：
+  状态样例（loading / empty / error）与低保真层级图用**独立 head**
+  （如 `candidate.state.dashboard-loading`、`candidate.wireframe.dashboard`），
+  登记进 `_contract.json` 的 `uncovered`——几何/命名检查覆盖，字段契约豁免。
+  原因：字段契约要求同 head 所有变体满足全部锚点，与"骨架/空态天然缺字段"冲突。
+- `· <variant> · W×H` 的 variant 语法仍保留给**满足完整契约的状态无关变体**
+  （如 430 宽屏默认态）。
+- 状态样例转正（进入 B1 实现契约）时，应升格为独立 screens 条目或带状态维度的
+  契约扩展，不应长期停留在 uncovered。

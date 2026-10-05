@@ -175,4 +175,71 @@ const candidateDashboard = (w, h) => {
 };
 
 candidateDashboard(390, 844);
-console.log('candidate sample built');
+candidateDashboard(430, 932);
+
+// ============================================================
+// B0-2 状态样例（独立 head + uncovered 登记：几何检查覆盖、字段契约豁免）
+// ============================================================
+const stateShell = (name, w, h) => {
+  const phone = I(null, { type: 'frame', name, width: w, height: h, layout: 'none', clipContent: true, fill: s(C.canvas) });
+  statusBar(phone, w);
+  const header = I(phone, { type: 'frame', name: 'page header', x: 0, y: SB_H, width: w, height: 64, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, PAD] });
+  const hl = I(header, { type: 'frame', name: 'heading', layout: 'vertical', gap: 2 });
+  I(hl, { type: 'text', content: '概览', fontSize: 20, fontWeight: 700, fill: s(C.navy), textGrowth: 'fixed-width' });
+  I(hl, { type: 'text', content: '管控信用卡资产与还款日程', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
+  const content = I(phone, {
+    type: 'frame', name: 'content', x: 0, y: SB_H + 64, width: w, height: h - SB_H - 64 - NAV_H,
+    layout: 'vertical', alignItems: 'center', justifyContent: 'center', gap: 12, padding: [0, PAD], clipContent: true, fill: s(C.canvas),
+  });
+  bottomNav(phone, w, h, '首页');
+  return content;
+};
+
+// 加载：骨架占位（skeleton token）
+const loading = stateShell('candidate.state.dashboard-loading · 390×844', 390, 844);
+const loadBox = I(loading, { type: 'frame', name: 'loading block', width: 'fill_container', layout: 'vertical', gap: 12, padding: [16, 16], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+I(loadBox, { type: 'rectangle', name: 'skeleton title', width: 120, height: 14, cornerRadius: 999, fill: s('$color.bg.skeleton') });
+for (const bw of [280, 240, 260, 180]) {
+  I(loadBox, { type: 'rectangle', name: 'skeleton row', width: bw, height: 12, cornerRadius: 999, fill: s('$color.bg.skeleton') });
+}
+I(loadBox, { type: 'text', content: '正在同步账单…', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
+
+// 空态：引导记一笔
+const empty = stateShell('candidate.state.dashboard-empty · 390×844', 390, 844);
+const emptyBox = I(empty, { type: 'frame', name: 'empty block', width: 'fill_container', layout: 'vertical', gap: 10, alignItems: 'center', padding: [24, 20], cornerRadius: 12, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) } });
+I(emptyBox, { type: 'icon_font', iconFontName: 'inbox', width: 32, height: 32, fill: s(C.text2) });
+I(emptyBox, { type: 'text', content: '还没有账单', fontSize: 15, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
+I(emptyBox, { type: 'text', content: '同步邮箱或手动记一笔', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
+const emptyCta = I(emptyBox, { type: 'frame', name: 'cta', layout: 'horizontal', padding: [10, 20], cornerRadius: 999, fill: s(C.primary) });
+I(emptyCta, { type: 'text', content: '记一笔', fontSize: 13, fontWeight: 600, fill: s(C.onDark) });
+
+// 错误：可重试
+const err = stateShell('candidate.state.dashboard-error · 390×844', 390, 844);
+const errBox = I(err, { type: 'frame', name: 'error block', width: 'fill_container', layout: 'vertical', gap: 10, alignItems: 'center', padding: [24, 20], cornerRadius: 12, fill: s(C.dangerSoft), stroke: { thickness: 1, fill: s(C.dangerSoft) } });
+I(errBox, { type: 'icon_font', iconFontName: 'alert-circle', width: 32, height: 32, fill: s(C.dangerInk) });
+I(errBox, { type: 'text', content: '加载失败', fontSize: 15, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
+I(errBox, { type: 'text', content: '网络异常，请重试', fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
+const retryCta = I(errBox, { type: 'frame', name: 'cta', layout: 'horizontal', padding: [10, 20], cornerRadius: 999, fill: s(C.dangerInk) });
+I(retryCta, { type: 'text', content: '重试', fontSize: 13, fontWeight: 600, fill: s(C.onDark) });
+
+// ============================================================
+// B0-2 低保真信息层级图（wireframe：只表达层级与分组，不做视觉）
+// ============================================================
+const wire = I(null, { type: 'frame', name: 'candidate.wireframe.dashboard · 390×844', width: 390, height: 844, layout: 'none', clipContent: true, fill: s(C.surface) });
+const wireBox = (parent, label, x, y, w2, h2) => {
+  const b = I(parent, { type: 'frame', name: 'wire / ' + label, x, y, width: w2, height: h2, layout: 'vertical', gap: 6, padding: [8, 10], cornerRadius: 6, fill: s(C.canvas), stroke: { thickness: 1, fill: s(C.border) } });
+  I(b, { type: 'text', content: label, fontSize: 11, fontWeight: 600, fill: s(C.text2), textGrowth: 'fixed-width' });
+  return b;
+};
+wireBox(wire, '状态栏', 0, 0, 390, 48);
+wireBox(wire, '页头: 概览 + 头像', 0, 48, 390, 64);
+wireBox(wire, '逾期风险条 + 一键全部还款(有逾期时)', 12, 120, 366, 52);
+wireBox(wire, '持卡人筛选 pills', 12, 180, 366, 40);
+wireBox(wire, '总待还款 hero(含逾期 / 未来 7 天)', 12, 228, 366, 120);
+wireBox(wire, '指标 2x2: 已逾期 / 未来待还(7/14/30) / 总欠款 / 未出账单', 12, 356, 366, 150);
+wireBox(wire, '账户 + 持卡人 pills', 12, 514, 366, 40);
+wireBox(wire, '金刚区: 记一笔 / 优惠 / 权益 / 邮箱账单', 12, 562, 366, 72);
+wireBox(wire, '逾期明细: 标题 + 查看全部 + 账单行(金额 / 全额结清)', 12, 642, 366, 96);
+wireBox(wire, '底部导航 56 + 安全区 34', 0, 754, 390, 90);
+
+console.log('candidate set built: 390/430 hi-fi + loading/empty/error + wireframe');
