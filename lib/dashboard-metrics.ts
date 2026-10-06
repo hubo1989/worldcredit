@@ -36,6 +36,8 @@ export function billCurrency(bill: BillDashboardItem, fallback: string): string 
  * 都是「折算后的真数」，同时附带 fx 元数据：汇率不可用时跨币种部分被排除在数字
  * 之外（而不是按 1:1 混进去），UI 通过 fx 标记向用户说明。
  */
+export type DashboardMetrics = ReturnType<typeof computeMetrics>
+
 export function computeMetrics(
   bills: BillDashboardItem[],
   futureDays: FutureRange,
