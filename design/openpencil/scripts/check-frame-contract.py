@@ -406,7 +406,9 @@ def check_doc(doc: dict, contract: dict, registry: dict | None) -> tuple[int, li
             present = by_head.get(head) or []
             entry = {"key": key, "role": role, "head": head, "present": bool(present)}
             # 2026-10-05 批准：屏级 requiredRoles 覆盖全局默认（如 B0-2 后收紧 dashboard 的 candidate 为必需）
-            screen_required = screen.get("requiredRoles") or required_roles
+            # 屏级覆盖全局默认；显式 [] 表达「本屏无必需角色」，不得被 or 兜底吞掉
+            screen_required = (screen["requiredRoles"]
+                               if "requiredRoles" in screen else required_roles)
             if not present:
                 if role in screen_required:
                     failures.append(f"missing-frame {head}（role={role} 为必需）")

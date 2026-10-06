@@ -1,6 +1,6 @@
 # WorldCredit 家庭财务管理审计与改造计划
 
-审计日期：2026-09-08。代码基线：`a4b7418b4db62f7b2a0637102afaf02d6f59de26`，本地 `main`。实际仓库：`/Users/hubo/Projects/worldcredit`；会话目录 `/Users/hubo/worktrees/worldcredit` 为容器目录，不是 Git 仓库。
+审计日期：2026-09-08。代码基线：`a4b7418b4db62f7b2a0637102afaf02d6f59de26`，本地 `main`。实际仓库：`/Volumes/external/Projects/worldcredit`；会话目录 `/Volumes/external/worktrees/worldcredit` 为容器目录，不是 Git 仓库。
 
 ## 1. 结论与范围
 
@@ -23,7 +23,7 @@
 
 现有 `npm test` 仍是主动退出失败的占位脚本，不能作为交付检查入口。未执行 `scripts/test-full-flow.mjs`：该脚本会向配置的远端写测试持卡人、卡片等数据，不适合作为本次只读审计的验证方式。
 
-复现数据：[reproduction-results.json](</Users/hubo/Projects/worldcredit/docs/audits/2026-09-08-evidence/reproduction-results.json>)。复现脚本：[reproduce.cjs](</Users/hubo/Projects/worldcredit/docs/audits/2026-09-08-evidence/reproduce.cjs>)。脚本读取上述实际仓库、使用已安装 TypeScript 执行源函数；不连接数据库，不写业务数据。
+复现数据：[reproduction-results.json](</Volumes/external/Projects/worldcredit/docs/audits/2026-09-08-evidence/reproduction-results.json>)。复现脚本：[reproduce.cjs](</Volumes/external/Projects/worldcredit/docs/audits/2026-09-08-evidence/reproduce.cjs>)。脚本读取上述实际仓库、使用已安装 TypeScript 执行源函数；不连接数据库，不写业务数据。
 
 ## 2. 功能覆盖矩阵
 
@@ -60,7 +60,7 @@
 
 必须引入账户/子账户币种、账单币种、支付币种，默认分币种汇总；折算总额必须带汇率、来源、时点和“估算”标记。没有汇率时不得默认 1:1。跨币种还款保存实付金额、入账金额及费用，不使用展示汇率替代银行结算结果。
 
-证据：[首页:45](</Users/hubo/Projects/worldcredit/app/(mobile)/dashboard/page.tsx:45>)、[schema:116](</Users/hubo/Projects/worldcredit/db/schema.sql:116>)、[同步:180](</Users/hubo/Projects/worldcredit/lib/api/sync-gmail.ts:180>)、[通知:120](</Users/hubo/Projects/worldcredit/lib/notifications.ts:120>)。
+证据：[首页:45](</Volumes/external/Projects/worldcredit/app/(mobile)/dashboard/page.tsx:45>)、[schema:116](</Volumes/external/Projects/worldcredit/db/schema.sql:116>)、[同步:180](</Volumes/external/Projects/worldcredit/lib/api/sync-gmail.ts:180>)、[通知:120](</Volumes/external/Projects/worldcredit/lib/notifications.ts:120>)。
 
 ### F02 · P0：部分还款、已还状态、逾期在各模块不一致
 
@@ -68,7 +68,7 @@
 
 此外，状态函数优先返回 `partial`，因此不能同时表达“部分还款且超过到期日”。应分离结清进度、最低应还完成度、全额到期未结清、银行确认逾期等维度；不能把只还最低与全额结清混同，也不能把产品内“到期未结清”直接宣称为银行征信逾期。原有“免息天数”有路径直接使用距还款日天数，应改为清楚的日期指标，免息资格需由实际产品规则确认。
 
-证据：[analytics:86](</Users/hubo/Projects/worldcredit/lib/api/analytics.ts:86>)、[holders:257](</Users/hubo/Projects/worldcredit/lib/api/holders.ts:257>)、[export:268](</Users/hubo/Projects/worldcredit/lib/export.ts:268>)、[聚合:191](</Users/hubo/Projects/worldcredit/lib/api/bills.ts:191>)、[详情:25](</Users/hubo/Projects/worldcredit/app/(mobile)/bills/[id]/page.tsx:25>)。
+证据：[analytics:86](</Volumes/external/Projects/worldcredit/lib/api/analytics.ts:86>)、[holders:257](</Volumes/external/Projects/worldcredit/lib/api/holders.ts:257>)、[export:268](</Volumes/external/Projects/worldcredit/lib/export.ts:268>)、[聚合:191](</Volumes/external/Projects/worldcredit/lib/api/bills.ts:191>)、[详情:25](</Volumes/external/Projects/worldcredit/app/(mobile)/bills/[id]/page.tsx:25>)。
 
 ### F03 · P0：普通还款不具备稳定重试与统一事务
 
@@ -76,7 +76,7 @@
 
 统一还款命令：操作发起时生成稳定 request_id，服务端校验归属、锁定必要记录、记流水及分配，再返回一致余额。同一 request_id 只能产生一次效果。误录通过冲正及重新分配修复；“登记已还”与实际银行扣款明确区分，系统不冒充支付通道。
 
-证据：[payments:17](</Users/hubo/Projects/worldcredit/lib/api/payments.ts:17>)、[单笔结清:489](</Users/hubo/Projects/worldcredit/lib/api/bills.ts:489>)、[详情还款:78](</Users/hubo/Projects/worldcredit/app/(mobile)/bills/[id]/page.tsx:78>)、[批量 RPC:30](</Users/hubo/Projects/worldcredit/migrations/20260901000001_add-atomic-bill-payment.sql:30>)。
+证据：[payments:17](</Volumes/external/Projects/worldcredit/lib/api/payments.ts:17>)、[单笔结清:489](</Volumes/external/Projects/worldcredit/lib/api/bills.ts:489>)、[详情还款:78](</Volumes/external/Projects/worldcredit/app/(mobile)/bills/[id]/page.tsx:78>)、[批量 RPC:30](</Volumes/external/Projects/worldcredit/migrations/20260901000001_add-atomic-bill-payment.sql:30>)。
 
 ### F04 · P0：查询截断和余额口径可能漏掉新的应付
 
@@ -84,7 +84,7 @@
 
 应分别查询未结清事项和分页历史，统计在完整数据集上计算。长期负债不能把历期月结单简单累加：如果新月结单包含旧欠款，直接相加会重复计算。旧记录缺少期初余额及结转证据时，应标记待核对，而不是自动合并或清账。
 
-证据：[首页查询:125](</Users/hubo/Projects/worldcredit/app/(mobile)/dashboard/page.tsx:125>)、[排序及上限:123](</Users/hubo/Projects/worldcredit/lib/api/bills.ts:123>)、[卡片账务查询:306](</Users/hubo/Projects/worldcredit/lib/api/bills.ts:306>)。
+证据：[首页查询:125](</Volumes/external/Projects/worldcredit/app/(mobile)/dashboard/page.tsx:125>)、[排序及上限:123](</Volumes/external/Projects/worldcredit/lib/api/bills.ts:123>)、[卡片账务查询:306](</Volumes/external/Projects/worldcredit/lib/api/bills.ts:306>)。
 
 ### F05 · P0：邮件匹配、默认建卡和去重会错误归属或隐藏账单
 
@@ -94,7 +94,7 @@ Gmail 展示去重忽略币种和成员；“同周期保留最大金额”及�
 
 只有唯一、完整匹配才能自动关联；不确定时进入待确认队列。原始消息保留，重复关系单独记录；产品、额度、成员、币种未知就保留未知。禁止把最大金额当作真实版本判定依据。
 
-证据：[同步:136](</Users/hubo/Projects/worldcredit/lib/api/sync-gmail.ts:136>)、[默认额度:193](</Users/hubo/Projects/worldcredit/lib/api/sync-gmail.ts:193>)、[默认地区:145](</Users/hubo/Projects/worldcredit/lib/api/emailBills.ts:145>)、[Worker 匹配](</Users/hubo/Projects/worldcredit/email-worker/src/index.ts>)、[去重:177](</Users/hubo/Projects/worldcredit/lib/api/gmail-ledger.ts:177>)。
+证据：[同步:136](</Volumes/external/Projects/worldcredit/lib/api/sync-gmail.ts:136>)、[默认额度:193](</Volumes/external/Projects/worldcredit/lib/api/sync-gmail.ts:193>)、[默认地区:145](</Volumes/external/Projects/worldcredit/lib/api/emailBills.ts:145>)、[Worker 匹配](</Volumes/external/Projects/worldcredit/email-worker/src/index.ts>)、[去重:177](</Volumes/external/Projects/worldcredit/lib/api/gmail-ledger.ts:177>)。
 
 ### F06 · P0：导入链路可以绕过草稿并修改正式账单
 
@@ -104,7 +104,7 @@ Worker 的 upsert 客户端也没有显式声明 `card_id,bill_month` 冲突目�
 
 统一原始来源→解析版本→草稿→差异比较→确认→正式入账。已确认金额和已还事实不得被识别结果静默改写。变更必须有来源、操作者、前后值、时间及回退/冲正方式。
 
-证据：[设计约束:382](</Users/hubo/Projects/worldcredit/docs/plans/WorldCredit 产品需求与设计规范.md:382>)、[邮件覆盖:209](</Users/hubo/Projects/worldcredit/lib/api/emailBills.ts:209>)、[Worker](</Users/hubo/Projects/worldcredit/email-worker/src/index.ts>)、[upsert 实现](</Users/hubo/Projects/worldcredit/email-worker/src/insforge.ts>)。
+证据：[设计约束:382](</Volumes/external/Projects/worldcredit/docs/plans/WorldCredit 产品需求与设计规范.md:382>)、[邮件覆盖:209](</Volumes/external/Projects/worldcredit/lib/api/emailBills.ts:209>)、[Worker](</Volumes/external/Projects/worldcredit/email-worker/src/index.ts>)、[upsert 实现](</Volumes/external/Projects/worldcredit/email-worker/src/insforge.ts>)。
 
 ### F07 · P0：文本解析确定性算错，导入明细没有进入正式模型
 
@@ -112,7 +112,7 @@ Worker 的 upsert 客户端也没有显式声明 `card_id,bill_month` 冲突目�
 
 草稿确认先建账单后更新草稿状态，更新没有检查错误，可能出现账单已建立而草稿仍待确认。图片/PDF 入口目前直接提示未推出。
 
-证据：[识别:55](</Users/hubo/Projects/worldcredit/lib/billRecognizer.ts:55>)、[周期:94](</Users/hubo/Projects/worldcredit/lib/billRecognizer.ts:94>)、[丢弃明细:393](</Users/hubo/Projects/worldcredit/lib/api/bills.ts:393>)、[草稿确认:126](</Users/hubo/Projects/worldcredit/lib/api/billDrafts.ts:126>)、[图片/PDF:93](</Users/hubo/Projects/worldcredit/components/mobile/BillImportDialog.tsx:93>)。
+证据：[识别:55](</Volumes/external/Projects/worldcredit/lib/billRecognizer.ts:55>)、[周期:94](</Volumes/external/Projects/worldcredit/lib/billRecognizer.ts:94>)、[丢弃明细:393](</Volumes/external/Projects/worldcredit/lib/api/bills.ts:393>)、[草稿确认:126](</Volumes/external/Projects/worldcredit/lib/api/billDrafts.ts:126>)、[图片/PDF:93](</Volumes/external/Projects/worldcredit/components/mobile/BillImportDialog.tsx:93>)。
 
 ### F08 · P0：提醒不具备“不打开 App 也能收到”的保证
 
@@ -120,7 +120,7 @@ Worker 的 upsert 客户端也没有显式声明 `card_id,bill_month` 冲突目�
 
 应建立服务端定时扫描、持久化待发任务、真实通道发送、结果回执和重试。只在供应商接受后记为已发送；“供应商接受”“设备展示”“用户确认”不能混为一谈。还款后重新核验未还余额，避免继续催还。贷款提醒要基于持久化期表，不能到次月就遗忘上期漏还。
 
-证据：[本地提醒:74](</Users/hubo/Projects/worldcredit/lib/reminders.ts:74>)、[假发送:278](</Users/hubo/Projects/worldcredit/lib/notifications.ts:278>)、[打开应用触发:37](</Users/hubo/Projects/worldcredit/components/mobile/MobileShell.tsx:37>)、[Worker 配置](/Users/hubo/Projects/worldcredit/wrangler.jsonc)。
+证据：[本地提醒:74](</Volumes/external/Projects/worldcredit/lib/reminders.ts:74>)、[假发送:278](</Volumes/external/Projects/worldcredit/lib/notifications.ts:278>)、[打开应用触发:37](</Volumes/external/Projects/worldcredit/components/mobile/MobileShell.tsx:37>)、[Worker 配置](/Volumes/external/Projects/worldcredit/wrangler.jsonc)。
 
 ### F09 · P0：同产品多张卡共用核销记录，不能可靠管理全家权益
 
@@ -128,7 +128,7 @@ Worker 的 upsert 客户端也没有显式声明 `card_id,bill_month` 冲突目�
 
 拆分产品权益模板、实际持有账户的权益实例、周期额度和核销流水。每项规则明确按账户/卡片/持卡人共享，不能默认所有卡都独立，也不能默认全家共享。核销保存次数或金额、币种、周期、使用者、费用与实际价值，支持冲正。规则更新不改写历史周期。
 
-证据：[核销模型:146](</Users/hubo/Projects/worldcredit/db/schema.sql:146>)、[聚合:111](</Users/hubo/Projects/worldcredit/lib/api/benefits.ts:111>)、[直接核销:151](</Users/hubo/Projects/worldcredit/lib/api/benefits.ts:151>)、[持卡人核销查询](</Users/hubo/Projects/worldcredit/lib/api/benefitUsages.ts>)。
+证据：[核销模型:146](</Volumes/external/Projects/worldcredit/db/schema.sql:146>)、[聚合:111](</Volumes/external/Projects/worldcredit/lib/api/benefits.ts:111>)、[直接核销:151](</Volumes/external/Projects/worldcredit/lib/api/benefits.ts:151>)、[持卡人核销查询](</Volumes/external/Projects/worldcredit/lib/api/benefitUsages.ts>)。
 
 ### F10 · P0：优惠操作存在“提示成功但没有落库”的路径
 
@@ -136,7 +136,7 @@ Worker 的 upsert 客户端也没有显式声明 `card_id,bill_month` 冲突目�
 
 关注、报名、消费达标、奖励待到、奖励已到分别记录，选定成员及实际卡账户；只有持久化成功且回读一致后提示成功。静态示例与实际可用活动分开。发卡地区、卡种、消费地、商户/渠道、有效期、资格和报名状态缺失时，显示“待核验”，不直接宣称可享。
 
-证据：[关注:198](</Users/hubo/Projects/worldcredit/app/(mobile)/promos/page.tsx:198>)、[新增:214](</Users/hubo/Projects/worldcredit/app/(mobile)/promos/page.tsx:214>)、[适用匹配:123](</Users/hubo/Projects/worldcredit/app/(mobile)/promos/page.tsx:123>)、[核销 API](</Users/hubo/Projects/worldcredit/lib/api/promoUsages.ts>)。
+证据：[关注:198](</Volumes/external/Projects/worldcredit/app/(mobile)/promos/page.tsx:198>)、[新增:214](</Volumes/external/Projects/worldcredit/app/(mobile)/promos/page.tsx:214>)、[适用匹配:123](</Volumes/external/Projects/worldcredit/app/(mobile)/promos/page.tsx:123>)、[核销 API](</Volumes/external/Projects/worldcredit/lib/api/promoUsages.ts>)。
 
 ### F11 · P0 验证门禁：家庭权限和数据库版本化不能从现有代码证明闭环
 
@@ -146,7 +146,7 @@ Worker 的 upsert 客户端也没有显式声明 `card_id,bill_month` 冲突目�
 
 附件采用公共 URL 获取方式、AI key 被取到前端直接请求等边界也需核查。公共 URL 代码不能证明桶实际公开，但上线验收必须验证登出后无法取得私人账单附件。AI 配置移入服务端，客户端不取得共享密钥；只向解析服务发送必要资料。
 
-证据：[权限辅助函数](</Users/hubo/Projects/worldcredit/lib/permissions.ts>)、[后台白名单:35](</Users/hubo/Projects/worldcredit/components/admin/AdminShell.tsx:35>)、[旧 RLS:55](</Users/hubo/Projects/worldcredit/db/migrations/002_enable_member_rls.sql:55>)、[附件:65](</Users/hubo/Projects/worldcredit/lib/api/attachments.ts:65>)、[前端 AI:115](</Users/hubo/Projects/worldcredit/components/mobile/AiFillBox.tsx:115>)。
+证据：[权限辅助函数](</Volumes/external/Projects/worldcredit/lib/permissions.ts>)、[后台白名单:35](</Volumes/external/Projects/worldcredit/components/admin/AdminShell.tsx:35>)、[旧 RLS:55](</Volumes/external/Projects/worldcredit/db/migrations/002_enable_member_rls.sql:55>)、[附件:65](</Volumes/external/Projects/worldcredit/lib/api/attachments.ts:65>)、[前端 AI:115](</Volumes/external/Projects/worldcredit/components/mobile/AiFillBox.tsx:115>)。
 
 ### F12 · P1：贷款、房租、信用账户生命周期尚未建模
 
@@ -154,7 +154,7 @@ Worker 的 upsert 客户端也没有显式声明 `card_id,bill_month` 冲突目�
 
 应将信用账户、物理卡、贷款合同、租约分别表达，通过统一“应付事项”和支付分配服务聚合展示。不得为了复用现有表，把房租也伪装成信用卡产品。
 
-证据：[信用卡/贷款模型:87](</Users/hubo/Projects/worldcredit/db/schema.sql:87>)、[贷款表单:320](</Users/hubo/Projects/worldcredit/components/mobile/CardForm.tsx:320>)、[总欠款占位:589](</Users/hubo/Projects/worldcredit/app/(mobile)/dashboard/page.tsx:589>)。
+证据：[信用卡/贷款模型:87](</Volumes/external/Projects/worldcredit/db/schema.sql:87>)、[贷款表单:320](</Volumes/external/Projects/worldcredit/components/mobile/CardForm.tsx:320>)、[总欠款占位:589](</Volumes/external/Projects/worldcredit/app/(mobile)/dashboard/page.tsx:589>)。
 
 ### F13 · P1：权益规则不足，周期日期受设备时区影响
 
@@ -162,7 +162,7 @@ Worker 的 upsert 客户端也没有显式声明 `card_id,bill_month` 冲突目�
 
 应使用规则约定时区与明确的起止日期，存储原始日期及必要的时间戳，定义 `[start, end)` 边界。实际账单日期优先于模板推算；美区不能简单绑定单一美国时区。国家/地区只能用于规则默认模板，不能替代具体发卡行条款。
 
-证据：[权益定义:42](</Users/hubo/Projects/worldcredit/db/schema.sql:42>)、[周期计算:8](</Users/hubo/Projects/worldcredit/lib/api/benefits.ts:8>)、[周期过滤:126](</Users/hubo/Projects/worldcredit/lib/api/benefits.ts:126>)、[使用日期:72](</Users/hubo/Projects/worldcredit/app/(mobile)/benefits/page.tsx:72>)。
+证据：[权益定义:42](</Volumes/external/Projects/worldcredit/db/schema.sql:42>)、[周期计算:8](</Volumes/external/Projects/worldcredit/lib/api/benefits.ts:8>)、[周期过滤:126](</Volumes/external/Projects/worldcredit/lib/api/benefits.ts:126>)、[使用日期:72](</Volumes/external/Projects/worldcredit/app/(mobile)/benefits/page.tsx:72>)。
 
 ### F14 · P1：分析、导出和功能入口没有完整收敛
 
@@ -170,7 +170,7 @@ Worker 的 upsert 客户端也没有显式声明 `card_id,bill_month` 冲突目�
 
 统一统计查询和金额/日期格式；报表必须与同口径账单逐项对账。首页把“今天要处理的应付、待确认导入、即将失效权益、待到账奖励”放到可操作位置，保留现有导航结构，明确卡包入口与类型筛选。首轮不重做设计系统。
 
-证据：[分析字段:59](</Users/hubo/Projects/worldcredit/lib/api/analytics.ts:59>)、[账单导出:141](</Users/hubo/Projects/worldcredit/lib/export.ts:141>)、[权益初始化:87](</Users/hubo/Projects/worldcredit/app/(mobile)/benefits/page.tsx:87>)、[导航](</Users/hubo/Projects/worldcredit/components/mobile/BottomNav.tsx>)。
+证据：[分析字段:59](</Volumes/external/Projects/worldcredit/lib/api/analytics.ts:59>)、[账单导出:141](</Volumes/external/Projects/worldcredit/lib/export.ts:141>)、[权益初始化:87](</Volumes/external/Projects/worldcredit/app/(mobile)/benefits/page.tsx:87>)、[导航](</Volumes/external/Projects/worldcredit/components/mobile/BottomNav.tsx>)。
 
 ## 4. 三地区必须覆盖的产品规则
 

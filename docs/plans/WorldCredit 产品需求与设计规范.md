@@ -1,7 +1,7 @@
 # WorldCredit 产品需求与设计规范
 
 > 面向 AI coding agent 的完整需求文档。包含产品定义、信息架构、页面详述、设计系统、数据治理与分阶段任务。
-> 当前项目路径：`/Users/hubo/Projects/worldcredit`
+> 当前项目路径：`/Volumes/external/Projects/worldcredit`
 > 最后更新：2026-08-12
 
 ---
