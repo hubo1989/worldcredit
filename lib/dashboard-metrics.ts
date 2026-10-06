@@ -85,6 +85,20 @@ export function computeMetrics(
   }
 }
 
+
+/**
+ * 「今天需还款」列表：当天到期、尚未结清、且还有剩余待还的账单。
+ *
+ * computeMetrics 的 futureAmount 只统计未还清账单，但原始 bills 里仍可能混入
+ * 已结清（computed_status === 'paid'）或剩余为 0 的记录；它们出现在当天列表里
+ * 会引导用户点一个必然被 markBillAsPaid 拒绝的「立即还款」，所以这里显式过滤。
+ */
+export function getDueTodayBills(bills: BillDashboardItem[]): BillDashboardItem[] {
+  return bills.filter(
+    b => b.days_until_due === 0 && b.computed_status !== 'paid' && b.remaining_amount > 0
+  )
+}
+
 /** 卡数统计：{ holderId: count } */
 export function countCardsByHolder(cards: Array<{ holder_id: string }>): Record<string, number> {
   const map: Record<string, number> = {}

@@ -3,10 +3,8 @@
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Snackbar, Alert, CircularProgress,
-  Button,
   Box, Paper, Typography,
 } from '@mui/material'
-import type { FxRates } from '@/lib/fx'
 
 interface DashboardOverlaysProps {
   metrics: { overdueBills: unknown[]; overdueAmount: number }
@@ -44,17 +42,26 @@ export function DashboardOverlays(vm: DashboardOverlaysProps) {
           </Typography>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={vm.onPayAllClose} disabled={vm.paying}>取消</Button>
-          <Button
-            variant="contained"
-            color="error"
+          {/* 这里刻意不用 MUI Button：该主题把 palette.text.primary 设成 CSS 变量，
+              MUI 的 alpha() 解析不了 var(...)，Button 一渲染就抛错（存量问题，
+              全站受影响）。原生按钮既避开这条崩溃路径，也与暗色视图的样式一致。 */}
+          <button
+            type="button"
+            onClick={vm.onPayAllClose}
+            disabled={vm.paying}
+            className="h-10 rounded-xl px-5 text-sm font-semibold text-d-muted disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            type="button"
             onClick={vm.onPayAllConfirm}
             disabled={vm.paying}
-            startIcon={vm.paying ? <CircularProgress size={16} color="inherit" /> : null}
-            sx={{ fontWeight: 700 }}
+            className="flex h-10 items-center gap-2 rounded-xl bg-d-danger px-5 text-sm font-bold text-white disabled:opacity-50"
           >
+            {vm.paying ? <CircularProgress size={16} color="inherit" /> : null}
             确认全部结清
-          </Button>
+          </button>
         </DialogActions>
       </Dialog>
       <Snackbar

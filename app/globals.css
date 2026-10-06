@@ -1,3 +1,5 @@
+/* 层序必须先声明：base（原生元素归一化）低于 utilities，否则作用域重置会盖掉工具类。 */
+@layer theme, base, utilities;
 @import "tailwindcss/theme" layer(theme);
 @import "tailwindcss/utilities" layer(utilities);
 
@@ -13,10 +15,33 @@
   --color-d-accent-light: #7aadff;
   --color-d-gold: #f0c75e;
   --color-d-gold-deep: #d9a93f;
+  --color-d-gold-soft: #3a3320;
   --color-d-danger: #e5484d;
+  --color-d-danger-soft: #3a222a;
   --color-d-danger-ink: #ff8a8a;
   --color-d-warn-ink: #ffc46b;
   --color-d-success-ink: #6ee7a0;
+}
+
+/*
+ * ObsidianUI 暗色视图作用域内的原生元素归一化。
+ * 本项目只引入 Tailwind 的 theme/utilities（刻意不含 Preflight），MUI 的
+ * CssBaseline 也不重置 p / button，所以 <p> 会带浏览器默认外边距、原生按钮会
+ * 保留系统边框与字体。这里用 :where() 把特异性压到 0，并置于 base 层，
+ * 保证视图里的工具类（mt-4 / p-3.5 / bg-d-surface …）仍能覆盖。
+ */
+@layer base {
+  :where(.obsidian-dashboard) :where(p, h1, h2, h3, h4, h5, h6, figure, blockquote) {
+    margin: 0;
+  }
+  :where(.obsidian-dashboard) :where(button) {
+    appearance: none;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
 }
 
 :root {

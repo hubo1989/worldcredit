@@ -7,6 +7,7 @@ import {
   computeMetrics,
   formatMoney,
   FUTURE_RANGES,
+  getDueTodayBills,
   type FutureRange,
   type HolderFilter,
 } from '@/lib/dashboard-metrics'
@@ -38,6 +39,9 @@ export interface DashboardViewProps {
   cardsByHolder: Record<string, number>
   quickActions: Array<{ key: string; label: string; icon: ReactNode; onClick: () => void }>
   promoCount: number | null
+  /** 已登录用户展示口径：姓名缺失时回落到邮箱前缀，避免把所有人显示成同一个人。 */
+  userName: string | null
+  userEmail: string | null
 }
 
 export function DashboardView(vm: DashboardViewProps) {
@@ -46,17 +50,22 @@ export function DashboardView(vm: DashboardViewProps) {
     debtExpanded, onDebtExpanded, privacyOn, privacyIcon, onTogglePrivacy,
     amountClass, displayCurrency, visibleBills, onPaySingle, onPayAllOpen,
     onNavBills, onNavPromos, totalCardCount, holders, cardsByHolder,
-    quickActions, promoCount,
+    quickActions, promoCount, userName, userEmail,
   } = vm
 
+  // 头像/称呼都来自当前登录用户；邮箱前缀只是兜底，不能再写死成某一个人的名字。
+  const emailPrefix = (userEmail || '').split('@')[0]
+  const displayName = (userName || '').trim() || emailPrefix || '我'
+  const avatarInitial = (displayName.trim().charAt(0) || '我').toUpperCase()
+
   return (
-    <div className="min-h-dvh bg-d-bg pb-4 text-d-text">
+    <div className="obsidian-dashboard min-h-dvh bg-d-bg pb-4 text-d-text">
       {/* 页头：问候 + 隐私开关 */}
       <div className="flex items-center gap-3 px-5 pt-5">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-d-accent text-sm font-bold text-white">呼</div>
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-d-accent text-sm font-bold text-white">{avatarInitial}</div>
         <div className="flex-1">
           <p className="text-[11px] leading-4 text-d-muted">概览</p>
-          <p className="text-[15px] font-bold leading-5">呼博</p>
+          <p className="text-[15px] font-bold leading-5">{displayName}</p>
         </div>
         <button
           onClick={onTogglePrivacy}
@@ -198,7 +207,9 @@ export function DashboardView(vm: DashboardViewProps) {
 
       {/* 当天需还款（B0-2 修订需求） */}
       {(() => {
-        const dueToday = visibleBills.filter(b => b.days_until_due === 0)
+        // 已结清（或剩余为 0）的账单不该再出现在「今天需还款」里——
+        // 它的 CTA 会被 markBillAsPaid 拒绝，用户看到的是一个必然失败的操作。
+        const dueToday = getDueTodayBills(visibleBills)
         if (dueToday.length === 0) return null
         return (
           <div className="mx-5 mt-4 rounded-2xl border border-d-gold-deep bg-d-surface p-3.5">
@@ -234,7 +245,9 @@ export function DashboardView(vm: DashboardViewProps) {
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-d-subtle text-d-gold">%</div>
         <div className="flex-1">
           <p className="text-[13px] font-bold">今日可享优惠</p>
-          <p className="text-[11px] text-d-muted">查看名下卡片在有效期内的优惠</p>
+          <p className="text-[11px] text-d-muted">
+            {promoCount !== null ? promoCount + ' 项有效期内优惠' : '查看名下卡片在有效期内的优惠'}
+          </p>
         </div>
         <span className="text-d-muted">›</span>
       </button>
