@@ -23,7 +23,7 @@ import {
   formatMoney,
 } from '@/lib/dashboard-metrics'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
-import { fetchRates, sumByCurrency, currencySymbol, type FxRates } from '@/lib/fx'
+import { fetchRates, type FxRates } from '@/lib/fx'
 import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
 import { useAuth } from '@/lib/auth'
 import { WcSkeleton } from '@/components/mobile/WcStates'
