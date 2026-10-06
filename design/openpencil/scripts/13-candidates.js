@@ -308,21 +308,27 @@ const billsDark = (w, h) => {
   I(payEmpty, { type: 'text', content: '还没有固定支出。房租、贷款这类每月固定要付的可以加在这里。', fontSize: 12, fill: s(C.text2), textAlign: 'center', textGrowth: 'fixed-width' });
   const billCard = (opts) => {
     const bank = opts.bank, cardName = opts.cardName, tail = opts.tail, status = opts.status;
+    const holderName = opts.holderName, accountMode = opts.accountMode;
     const amountLabel = opts.amountLabel, amount = opts.amount, currency = opts.currency;
     const dueLine = opts.dueLine, distanceLine = opts.distanceLine;
     const hasHistory = opts.hasHistory, amountEditable = opts.amountEditable, interestFree = opts.interestFree;
     const card = I(content, { type: 'frame', name: 'bill card / ' + bank, width: 'fill_container', layout: 'vertical', gap: 10, padding: [14, 14], cornerRadius: 14, fill: s(C.surface), stroke: { thickness: 1, fill: s(C.border) }, effects: [{ type: 'shadow', offsetX: 0, offsetY: 4, blur: 14, spread: 0, color: 'rgba(0,0,0,0.35)' }] });
+    // 卡头：银行名为主标题 + 账户模式标签（多卡一账户/单卡单账户）；持卡人降为次要信息
     const top = I(card, { type: 'frame', name: 'top', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center' });
-    const holder = I(top, { type: 'frame', name: 'holder', layout: 'horizontal', gap: 6, alignItems: 'center' });
-    I(holder, { type: 'icon_font', iconFontName: 'user', width: 15, height: 15, fill: s(C.text2) });
-    I(holder, { type: 'text', content: '呼博', fontSize: 14, fontWeight: 700, fill: s(C.text), textGrowth: 'fixed-width' });
+    const titleCol = I(top, { type: 'frame', name: 'title col', width: 'fill_container', layout: 'vertical', gap: 4 });
+    const titleRow = I(titleCol, { type: 'frame', name: 'title row', layout: 'horizontal', gap: 8, alignItems: 'center' });
+    const bankChip = I(titleRow, { type: 'frame', name: 'bank chip', width: 26, height: 26, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', cornerRadius: 8, fill: s(C.subtle) });
+    I(bankChip, { type: 'icon_font', iconFontName: 'landmark', width: 14, height: 14, fill: s(C.blue400) });
+    I(titleRow, { type: 'text', content: bank, fontSize: 15, fontWeight: 700, fill: s(C.text), textGrowth: 'fixed-width' });
+    const modeTagBg = accountMode === 'multi' ? C.infoSoft : C.subtle;
+    const modeTagFg = accountMode === 'multi' ? C.infoInk : C.text2;
+    const modeTag = I(titleRow, { type: 'frame', name: 'account mode tag', layout: 'horizontal', padding: [2, 7], cornerRadius: 6, fill: s(modeTagBg) });
+    I(modeTag, { type: 'text', content: accountMode === 'multi' ? '多卡一账户' : '单卡单账户', fontSize: 9, fontWeight: 600, fill: s(modeTagFg) });
+    const subRow = I(titleCol, { type: 'frame', name: 'sub row', layout: 'horizontal', gap: 8, alignItems: 'center' });
+    I(subRow, { type: 'text', content: cardName, fontSize: 12, fill: s(C.text2), textGrowth: 'fixed-width' });
+    I(subRow, { type: 'text', content: '尾号 ' + tail, fontSize: 12, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
+    I(subRow, { type: 'text', content: '持卡人 ' + holderName, fontSize: 10, fill: s(C.text2), textGrowth: 'fixed-width' });
     if (status) statusPill(top, status);
-    const bankRow = I(card, { type: 'frame', name: 'bank row', width: 'fill_container', layout: 'horizontal', gap: 8, alignItems: 'center' });
-    const bankBadge = I(bankRow, { type: 'frame', name: 'bank badge', layout: 'horizontal', gap: 4, alignItems: 'center', padding: [3, 8], cornerRadius: 999, fill: s(C.subtle) });
-    I(bankBadge, { type: 'icon_font', iconFontName: 'landmark', width: 12, height: 12, fill: s(C.blue400) });
-    I(bankBadge, { type: 'text', content: bank, fontSize: 11, fontWeight: 600, fill: s(C.text), textGrowth: 'fixed-width' });
-    I(bankRow, { type: 'text', content: cardName, fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
-    I(bankRow, { type: 'text', content: '**** ' + tail, fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
     const amtRow = I(card, { type: 'frame', name: 'amount row', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center' });
     const amtLeft = I(amtRow, { type: 'frame', name: 'amount left', layout: 'vertical', gap: 3 });
     I(amtLeft, { type: 'text', content: amountLabel, fontSize: 11, fill: s(C.text2), textGrowth: 'fixed-width' });
@@ -354,12 +360,12 @@ const billsDark = (w, h) => {
     }
     return card;
   };
-  billCard({ bank: '中国农业银行', cardName: '尊然白金信用卡（精粹版）', tail: '2016', status: '逾期', amountLabel: '当前待还金额', amount: '3,680.55', dueLine: '账单日 每月 29 日 · 本期还款日 09-08', distanceLine: '逾期 14 日', hasHistory: true });
-  billCard({ bank: '中国建设银行', cardName: '龙卡全球支付', tail: '9003', status: '逾期', amountLabel: '当前待还金额', amount: '3,680.55', dueLine: '账单日 每月 20 日 · 本期还款日 09-08', distanceLine: '逾期 14 日', hasHistory: true });
-  billCard({ bank: '汇丰银行', cardName: 'Visa Signature', tail: '9002', status: '部分还款', amountLabel: '当前待还金额', amount: '15,000', currency: 'HK$', dueLine: '账单日 每月 12 日 · 本期还款日 09-28', distanceLine: '距离还款日 6 日', hasHistory: true });
-  billCard({ bank: 'American Express', cardName: 'Platinum Card', tail: '9001', status: '待还款', amountLabel: '当前待还金额', amount: '2,860', currency: 'US$', dueLine: '账单日 每月 8 日 · 本期还款日 10-10', distanceLine: '距离还款日 18 日', hasHistory: true });
-  billCard({ bank: '交通银行', cardName: '标准白金卡', tail: '9004', status: '待还款', amountLabel: '当前待还金额', amount: '8,000', dueLine: '账单日 每月 5 日 · 本期还款日 11-06', distanceLine: '距离还款日 45 日', hasHistory: true, amountEditable: true });
-  billCard({ bank: '中国邮政储蓄银行', cardName: '普卡', tail: '3293', status: '未出账单', amountLabel: '本期待还', amount: '0', dueLine: '账单日 每月 22 日 · 下期还款约 10-12', interestFree: '今日刷卡免息 20 天' });
+  billCard({ bank: '中国农业银行', cardName: '尊然白金信用卡（精粹版）', tail: '2016', accountMode: 'single', status: '逾期', amountLabel: '当前待还金额', amount: '3,680.55', dueLine: '账单日 每月 29 日 · 本期还款日 09-08', distanceLine: '逾期 14 日', hasHistory: true });
+  billCard({ bank: '中国建设银行', cardName: '龙卡全球支付', tail: '9003', accountMode: 'multi', status: '逾期', amountLabel: '当前待还金额', amount: '3,680.55', dueLine: '账单日 每月 20 日 · 本期还款日 09-08', distanceLine: '逾期 14 日', hasHistory: true });
+  billCard({ bank: '汇丰银行', cardName: 'Visa Signature', tail: '9002', accountMode: 'single', status: '部分还款', amountLabel: '当前待还金额', amount: '15,000', currency: 'HK$', dueLine: '账单日 每月 12 日 · 本期还款日 09-28', distanceLine: '距离还款日 6 日', hasHistory: true });
+  billCard({ bank: 'American Express', cardName: 'Platinum Card', tail: '9001', accountMode: 'single', status: '待还款', amountLabel: '当前待还金额', amount: '2,860', currency: 'US$', dueLine: '账单日 每月 8 日 · 本期还款日 10-10', distanceLine: '距离还款日 18 日', hasHistory: true });
+  billCard({ bank: '交通银行', cardName: '标准白金卡', tail: '9004', accountMode: 'multi', status: '待还款', amountLabel: '当前待还金额', amount: '8,000', dueLine: '账单日 每月 5 日 · 本期还款日 11-06', distanceLine: '距离还款日 45 日', hasHistory: true, amountEditable: true });
+  billCard({ bank: '中国邮政储蓄银行', cardName: '普卡', tail: '3293', accountMode: 'single', status: '未出账单', amountLabel: '本期待还', amount: '0', dueLine: '账单日 每月 22 日 · 下期还款约 10-12', interestFree: '今日刷卡免息 20 天' });
   bottomNav(phone, w, h, '账单');
   return phone;
 };
