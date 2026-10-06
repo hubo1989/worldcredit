@@ -2,12 +2,17 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import {
-  Box, Container,
+  Container, Typography, Box, Stack, Paper,
+  IconButton, Tooltip, Button, Dialog, DialogTitle,
+  DialogContent, DialogActions, Snackbar, Alert,
+  CircularProgress,
 } from '@mui/material'
+import CheckIcon from '@mui/icons-material/CheckCircleOutline'
 import { useRouter } from 'next/navigation'
 import { getBillDashboardItems, markBillAsPaid, markAllOverdueBillsAsPaid, type BillDashboardItem } from '@/lib/api/bills'
 import { getHolders } from '@/lib/api/holders'
 import { getCardsBasicByHolders } from '@/lib/api/cards'
+import { formatCardTail, getEffectiveCardName } from '@/lib/utils'
 import {
   type HolderFilter,
   type FutureRange,
@@ -22,9 +27,12 @@ import { fetchRates, type FxRates } from '@/lib/fx'
 import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
 import { useAuth } from '@/lib/auth'
 import { WcSkeleton } from '@/components/mobile/WcStates'
+import { QuickActionSheet } from '@/components/mobile/QuickActionSheet'
 import {
   EyeIcon, EyeOffIcon,
   NoteIcon, PromoIcon, BenefitIcon, ImportIcon,
+  ChevronDownIcon, ChevronRightIcon,
+  AlertIcon,
 } from '@/components/icons/WcIcon'
 import type { CardHolder } from '@/lib/types'
 
@@ -62,7 +70,6 @@ export default function DashboardPage() {
   // 一键还款与 Toast 状态
   const [payAllOpen, setPayAllOpen] = useState(false)
   const [paying, setPaying] = useState(false)
-  const [promoCount, setPromoCount] = useState<number | null>(null)
   const [toast, setToast] = useState<{ open: boolean; message: string; severity: 'success' | 'info' | 'error' }>({
     open: false,
     message: '',
@@ -252,240 +259,939 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-dvh bg-d-bg pb-4 text-d-text">
-      {/* 页头：问候 + 隐私开关 */}
-      <div className="flex items-center gap-3 px-5 pt-5">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-d-accent text-sm font-bold text-white">呼</div>
-        <div className="flex-1">
-          <p className="text-[11px] leading-4 text-d-muted">概览</p>
-          <p className="text-[15px] font-bold leading-5">呼博</p>
-        </div>
-        <button
-          onClick={togglePrivacyMode}
-          aria-label={privacyOn ? '显示金额' : '隐匿金额'}
-          className="flex h-11 w-11 items-center justify-center rounded-full border border-d-border bg-d-surface"
-        >
-          {privacyOn ? <EyeOffIcon size={18} /> : <EyeIcon size={18} />}
-        </button>
-      </div>
-
-      {/* 居中大余额 */}
-      <div className="mt-4 flex flex-col items-center gap-2">
-        <p className="text-xs text-d-muted">总待还款</p>
-        <p className={amountClass + ' text-[34px] font-bold leading-none'}>
-          {formatMoney(metrics.totalPending, displayCurrency)}
-        </p>
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-d-muted">含逾期</span>
-            <span className={amountClass + ' text-[13px] font-semibold text-d-danger-ink'}>
-              {formatMoney(metrics.overdueAmount, displayCurrency)}
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-d-muted">未来 {futureRange} 天</span>
-            <span className={amountClass + ' text-[13px] font-semibold text-d-warn-ink'}>
-              {formatMoney(metrics.futureAmount, displayCurrency)}
-            </span>
-          </div>
-        </div>
-        {metrics.unconvertedCurrencies.length > 0 && (
-          <p className="text-[11px] text-d-muted">
-            未含汇率：{metrics.unconvertedCurrencies.join('、')} 未计入合计
-          </p>
-        )}
-      </div>
-
-      {/* 逾期风险条 */}
-      {metrics.overdueBills.length > 0 && (
-        <div className="mx-5 mt-4 flex items-center gap-3 rounded-xl bg-d-danger-soft p-3">
-          <span className="text-sm text-d-danger-ink">!</span>
-          <div className="flex-1">
-            <p className="text-xs font-bold text-d-danger-ink">{metrics.overdueBills.length} 笔账单已逾期</p>
-            <p className="text-[11px] text-d-danger-ink">建议今日处理，避免逾期费用</p>
-          </div>
-          <button
-            onClick={() => setPayAllOpen(true)}
-            className="h-11 shrink-0 rounded-xl bg-d-danger px-4 text-xs font-semibold text-white"
-          >
-            一键全部还款
-          </button>
-        </div>
-      )}
-
-      {/* 当天需还款（B0-2 修订需求） */}
-      {(() => {
-        const dueToday = visibleBills.filter(b => b.days_until_due === 0)
-        if (dueToday.length === 0) return null
-        return (
-          <div className="mx-5 mt-4 rounded-2xl border border-d-gold-deep bg-d-surface p-3.5">
-            <div className="flex items-center justify-between">
-              <p className="text-[13px] font-bold">今天需还款</p>
-              <p className="text-[11px] text-d-gold">{dueToday.length} 笔</p>
-            </div>
-            {dueToday.map(b => (
-              <div key={b.id} className="mt-2 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[13px] font-semibold">
-                    {b.card?.card_product?.bank_name || '信用卡'} · 尾号 {b.card?.card_number_last4 || '----'}
-                  </p>
-                  <p className="text-[11px] text-d-gold">今日到期 · {formatMoney(b.remaining_amount, billCurrency(b, displayCurrency))}</p>
-                </div>
-                <button
-                  onClick={e => handlePaySingle(e, b)}
-                  className="h-11 shrink-0 rounded-xl bg-d-gold px-4 text-xs font-semibold text-d-bg"
-                >
-                  立即还款
-                </button>
-              </div>
-            ))}
-          </div>
-        )
-      })()}
-
-      {/* 今日可享优惠（B0-2 修订需求）：统计 + 入口 */}
-      <button
-        onClick={() => router.push('/promos')}
-        className="mx-5 mt-4 flex w-[calc(100%-40px)] items-center gap-3 rounded-2xl border border-d-border bg-d-surface p-3.5 text-left"
+    <Container maxWidth="sm" sx={{ py: 3, pb: 10, px: 2 }}>
+      {/* 顶部：标题 + 隐私切换 */}
+      <Box
+        sx={{
+          mb: 2,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+        }}
       >
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-d-subtle text-d-gold">%</div>
-        <div className="flex-1">
-          <p className="text-[13px] font-bold">今日可享优惠</p>
-          <p className="text-[11px] text-d-muted">
-            {promoCount !== null ? promoCount + ' 项有效期内' : '查看名下卡片在有效期内的优惠'}
-          </p>
-        </div>
-        <span className="text-d-muted">›</span>
-      </button>
+        <Box>
+          <Typography
+            variant="h5"
+            sx={{
+              fontSize: 'var(--type-title-size)',
+              lineHeight: 'var(--type-title-line)',
+              fontWeight: 'var(--type-title-weight)',
+              letterSpacing: 'var(--type-title-tracking)',
+              color: 'var(--text)',
+            }}
+          >
+            概览
+          </Typography>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mt: 0.25,
+            }}
+          >
+            管控信用卡资产与还款日程
+          </Typography>
+        </Box>
+        <Tooltip title={privacyOn ? '显示金额' : '隐匿金额'} placement="left">
+          <IconButton
+            onClick={togglePrivacyMode}
+            aria-label={privacyOn ? '显示金额' : '隐匿金额'}
+            sx={{
+              width: 'var(--button-size)',
+              height: 'var(--button-size)',
+              background: 'var(--button-face)',
+              color: 'var(--text-on-dark)',
+              boxShadow: 'var(--button-shadow)',
+              '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
+              '&:active': { boxShadow: 'var(--button-shadow-press)' },
+            }}
+          >
+            {privacyOn ? <EyeOffIcon size={18} /> : <EyeIcon size={18} />}
+          </IconButton>
+        </Tooltip>
+      </Box>
 
-      {/* 持卡人筛选 */}
-      <div className="mt-4 flex gap-2 overflow-x-auto px-5">
+      {/* 持卡人分段控件（pills） */}
+      <Box sx={{ mb: 2.5, display: 'flex', gap: 1, overflowX: 'auto', pb: 0.5 }}>
         {holderPills.map(p => {
           const active = holderFilter === p.value
           return (
-            <button
+            <Box
               key={p.value}
+              role="button"
+              tabIndex={0}
               onClick={() => setHolderFilter(p.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  setHolderFilter(p.value)
+                }
+              }}
               title={p.fullName || p.label}
-              className={
-                'shrink-0 rounded-full px-4 py-2 text-[13px] font-semibold ' +
-                (active ? 'bg-d-accent text-white' : 'border border-d-border bg-d-surface text-d-muted')
-              }
+              sx={{
+                flex: '0 0 auto',
+                px: 2.25,
+                py: 0.75,
+                borderRadius: 'var(--radius-pill)',
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'box-shadow var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out)',
+                bgcolor: active ? 'var(--navy-600)' : 'var(--paper)',
+                color: active ? 'var(--text-on-dark)' : 'var(--text)',
+                border: 0,
+                boxShadow: active ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
+                userSelect: 'none',
+                '&:hover': active ? {} : { boxShadow: 'var(--shadow-e2)' },
+              }}
             >
               {p.label}
-            </button>
+            </Box>
           )
         })}
-      </div>
+      </Box>
 
-      {/* 指标 2×2 */}
-      <div className="mt-4 grid grid-cols-2 gap-3 px-5">
-        <button onClick={() => router.push('/bills')} className="rounded-2xl border border-d-border bg-d-surface p-3.5 text-left">
-          <p className="text-xs text-d-muted">已逾期</p>
-          <p className={amountClass + ' mt-1 text-[22px] font-bold ' + (metrics.overdueAmount > 0 ? 'text-d-danger-ink' : 'text-d-success-ink')}>
+      {/* 主指标卡：总待还款（深蓝渐变） */}
+      <Paper
+        elevation={0}
+        sx={{
+          p: 3,
+          mb: 3,
+          borderRadius: 'var(--radius-depth-3)',
+          background: 'linear-gradient(135deg, var(--navy-800) 0%, var(--navy-600) 100%)',
+          color: 'var(--text-on-dark)',
+          // 深蓝主指标卡：品牌暗影
+          boxShadow: 'var(--shadow-dark)',
+          position: 'relative',
+          overflow: 'hidden',
+        }}
+      >
+        <Typography
+          sx={{
+            color: 'rgba(255,255,255,0.78)',
+            fontSize: 'var(--type-body-size)',
+            lineHeight: 'var(--type-body-line)',
+            letterSpacing: 'var(--type-body-tracking)',
+            mb: 1,
+          }}
+        >
+          总待还款
+        </Typography>
+        <Typography
+          className={amountClass}
+          sx={{
+            color: 'var(--text-on-dark)',
+            fontSize: 36,
+            fontWeight: 700,
+            lineHeight: 1.1,
+            mb: 2,
+            letterSpacing: 0,
+          }}
+        >
+          {formatMoney(metrics.totalPending, displayCurrency)}
+        </Typography>
+
+        {/* 子指标：逾期 + 未来 N 天 */}
+        <Stack direction="row" spacing={3}>
+          <Box>
+            <Typography
+              sx={{
+                color: 'rgba(255,255,255,0.68)',
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                mb: 0.25,
+              }}
+            >
+              含逾期
+            </Typography>
+            <Typography
+              className={amountClass}
+              sx={{
+                // 暗底上的告警红：从 --danger 提亮派生（同 DESIGN.md sky-on-navy 的暗表面语义色约定）
+                color: metrics.overdueAmount > 0
+                  ? 'color-mix(in srgb, var(--danger) 56%, #FFFFFF)'
+                  : 'rgba(255,255,255,0.9)',
+                fontSize: 14,
+                fontWeight: 600,
+              }}
+            >
+              {formatMoney(metrics.overdueAmount, displayCurrency)}
+            </Typography>
+          </Box>
+          <Box>
+            <Typography
+              sx={{
+                color: 'rgba(255,255,255,0.68)',
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                mb: 0.25,
+              }}
+            >
+              未来 {futureRange} 天
+            </Typography>
+            <Typography
+              className={amountClass}
+              sx={{ color: 'var(--warn)', fontSize: 14, fontWeight: 600 }}
+            >
+              {formatMoney(metrics.futureAmount, displayCurrency)}
+            </Typography>
+          </Box>
+        </Stack>
+        {/* 汇率不可用时，明确告诉用户合计里缺了哪些外币，而不是给一个看着正常的假数 */}
+        {metrics.unconvertedCurrencies.length > 0 && (
+          <Typography sx={{ fontSize: 12, lineHeight: '16px', color: 'rgba(255,255,255,0.72)', mt: 1 }}>
+            未含汇率：{metrics.unconvertedCurrencies.join('、')} 未计入合计
+          </Typography>
+        )}
+      </Paper>
+
+      {/* 指标网格 2×2 */}
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: 1.5,
+          mb: 3,
+        }}
+      >
+        {/* 1. 已逾期 */}
+        <Paper
+          elevation={0}
+          onClick={() => router.push('/bills')}
+          sx={{
+            p: 2,
+            // 无边框：分层阴影表达层级
+            borderRadius: 'var(--radius-depth-2)',
+            bgcolor: 'var(--paper)',
+            border: 0,
+            boxShadow: 'var(--shadow-e1)',
+            cursor: 'pointer',
+            transition: 'box-shadow var(--dur-fast) var(--ease-out)',
+            '&:hover': { boxShadow: 'var(--shadow-e3)' },
+          }}
+        >
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mb: 0.5,
+            }}
+          >
+            已逾期
+          </Typography>
+          <Typography
+            className={amountClass}
+            sx={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: metrics.overdueAmount > 0 ? 'var(--danger)' : 'var(--success)',
+              lineHeight: 1.2,
+            }}
+          >
             {formatMoney(metrics.overdueAmount, displayCurrency)}
-          </p>
-          <p className="mt-1 text-[11px] text-d-muted">
-            {metrics.overdueAmount > 0 ? metrics.overdueBills.length + ' 笔待处理' : '暂无逾期'}
-          </p>
-        </button>
-        <div className="rounded-2xl border border-d-border bg-d-surface p-3.5">
-          <div className="flex flex-wrap items-center justify-between gap-1">
-            <p className="whitespace-nowrap text-xs text-d-muted">未来待还</p>
-            <div className="flex gap-1">
+          </Typography>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mt: 0.5,
+            }}
+          >
+            {metrics.overdueAmount > 0 ? `${metrics.overdueBills.length} 笔待处理` : '暂无逾期'}
+          </Typography>
+        </Paper>
+
+        {/* 2. 未来 N 天待还（带 7/14/30 切换） */}
+        <Paper
+          elevation={0}
+          sx={{
+            p: 2,
+            borderRadius: 'var(--radius-depth-2)',
+            bgcolor: 'var(--paper)',
+            border: 0,
+            boxShadow: 'var(--shadow-e1)',
+          }}
+        >
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              // 2 列指标卡在 360 下内宽仅 126px：标签与 7/14/30 天胶囊放不下同一行，
+              // 允许换行，避免两者被同时压成两行
+              flexWrap: 'wrap',
+              columnGap: 1,
+              rowGap: 0.5,
+              mb: 0.5,
+            }}
+          >
+            <Typography
+              sx={{
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                color: 'var(--muted)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              未来待还
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 0.25, flexShrink: 0 }}>
               {FUTURE_RANGES.map(r => {
                 const active = futureRange === r
                 return (
-                  <button
+                  <Box
                     key={r}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setFutureRange(r)}
-                    className={
-                      'whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ' +
-                      (active ? 'bg-d-gold-soft text-d-gold' : 'text-d-muted')
-                    }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        setFutureRange(r)
+                      }
+                    }}
+                    sx={{
+                      px: 0.75,
+                      py: 0.25,
+                      // 计数级小胶囊：11px 数字在 17px 圆内，属既定尺寸约束
+                      fontSize: 11,
+                      lineHeight: 1.3,
+                      fontWeight: 600,
+                      borderRadius: 'var(--radius-pill)',
+                      cursor: 'pointer',
+                      // 「7 天」是原子语义单元，不允许在数字与单位之间折行
+                      whiteSpace: 'nowrap',
+                      bgcolor: active ? 'rgba(201,162,39,0.15)' : 'transparent',
+                      color: active ? 'var(--gold-700)' : 'var(--text-disabled)',
+                      transition: 'background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)',
+                      '&:hover': { bgcolor: 'rgba(201,162,39,0.10)' },
+                    }}
                   >
                     {r}天
-                  </button>
+                  </Box>
                 )
               })}
-            </div>
-          </div>
-          <p className={amountClass + ' mt-1 text-[22px] font-bold'}>
+            </Box>
+          </Box>
+          <Typography
+            className={amountClass}
+            sx={{
+              fontSize: 22,
+              fontWeight: 700,
+              // 白卡上的金额是正文级信息，gold-500 只有 2.42:1（连 3:1 的大字号门槛都不到），
+              // 用 gold-700（4.90:1）。gold-500 只留给深蓝底上的金色强调。
+              color: 'var(--gold-700)',
+              lineHeight: 1.2,
+            }}
+          >
             {formatMoney(metrics.futureAmount, displayCurrency)}
-          </p>
-          <p className="mt-1 text-[11px] text-d-muted">{futureRange} 天内到期合计</p>
-        </div>
-        <button
-          onClick={() => setDebtExpanded(v => !v)}
-          className="rounded-2xl border border-d-border bg-d-surface p-3.5 text-left"
-        >
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-d-muted">总欠款</p>
-            <span className="text-xs text-d-muted">{debtExpanded ? '收起' : '展开'}</span>
-          </div>
-          <p className={amountClass + ' mt-1 text-[22px] font-bold'}>
-            {formatMoney(metrics.plainOwed, displayCurrency)}
-          </p>
-          {debtExpanded && (
-            <div className="mt-2 space-y-1 border-t border-d-border pt-2 text-[11px] text-d-muted">
-              <div className="flex justify-between"><span>分期剩余本金</span><span>暂未接入</span></div>
-              <div className="flex justify-between"><span>贷款剩余本息</span><span>暂未接入</span></div>
-              <div className="flex justify-between"><span>普通未还</span>
-                <span className={amountClass + ' font-semibold'}>{formatMoney(metrics.plainOwed, displayCurrency)}</span>
-              </div>
-            </div>
-          )}
-        </button>
-        <div className="rounded-2xl border border-d-border bg-d-surface p-3.5">
-          <p className="text-xs text-d-muted">未出账单</p>
-          <p className="mt-1 text-[22px] font-bold text-d-muted">暂无数据</p>
-          <p className="mt-1 text-[11px] text-d-muted">邮件解析待接入</p>
-        </div>
-      </div>
+          </Typography>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mt: 0.5,
+            }}
+          >
+            {futureRange} 天内到期合计
+          </Typography>
+        </Paper>
 
-      {/* 账户 chips */}
-      <div className="mt-5 px-5">
-        <p className="text-[15px] font-semibold">账户</p>
-        <div className="mt-2 flex flex-wrap gap-2">
-          <button
+        {/* 3. 总欠款（可展开） */}
+        <Paper
+          elevation={0}
+          onClick={() => setDebtExpanded(v => !v)}
+          sx={{
+            p: 2,
+            borderRadius: 'var(--radius-depth-2)',
+            bgcolor: 'var(--paper)',
+            border: 0,
+            boxShadow: 'var(--shadow-e1)',
+            cursor: 'pointer',
+            transition: 'box-shadow var(--dur-fast) var(--ease-out)',
+            '&:hover': { boxShadow: 'var(--shadow-e3)' },
+          }}
+        >
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography
+              sx={{
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                color: 'var(--muted)',
+              }}
+            >
+              总欠款
+            </Typography>
+            <ChevronDownIcon
+              size={16}
+              style={{
+                transition: 'transform var(--dur-fast) var(--ease-out)',
+                transform: debtExpanded ? 'rotate(180deg)' : 'none',
+                color: 'var(--strong)',
+              }}
+            />
+          </Box>
+          <Typography
+            className={amountClass}
+            sx={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: 'var(--text)',
+              lineHeight: 1.2,
+              mt: 0.5,
+            }}
+          >
+            {formatMoney(metrics.plainOwed, displayCurrency)}
+          </Typography>
+
+          {debtExpanded && (
+            <Box sx={{ mt: 1.5, pt: 1.5, borderTop: '1px solid var(--track)' }}>
+              <Stack spacing={1}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>
+                    分期剩余本金
+                  </Typography>
+                  <Typography
+                    className="num-tabular"
+                    sx={{ fontSize: 'var(--type-body-size)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--text-disabled)' }}
+                  >
+                    暂未接入
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>
+                    贷款剩余本息
+                  </Typography>
+                  <Typography
+                    className="num-tabular"
+                    sx={{ fontSize: 'var(--type-body-size)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--text-disabled)' }}
+                  >
+                    暂未接入
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>
+                    普通未还
+                  </Typography>
+                  <Typography
+                    className={amountClass}
+                    sx={{ fontSize: 'var(--type-body-size)', letterSpacing: 'var(--type-body-tracking)', fontWeight: 600, color: 'var(--text)' }}
+                  >
+                    {formatMoney(metrics.plainOwed, displayCurrency)}
+                  </Typography>
+                </Box>
+              </Stack>
+            </Box>
+          )}
+        </Paper>
+
+        {/* 4. 未出账单（占位） */}
+        <Paper
+          elevation={0}
+          sx={{
+            p: 2,
+            borderRadius: 'var(--radius-depth-2)',
+            bgcolor: 'var(--paper)',
+            border: 0,
+            boxShadow: 'var(--shadow-e1)',
+          }}
+        >
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+            }}
+          >
+            未出账单
+          </Typography>
+          <Typography
+            sx={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: 'var(--text-disabled)',
+              lineHeight: 1.2,
+              mt: 0.5,
+            }}
+          >
+            暂无数据
+          </Typography>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mt: 0.5,
+            }}
+          >
+            邮件解析待接入
+          </Typography>
+        </Paper>
+      </Box>
+
+      {/* 账户数 chips */}
+      <Box sx={{ mb: 3 }}>
+        <Typography
+          sx={{
+            fontSize: 'var(--type-section-size)',
+            lineHeight: 'var(--type-section-line)',
+            fontWeight: 'var(--type-section-weight)',
+            letterSpacing: 'var(--type-section-tracking)',
+            color: 'var(--text)',
+            mb: 1,
+          }}
+        >
+          账户
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          <Box
             onClick={() => setHolderFilter('all')}
-            className={
-              'rounded-full px-3 py-1 text-xs font-semibold ' +
-              (holderFilter === 'all' ? 'bg-d-accent text-white' : 'border border-d-border bg-d-surface text-d-text')
-            }
+            sx={{
+              px: 1.5,
+              py: 0.5,
+              borderRadius: 'var(--radius-pill)',
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              fontWeight: 600,
+              cursor: 'pointer',
+              bgcolor: holderFilter === 'all' ? 'var(--navy-600)' : 'var(--paper)',
+              color: holderFilter === 'all' ? 'var(--text-on-dark)' : 'var(--text)',
+              // 无边框：选中态用填充 + 分层阴影
+              border: 0,
+              boxShadow: holderFilter === 'all' ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
+            }}
           >
             全部 {totalCardCount} 张
-          </button>
+          </Box>
           {holders.map(h => (
-            <button
+            <Box
               key={h.id}
               onClick={() => setHolderFilter(h.id)}
-              className={
-                'rounded-full px-3 py-1 text-xs font-semibold ' +
-                (holderFilter === h.id ? 'bg-d-accent text-white' : 'border border-d-border bg-d-surface text-d-text')
-              }
+              sx={{
+                px: 1.5,
+                py: 0.5,
+                borderRadius: 'var(--radius-pill)',
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                fontWeight: 600,
+                cursor: 'pointer',
+                bgcolor: holderFilter === h.id ? 'var(--navy-600)' : 'var(--paper)',
+                color: holderFilter === h.id ? 'var(--text-on-dark)' : 'var(--text)',
+                border: 0,
+                boxShadow: holderFilter === h.id ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
+              }}
             >
               {h.name} {cardsByHolder[h.id] || 0} 张
-            </button>
+            </Box>
           ))}
-        </div>
-      </div>
+        </Box>
+      </Box>
 
-      {/* 金刚区 */}
-      <div className="mx-5 mt-4 grid grid-cols-4 gap-2">
+      {/* 金刚区 4 格 */}
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          gap: 1,
+          mb: 3,
+          px: 0.5,
+        }}
+      >
         {quickActions.map(a => (
-          <button
+          <Box
             key={a.key}
+            role="button"
+            tabIndex={0}
             onClick={a.onClick}
-            className="flex min-h-[76px] flex-col items-center justify-center gap-1.5 rounded-2xl border border-d-border bg-d-surface py-3"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                a.onClick()
+              }
+            }}
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 0.75,
+              py: 1.5,
+              borderRadius: 'var(--radius-depth-2)',
+              cursor: 'pointer',
+              color: 'var(--strong)',
+              transition: 'box-shadow var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out)',
+              bgcolor: 'var(--paper)',
+              boxShadow: 'var(--shadow-e1)',
+              '&:hover': { boxShadow: 'var(--shadow-e2)' },
+              '&:focus-visible': { outline: '2px solid var(--navy-600)', outlineOffset: 2 },
+              // 触控区域 ≥ 64pt（minHeight 64 + 内边距）
+              minHeight: 76,
+            }}
           >
             {a.icon}
-            <span className="text-xs font-semibold">{a.label}</span>
-          </button>
+            <Typography
+              sx={{
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                fontWeight: 600,
+                color: 'var(--text)',
+              }}
+            >
+              {a.label}
+            </Typography>
+          </Box>
         ))}
-      </div>
+      </Box>
 
-    </div>
+      <QuickActionSheet open={quickSheetOpen} onClose={() => setQuickSheetOpen(false)} onChanged={loadData} />
 
- )
+      {/* 逾期明细 */}
+      <Box
+        sx={{
+          mb: 1.5,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <Typography
+          sx={{
+            fontSize: 'var(--type-section-size)',
+            lineHeight: 'var(--type-section-line)',
+            fontWeight: 'var(--type-section-weight)',
+            letterSpacing: 'var(--type-section-tracking)',
+            color: 'var(--text)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.75,
+          }}
+        >
+          <AlertIcon size={18} style={{ color: metrics.overdueAmount > 0 ? 'var(--danger)' : 'var(--success)' }} />
+          逾期明细
+        </Typography>
+        {metrics.overdueBills.length > 0 && (
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Button
+              variant="contained"
+              color="error"
+              size="small"
+              startIcon={<CheckIcon fontSize="small" />}
+              onClick={() => setPayAllOpen(true)}
+              sx={{
+                borderRadius: 'var(--radius-pill)',
+                fontSize: 'var(--type-body-size)',
+                letterSpacing: 'var(--type-body-tracking)',
+                fontWeight: 700,
+                py: 0.25,
+                px: 1.25,
+                whiteSpace: 'nowrap',
+                textTransform: 'none',
+                boxShadow: 'none',
+              }}
+            >
+              一键全部还款
+            </Button>
+          <Box
+            onClick={() => router.push('/bills')}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.25,
+              cursor: 'pointer',
+              color: 'var(--strong)',
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              fontWeight: 600,
+            }}
+            >
+              查看全部
+              <ChevronRightIcon size={14} />
+            </Box>
+          </Stack>
+        )}
+      </Box>
+
+      {metrics.overdueBills.length === 0 ? (
+        // 无逾期：绿色"本月无逾期"空态
+        <Paper
+          elevation={0}
+          sx={{
+            p: 3,
+            // 无逾期空态：语义成功色容器，保留 1px 语义描边
+            borderRadius: 'var(--radius-depth-2)',
+            bgcolor: 'color-mix(in srgb, var(--success) 6%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--success) 20%, transparent)',
+            textAlign: 'center',
+          }}
+        >
+          <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', fontWeight: 600, color: 'var(--success)' }}>
+            本月无逾期
+          </Typography>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              mt: 0.5,
+            }}
+          >
+            所有账单都在按时还款
+          </Typography>
+        </Paper>
+      ) : (
+        <Stack spacing={1.5}>
+          {metrics.overdueBills
+            .slice()
+            .sort((a, b) => a.days_until_due - b.days_until_due)
+            .map(bill => {
+              const product = bill.card?.card_product
+              const tailDigits = formatCardTail(bill.card?.card_number_last4)
+              const tail = tailDigits ? `尾号 ${tailDigits}` : '未记录尾号'
+              // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
+              const cardDisplayName = bill.card ? getEffectiveCardName(bill.card, product) : ''
+              const overdueDays = Math.abs(bill.days_until_due)
+              const remaining = bill.remaining_amount > 0 ? bill.remaining_amount : Number(bill.bill_amount)
+
+              return (
+                <Paper
+                  key={bill.id}
+                  elevation={0}
+                  onClick={() => router.push('/bills')}
+                  sx={{
+                    p: 2,
+                    borderRadius: 'var(--radius-depth-2)',
+                    bgcolor: 'var(--paper)',
+                    border: 0,
+                    boxShadow: 'var(--shadow-e1)',
+                    cursor: 'pointer',
+                    transition: 'box-shadow var(--dur-fast) var(--ease-out)',
+                    '&:hover': { boxShadow: 'var(--shadow-e3)' },
+                  }}
+                >
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      mb: 1,
+                      gap: 1,
+                    }}
+                  >
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography
+                        sx={{
+                          fontSize: 'var(--type-body-size)',
+                          lineHeight: 'var(--type-body-line)',
+                          letterSpacing: 'var(--type-body-tracking)',
+                          fontWeight: 600,
+                          color: 'var(--text)',
+                        }}
+                        noWrap
+                      >
+                        {product?.bank_name || '未知银行'} {cardDisplayName}
+                      </Typography>
+                      <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>
+                        {tail} · {bill.bill_month || ''}
+                      </Typography>
+                    </Box>
+                    <Box
+                      sx={{
+                        flexShrink: 0,
+                        px: 1,
+                        py: 0.25,
+                        borderRadius: 'var(--radius-pill)',
+                        bgcolor: 'rgba(207,46,46,0.10)',
+                        color: 'var(--danger-ink)',
+                        fontSize: 'var(--type-body-size)',
+                        lineHeight: 'var(--type-body-line)',
+                        letterSpacing: 'var(--type-body-tracking)',
+                        fontWeight: 700,
+                      }}
+                    >
+                      逾期 {overdueDays} 天
+                    </Box>
+                  </Box>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      pt: 0.5,
+                      borderTop: '1px dashed var(--track)'
+                    }}
+                  >
+                    <Box>
+                      <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>待还金额</Typography>
+                      <Typography
+                        className={amountClass}
+                        sx={{
+                          fontSize: 18,
+                          fontWeight: 700,
+                          color: 'var(--danger-ink)',
+                        }}
+                      >
+                        {formatMoney(remaining, billCurrency(bill, displayCurrency))}
+                      </Typography>
+                    </Box>
+                    <Button
+                      variant="outlined"
+                      color="error"
+                      size="small"
+                      startIcon={<CheckIcon fontSize="small" />}
+                      onClick={(e) => handlePaySingle(e, bill)}
+                      sx={{
+                        borderRadius: 'var(--radius-pill)',
+                        fontSize: 'var(--type-body-size)',
+                        letterSpacing: 'var(--type-body-tracking)',
+                        fontWeight: 700,
+                        py: 0.35,
+                        px: 1.5,
+                        textTransform: 'none',
+                      }}
+                    >
+                      全额结清
+                    </Button>
+                  </Box>
+                </Paper>
+              )
+            })}
+        </Stack>
+      )}
+
+      {/* 一键全部还款确认弹窗 */}
+      <Dialog open={payAllOpen} onClose={() => !paying && setPayAllOpen(false)} maxWidth="xs" fullWidth>
+        {/* Dialog 走 portal，在 .phone 之外：显式声明角色令牌 */}
+        <DialogTitle
+          sx={{
+            fontSize: 'var(--type-section-size)',
+            lineHeight: 'var(--type-section-line)',
+            fontWeight: 'var(--type-section-weight)',
+            letterSpacing: 'var(--type-section-tracking)',
+            color: 'var(--text)',
+            fontFamily: 'var(--font-display)',
+          }}
+        >
+          确认一键完成全部还款？
+        </DialogTitle>
+        <DialogContent>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-body-size)',
+              lineHeight: 'var(--type-body-line)',
+              letterSpacing: 'var(--type-body-tracking)',
+              color: 'var(--muted)',
+              fontFamily: 'var(--font-body)',
+              mb: 1,
+            }}
+          >
+            系统将把当前 <strong>{metrics.overdueBills.length} 笔</strong>逾期账单全部标记为已结清。
+          </Typography>
+          <Typography
+            sx={{
+              fontSize: 'var(--type-section-size)',
+              lineHeight: 'var(--type-section-line)',
+              fontWeight: 'var(--type-section-weight)',
+              letterSpacing: 'var(--type-section-tracking)',
+              color: 'var(--danger)',
+              fontFamily: 'var(--font-display)',
+            }}
+          >
+            合计结清金额：{formatMoney(metrics.overdueAmount, displayCurrency)}
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setPayAllOpen(false)} disabled={paying}>取消</Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={handlePayAllOverdue}
+            disabled={paying}
+            startIcon={paying ? <CircularProgress size={16} color="inherit" /> : null}
+            sx={{ fontWeight: 700, borderRadius: 'var(--radius-pill)' }}
+          >
+            确认全部结清
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Toast 提示 */}
+      <Snackbar
+        open={toast.open}
+        autoHideDuration={3500}
+        onClose={() => setToast(prev => ({ ...prev, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity={toast.severity} sx={{ borderRadius: 'var(--radius-depth-1)', fontWeight: 600 }}>
+          {toast.message}
+        </Alert>
+      </Snackbar>
+
+      {error && (
+        <Box sx={{ mt: 3 }}>
+          <Paper
+            elevation={0}
+            sx={{
+              p: 2,
+              // 错误态：语义危险色容器，保留 1px 语义描边
+              borderRadius: 'var(--radius-depth-2)',
+              bgcolor: 'rgba(207,46,46,0.06)',
+              border: '1px solid rgba(207,46,46,0.20)',
+              textAlign: 'center',
+            }}
+          >
+            <Typography
+              sx={{
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                color: 'var(--danger)',
+                mb: 1,
+              }}
+            >
+              {error}
+            </Typography>
+            <Box
+              onClick={loadData}
+              sx={{
+                display: 'inline-block',
+                px: 2,
+                py: 0.5,
+                borderRadius: 'var(--radius-pill)',
+                bgcolor: 'var(--danger)',
+                color: 'var(--text-on-dark)',
+                fontSize: 'var(--type-body-size)',
+                lineHeight: 'var(--type-body-line)',
+                letterSpacing: 'var(--type-body-tracking)',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              重试
+            </Box>
+          </Paper>
+        </Box>
+      )}
+    </Container>
+  )
 }

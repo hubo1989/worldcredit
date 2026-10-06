@@ -1,5 +1,6 @@
 import type { BillDashboardItem } from './api/bills.server'
-import { currencySymbol, sumByCurrency, type FxRates } from './fx'
+import { currencySymbol, sumByCurrency } from './fx'
+import type { FxRates } from './fx'
 
 /** Dashboard 页面的纯指标计算与格式化逻辑（从页面抽出，便于 characterization 测试）。 */
 
