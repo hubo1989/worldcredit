@@ -17,7 +17,7 @@ function bill(p: { days_until_due: number; remaining_amount: number; currency?: 
   } as unknown as BillDashboardItem
 }
 
-const RATES = { base: 'USD', rates: { USD: 1, CNY: 7.2 }, timestamp: 0, fetched_at: 'test' }
+const RATES = { base: 'USD', rates: { USD: 1, CNY: 7.2 }, timestamp: 0, fetched_at: 0 }
 
 describe('computeMetrics（现状 characterization）', () => {
   it('paid 账单被排除在所有合计之外', () => {
