@@ -22,13 +22,9 @@ import { fetchRates, type FxRates } from '@/lib/fx'
 import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
 import { useAuth } from '@/lib/auth'
 import { WcSkeleton } from '@/components/mobile/WcStates'
-import { QuickActionSheet } from '@/components/mobile/QuickActionSheet'
-import { DashboardOverlays } from '@/components/obsidian/DashboardOverlays'
 import {
   EyeIcon, EyeOffIcon,
   NoteIcon, PromoIcon, BenefitIcon, ImportIcon,
-  ChevronDownIcon, ChevronRightIcon,
-  AlertIcon,
 } from '@/components/icons/WcIcon'
 import type { CardHolder } from '@/lib/types'
 
@@ -490,5 +486,6 @@ export default function DashboardPage() {
       </div>
 
     </div>
-  )
+
+ )
 }
