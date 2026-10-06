@@ -2,17 +2,12 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import {
-  Container, Typography, Box, Stack, Paper,
-  IconButton, Tooltip, Button, Dialog, DialogTitle,
-  DialogContent, DialogActions, Snackbar, Alert,
-  CircularProgress,
+  Box, Container,
 } from '@mui/material'
-import CheckIcon from '@mui/icons-material/CheckCircleOutline'
 import { useRouter } from 'next/navigation'
 import { getBillDashboardItems, markBillAsPaid, markAllOverdueBillsAsPaid, type BillDashboardItem } from '@/lib/api/bills'
 import { getHolders } from '@/lib/api/holders'
 import { getCardsBasicByHolders } from '@/lib/api/cards'
-import { formatCardTail, getEffectiveCardName } from '@/lib/utils'
 import {
   type HolderFilter,
   type FutureRange,
@@ -28,6 +23,7 @@ import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
 import { useAuth } from '@/lib/auth'
 import { WcSkeleton } from '@/components/mobile/WcStates'
 import { QuickActionSheet } from '@/components/mobile/QuickActionSheet'
+import { DashboardOverlays } from '@/components/obsidian/DashboardOverlays'
 import {
   EyeIcon, EyeOffIcon,
   NoteIcon, PromoIcon, BenefitIcon, ImportIcon,
@@ -70,6 +66,7 @@ export default function DashboardPage() {
   // 一键还款与 Toast 状态
   const [payAllOpen, setPayAllOpen] = useState(false)
   const [paying, setPaying] = useState(false)
+  const [promoCount, setPromoCount] = useState<number | null>(null)
   const [toast, setToast] = useState<{ open: boolean; message: string; severity: 'success' | 'info' | 'error' }>({
     open: false,
     message: '',
