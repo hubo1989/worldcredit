@@ -5,6 +5,7 @@ import {
   computeMetrics,
   countCardsByHolder,
   formatMoney,
+  getDueTodayBills,
 } from '../dashboard-metrics'
 
 /** 最小账单夹具：只带 computeMetrics 读取的字段（characterization 钉行为用）。 */
@@ -110,5 +111,21 @@ describe('formatMoney / billCurrency / countCardsByHolder（现状 characterizat
     expect(countCardsByHolder([
       { holder_id: 'h1' }, { holder_id: 'h1' }, { holder_id: 'h2' }, { holder_id: '' },
     ])).toEqual({ h1: 2, h2: 1 })
+  })
+})
+
+describe('getDueTodayBills（今天需还款列表）', () => {
+  it('只保留当天到期、未结清、且仍有剩余待还的账单', () => {
+    const due = bill({ days_until_due: 0, remaining_amount: 100 })
+    expect(getDueTodayBills([
+      due,
+      // 已结清：仍标 days_until_due === 0，但 CTA 会被 markBillAsPaid 拒绝
+      bill({ days_until_due: 0, remaining_amount: 0, computed_status: 'paid' }),
+      // 未结清但剩余为 0：同样不该出现
+      bill({ days_until_due: 0, remaining_amount: 0 }),
+      // 明天到期 / 已逾期：不属于「今天」
+      bill({ days_until_due: 1, remaining_amount: 10 }),
+      bill({ days_until_due: -1, remaining_amount: 10 }),
+    ])).toEqual([due])
   })
 })
