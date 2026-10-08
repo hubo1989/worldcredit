@@ -2,20 +2,11 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import {
-  Container, Typography, Box, Stack, Paper,
-  Button, Skeleton, Card, CardContent, LinearProgress,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField,
-  IconButton, Tooltip, Alert
 } from '@mui/material'
-import BenefitIcon from '@mui/icons-material/Star'
-import AddIcon from '@mui/icons-material/Add'
-import TravelIcon from '@mui/icons-material/FlightTakeoff'
-import HealthIcon from '@mui/icons-material/HealthAndSafety'
-import LifestyleIcon from '@mui/icons-material/SportsGolf'
-import AiIcon from '@mui/icons-material/AutoAwesome'
-import EditIcon from '@mui/icons-material/Edit'
-import DeleteIcon from '@mui/icons-material/Delete'
-import AlertIcon from '@mui/icons-material/AccessTime'
+import {
+  BenefitIcon, AiSparkleIcon, PlusIcon,
+} from '@/components/icons/WcIcon'
 import {
   getAllMyBenefits,
   recordBenefitUsage,
@@ -29,9 +20,9 @@ import type { Benefit, CardProduct } from '@/lib/types'
 
 import { useAuth } from '@/lib/auth'
 
-type BenefitWithStats = Benefit & { 
-  card_product?: CardProduct, 
-  usage_count: number 
+type BenefitWithStats = Benefit & {
+  card_product?: CardProduct,
+  usage_count: number
 }
 
 export default function BenefitsPage() {
@@ -40,7 +31,7 @@ export default function BenefitsPage() {
   const [loading, setLoading] = useState(true)
   const [collectingAi, setCollectingAi] = useState(false)
   const [selectedBenefit, setSelectedBenefit] = useState<BenefitWithStats | null>(null)
-  
+
   // Usage Record Dialog State
   const [useOpen, setUseOpen] = useState(false)
   const [note, setNote] = useState('')
@@ -101,7 +92,7 @@ export default function BenefitsPage() {
     try {
       const added = await autoEnrichCardBenefits(sampleCard.id, sampleCard.bank_name, sampleCard.card_name)
       if (added.length > 0) {
-        alert(`✨ AI 自动搜集成功！已成功检索并添加了 ${added.length} 项专属权益。`)
+        alert('✨ AI 自动搜集成功！已成功检索并添加了 ' + added.length + ' 项专属权益。')
         loadData()
       } else {
         alert('未检索到更多新权益。')
@@ -123,12 +114,6 @@ export default function BenefitsPage() {
     }
   }
 
-  const getCategoryIcon = (name: string) => {
-    if (name.includes('机场') || name.includes('接送') || name.includes('贵宾')) return <TravelIcon />
-    if (name.includes('体检') || name.includes('健康')) return <HealthIcon />
-    return <LifestyleIcon />
-  }
-
   // 计算到期/重置预警 (近 30 天内重置且尚有额度未享用)
   const expiringBenefits = benefits.filter(b => {
     const remaining = Number(b.quota) - b.usage_count
@@ -136,267 +121,160 @@ export default function BenefitsPage() {
   })
 
   return (
-    <Container sx={{ py: 3, pb: 10 }}>
-      {/* 页头与 AI 搜集/手动新增按钮 */}
-      {/* 标题块与两个操作按钮同排：360 下按钮要占 243px，标题块只剩 85px，
-          而「我的权益」单行需要 85.9px——差不到 1px 就被折成「我的权 / 益」。
-          标题是语义单元，用 nowrap 固定住，标题块的 flex 收缩下限因此抬到
-          标题自身宽度：390 下与按钮相加仍能同排（视觉不变），360 下按钮
-          整颗换行到下一行，两个单元都不再互相抢宽度。 */}
-      <Box
-        sx={{
-          mb: 3,
-          display: 'flex',
-          flexWrap: 'wrap',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          columnGap: 1,
-          rowGap: 1.5,
-        }}
-      >
-        <Box sx={{ flex: 1 }}>
-          <Typography
-            variant="h5"
-            sx={{
-              fontSize: 'var(--type-title-size)',
-              lineHeight: 'var(--type-title-line)',
-              fontWeight: 'var(--type-title-weight)',
-              letterSpacing: 'var(--type-title-tracking)',
-              color: 'var(--text)',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            我的权益
-          </Typography>
-          <Typography
-            sx={{
-              fontSize: 'var(--type-body-size)',
-              lineHeight: 'var(--type-body-line)',
-              letterSpacing: 'var(--type-body-tracking)',
-              color: 'var(--muted)',
-            }}
-          >
+    <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-4 text-d-text'>
+      {/* 页头与 AI 搜集/手动新增按钮：360 下按钮整颗换行，不与标题互抢宽度 */}
+      <div className='mb-4 flex flex-wrap items-start justify-between gap-x-2.5 gap-y-1.5'>
+        <div className='min-w-0 flex-1'>
+          <p className='whitespace-nowrap text-[20px] font-bold leading-7 text-d-text'>我的权益</p>
+          <p className='mt-0.5 text-[12px] leading-4 text-d-muted'>
             智能追踪与享用您的信用卡专属权益
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1} sx={{ flexShrink: 0, ml: 'auto' }}>
-          <Button
-            variant="contained"
-            color="secondary"
-            size="small"
-            startIcon={<AiIcon />}
+          </p>
+        </div>
+        <div className='flex shrink-0 gap-2'>
+          <button
+            type='button'
             disabled={collectingAi}
             onClick={handleAutoCollectAi}
-            sx={{ borderRadius: 'var(--radius-pill)', whiteSpace: 'nowrap' }}
+            className='flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full bg-d-accent px-3.5 text-[12px] font-semibold text-white disabled:opacity-60'
           >
+            <AiSparkleIcon size={14} />
             {collectingAi ? 'AI 搜集中...' : 'AI 搜集权益'}
-          </Button>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={<AddIcon />}
+          </button>
+          <button
+            type='button'
             onClick={() => {
               setEditingBenefit(null)
               setEditOpen(true)
             }}
-            sx={{ borderRadius: 'var(--radius-pill)', whiteSpace: 'nowrap' }}
+            className='flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full border border-d-accent px-3.5 text-[12px] font-semibold text-d-accent-light'
           >
+            <PlusIcon size={14} />
             手动添加
-          </Button>
-        </Stack>
-      </Box>
+          </button>
+        </div>
+      </div>
 
       {/* 权益到期/重置预警 Banner */}
       {expiringBenefits.length > 0 && (
-        <Alert severity="warning" icon={<AlertIcon fontSize="small" />} sx={{ mb: 3, borderRadius: 'var(--radius-depth-2)' }}>
-          提示：您有 <strong>{expiringBenefits.length}</strong> 项专属权益（如 {expiringBenefits[0].name}）仍有剩余额度未享用，请注意及时使用。
-        </Alert>
+        <div className='mb-4 rounded-xl bg-d-gold-soft p-3'>
+          <p className='text-[12px] font-semibold leading-5 text-d-warn-ink'>
+            提示：您有 {expiringBenefits.length} 项专属权益（如 {expiringBenefits[0].name}）仍有剩余额度未享用，请注意及时使用。
+          </p>
+        </div>
       )}
 
       {loading ? (
-        <Stack spacing={2}>
-          {[1, 2, 3].map(i => <Skeleton key={i} variant="rounded" height={120} sx={{ borderRadius: 'var(--radius-depth-3)' }} />)}
-        </Stack>
+        <div className='flex flex-col gap-3'>
+          {[1, 2, 3].map(i => (
+            <div key={i} className='wc-skeleton h-[120px] w-full rounded-2xl' />
+          ))}
+        </div>
       ) : benefits.length === 0 ? (
-        <Paper
-          elevation={0}
-          sx={{
-            p: 4, textAlign: 'center', borderRadius: 'var(--radius-depth-3)',
-            bgcolor: 'var(--paper)', border: '1px dashed', borderColor: 'var(--track)',
-          }}
-        >
-          <BenefitIcon sx={{ fontSize: 48, color: 'var(--text-disabled)', mb: 2 }} />
-          <Typography
-            sx={{
-              fontSize: 'var(--type-body-size)',
-              lineHeight: 'var(--type-body-line)',
-              letterSpacing: 'var(--type-body-tracking)',
-              fontWeight: 600,
-              color: 'var(--text)',
-            }}
+        <div className='rounded-2xl border border-dashed border-d-border bg-d-surface p-8 text-center'>
+          <BenefitIcon size={48} className='mx-auto mb-4 text-d-muted' />
+          <p className='text-[13px] font-semibold leading-5 text-d-text'>暂无可用权益</p>
+          <p className='mb-4 mt-1 block text-[12px] leading-4 text-d-muted'>
+            点击「AI 搜集权益」自动检索卡片权益或手动添加
+          </p>
+          <button
+            type='button'
+            onClick={handleAutoCollectAi}
+            className='mx-auto flex h-11 items-center gap-1.5 rounded-full bg-d-accent px-5 text-[13px] font-semibold text-white'
           >
-            暂无可用权益
-          </Typography>
-          <Typography
-            sx={{
-              fontSize: 'var(--type-body-size)',
-              lineHeight: 'var(--type-body-line)',
-              letterSpacing: 'var(--type-body-tracking)',
-              color: 'var(--muted)',
-              display: 'block',
-              mt: 0.5,
-              mb: 2,
-            }}
-          >
-            点击“AI 搜集权益”自动检索卡片权益或手动添加
-          </Typography>
-          <Button variant="contained" color="secondary" startIcon={<AiIcon />} onClick={handleAutoCollectAi}>
+            <AiSparkleIcon size={15} />
             一键 AI 自动搜集
-          </Button>
-        </Paper>
+          </button>
+        </div>
       ) : (
-        <Stack spacing={2}>
+        <div className='flex flex-col gap-3'>
           {benefits.map(b => {
             const remaining = Math.max(0, Number(b.quota) - b.usage_count)
             const progress = (b.usage_count / Number(b.quota)) * 100
 
             return (
-              <Card
-                key={b.id}
-                elevation={0}
-                sx={{ borderRadius: 'var(--radius-depth-3)', border: 0, boxShadow: 'var(--shadow-e2)' }}
-              >
-                <CardContent sx={{ p: 2.5 }}>
-                  <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
-                    <Box sx={{
-                      width: 48, height: 48, borderRadius: 'var(--radius-depth-1)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      bgcolor: 'rgba(30,58,138,0.08)', color: 'var(--strong)'
-                    }}>
-                      {getCategoryIcon(b.name)}
-                    </Box>
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography
-                        sx={{
-                          fontSize: 'var(--type-body-size)',
-                          lineHeight: 'var(--type-body-line)',
-                          letterSpacing: 'var(--type-body-tracking)',
-                          fontWeight: 600,
-                          color: 'var(--muted)',
-                        }}
-                      >
-                        {b.card_product?.bank_name} · {b.card_product?.card_name}
-                      </Typography>
-                      <Typography
-                        variant="h6"
-                        sx={{
-                          fontSize: 'var(--type-section-size)',
-                          lineHeight: 'var(--type-section-line)',
-                          fontWeight: 'var(--type-section-weight)',
-                          letterSpacing: 'var(--type-section-tracking)',
-                          color: 'var(--text)',
-                        }}
-                      >
-                        {b.name}
-                      </Typography>
-                      {b.description && (
-                        <Typography
-                          sx={{
-                            fontSize: 'var(--type-body-size)',
-                            lineHeight: 'var(--type-body-line)',
-                            letterSpacing: 'var(--type-body-tracking)',
-                            color: 'var(--muted)',
-                            display: 'block',
-                            mt: 0.25,
-                          }}
-                        >
-                          {b.description}
-                        </Typography>
-                      )}
-                    </Box>
-                    <Stack direction="row" spacing={0.5}>
-                      <Tooltip title="编辑">
-                        <IconButton
-                          aria-label="编辑权益"
-                          size="small"
-                          onClick={() => {
-                            setEditingBenefit(b)
-                            setEditOpen(true)
-                          }}
-                          sx={{ border: 0, color: 'var(--strong)', boxShadow: 'var(--shadow-e1)' }}
-                        >
-                          <EditIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="删除">
-                        <IconButton
-                          aria-label="删除权益"
-                          size="small"
-                          color="error"
-                          onClick={() => handleDeleteBenefit(b.id)}
-                          sx={{ border: 0, boxShadow: 'var(--shadow-e1)' }}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </Stack>
-                  </Box>
+              <div key={b.id} className='rounded-2xl border border-d-border bg-d-surface p-4'>
+                <div className='mb-3 flex gap-3'>
+                  <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-d-subtle text-d-accent-light'>
+                    <BenefitIcon size={22} />
+                  </div>
+                  <div className='min-w-0 flex-1'>
+                    <p className='truncate text-[12px] leading-4 text-d-muted'>
+                      {b.card_product?.bank_name} · {b.card_product?.card_name}
+                    </p>
+                    <p className='mt-0.5 text-[15px] font-semibold leading-5 text-d-text'>{b.name}</p>
+                    {b.description && (
+                      <p className='mt-0.5 text-[12px] leading-4 text-d-muted'>{b.description}</p>
+                    )}
+                  </div>
+                  <div className='flex shrink-0 gap-1.5'>
+                    <button
+                      type='button'
+                      aria-label='编辑权益'
+                      onClick={() => {
+                        setEditingBenefit(b)
+                        setEditOpen(true)
+                      }}
+                      className='text-[12px] font-semibold text-d-muted'
+                    >
+                      编辑
+                    </button>
+                    <button
+                      type='button'
+                      aria-label='删除权益'
+                      onClick={() => handleDeleteBenefit(b.id)}
+                      className='text-[12px] font-semibold text-d-danger-ink'
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
 
-                  <Box sx={{ mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                    <Box>
-                      <Typography
-                        sx={{
-                          fontSize: 'var(--type-body-size)',
-                          lineHeight: 'var(--type-body-line)',
-                          letterSpacing: 'var(--type-body-tracking)',
-                          fontWeight: 600,
-                          color: remaining > 0 ? 'var(--strong)' : 'var(--text-disabled)',
-                        }}
-                      >
-                        可用剩余：{remaining} / {b.quota} 次
-                      </Typography>
-                      {b.reset_month ? (
-                        <Typography sx={{ fontSize: 'var(--type-body-size)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)', ml: 1 }}>
-                          每年 {b.reset_month} 月重置
-                        </Typography>
-                      ) : b.expiry_date ? (
-                        <Typography sx={{ fontSize: 'var(--type-body-size)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)', ml: 1 }}>
-                          截止：{b.expiry_date}
-                        </Typography>
-                      ) : null}
-                    </Box>
-                  </Box>
+                <div className='mb-1.5 flex items-end justify-between gap-2'>
+                  <div className='min-w-0'>
+                    <p
+                      className={
+                        'text-[13px] font-semibold leading-5 ' +
+                        (remaining > 0 ? 'text-d-accent-light' : 'text-d-muted')
+                      }
+                    >
+                      可用剩余：{remaining} / {b.quota} 次
+                    </p>
+                    {b.reset_month ? (
+                      <p className='text-[12px] leading-4 text-d-muted'>每年 {b.reset_month} 月重置</p>
+                    ) : b.expiry_date ? (
+                      <p className='text-[12px] leading-4 text-d-muted'>截止：{b.expiry_date}</p>
+                    ) : null}
+                  </div>
+                </div>
 
-                  <LinearProgress 
-                    variant="determinate" 
-                    value={Math.min(100, progress)} 
-                    sx={{ height: 6, borderRadius: 'var(--radius-pill)', mb: 2 }}
+                {/* 进度条：已用占比 */}
+                <div className='mb-3 h-1.5 w-full overflow-hidden rounded-full bg-d-border'>
+                  <div
+                    className='h-full rounded-full bg-d-accent'
+                    style={{ width: Math.min(100, progress) + '%' }}
                   />
+                </div>
 
-                  <Button 
-                    variant="contained" 
-                    fullWidth 
-                    size="small"
-                    startIcon={<AddIcon />}
-                    disabled={remaining <= 0}
-                    onClick={() => {
-                      setSelectedBenefit(b)
-                      setUseOpen(true)
-                    }}
-                    sx={{ borderRadius: 'var(--radius-pill)' }}
-                  >
-                    登记享用权益
-                  </Button>
-                </CardContent>
-              </Card>
+                <button
+                  type='button'
+                  disabled={remaining <= 0}
+                  onClick={() => {
+                    setSelectedBenefit(b)
+                    setUseOpen(true)
+                  }}
+                  className='flex h-11 w-full items-center justify-center gap-1.5 rounded-full bg-d-accent text-[13px] font-semibold text-white disabled:opacity-50'
+                >
+                  <PlusIcon size={15} />
+                  登记享用权益
+                </button>
+              </div>
             )
           })}
-        </Stack>
+        </div>
       )}
 
       {/* 登记享用 Dialog */}
-      <Dialog open={useOpen} onClose={() => setUseOpen(false)} fullWidth maxWidth="xs">
-        {/* Dialog 走 portal，不在 .phone 作用域内：需显式声明角色令牌 */}
+      <Dialog open={useOpen} onClose={() => setUseOpen(false)} fullWidth maxWidth='xs'>
         <DialogTitle
           sx={{
             fontSize: 'var(--type-section-size)',
@@ -410,38 +288,37 @@ export default function BenefitsPage() {
           登记权益享用
         </DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <Typography
-              sx={{
-                fontSize: 'var(--type-body-size)',
-                lineHeight: 'var(--type-body-line)',
-                letterSpacing: 'var(--type-body-tracking)',
-                color: 'var(--muted)',
-                fontFamily: 'var(--font-body)',
-              }}
-            >
-              正在登记享用: <strong>{selectedBenefit?.name}</strong>
-            </Typography>
+          <div className='mt-2 flex flex-col gap-3'>
+            <p className='text-[13px] leading-5 text-d-muted'>
+              正在登记享用: <strong className='text-d-text'>{selectedBenefit?.name}</strong>
+            </p>
             <TextField
-              label="使用场景与备注 (选填)"
-              placeholder="例如: 浦东机场 T2 专车接送"
+              label='使用场景与备注 (选填)'
+              placeholder='例如: 浦东机场 T2 专车接送'
               fullWidth
               multiline
               rows={3}
               value={note}
-              onChange={(e) => setNote(e.target.value)}
+              onChange={e => setNote(e.target.value)}
             />
-          </Stack>
+          </div>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setUseOpen(false)}>取消</Button>
-          <Button 
-            variant="contained" 
-            onClick={handleUseBenefit} 
+        <DialogActions sx={{ p: 2 }}>
+          <button
+            type='button'
+            onClick={() => setUseOpen(false)}
+            className='h-10 rounded-xl px-5 text-sm font-semibold text-d-muted'
+          >
+            取消
+          </button>
+          <button
+            type='button'
+            onClick={handleUseBenefit}
             disabled={submitting}
+            className='h-10 rounded-xl bg-d-accent px-5 text-sm font-semibold text-white disabled:opacity-50'
           >
             {submitting ? '登记中...' : '确认登记享用'}
-          </Button>
+          </button>
         </DialogActions>
       </Dialog>
 
@@ -460,6 +337,6 @@ export default function BenefitsPage() {
           }
         }}
       />
-    </Container>
+    </div>
   )
 }
