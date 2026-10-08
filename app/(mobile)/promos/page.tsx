@@ -2,21 +2,13 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import {
-  Container, Typography, Box, Stack, Paper,
-  Card, CardContent, Chip, Button, Skeleton,
-  Tabs, Tab, TextField, Dialog, DialogTitle,
+  TextField, Dialog, DialogTitle,
   DialogContent, DialogActions,
   Snackbar, Alert
 } from '@mui/material'
-import PromoIcon from '@mui/icons-material/LocalOffer'
-import StoreIcon from '@mui/icons-material/Store'
-import GasIcon from '@mui/icons-material/LocalGasStation'
-import DrinkIcon from '@mui/icons-material/Coffee'
-import TravelIcon from '@mui/icons-material/FlightTakeoff'
-import CinemaIcon from '@mui/icons-material/Movie'
-import AddIcon from '@mui/icons-material/Add'
-import AccessTimeIcon from '@mui/icons-material/AccessTime'
-import CreditCardIcon from '@mui/icons-material/CreditCard'
+import {
+  PromoIcon, PlusIcon, ClockIcon, CardIcon,
+} from '@/components/icons/WcIcon'
 import { getPromosWithBanks, createUserPromo } from '@/lib/api/promos'
 import type { Promo } from '@/lib/types'
 
@@ -212,363 +204,200 @@ export default function PromosPage() {
     }
   }
 
-  const getPromoIcon = (title: string, desc: string = '') => {
-    const text = title + desc
-    if (text.includes('加油') || text.includes('车')) return <GasIcon />
-    if (text.includes('饮品') || text.includes('咖啡') || text.includes('茶')) return <DrinkIcon />
-    if (text.includes('商超') || text.includes('超市')) return <StoreIcon />
-    if (text.includes('境外') || text.includes('航') || text.includes('酒店')) return <TravelIcon />
-    if (text.includes('电影') || text.includes('影音') || text.includes('娱乐')) return <CinemaIcon />
-    return <PromoIcon />
-  }
+  // WcIcon 暂无分类图标族，先统一用 PromoIcon 表达
+  const getPromoIcon = (_title: string, _desc: string = '') => <PromoIcon size={24} />
 
   return (
-    <Container sx={{ py: 3, pb: 12 }}>
+    <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-4 text-d-text'>
       {/* 顶部标题栏 */}
-      <Box sx={{ mb: 2.5, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <Box>
-          <Typography
-            variant="h5"
-            sx={{
-              fontSize: 'var(--type-title-size)',
-              lineHeight: 'var(--type-title-line)',
-              fontWeight: 'var(--type-title-weight)',
-              letterSpacing: 'var(--type-title-tracking)',
-              color: 'var(--text)',
-            }}
-          >
-            优惠活动
-          </Typography>
-          <Typography
-            sx={{
-              fontSize: 'var(--type-body-size)',
-              lineHeight: 'var(--type-body-line)',
-              letterSpacing: 'var(--type-body-tracking)',
-              color: 'var(--muted)',
-            }}
-          >
+      <div className='mb-2.5 flex items-start justify-between gap-2.5'>
+        <div className='min-w-0'>
+          <p className='text-[20px] font-bold leading-7 text-d-text'>优惠活动</p>
+          <p className='mt-0.5 text-[12px] leading-4 text-d-muted'>
             精选各行当期热门活动与信用卡专属羊毛
-          </Typography>
-        </Box>
-        <Button
-          variant="contained"
-          size="small"
-          startIcon={<AddIcon />}
+          </p>
+        </div>
+        <button
+          type='button'
           onClick={() => setAddOpen(true)}
-          sx={{ borderRadius: 'var(--radius-pill)', fontWeight: 700, whiteSpace: 'nowrap' }}
+          className='flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-d-accent px-3.5 text-[12px] font-bold text-white'
         >
+          <PlusIcon size={14} />
           添加活动
-        </Button>
-      </Box>
+        </button>
+      </div>
 
-      {/* 分类 Tabs */}
-      <Box sx={{ borderBottom: '1px solid var(--track)', mb: 2 }}>
-        <Tabs
-          value={categoryTab}
-          onChange={(_, v) => setCategoryTab(v)}
-          variant="scrollable"
-          scrollButtons="auto"
-          sx={{
-            minHeight: 40,
-            '& .MuiTab-root': {
-              minHeight: 40,
-              fontSize: 'var(--type-body-size)',
-              letterSpacing: 'var(--type-body-tracking)',
-              fontWeight: 700,
-              px: 1.5,
-              textTransform: 'none'
-            }
-          }}
-        >
-          <Tab label="全部精选" value="all" />
-          <Tab label="餐饮美食" value="food" />
-          <Tab label="超市便利" value="shopping" />
-          <Tab label="加油车主" value="gas" />
-          <Tab label="咖啡茶饮" value="drink" />
-          <Tab label="商旅海淘" value="travel" />
-        </Tabs>
-      </Box>
+      {/* 分类筛选 pills */}
+      <div className='mb-3 flex gap-2 overflow-x-auto pb-1'>
+        {[
+          { v: 'all', label: '全部精选' },
+          { v: 'food', label: '餐饮美食' },
+          { v: 'shopping', label: '超市便利' },
+          { v: 'gas', label: '加油车主' },
+          { v: 'drink', label: '咖啡茶饮' },
+          { v: 'travel', label: '商旅海淘' },
+        ].map(t => {
+          const active = categoryTab === t.v
+          return (
+            <button
+              key={t.v}
+              type='button'
+              onClick={() => setCategoryTab(t.v)}
+              className={
+                'shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[13px] font-bold transition-colors ' +
+                (active
+                  ? 'bg-d-accent text-white'
+                  : 'border border-d-border bg-d-surface text-d-muted')
+              }
+            >
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
 
-      {/* 银行快速筛选 Chips */}
-      <Box sx={{ mb: 2.5, display: 'flex', gap: 1, overflowX: 'auto', pb: 0.5 }}>
-        <Chip
-          label="全部银行"
-          clickable
-          size="small"
-          color={selectedBank === 'all' ? 'primary' : 'default'}
-          variant={selectedBank === 'all' ? 'filled' : 'outlined'}
+      {/* 银行快速筛选 pills */}
+      <div className='mb-3 flex gap-2 overflow-x-auto pb-1'>
+        <button
+          type='button'
           onClick={() => setSelectedBank('all')}
-          sx={{
-            // 无边框：层级由分层阴影表达；选中态走品牌色填充
-            border: selectedBank === 'all' ? 0 : '1px solid transparent',
-            fontSize: 'var(--type-body-size)',
-            letterSpacing: 'var(--type-body-tracking)',
-            fontWeight: 600,
-            boxShadow: selectedBank === 'all' ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
-          }}
-        />
+          className={
+            'shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[13px] font-semibold ' +
+            (selectedBank === 'all'
+              ? 'bg-d-accent text-white'
+              : 'border border-d-border bg-d-surface text-d-muted')
+          }
+        >
+          全部银行
+        </button>
         {userBanks.length > 0 && (
-          <Chip
-            icon={<CreditCardIcon sx={{ fontSize: '14px !important' }} />}
-            label={`我持有的银行 (${userBanks.length})`}
-            clickable
-            size="small"
-            color={selectedBank === 'my_cards' ? 'primary' : 'default'}
-            variant={selectedBank === 'my_cards' ? 'filled' : 'outlined'}
+          <button
+            type='button'
             onClick={() => setSelectedBank('my_cards')}
-            sx={{
-              border: selectedBank === 'my_cards' ? 0 : '1px solid transparent',
-              fontSize: 'var(--type-body-size)',
-              letterSpacing: 'var(--type-body-tracking)',
-              fontWeight: 600,
-              boxShadow: selectedBank === 'my_cards' ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
-            }}
-          />
+            className={
+              'flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[13px] font-semibold ' +
+              (selectedBank === 'my_cards'
+                ? 'bg-d-accent text-white'
+                : 'border border-d-border bg-d-surface text-d-muted')
+            }
+          >
+            <CardIcon size={14} />
+            我持有的银行 ({userBanks.length})
+          </button>
         )}
         {allBanks.map(b => (
-          <Chip
+          <button
             key={b}
-            label={b}
-            clickable
-            size="small"
-            color={selectedBank === b ? 'primary' : 'default'}
-            variant={selectedBank === b ? 'filled' : 'outlined'}
+            type='button'
             onClick={() => setSelectedBank(b)}
-            sx={{
-              border: selectedBank === b ? 0 : '1px solid transparent',
-              fontSize: 'var(--type-body-size)',
-              letterSpacing: 'var(--type-body-tracking)',
-              fontWeight: 600,
-              boxShadow: selectedBank === b ? 'var(--shadow-e2)' : 'var(--shadow-e1)',
-            }}
-          />
+            className={
+              'shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[13px] font-semibold ' +
+              (selectedBank === b
+                ? 'bg-d-accent text-white'
+                : 'border border-d-border bg-d-surface text-d-muted')
+            }
+          >
+            {b}
+          </button>
         ))}
-      </Box>
+      </div>
 
       {/* 列表渲染 */}
       {loading ? (
-        <Stack spacing={2}>
-          {[1, 2, 3].map(i => <Skeleton key={i} variant="rounded" height={140} sx={{ borderRadius: 'var(--radius-depth-3)' }} />)}
-        </Stack>
+        <div className='flex flex-col gap-3'>
+          {[1, 2, 3].map(i => (
+            <div key={i} className='wc-skeleton h-[140px] w-full rounded-2xl' />
+          ))}
+        </div>
       ) : filteredPromos.length === 0 ? (
-        <Paper
-          elevation={0}
-          sx={{
-            p: 5, textAlign: 'center', borderRadius: 'var(--radius-depth-3)',
-            bgcolor: 'var(--bg)', border: '1px dashed', borderColor: 'var(--track)',
-          }}
-        >
-          <PromoIcon sx={{ fontSize: 48, color: 'var(--text-disabled)', mb: 2 }} />
-          <Typography
-            sx={{
-              fontSize: 'var(--type-body-size)',
-              lineHeight: 'var(--type-body-line)',
-              letterSpacing: 'var(--type-body-tracking)',
-              fontWeight: 600,
-              color: 'var(--text)',
-            }}
-          >
-            该分类下暂无活动
-          </Typography>
-          <Typography
-            sx={{
-              fontSize: 'var(--type-body-size)',
-              lineHeight: 'var(--type-body-line)',
-              letterSpacing: 'var(--type-body-tracking)',
-              color: 'var(--muted)',
-              display: 'block',
-              mt: 0.5,
-              mb: 2,
-            }}
-          >
+        <div className='rounded-2xl border border-dashed border-d-border bg-d-surface p-8 text-center'>
+          <PromoIcon size={48} className='mx-auto mb-4 text-d-muted' />
+          <p className='text-[13px] font-semibold leading-5 text-d-text'>该分类下暂无活动</p>
+          <p className='mb-4 mt-1 block text-[12px] leading-4 text-d-muted'>
             您可以切换银行分类或手动添加您关注的信用卡优惠
-          </Typography>
-          <Button variant="outlined" size="small" onClick={() => { setCategoryTab('all'); setSelectedBank('all') }}>
+          </p>
+          <button
+            type='button'
+            onClick={() => { setCategoryTab('all'); setSelectedBank('all') }}
+            className='mx-auto flex h-10 items-center rounded-full border border-d-accent px-4 text-[12px] font-semibold text-d-accent-light'
+          >
             查看全部活动
-          </Button>
-        </Paper>
+          </button>
+        </div>
       ) : (
-        <Stack spacing={2}>
+        <div className='flex flex-col gap-3'>
           {filteredPromos.map(p => {
             const hasCard = userBanks.some(b => p.bank_name.includes(b))
 
             return (
-              <Card
+              <div
                 key={p.id}
-                elevation={0}
-                sx={{
-                  // 无边框：层级由分层阴影表达；持卡可享的强调走品牌蓝描边语义
-                  borderRadius: 'var(--radius-depth-3)',
-                  border: hasCard ? '1px solid var(--navy-600)' : 0,
-                  boxShadow: hasCard ? 'var(--shadow-e3)' : 'var(--shadow-e1)',
-                  position: 'relative',
-                  overflow: 'hidden',
-                  transition: 'transform 0.15s ease',
-                  '&:hover': { transform: 'translateY(-1px)' }
-                }}
+                className={
+                  'relative overflow-hidden rounded-2xl bg-d-surface transition-transform ' +
+                  (hasCard ? 'border border-d-accent' : 'border border-d-border')
+                }
               >
                 {/* 我已持卡可享 顶部角标 */}
                 {hasCard && (
-                  <Box
-                    sx={{
-                      position: 'absolute',
-                      top: 0,
-                      right: 0,
-                      bgcolor: 'var(--navy-600)',
-                      color: 'var(--text-on-dark)',
-                      fontSize: 'var(--type-body-size)',
-                      lineHeight: 1.4,
-                      letterSpacing: 'var(--type-body-tracking)',
-                      fontWeight: 600,
-                      px: 1.5,
-                      py: 0.25,
-                      borderBottomLeftRadius: 'var(--radius-depth-1)',
-                    }}
-                  >
+                  <span className='absolute right-0 top-0 rounded-bl-xl bg-d-accent px-2 py-0.5 text-[11px] font-semibold leading-5 text-white'>
                     💳 我已持卡可享
-                  </Box>
+                  </span>
                 )}
 
-                {/* 持卡角标「我已持卡可享」绝对定位在卡片右上角，会盖住内容顶部；
-                    卡片根 padding 收敛后首行上移，必须给角标留出高度，否则
-                    银行名与优惠标签会被角标压住。 */}
-                <CardContent sx={{ p: 2.5, pt: hasCard ? 4 : 2.5 }}>
-                  <Stack direction="row" spacing={2}>
-                    <Box
-                      sx={{
-                        width: 52,
-                        height: 52,
-                        borderRadius: 'var(--radius-depth-1)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        bgcolor: 'rgba(30,58,138,0.08)',
-                        color: 'var(--strong)',
-                        flexShrink: 0
-                      }}
-                    >
+                <div className={'p-4' + (hasCard ? ' pt-9' : '')}>
+                  <div className='flex gap-3'>
+                    <div className='flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-xl bg-d-subtle text-d-accent-light'>
                       {getPromoIcon(p.title, p.description || '')}
-                    </Box>
+                    </div>
 
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
-                        <Typography
-                          sx={{
-                            fontSize: 'var(--type-body-size)',
-                            lineHeight: 'var(--type-body-line)',
-                            letterSpacing: 'var(--type-body-tracking)',
-                            fontWeight: 600,
-                            color: 'var(--strong)',
-                            minWidth: 0,
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                          }}
-                        >
+                    <div className='min-w-0 flex-1'>
+                      <div className='mb-0.5 flex items-center justify-between gap-2'>
+                        <p className='min-w-0 truncate text-[13px] font-semibold leading-4 text-d-accent-light'>
                           {p.bank_name}
-                        </Typography>
-                        <Chip
-                          label={p.discount_type || '优惠'}
-                          size="small"
-                          color="error"
-                          sx={{
-                            height: 20, fontSize: 'var(--type-body-size)',
-                            letterSpacing: 'var(--type-body-tracking)', fontWeight: 600,
-                            // 角标「我已持卡可享」是绝对定位在卡片右上角、盖在本行之上的，
-                            // 不需要用 80px 右边距给它让位（那会把「招商银行」压成竖排）。
-                            flexShrink: 0,
-                          }}
-                        />
-                      </Stack>
+                        </p>
+                        <span className='shrink-0 rounded-md bg-d-danger-soft px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-d-danger-ink'>
+                          {p.discount_type || '优惠'}
+                        </span>
+                      </div>
 
-                      <Typography
-                        variant="h6"
-                        sx={{
-                          fontSize: 'var(--type-section-size)',
-                          lineHeight: 'var(--type-section-line)',
-                          fontWeight: 'var(--type-section-weight)',
-                          letterSpacing: 'var(--type-section-tracking)',
-                          color: 'var(--text)',
-                          mb: 0.75,
-                        }}
-                      >
-                        {p.title}
-                      </Typography>
+                      <p className='mb-1.5 text-[15px] font-semibold leading-5 text-d-text'>{p.title}</p>
 
                       {p.description && (
-                        <Typography sx={{
-                          fontSize: 'var(--type-body-size)',
-                          lineHeight: 'var(--type-body-line)',
-                          letterSpacing: 'var(--type-body-tracking)',
-                          color: 'var(--muted)',
-                          mb: 1.5,
-                          overflow: 'hidden', textOverflow: 'ellipsis',
-                          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'
-                        }}>
+                        <p className='mb-1.5 line-clamp-2 text-[12px] leading-4 text-d-muted'>
                           {p.description}
-                        </Typography>
+                        </p>
                       )}
 
-                      {/* 截止日期（约 105px）与操作按钮（约 82px）都是不可拆的语义
-                          单元：宽度够时并排、两端对齐，装不下时按钮整颗换行，
-                          而不是把「截止至 2026-12-31」从中间断开。 */}
-                      <Stack
-                        direction="row"
-                        justifyContent="space-between"
-                        sx={{
-                          pt: 1,
-                          borderTop: '1px dashed var(--track)',
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                          gap: 1,
-                        }}
-                      >
-                        <Typography
-                          sx={{
-                            fontSize: 'var(--type-body-size)',
-                            lineHeight: 'var(--type-body-line)',
-                            letterSpacing: 'var(--type-body-tracking)',
-                            color: 'var(--muted)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 0.5,
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          <AccessTimeIcon sx={{ fontSize: 13 }} />
+                      {/* 截止日期与操作按钮都是不可拆语义单元：够宽并排，装不下按钮整颗换行 */}
+                      <div className='flex flex-wrap items-center justify-between gap-2 border-t border-dashed border-d-border pt-2'>
+                        <p className='flex items-center gap-1 whitespace-nowrap text-[12px] leading-4 text-d-muted'>
+                          <ClockIcon size={13} />
                           截止至 {p.end_date || '长期有效'}
-                        </Typography>
-                        <Button
-                          variant={hasCard ? 'contained' : 'outlined'}
-                          size="small"
+                        </p>
+                        <button
+                          type='button'
                           onClick={() => handleRegister(p)}
-                          sx={{
-                            borderRadius: 'var(--radius-pill)',
-                            fontSize: 'var(--type-body-size)',
-                            letterSpacing: 'var(--type-body-tracking)',
-                            fontWeight: 700,
-                            py: 0.4,
-                            px: 1.5,
-                            textTransform: 'none',
-                            flexShrink: 0,
-                            whiteSpace: 'nowrap',
-                          }}
+                          className={
+                            'h-9 shrink-0 whitespace-nowrap rounded-full px-3.5 text-[12px] font-bold ' +
+                            (hasCard
+                              ? 'bg-d-accent text-white'
+                              : 'border border-d-accent text-d-accent-light')
+                          }
                         >
                           {hasCard ? '一键享用' : '关注活动'}
-                        </Button>
-                      </Stack>
-                    </Box>
-                  </Stack>
-                </CardContent>
-              </Card>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             )
           })}
-        </Stack>
+        </div>
       )}
 
       {/* 新增活动 Dialog */}
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} fullWidth maxWidth="xs">
-        {/* Dialog 走 portal，在 .phone 作用域之外：显式声明角色令牌 */}
+      <Dialog open={addOpen} onClose={() => setAddOpen(false)} fullWidth maxWidth='xs'>
         <DialogTitle
           sx={{
             fontSize: 'var(--type-section-size)',
@@ -582,62 +411,68 @@ export default function PromosPage() {
           添加信用卡优惠活动
         </DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ mt: 1 }}>
+          <div className='mt-2 flex flex-col gap-3'>
             <TextField
-              label="发卡银行 *"
+              label='发卡银行 *'
               fullWidth
-              size="small"
+              size='small'
               value={newBank}
               onChange={e => setNewBank(e.target.value)}
-              placeholder="例如 招商银行 / 工商银行"
+              placeholder='例如 招商银行 / 工商银行'
             />
             <TextField
-              label="活动名称 *"
+              label='活动名称 *'
               fullWidth
-              size="small"
+              size='small'
               value={newTitle}
               onChange={e => setNewTitle(e.target.value)}
-              placeholder="例如 周三 5 折美食日"
+              placeholder='例如 周三 5 折美食日'
             />
             <TextField
-              label="优惠标签"
+              label='优惠标签'
               fullWidth
-              size="small"
+              size='small'
               value={newType}
               onChange={e => setNewType(e.target.value)}
-              placeholder="例如 5折立减 / 满50减10 / 积分兑换"
+              placeholder='例如 5折立减 / 满50减10 / 积分兑换'
             />
             <TextField
-              label="活动截止日期"
-              type="date"
+              label='活动截止日期'
+              type='date'
               fullWidth
-              size="small"
+              size='small'
               value={newEndDate}
               onChange={e => setNewEndDate(e.target.value)}
               InputLabelProps={{ shrink: true }}
             />
             <TextField
-              label="活动说明与规则"
+              label='活动说明与规则'
               fullWidth
               multiline
               rows={3}
-              size="small"
+              size='small'
               value={newDesc}
               onChange={e => setNewDesc(e.target.value)}
-              placeholder="描述参与方式、达标条件及使用渠道等"
+              placeholder='描述参与方式、达标条件及使用渠道等'
             />
-          </Stack>
+          </div>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setAddOpen(false)}>取消</Button>
-          <Button
-            variant="contained"
+          <button
+            type='button'
+            onClick={() => setAddOpen(false)}
+            className='h-10 rounded-xl px-5 text-sm font-semibold text-d-muted'
+          >
+            取消
+          </button>
+          <button
+            type='button'
             onClick={handleAddPromo}
             disabled={submitting}
-            sx={{ borderRadius: 'var(--radius-pill)', fontWeight: 700 }}
+            className='h-10 rounded-full bg-d-accent px-5 text-sm font-bold text-white disabled:opacity-50'
           >
             {submitting ? '保存中...' : '确认添加'}
-          </Button>
+          </button>
         </DialogActions>
       </Dialog>
 
@@ -648,10 +483,10 @@ export default function PromosPage() {
         onClose={() => setToast(prev => ({ ...prev, open: false }))}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
-        <Alert severity={toast.severity} sx={{ borderRadius: 'var(--radius-depth-1)', fontWeight: 600 }}>
+        <Alert severity={toast.severity} sx={{ fontWeight: 600 }}>
           {toast.message}
         </Alert>
       </Snackbar>
-    </Container>
+    </div>
   )
 }
