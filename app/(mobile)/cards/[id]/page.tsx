@@ -2,14 +2,10 @@
 
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
-import { Container, Box, Typography, Stack, IconButton, Paper, Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, MenuItem, InputAdornment, Alert } from '@mui/material'
-import ArrowBackIcon from '@mui/icons-material/ArrowBack'
-import EditIcon from '@mui/icons-material/Edit'
+import { Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, InputAdornment, Alert } from '@mui/material'
 import { format } from 'date-fns'
 import { getCardDetail, updateCard, getCardHolders } from '@/lib/api/cards'
-import { StatusBadge } from '@/components/mobile/WcBadge'
-import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
-import { ChevronRightIcon, ClockIcon } from '@/components/icons/WcIcon'
+import { ChevronLeftIcon, ChevronRightIcon, ClockIcon } from '@/components/icons/WcIcon'
 import { getEffectiveBillingDay, getEffectiveDueConfig, formatCardTail, getEffectiveCardName, getEffectiveAnnualFee } from '@/lib/utils'
 import type { CreditCard, CardProduct, CardHolder, Bill, Benefit } from '@/lib/types'
 
@@ -19,6 +15,22 @@ type CardDetail = CreditCard & {
 }
 
 type BillWithPaid = Bill & { paid_amount: number; computed_status: Bill['status'] }
+
+/** 账单状态徽章（暗色）：淡底 + ink，与 bills 暗色视图同一口径 */
+function StatusBadgeDark({ status }: { status: string }) {
+  const map: Record<string, { cls: string; label: string }> = {
+    paid: { cls: 'bg-d-success-soft text-d-success-ink', label: '已还' },
+    partial: { cls: 'bg-d-gold-soft text-d-warn-ink', label: '部分' },
+    overdue: { cls: 'bg-d-danger-soft text-d-danger-ink', label: '逾期' },
+    unpaid: { cls: 'bg-d-subtle text-d-accent-light', label: '待还' },
+  }
+  const cfg = map[status] ?? map.unpaid
+  return (
+    <span className={'shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ' + cfg.cls}>
+      {cfg.label}
+    </span>
+  )
+}
 
 export default function CardDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -144,20 +156,30 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
 
   if (loading) {
     return (
-      <Container maxWidth="sm" sx={{ py: 2 }}>
-        <HeaderBack title="卡片详情" onBack={() => router.back()} />
-        <WcSkeleton height={180} count={1} />
-        <WcSkeleton height={96} count={2} />
-      </Container>
+      <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-3 text-d-text'>
+        <HeaderBack title='卡片详情' onBack={() => router.back()} />
+        <div className='wc-skeleton mb-3 h-[180px] w-full rounded-2xl' />
+        <div className='wc-skeleton mb-3 h-24 w-full rounded-2xl' />
+        <div className='wc-skeleton h-24 w-full rounded-2xl' />
+      </div>
     )
   }
 
   if (error || !card) {
     return (
-      <Container maxWidth="sm" sx={{ py: 2 }}>
-        <HeaderBack title="卡片详情" onBack={() => router.back()} />
-        <WcErrorState message={error || '卡片不存在'} onRetry={load} />
-      </Container>
+      <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-3 text-d-text'>
+        <HeaderBack title='卡片详情' onBack={() => router.back()} />
+        <div className='rounded-2xl bg-d-danger-soft p-4 text-center'>
+          <p className='text-[12px] font-semibold text-d-danger-ink'>{error || '卡片不存在'}</p>
+          <button
+            type='button'
+            onClick={load}
+            className='mt-2 h-10 rounded-xl bg-d-danger px-4 text-xs font-semibold text-white'
+          >
+            重试
+          </button>
+        </div>
+      </div>
     )
   }
 
@@ -190,200 +212,119 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
   const isAnnualFeeOverridden = card.annual_fee_override != null
 
   return (
-    <Container maxWidth="sm" sx={{ py: 2, pb: 10 }}>
-      <HeaderBack title="卡片详情" onBack={() => router.back()} />
+    <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-3 text-d-text'>
+      <HeaderBack title='卡片详情' onBack={() => router.back()} />
 
-      {/* 卡面：深蓝渐变 + 卡种名 + 掩码卡号 + 持卡人 + 金色装饰 */}
-      <Box
-        sx={{
-          position: 'relative',
+      {/* 卡面：深蓝渐变 + 卡种名 + 掩码卡号 + 持卡人 + 金色装饰（品牌元素，暗色下保留） */}
+      <div
+        className='relative mb-2.5 flex flex-col justify-between overflow-hidden rounded-2xl p-4 text-white'
+        style={{
           background: 'linear-gradient(135deg, var(--navy-800), var(--navy-600))',
-          borderRadius: 'var(--radius-depth-3)',
-          p: 2.25,
-          mb: 1.5,
-          color: 'var(--text-on-dark)',
-          overflow: 'hidden',
-          minHeight: 150,
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          // 深蓝渐变主卡：品牌暗影，不走中性分层
           boxShadow: 'var(--shadow-dark)',
+          minHeight: 150,
         }}
       >
-        {/* 金色半透明圆形装饰 */}
-        <Box
-          aria-hidden="true"
-          sx={{
-            position: 'absolute', right: -36, top: -36,
-            width: 140, height: 140, borderRadius: '50%',
-            // 品牌金装饰：用 color-mix 从 --gold-500 派生透明度，不散落字面色值
-            background: 'radial-gradient(circle, color-mix(in srgb, var(--gold-500) 45%, transparent), transparent)',
-          }}
+        <span
+          aria-hidden='true'
+          className='absolute -right-9 -top-9 h-[140px] w-[140px] rounded-full'
+          style={{ background: 'radial-gradient(circle, color-mix(in srgb, var(--gold-500) 45%, transparent), transparent)' }}
         />
-        <Box
-          aria-hidden="true"
-          sx={{
-            position: 'absolute', right: 18, bottom: -50,
-            width: 110, height: 110, borderRadius: '50%',
-            border: '1px solid color-mix(in srgb, var(--gold-500) 35%, transparent)',
-          }}
+        <span
+          aria-hidden='true'
+          className='absolute bottom-[-50px] right-[18px] h-[110px] w-[110px] rounded-full border'
+          style={{ borderColor: 'color-mix(in srgb, var(--gold-500) 35%, transparent)' }}
         />
-        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ position: 'relative', zIndex: 1 }}>
-          <Box>
-            <Typography
-              sx={{
-                fontSize: 'var(--type-body-size)',
-                lineHeight: 'var(--type-body-line)',
-                letterSpacing: 'var(--type-body-tracking)',
-                color: 'rgba(255,255,255,0.78)',
-              }}
-            >
-              {bankName}
-            </Typography>
-            <Typography
-              sx={{
-                fontSize: 'var(--type-section-size)',
-                lineHeight: 'var(--type-section-line)',
-                fontWeight: 'var(--type-section-weight)',
-                letterSpacing: 'var(--type-section-tracking)',
-                color: 'var(--text-on-dark)',
-                mt: 0.25,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 0.5,
-              }}
-            >
+        <div className='relative z-10 flex items-start justify-between'>
+          <div>
+            <p className='text-[12px] leading-4 text-white/75'>{bankName}</p>
+            <p className='mt-0.5 flex items-center gap-1.5 text-[15px] font-semibold leading-5 text-white'>
               {cardName}
               {isNameOverridden && (
-                <Box
-                  component="span"
-                  sx={{
-                    fontSize: 10,
-                    lineHeight: 1,
-                    px: 0.5,
-                    py: 0.25,
-                    borderRadius: 'var(--radius-pill)',
-                    bgcolor: 'rgba(255,255,255,0.18)',
-                    color: 'var(--text-on-dark)',
-                    fontWeight: 600,
-                  }}
-                >
+                <span className='rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white'>
                   已自定义
-                </Box>
+                </span>
               )}
-            </Typography>
-          </Box>
+            </p>
+          </div>
           {card.status !== 'active' && (
-            <Box
-              sx={{
-                bgcolor: 'rgba(255,255,255,0.16)',
-                px: 1,
-                py: 0.25,
-                borderRadius: 'var(--radius-pill)',
-                fontSize: 'var(--type-body-size)',
-                lineHeight: 'var(--type-body-line)',
-                letterSpacing: 'var(--type-body-tracking)',
-                fontWeight: 600,
-              }}
-            >
+            <span className='rounded-full bg-white/15 px-2.5 py-0.5 text-[12px] font-semibold leading-4'>
               {card.status === 'frozen' ? '已冻结' : '已注销'}
-            </Box>
+            </span>
           )}
-        </Stack>
-        <Box sx={{ position: 'relative', zIndex: 1 }}>
-          <Typography className="num-tabular" sx={{ fontSize: 17, letterSpacing: '0.08em', mb: 0.5 }}>
+        </div>
+        <div className='relative z-10'>
+          <p className='num-tabular mb-0.5 text-[17px] tracking-widest'>
             ****&nbsp;****&nbsp;****&nbsp;{last4 || '----'}
-          </Typography>
-          <Typography
-            sx={{
-              fontSize: 'var(--type-body-size)',
-              lineHeight: 'var(--type-body-line)',
-              letterSpacing: 'var(--type-body-tracking)',
-              color: 'rgba(255,255,255,0.82)',
-            }}
-          >
+          </p>
+          <p className='text-[12px] leading-4 text-white/80'>
             {holderName || '—'} · {card.card_type === 'loan' ? '贷款类' : '信用卡'}
-          </Typography>
-        </Box>
-      </Box>
+          </p>
+        </div>
+      </div>
 
       {/* 额度三格 */}
-      <Box
-        sx={{
-          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0.5,
-          // 无边框：分层阴影表达层级
-          bgcolor: 'var(--paper)', border: 0, borderRadius: 'var(--radius-depth-2)',
-          boxShadow: 'var(--shadow-e1)',
-          p: 1.5, mb: 1.5,
-        }}
-      >
-        <Quota label="总额度" value={limit} color="var(--strong)" />
-        <Quota label="已用" value={used} color="var(--gold-700)" />
-        <Quota label="可用" value={available} color="var(--success)" />
-      </Box>
+      <div className='mb-2.5 grid grid-cols-3 gap-0.5 rounded-2xl border border-d-border bg-d-surface p-2'>
+        <Quota label='总额度' value={limit} cls='text-d-text' />
+        <Quota label='已用' value={used} cls='text-d-gold' />
+        <Quota label='可用' value={available} cls='text-d-success-ink' />
+      </div>
 
       {/* 日期与费用 */}
       <Section
-        title="日期与费用"
+        title='日期与费用'
         action={
-          <IconButton
-            onClick={openEdit}
-            aria-label="编辑卡片"
-            size="small"
-            sx={{ color: 'var(--muted)', p: 0.5 }}
-          >
-            <EditIcon sx={{ fontSize: 16 }} />
-          </IconButton>
+          <button type='button' onClick={openEdit} aria-label='编辑卡片' className='text-[12px] font-semibold text-d-muted'>
+            编辑
+          </button>
         }
       >
-        <Stack spacing={0.75}>
-          <Row label="账单日" value={billingDay ? `每月 ${billingDay} 日` : '—'} />
+        <div className='flex flex-col gap-1.5'>
+          <Row label='账单日' value={billingDay ? '每月 ' + billingDay + ' 日' : '—'} />
           <Row
-            label="还款日"
+            label='还款日'
             value={
-              <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-                {dueDayOfMonth ? `每月 ${dueDayOfMonth} 日` : (card.loan_due_day ? `每月 ${card.loan_due_day} 日` : (dueConfig.type === 'after_billing' ? `账单日后 ${dueConfig.value} 天` : '—'))}
+              <span className='inline-flex items-center gap-1.5'>
+                {dueDayOfMonth ? '每月 ' + dueDayOfMonth + ' 日' : (card.loan_due_day ? '每月 ' + card.loan_due_day + ' 日' : (dueConfig.type === 'after_billing' ? '账单日后 ' + dueConfig.value + ' 天' : '—'))}
                 {isDueOverridden && <CustomizedTag />}
-              </Box>
+              </span>
             }
           />
           <Row
-            label="最长免息"
+            label='最长免息'
             value={
               grace != null ? (
-                <Box component="span" sx={{ color: 'var(--gold-700)', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 0.25 }}>
+                <span className='inline-flex items-center gap-1 font-bold text-d-gold'>
                   <ClockIcon size={12} /> {grace} 天
-                </Box>
+                </span>
               ) : '—'
             }
           />
           <Row
-            label="年费"
+            label='年费'
             value={
-              <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-                {annualFee != null ? `¥${annualFee.toLocaleString()}` : '—'}
+              <span className='inline-flex items-center gap-1.5'>
+                {annualFee != null ? '¥' + annualFee.toLocaleString() : '—'}
                 {isAnnualFeeOverridden && <CustomizedTag />}
-              </Box>
+              </span>
             }
           />
-          <Row label="币种" value={currency} />
-        </Stack>
+          <Row label='币种' value={currency} />
+        </div>
       </Section>
 
       {/* 编辑卡片对话框：保存后卡级别内容优先于卡产品默认 */}
-      <Dialog open={editOpen} onClose={() => !saving && setEditOpen(false)} fullWidth maxWidth="xs" PaperProps={{ sx: { borderRadius: 'var(--radius-depth-2)' } }}>
-        <DialogTitle sx={{ fontWeight: 700, fontSize: 'var(--type-section-size)' }}>编辑卡片</DialogTitle>
+      <Dialog open={editOpen} onClose={() => !saving && setEditOpen(false)} fullWidth maxWidth='xs'>
+        <DialogTitle sx={{ fontWeight: 700, fontSize: 'var(--type-section-size)', color: 'var(--text)' }}>编辑卡片</DialogTitle>
         <DialogContent>
-          {editError && <Alert severity="error" sx={{ mb: 2 }}>{editError}</Alert>}
-          <Stack spacing={2} sx={{ mt: 0.5 }}>
+          {editError && <Alert severity='error' sx={{ mb: 2 }}>{editError}</Alert>}
+          <div className='mt-1 flex flex-col gap-4'>
             {holders.length > 0 && (
               <TextField
-                label="持卡人"
+                label='持卡人'
                 select
                 value={holderId}
                 onChange={e => setHolderId(e.target.value)}
-                helperText="邮件自动建卡挂错人时，在这里转移归属"
+                helperText='邮件自动建卡挂错人时，在这里转移归属'
                 fullWidth
               >
                 {holders.map(h => (
@@ -392,316 +333,214 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
               </TextField>
             )}
             <TextField
-              label="卡片名称"
+              label='卡片名称'
               placeholder={product?.card_name || '输入卡片名称'}
               value={nameOverride}
               onChange={e => setNameOverride(e.target.value)}
-              helperText={product?.card_name ? `留空则使用卡产品默认名称「${product.card_name}」` : ' '}
+              helperText={product?.card_name ? '留空则使用卡产品默认名称「' + product.card_name + '」' : ' '}
               fullWidth
             />
             <TextField
-              label="总额度"
-              type="number"
+              label='总额度'
+              type='number'
               value={limitInput}
               onChange={e => setLimitInput(e.target.value)}
               required
               fullWidth
-              InputProps={{ startAdornment: <InputAdornment position="start">¥</InputAdornment> }}
+              InputProps={{ startAdornment: <InputAdornment position='start'>¥</InputAdornment> }}
             />
             <TextField
-              label="账单日"
-              type="number"
+              label='账单日'
+              type='number'
               value={billingDayInput}
               onChange={e => setBillingDayInput(e.target.value)}
               required
-              helperText="每月出账日期（1-31）"
+              helperText='每月出账日期（1-31）'
               fullWidth
               inputProps={{ min: 1, max: 31 }}
-              InputProps={{ endAdornment: <InputAdornment position="end">日</InputAdornment> }}
+              InputProps={{ endAdornment: <InputAdornment position='end'>日</InputAdornment> }}
             />
             <TextField
               select
-              label="还款日规则"
+              label='还款日规则'
               value={dueType}
               onChange={e => setDueType(e.target.value as typeof dueType)}
-              helperText="修改后以此规则优先计算各期账单还款日"
+              helperText='修改后以此规则优先计算各期账单还款日'
               fullWidth
             >
-              <MenuItem value="default" disabled={!product}>
+              <MenuItem value='default' disabled={!product}>
                 跟随卡产品默认
-                {product ? `（${product.payment_due_type === 'after_billing' ? `账单日后 ${product.payment_due_value} 天` : `每月 ${product.payment_due_value} 日`}）` : ''}
+                {product ? ('（' + (product.payment_due_type === 'after_billing' ? '账单日后 ' + product.payment_due_value + ' 天' : '每月 ' + product.payment_due_value + ' 日') + '）') : ''}
               </MenuItem>
-              <MenuItem value="after_billing">账单日后 X 天</MenuItem>
-              <MenuItem value="fixed">每月固定还款日</MenuItem>
-              <MenuItem value="fixed_before_billing">每月固定还款日（账单日倒推）</MenuItem>
+              <MenuItem value='after_billing'>账单日后 X 天</MenuItem>
+              <MenuItem value='fixed'>每月固定还款日</MenuItem>
+              <MenuItem value='fixed_before_billing'>每月固定还款日（账单日倒推）</MenuItem>
             </TextField>
             {dueType !== 'default' && (
               <TextField
                 label={dueType === 'after_billing' ? '账单日后天数' : '每月还款日'}
-                type="number"
+                type='number'
                 value={dueValue}
                 onChange={e => setDueValue(e.target.value)}
                 required
                 fullWidth
                 inputProps={dueType === 'after_billing' ? { min: 1 } : { min: 1, max: 31 }}
-                InputProps={{ endAdornment: <InputAdornment position="end">{dueType === 'after_billing' ? '天' : '日'}</InputAdornment> }}
+                InputProps={{ endAdornment: <InputAdornment position='end'>{dueType === 'after_billing' ? '天' : '日'}</InputAdornment> }}
               />
             )}
             <TextField
-              label="年费"
-              type="number"
+              label='年费'
+              type='number'
               value={annualFeeInput}
               onChange={e => setAnnualFeeInput(e.target.value)}
-              helperText={product?.annual_fee != null && Number(product.annual_fee) > 0 ? `留空则使用卡产品默认年费 ¥${Number(product.annual_fee).toLocaleString()}` : '留空表示无年费'}
+              helperText={product?.annual_fee != null && Number(product.annual_fee) > 0 ? '留空则使用卡产品默认年费 ¥' + Number(product.annual_fee).toLocaleString() : '留空表示无年费'}
               fullWidth
-              InputProps={{ startAdornment: <InputAdornment position="start">¥</InputAdornment> }}
+              InputProps={{ startAdornment: <InputAdornment position='start'>¥</InputAdornment> }}
             />
-          </Stack>
+          </div>
         </DialogContent>
         <DialogActions sx={{ p: 2, pt: 0 }}>
-          <Button onClick={() => setEditOpen(false)} disabled={saving} sx={{ color: 'var(--muted)' }}>取消</Button>
-          <Button onClick={handleSave} disabled={saving} variant="contained">{saving ? '保存中…' : '保存'}</Button>
+          {/* 原生按钮：MUI Button 解析不了 var() 色值（存量崩溃路径） */}
+          <button
+            type='button'
+            onClick={() => setEditOpen(false)}
+            disabled={saving}
+            className='h-10 rounded-xl px-5 text-sm font-semibold text-d-muted disabled:opacity-50'
+          >
+            取消
+          </button>
+          <button
+            type='button'
+            onClick={handleSave}
+            disabled={saving}
+            className='h-10 rounded-xl bg-d-accent px-5 text-sm font-semibold text-white disabled:opacity-50'
+          >
+            {saving ? '保存中…' : '保存'}
+          </button>
         </DialogActions>
       </Dialog>
 
       {/* 最近账单 */}
-      <Section title="最近账单">
+      <Section title='最近账单'>
         {bills.length === 0 ? (
-          <WcEmptyState title="暂无账单" description="这张卡还没有录入账单" />
+          <div className='py-4 text-center'>
+            <p className='text-[13px] font-semibold text-d-text'>暂无账单</p>
+            <p className='mt-1 text-[12px] text-d-muted'>这张卡还没有录入账单</p>
+          </div>
         ) : (
-          <Stack spacing={1}>
+          <div className='flex flex-col gap-2'>
             {bills.map(b => (
-              <Box
+              <button
                 key={b.id}
-                component="button"
-                onClick={() => router.push(`/bills/${b.id}`)}
-                sx={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  width: '100%', border: 0, bgcolor: 'var(--paper)',
-                  cursor: 'pointer', p: 1.25, borderRadius: 'var(--radius-depth-1)', textAlign: 'left',
-                  boxShadow: 'var(--shadow-e1)',
-                  transition: 'box-shadow var(--dur-fast) ease',
-                  '&:hover': { boxShadow: 'var(--shadow-e2)' },
-                  '&:focus-visible': { outline: '2px solid var(--navy-600)', outlineOffset: -2 },
-                }}
+                type='button'
+                onClick={() => router.push('/bills/' + b.id)}
+                className='flex w-full items-center justify-between rounded-xl bg-d-subtle p-2.5 text-left transition-colors active:bg-d-border'
               >
-                <Box>
-                  <Typography
-                    sx={{
-                      fontSize: 'var(--type-body-size)',
-                      lineHeight: 'var(--type-body-line)',
-                      letterSpacing: 'var(--type-body-tracking)',
-                      color: 'var(--muted)',
-                    }}
-                  >
-                    {b.bill_month} 账单
-                  </Typography>
-                  <Typography className="num-tabular" sx={{ fontSize: 16, fontWeight: 700, color: 'var(--strong)', mt: 0.25 }}>
+                <span>
+                  <span className='block text-[12px] leading-4 text-d-muted'>{b.bill_month} 账单</span>
+                  <span className='num-tabular mt-0.5 block text-[16px] font-bold text-d-text'>
                     ¥{Number(b.bill_amount).toLocaleString()}
-                  </Typography>
-                  <Typography
-                    sx={{
-                      fontSize: 'var(--type-body-size)',
-                      lineHeight: 'var(--type-body-line)',
-                      letterSpacing: 'var(--type-body-tracking)',
-                      color: 'var(--muted)',
-                      mt: 0.25,
-                    }}
-                  >
+                  </span>
+                  <span className='mt-0.5 block text-[12px] leading-4 text-d-muted'>
                     到期 {format(new Date(b.due_date), 'yyyy-MM-dd')}
-                  </Typography>
-                </Box>
-                <Stack direction="row" alignItems="center" spacing={1}>
-                  <StatusBadge status={b.computed_status} />
-                  <ChevronRightIcon size={16} />
-                </Stack>
-              </Box>
+                  </span>
+                </span>
+                <span className='flex items-center gap-2'>
+                  <StatusBadgeDark status={b.computed_status} />
+                  <ChevronRightIcon size={16} className='text-d-muted' />
+                </span>
+              </button>
             ))}
-          </Stack>
+          </div>
         )}
       </Section>
 
       {/* 权益进度（如无数据则省略） */}
       {benefits.length > 0 && (
-        <Section title="权益进度">
-          <Stack spacing={1.25}>
+        <Section title='权益进度'>
+          <div className='flex flex-col gap-3'>
             {benefits.map(b => {
               const pct = b.quota > 0 ? Math.min(100, Math.round((b.used / b.quota) * 100)) : 0
               const over = b.used >= b.quota
               return (
-                <Box key={b.id}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
-                    <Typography
-                      sx={{
-                        fontSize: 'var(--type-body-size)',
-                        lineHeight: 'var(--type-body-line)',
-                        letterSpacing: 'var(--type-body-tracking)',
-                        fontWeight: 600,
-                        color: 'var(--text)',
-                      }}
-                    >
-                      {b.name}
-                    </Typography>
-                    <Typography className="num-tabular" sx={{ fontSize: 'var(--type-body-size)', letterSpacing: 'var(--type-body-tracking)', color: over ? 'var(--danger)' : 'var(--muted)', fontWeight: 600 }}>
+                <div key={b.id}>
+                  <div className='mb-1 flex items-center justify-between'>
+                    <p className='text-[13px] font-semibold leading-4 text-d-text'>{b.name}</p>
+                    <p className={'num-tabular text-[12px] font-semibold ' + (over ? 'text-d-danger-ink' : 'text-d-muted')}>
                       {b.used}/{b.quota}
-                    </Typography>
-                  </Stack>
-                  <Box sx={{ height: 6, borderRadius: 'var(--radius-pill)', bgcolor: 'rgba(10,31,68,0.08)', overflow: 'hidden' }}>
+                    </p>
+                  </div>
+                  <div className='h-1.5 overflow-hidden rounded-full bg-d-border'>
                     {/* 进度填充用 transform 而非 width，避免布局抖动 */}
-                    <Box
-                      sx={{
-                        height: '100%',
-                        width: '100%',
-                        transform: `scaleX(${Math.min(1, pct / 100)})`,
-                        transformOrigin: 'left center',
-                        bgcolor: over ? 'var(--danger)' : 'var(--gold-500)',
-                        borderRadius: 'var(--radius-pill)',
-                        transition: 'transform var(--dur-fast) ease',
-                      }}
+                    <div
+                      className={'h-full w-full origin-left rounded-full transition-transform ' + (over ? 'bg-d-danger' : 'bg-d-gold')}
+                      style={{ transform: 'scaleX(' + Math.min(1, pct / 100) + ')' }}
                     />
-                  </Box>
+                  </div>
                   {b.description && (
-                    <Typography
-                      sx={{
-                        fontSize: 'var(--type-body-size)',
-                        lineHeight: 'var(--type-body-line)',
-                        letterSpacing: 'var(--type-body-tracking)',
-                        color: 'var(--muted)',
-                        mt: 0.25,
-                      }}
-                    >
-                      {b.description}
-                    </Typography>
+                    <p className='mt-0.5 text-[12px] leading-4 text-d-muted'>{b.description}</p>
                   )}
-                </Box>
+                </div>
               )
             })}
-          </Stack>
+          </div>
         </Section>
       )}
-    </Container>
+    </div>
   )
 }
 
 function HeaderBack({ title, onBack }: { title: string; onBack: () => void }) {
   return (
-    <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
-      <IconButton
+    <div className='mb-2.5 flex items-center gap-2.5'>
+      <button
+        type='button'
         onClick={onBack}
-        aria-label="返回"
-        sx={{
-          width: 'var(--button-size)',
-          height: 'var(--button-size)',
-          background: 'var(--button-face)',
-          color: 'var(--text-on-dark)',
-          boxShadow: 'var(--button-shadow)',
-          '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
-          '&:active': { boxShadow: 'var(--button-shadow-press)' },
-        }}
+        aria-label='返回'
+        className='flex h-11 w-11 items-center justify-center rounded-xl border border-d-border bg-d-surface text-d-text'
       >
-        <ArrowBackIcon />
-      </IconButton>
-      <Typography
-        variant="h6"
-        sx={{
-          fontSize: 'var(--type-section-size)',
-          lineHeight: 'var(--type-section-line)',
-          fontWeight: 'var(--type-section-weight)',
-          letterSpacing: 'var(--type-section-tracking)',
-          color: 'var(--text)',
-        }}
-      >
-        {title}
-      </Typography>
-    </Stack>
+        <ChevronLeftIcon size={20} />
+      </button>
+      <p className='text-[15px] font-semibold leading-5 text-d-text'>{title}</p>
+    </div>
   )
 }
 
 function Section({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <Box sx={{ mb: 1.5 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.75 }}>
-        <Typography
-          sx={{
-            fontSize: 'var(--type-section-size)',
-            lineHeight: 'var(--type-section-line)',
-            fontWeight: 'var(--type-section-weight)',
-            letterSpacing: 'var(--type-section-tracking)',
-            color: 'var(--text)',
-          }}
-        >
-          {title}
-        </Typography>
+    <div className='mb-2.5'>
+      <div className='mb-1.5 flex items-center justify-between'>
+        <p className='text-[15px] font-semibold leading-5 text-d-text'>{title}</p>
         {action}
-      </Stack>
-      <Paper
-        elevation={0}
-        sx={{ p: 1.5, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e2)' }}
-      >
-        {children}
-      </Paper>
-    </Box>
+      </div>
+      <div className='rounded-2xl border border-d-border bg-d-surface p-3.5'>{children}</div>
+    </div>
   )
 }
 
 /** 「已自定义」小徽标：标记该字段为卡级别覆盖值 */
 function CustomizedTag() {
   return (
-    <Box
-      component="span"
-      sx={{
-        fontSize: 10,
-        lineHeight: 1,
-        px: 0.5,
-        py: 0.25,
-        borderRadius: 'var(--radius-pill)',
-        bgcolor: 'rgba(10,31,68,0.06)',
-        color: 'var(--muted)',
-        fontWeight: 600,
-      }}
-    >
+    <span className='rounded-full bg-d-subtle px-1.5 py-0.5 text-[10px] font-semibold leading-none text-d-muted'>
       已自定义
-    </Box>
+    </span>
   )
 }
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <Stack direction="row" justifyContent="space-between" alignItems="center">
-      <Typography
-        sx={{
-          fontSize: 'var(--type-body-size)',
-          lineHeight: 'var(--type-body-line)',
-          letterSpacing: 'var(--type-body-tracking)',
-          color: 'var(--muted)',
-        }}
-      >
-        {label}
-      </Typography>
-      <Typography className="num-tabular" sx={{ fontSize: 'var(--type-body-size)', letterSpacing: 'var(--type-body-tracking)', fontWeight: 600, color: 'var(--text)' }}>
-        {value}
-      </Typography>
-    </Stack>
+    <div className='flex items-center justify-between'>
+      <span className='text-[12px] leading-4 text-d-muted'>{label}</span>
+      <span className='num-tabular text-[12px] font-semibold text-d-text'>{value}</span>
+    </div>
   )
 }
 
-function Quota({ label, value, color }: { label: string; value: number; color: string }) {
+function Quota({ label, value, cls }: { label: string; value: number; cls: string }) {
   return (
-    <Box sx={{ textAlign: 'center' }}>
-      <Typography
-        sx={{
-          fontSize: 'var(--type-body-size)',
-          lineHeight: 'var(--type-body-line)',
-          letterSpacing: 'var(--type-body-tracking)',
-          color: 'var(--muted)',
-          mb: 0.25,
-        }}
-      >
-        {label}
-      </Typography>
-      <Typography className="num-tabular" sx={{ fontSize: 15, fontWeight: 700, color }}>
-        ¥{Number(value).toLocaleString()}
-      </Typography>
-    </Box>
+    <div className='text-center'>
+      <p className='mb-0.5 text-[12px] leading-4 text-d-muted'>{label}</p>
+      <p className={'num-tabular text-[15px] font-bold ' + cls}>¥{Number(value).toLocaleString()}</p>
+    </div>
   )
 }
