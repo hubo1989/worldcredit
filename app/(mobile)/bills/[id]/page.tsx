@@ -2,14 +2,10 @@
 
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
-import { Container, Box, Typography, Stack, IconButton, Button, Paper } from '@mui/material'
-import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import { format } from 'date-fns'
 import { createPayment, updateBillStatus, getBillDetail, getPaymentTotal } from '@/lib/api/bills'
-import { StatusBadge, SourceBadge } from '@/components/mobile/WcBadge'
-import { WcSkeleton, WcEmptyState, WcErrorState } from '@/components/mobile/WcStates'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
-import { ChevronRightIcon, BankIcon, UserIcon, ClockIcon } from '@/components/icons/WcIcon'
+import { ChevronLeftIcon, ChevronRightIcon, BankIcon, UserIcon, ClockIcon } from '@/components/icons/WcIcon'
 import { getDueDate, getEffectiveBillingDay, getEffectiveDueConfig, getLoanNextDueDate, formatCardTail, getEffectiveCardName } from '@/lib/utils'
 import type { Bill, Payment, CreditCard, CardProduct, CardHolder } from '@/lib/types'
 
@@ -35,6 +31,37 @@ function computeBillProgress(bill: BillDetail) {
     if (due.getTime() < today.getTime()) status = 'overdue'
   }
   return { paid, remaining, status }
+}
+
+/** 状态徽章（暗色）：淡底 + ink，与 bills 暗色视图同一口径 */
+function StatusBadgeDark({ status }: { status: string }) {
+  const map: Record<string, { cls: string; label: string }> = {
+    paid: { cls: 'bg-d-success-soft text-d-success-ink', label: '已还' },
+    partial: { cls: 'bg-d-gold-soft text-d-warn-ink', label: '部分' },
+    overdue: { cls: 'bg-d-danger-soft text-d-danger-ink', label: '逾期' },
+    unpaid: { cls: 'bg-d-subtle text-d-accent-light', label: '待还' },
+  }
+  const cfg = map[status] ?? map.unpaid
+  return (
+    <span className={'shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[12px] font-semibold ' + cfg.cls}>
+      {cfg.label}
+    </span>
+  )
+}
+
+/** 来源徽章（暗色） */
+function SourceBadgeDark({ source }: { source: string }) {
+  const map: Record<string, { cls: string; label: string }> = {
+    email: { cls: 'bg-d-subtle text-d-accent-light', label: '邮件' },
+    ai: { cls: 'bg-d-gold-soft text-d-warn-ink', label: 'AI' },
+    manual: { cls: 'bg-d-subtle text-d-muted', label: '手动' },
+  }
+  const cfg = map[source] ?? map.manual
+  return (
+    <span className={'inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-[12px] font-semibold ' + cfg.cls}>
+      {cfg.label}
+    </span>
+  )
 }
 
 export default function BillDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -86,23 +113,30 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
 
   if (loading) {
     return (
-      <Container maxWidth="sm" sx={{ py: 2 }}>
-        <HeaderBack title="账单详情" onBack={() => router.back()} />
-        <WcSkeleton height={120} count={1} />
-        <WcSkeleton height={96} count={2} />
-      </Container>
+      <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-3 text-d-text'>
+        <HeaderBack title='账单详情' onBack={() => router.back()} />
+        <div className='wc-skeleton mb-3 h-[120px] w-full rounded-2xl' />
+        <div className='wc-skeleton mb-3 h-20 w-full rounded-2xl' />
+        <div className='wc-skeleton h-20 w-full rounded-2xl' />
+      </div>
     )
   }
 
   if (error || !bill) {
     return (
-      <Container maxWidth="sm" sx={{ py: 2 }}>
-        <HeaderBack title="账单详情" onBack={() => router.back()} />
-        <WcErrorState
-          message={error || '账单不存在或已被删除'}
-          onRetry={load}
-        />
-      </Container>
+      <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-3 text-d-text'>
+        <HeaderBack title='账单详情' onBack={() => router.back()} />
+        <div className='rounded-2xl bg-d-danger-soft p-4 text-center'>
+          <p className='text-[12px] font-semibold text-d-danger-ink'>{error || '账单不存在或已被删除'}</p>
+          <button
+            type='button'
+            onClick={load}
+            className='mt-2 h-10 rounded-xl bg-d-danger px-4 text-xs font-semibold text-white'
+          >
+            重试
+          </button>
+        </div>
+      </div>
     )
   }
 
@@ -137,168 +171,127 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const periodEnd = bill.statement_end ? format(new Date(bill.statement_end), 'M/d') : ''
 
   return (
-    <Container maxWidth="sm" sx={{ py: 2, pb: 10 }}>
-      <HeaderBack title="账单详情" onBack={() => router.back()} />
+    <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-3 text-d-text'>
+      <HeaderBack title='账单详情' onBack={() => router.back()} />
 
       {/* 头部：卡名 + 持卡人/银行 + 金额 + 状态徽章 */}
-      <Paper elevation={0} sx={{ p: 2, mb: 1.5, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e2)' }}>
-        <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={1} sx={{ mb: 0.5 }}>
-          <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography
-              variant="h6"
-              sx={{
-                fontSize: 'var(--type-section-size)',
-                lineHeight: 'var(--type-section-line)',
-                fontWeight: 'var(--type-section-weight)',
-                letterSpacing: 'var(--type-section-tracking)',
-                color: 'var(--text)',
-              }}
-              noWrap
-            >
-              {cardName}
-            </Typography>
-            <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 0.5, flexWrap: 'wrap', rowGap: 0.5 }}>
-              <Badge chip={<><BankIcon size={11} />&nbsp;{bankName}</>} color="navy" />
+      <div className='mb-2.5 rounded-2xl border border-d-border bg-d-surface p-4'>
+        <div className='mb-1 flex items-start justify-between gap-2.5'>
+          <div className='min-w-0 flex-1'>
+            <p className='truncate text-[15px] font-semibold leading-5 text-d-text'>{cardName}</p>
+            <div className='mt-1.5 flex flex-wrap items-center gap-1.5'>
+              <span className='inline-flex items-center gap-1 rounded-full bg-d-subtle px-2 py-0.5 text-[12px] font-semibold leading-4 text-d-accent-light'>
+                <BankIcon size={11} />
+                {bankName}
+              </span>
               {holderName && (
-                <Badge chip={<><UserIcon size={11} />&nbsp;{holderName}</>} color="blue" />
+                <span className='inline-flex items-center gap-1 rounded-full bg-d-subtle px-2 py-0.5 text-[12px] font-semibold leading-4 text-d-accent-light'>
+                  <UserIcon size={11} />
+                  {holderName}
+                </span>
               )}
-              {last4 && <Badge chip={`尾号 ${last4}`} color="muted" />}
-            </Stack>
-          </Box>
-          <StatusBadge status={status} size="md" />
-        </Stack>
-        <Typography className="num-tabular" sx={{ fontSize: 28, fontWeight: 700, color: 'var(--strong)', mt: 1 }}>
+              {last4 && (
+                <span className='rounded-full bg-d-subtle px-2 py-0.5 text-[12px] font-semibold leading-4 text-d-muted'>
+                  尾号 {last4}
+                </span>
+              )}
+            </div>
+          </div>
+          <StatusBadgeDark status={status} />
+        </div>
+        <p className='num-tabular mt-2 text-[28px] font-bold leading-none text-d-text'>
           ¥{billAmount.toLocaleString()}
-        </Typography>
-      </Paper>
+        </p>
+      </div>
 
       {/* 金额四格 */}
       <Grid4
         items={[
-          { label: '应还', value: billAmount },
-          { label: '最低', value: minPayment },
-          { label: '已还', value: paid, color: 'var(--success)' },
-          { label: '剩余', value: remaining, color: 'var(--danger)' },
+          { label: '应还', value: billAmount, cls: 'text-d-text' },
+          { label: '最低', value: minPayment, cls: 'text-d-text' },
+          { label: '已还', value: paid, cls: 'text-d-success-ink' },
+          { label: '剩余', value: remaining, cls: 'text-d-danger-ink' },
         ]}
       />
 
       {/* 账单周期 */}
-      <Section title="账单周期">
-        <Typography
-          sx={{
-            fontSize: 'var(--type-body-size)',
-            lineHeight: 'var(--type-body-line)',
-            letterSpacing: 'var(--type-body-tracking)',
-            color: 'var(--text)',
-          }}
-        >
-          {periodStart && periodEnd ? `账单周期 ${periodStart} – ${periodEnd}` : '账单周期 —'}
-          {last4 ? ` · 尾号 ${last4}` : ''}
-        </Typography>
+      <Section title='账单周期'>
+        <p className='text-[13px] leading-5 text-d-text'>
+          {periodStart && periodEnd ? '账单周期 ' + periodStart + ' – ' + periodEnd : '账单周期 —'}
+          {last4 ? ' · 尾号 ' + last4 : ''}
+        </p>
       </Section>
 
       {/* 日期信息 */}
-      <Section title="日期信息">
-        <Stack
-          direction="row"
-          spacing={1.25}
-          alignItems="center"
-          sx={{
-            fontSize: 'var(--type-body-size)',
-            lineHeight: 'var(--type-body-line)',
-            letterSpacing: 'var(--type-body-tracking)',
-            color: 'var(--muted)',
-            flexWrap: 'wrap',
-            rowGap: 0.5,
-          }}
-        >
-          <Box component="span">账单日 {billingDay ? `每月 ${billingDay} 日` : '—'}</Box>
-          <Dot />
-          <Box component="span">还款日 {dueDayOfMonth ? `每月 ${dueDayOfMonth} 日` : format(new Date(bill.due_date), 'MM-dd')}</Box>
-          <Dot />
-          <Box component="span" sx={{ color: 'var(--gold-700)', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 0.25 }}>
+      <Section title='日期信息'>
+        <div className='flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] leading-5 text-d-muted'>
+          <span>账单日 {billingDay ? '每月 ' + billingDay + ' 日' : '—'}</span>
+          <span className='text-d-border'>·</span>
+          <span>还款日 {dueDayOfMonth ? '每月 ' + dueDayOfMonth + ' 日' : format(new Date(bill.due_date), 'MM-dd')}</span>
+          <span className='text-d-border'>·</span>
+          <span className='inline-flex items-center gap-1 font-bold text-d-gold'>
             <ClockIcon size={12} /> 免息 {grace || '—'} 天
-          </Box>
-        </Stack>
+          </span>
+        </div>
       </Section>
 
       {/* 来源徽章 */}
-      <Section title="数据来源">
-        <SourceBadge source={(bill as { source?: string }).source || 'manual'} size="md" />
+      <Section title='数据来源'>
+        <SourceBadgeDark source={(bill as { source?: string }).source || 'manual'} />
       </Section>
 
       {/* 还款记录 */}
-      <Section title="还款记录">
+      <Section title='还款记录'>
         {bill.payments.length === 0 ? (
-          <WcEmptyState title="尚未还款" description="点击下方「去还款」登记第一笔还款" />
+          <div className='py-3 text-center'>
+            <p className='text-[13px] font-semibold text-d-text'>尚未还款</p>
+            <p className='mt-1 text-[12px] text-d-muted'>点击下方「去还款」登记第一笔还款</p>
+          </div>
         ) : (
-          <Stack spacing={1}>
-            {bill.payments.map(p => (
-              <Box
+          <div className='flex flex-col'>
+            {bill.payments.map((p, i) => (
+              <div
                 key={p.id}
-                sx={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  py: 1, borderBottom: '1px solid var(--track)',
-                }}
+                className={'flex items-center justify-between py-2' + (i > 0 ? ' border-t border-d-border' : '')}
               >
-                <Box>
-                  <Typography className="num-tabular" sx={{ fontSize: 15, fontWeight: 700, color: 'var(--success)' }}>
+                <div>
+                  <p className='num-tabular text-[15px] font-bold text-d-success-ink'>
                     +¥{Number(p.amount).toLocaleString()}
-                  </Typography>
-                  <Typography
-                    sx={{
-                      fontSize: 'var(--type-body-size)',
-                      lineHeight: 'var(--type-body-line)',
-                      letterSpacing: 'var(--type-body-tracking)',
-                      color: 'var(--muted)',
-                      mt: 0.25,
-                    }}
-                  >
+                  </p>
+                  <p className='mt-0.5 text-[12px] leading-4 text-d-muted'>
                     {format(new Date(p.paid_at), 'yyyy-MM-dd')}
-                    {p.channel ? ` · ${p.channel}` : ''}
-                  </Typography>
-                </Box>
+                    {p.channel ? ' · ' + p.channel : ''}
+                  </p>
+                </div>
                 {p.note && (
-                  <Typography
-                    sx={{
-                      fontSize: 'var(--type-body-size)',
-                      lineHeight: 'var(--type-body-line)',
-                      letterSpacing: 'var(--type-body-tracking)',
-                      color: 'var(--muted)',
-                      maxWidth: 140,
-                      textAlign: 'right',
-                    }}
-                    noWrap
-                  >
+                  <p className='max-w-[140px] truncate text-right text-[12px] leading-4 text-d-muted'>
                     {p.note}
-                  </Typography>
+                  </p>
                 )}
-              </Box>
+              </div>
             ))}
-          </Stack>
+          </div>
         )}
       </Section>
 
       {/* 操作按钮 */}
-      <Stack spacing={1} sx={{ mt: 2 }}>
-        <Button
-          fullWidth
-          variant="contained"
+      <div className='mt-4 flex flex-col gap-2.5'>
+        <button
+          type='button'
           onClick={() => setPaymentOpen(true)}
-          sx={{ py: 1.25, borderRadius: 'var(--radius-pill)', textTransform: 'none', fontWeight: 600 }}
+          className='h-12 w-full rounded-full bg-d-accent text-[14px] font-semibold text-white'
         >
           去还款
-        </Button>
-        <Button
-          fullWidth
-          variant="outlined"
-          onClick={() => card && router.push(`/cards/${card.id}`)}
-          endIcon={<ChevronRightIcon size={16} />}
-          sx={{ py: 1.25, borderRadius: 'var(--radius-pill)', textTransform: 'none', fontWeight: 600, borderColor: 'var(--navy-600)', color: 'var(--navy-600)' }}
+        </button>
+        <button
+          type='button'
+          onClick={() => card && router.push('/cards/' + card.id)}
+          className='flex h-12 w-full items-center justify-center gap-1.5 rounded-full border border-d-accent text-[14px] font-semibold text-d-accent-light'
         >
           查看卡片详情
-        </Button>
-      </Stack>
+          <ChevronRightIcon size={16} />
+        </button>
+      </div>
 
       <PaymentForm
         open={paymentOpen}
@@ -308,123 +301,46 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         billMonth={bill.bill_month}
         billId={bill.id}
       />
-    </Container>
+    </div>
   )
 }
 
 function HeaderBack({ title, onBack }: { title: string; onBack: () => void }) {
   return (
-    <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
-      <IconButton
+    <div className='mb-2.5 flex items-center gap-2.5'>
+      <button
+        type='button'
         onClick={onBack}
-        aria-label="返回"
-        sx={{
-          width: 'var(--button-size)',
-          height: 'var(--button-size)',
-          background: 'var(--button-face)',
-          color: 'var(--text-on-dark)',
-          boxShadow: 'var(--button-shadow)',
-          '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
-          '&:active': { boxShadow: 'var(--button-shadow-press)' },
-        }}
+        aria-label='返回'
+        className='flex h-11 w-11 items-center justify-center rounded-xl border border-d-border bg-d-surface text-d-text'
       >
-        <ArrowBackIcon />
-      </IconButton>
-      <Typography
-        variant="h6"
-        sx={{
-          fontSize: 'var(--type-section-size)',
-          lineHeight: 'var(--type-section-line)',
-          fontWeight: 'var(--type-section-weight)',
-          letterSpacing: 'var(--type-section-tracking)',
-          color: 'var(--text)',
-        }}
-      >
-        {title}
-      </Typography>
-    </Stack>
+        <ChevronLeftIcon size={20} />
+      </button>
+      <p className='text-[15px] font-semibold leading-5 text-d-text'>{title}</p>
+    </div>
   )
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <Box sx={{ mb: 1.5 }}>
-      <Typography
-        sx={{
-          fontSize: 'var(--type-section-size)',
-          lineHeight: 'var(--type-section-line)',
-          fontWeight: 'var(--type-section-weight)',
-          letterSpacing: 'var(--type-section-tracking)',
-          color: 'var(--text)',
-          mb: 0.75,
-        }}
-      >
-        {title}
-      </Typography>
-      <Paper
-        elevation={0}
-        sx={{ p: 1.5, border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e2)' }}
-      >
-        {children}
-      </Paper>
-    </Box>
+    <div className='mb-2.5'>
+      <p className='mb-1.5 text-[15px] font-semibold leading-5 text-d-text'>{title}</p>
+      <div className='rounded-2xl border border-d-border bg-d-surface p-3.5'>{children}</div>
+    </div>
   )
 }
 
-function Dot() {
-  return <Box component="span" sx={{ color: 'var(--track)' }}>·</Box>
-}
-
-function Badge({ chip, color }: { chip: React.ReactNode; color: 'navy' | 'blue' | 'muted' }) {
-  const map = {
-    navy: { bg: 'rgba(30,58,138,0.08)', fg: 'var(--navy-600)' },
-    blue: { bg: 'rgba(122,173,255,0.14)', fg: 'var(--navy-600)' },
-    muted: { bg: 'rgba(91,100,120,0.10)', fg: 'var(--muted)' },
-  }[color]
+function Grid4({ items }: { items: { label: string; value: number | null; cls: string }[] }) {
   return (
-    <Box
-      component="span"
-      sx={{
-        display: 'inline-flex', alignItems: 'center',
-        fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)',
-        letterSpacing: 'var(--type-body-tracking)',
-        fontWeight: 600, color: map.fg, bgcolor: map.bg,
-        borderRadius: 'var(--radius-pill)', px: 0.75, py: 0.15,
-      }}
-    >
-      {chip}
-    </Box>
-  )
-}
-
-function Grid4({ items }: { items: { label: string; value: number | null; color?: string }[] }) {
-  return (
-    <Box
-      sx={{
-        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 0.5,
-        bgcolor: 'var(--paper)', border: 0, borderRadius: 'var(--radius-depth-2)',
-        boxShadow: 'var(--shadow-e1)',
-        p: 1.5, mb: 1.5,
-      }}
-    >
+    <div className='mb-2.5 grid grid-cols-4 gap-0.5 rounded-2xl border border-d-border bg-d-surface p-2'>
       {items.map(it => (
-        <Box key={it.label} sx={{ textAlign: 'center' }}>
-          <Typography
-            sx={{
-              fontSize: 'var(--type-body-size)',
-              lineHeight: 'var(--type-body-line)',
-              letterSpacing: 'var(--type-body-tracking)',
-              color: 'var(--muted)',
-              mb: 0.25,
-            }}
-          >
-            {it.label}
-          </Typography>
-          <Typography className="num-tabular" sx={{ fontSize: 15, fontWeight: 700, color: it.color || 'var(--strong)' }}>
-            {it.value != null ? `¥${Number(it.value).toLocaleString()}` : '—'}
-          </Typography>
-        </Box>
+        <div key={it.label} className='text-center'>
+          <p className='mb-0.5 text-[12px] leading-4 text-d-muted'>{it.label}</p>
+          <p className={'num-tabular text-[15px] font-bold ' + it.cls}>
+            {it.value != null ? '¥' + Number(it.value).toLocaleString() : '—'}
+          </p>
+        </div>
       ))}
-    </Box>
+    </div>
   )
 }
