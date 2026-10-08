@@ -1,28 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import {
-  Container,
-  Typography,
-  Box,
-  Card,
-  CardContent,
-  IconButton,
-  Tooltip,
-  Snackbar,
-  Alert,
-  Divider,
-  Stack,
-  Button,
-  Chip,
-  Collapse,
-  Paper,
-} from '@mui/material'
-import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import { Snackbar, Alert } from '@mui/material'
 import CheckCircleIcon from '@mui/icons-material/CheckCircleOutline'
-import ForwardIcon from '@mui/icons-material/ForwardToInbox'
-import AdminIcon from '@mui/icons-material/AdminPanelSettings'
-import LogoutIcon from '@mui/icons-material/Logout'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
@@ -41,96 +21,35 @@ import {
 
 const DOMAIN = '20160325.xyz'
 
-/** 我的页管理入口行（§5.1）。点击整行触发 onClick（跳转或展开）。 */
-interface MineEntryProps {
+/** 我的页管理入口行（§5.1，暗色）。点击整行触发 onClick（跳转或展开）。 */
+function MineEntry({
+  icon, title, subtitle, onClick, expanded, rightSlot,
+}: {
   icon: React.ReactNode
   title: string
   subtitle: string
   onClick: () => void
   expanded?: boolean
   rightSlot?: React.ReactNode
-}
-
-function MineEntry({ icon, title, subtitle, onClick, expanded, rightSlot }: MineEntryProps) {
+}) {
   return (
-    <Paper
+    <button
+      type='button'
       onClick={onClick}
-      elevation={0}
-      sx={{
-        // 每个入口行：无边框，层级由分层阴影表达（列表深度 12px）
-        backgroundColor: 'var(--paper)',
-        border: 0,
-        borderRadius: 'var(--radius-depth-1)',
-        boxShadow: 'var(--shadow-e1)',
-        px: 2,
-        py: 1.75,
-        cursor: 'pointer',
-        transition: 'box-shadow 150ms var(--ease-out), background-color 150ms var(--ease-out)',
-        '&:active': { backgroundColor: 'rgba(10, 31, 68, 0.03)' },
-      }}
+      className='flex w-full items-center gap-3 rounded-xl border border-d-border bg-d-surface px-3.5 py-3 text-left transition-colors active:bg-d-subtle'
     >
-      {/*
-        360 下「带状态 chip」的行可用宽度 = 296 − 图标 48 − chip 88 − 右箭头 24
-        − 3×12px 间距 = 100px，比「邮箱账单导入」自身需要的 110px 窄，标题于是被
-        折成「邮箱账单导 / 入」。标题与 chip 都是不可拆的语义单元，所以只对这一行
-        把行间距从 12px 收到 8px 腾出 12px；其余入口行保持原 12px 节奏不变。
-      */}
-      <Stack direction="row" spacing={rightSlot ? 1 : 1.5} alignItems="center">
-        {/* 左侧 48x48 圆形浅底 + navy-600 图标 */}
-        <Box
-          sx={{
-            width: 48,
-            height: 48,
-            borderRadius: '50%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: 'rgba(30, 58, 138, 0.08)',
-            color: 'var(--strong)',
-            flexShrink: 0,
-            '& svg': { fontSize: 22 },
-          }}
-        >
-          {icon}
-        </Box>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography
-            sx={{
-              fontSize: 'var(--type-section-size)',
-              lineHeight: 'var(--type-section-line)',
-              fontWeight: 'var(--type-section-weight)',
-              letterSpacing: 'var(--type-section-tracking)',
-              color: 'var(--text)',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {title}
-          </Typography>
-          <Typography
-            sx={{
-              fontSize: 'var(--type-body-size)',
-              lineHeight: 'var(--type-body-line)',
-              letterSpacing: 'var(--type-body-tracking)',
-              color: 'var(--muted)',
-              mt: 0.25,
-              // 带 rightSlot（如「专属就绪」Chip）的行会窄约 88px。这里不截断：
-              // 「专属地址直传，免登记来源邮箱」被省略号吃掉半句就丢了功能说明，
-              // 实测折到 2 行只让该行高 76→90px（+14px），信息完整更值。
-              // 标题本身仍是 nowrap + ellipsis，保证列表首行对齐。
-            }}
-          >
-            {subtitle}
-          </Typography>
-        </Box>
-        {rightSlot}
-        {/* 右箭头：跳转项用 ChevronRightIcon；可折叠项展开后用 ChevronDownIcon */}
-        <Box sx={{ color: 'var(--text-disabled)', display: 'flex', alignItems: 'center', '& svg': { fontSize: 20 } }}>
-          {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
-        </Box>
-      </Stack>
-    </Paper>
+      <span className='flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-d-subtle text-d-accent-light'>
+        {icon}
+      </span>
+      <span className='min-w-0 flex-1'>
+        <span className='block truncate text-[15px] font-semibold leading-5 text-d-text'>{title}</span>
+        <span className='mt-0.5 block text-[12px] leading-4 text-d-muted'>{subtitle}</span>
+      </span>
+      {rightSlot}
+      <span className='shrink-0 text-d-muted'>
+        {expanded ? <ChevronDownIcon size={20} /> : <ChevronRightIcon size={20} />}
+      </span>
+    </button>
   )
 }
 
@@ -163,7 +82,7 @@ export default function SettingsPage() {
     severity: 'success',
   })
 
-  const forwardAddress = user ? `bills+${user.id}@${DOMAIN}` : null
+  const forwardAddress = user ? 'bills+' + user.id + '@' + DOMAIN : null
 
   const copyText = async (text: string, label = '已复制') => {
     try {
@@ -181,243 +100,144 @@ export default function SettingsPage() {
   }
 
   return (
-    <Container sx={{ py: 3, pb: 12 }}>
+    <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-4 text-d-text'>
       {/* 顶部标题「我的」+ 用户标识 */}
-      <Typography
-        variant="h5"
-        sx={{
-          fontSize: 'var(--type-title-size)',
-          lineHeight: 'var(--type-title-line)',
-          fontWeight: 'var(--type-title-weight)',
-          letterSpacing: 'var(--type-title-tracking)',
-          color: 'var(--text)',
-          mb: 0.5,
-        }}
-      >
-        我的
-      </Typography>
-      <Typography
-        sx={{
-          fontSize: 'var(--type-body-size)',
-          lineHeight: 'var(--type-body-line)',
-          letterSpacing: 'var(--type-body-tracking)',
-          color: 'var(--muted)',
-          mb: 2.5,
-        }}
-      >
+      <p className='text-[20px] font-bold leading-7 text-d-text'>我的</p>
+      <p className='mb-2.5 mt-0.5 break-all text-[12px] leading-4 text-d-muted'>
         {user?.email || '已登录用户'}
-      </Typography>
+      </p>
 
-      <Stack spacing={2}>
-        {/* 管理员专属控制台卡片（保留） */}
+      <div className='flex flex-col gap-2.5'>
+        {/* 管理员专属控制台卡片 */}
         {isAdmin && (
-          <Card
-            sx={{
-              // 管理端靛蓝：取 Design.md admin-indigo 声明档位（deep → main）。
-              // 此前用的是 Tailwind indigo-900/800（#312e81/#3730a3），既不在
-              // Design.md 的声明色阶里，也违反「管理端配色只经 adminDarkTheme 表达」。
+          <div
+            className='flex items-center justify-between gap-3 rounded-2xl p-4 text-white'
+            style={{
               background: 'linear-gradient(135deg, #4338ca 0%, #4f46e5 100%)',
-              color: '#ffffff',
-              border: 0,
-              borderRadius: 'var(--radius-depth-3)',
-              // 管理端品牌浮层：靛蓝光晕而非中性分层
               boxShadow: '0 8px 32px rgba(67, 56, 202, 0.28)',
             }}
           >
-            <CardContent sx={{ p: 2.5 }}>
-              <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between">
-                <Box>
-                  <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
-                    {/* 图标在靛蓝底上：#ed6c02 只有 3.67:1，改用 admin-indigo-light 档 */}
-                    <AdminIcon sx={{ color: '#c7d2fe', fontSize: 20 }} />
-                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                      系统管理员权限
-                    </Typography>
-                  </Stack>
-                  <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'rgba(255,255,255,0.85)', display: 'block' }}>
-                    管理全平台银行、卡产品、公共权益与 AI 配置
-                  </Typography>
-                </Box>
-                <Button
-                  variant="contained"
-                  color="warning"
-                  size="small"
-                  onClick={() => router.push('/admin')}
-                  sx={{ fontWeight: 700, whiteSpace: 'nowrap', borderRadius: 'var(--radius-pill)' }}
-                >
-                  进入后台
-                </Button>
-              </Stack>
-            </CardContent>
-          </Card>
+            <div className='min-w-0'>
+              <div className='mb-0.5 flex items-center gap-2'>
+                <span className='text-[#c7d2fe]'>◆</span>
+                <p className='text-[15px] font-bold leading-5'>系统管理员权限</p>
+              </div>
+              <p className='text-[12px] leading-4 text-white/85'>
+                管理全平台银行、卡产品、公共权益与 AI 配置
+              </p>
+            </div>
+            <button
+              type='button'
+              onClick={() => router.push('/admin')}
+              className='h-10 shrink-0 whitespace-nowrap rounded-full bg-[#f59e0b] px-3.5 text-[12px] font-bold text-[#3b2a00]'
+            >
+              进入后台
+            </button>
+          </div>
         )}
 
         {/* 管理入口列表（§5.1） */}
         <MineEntry
-          icon={<UserIcon />}
-          title="家庭管理"
-          subtitle="持卡人与卡片管理"
+          icon={<UserIcon size={22} />}
+          title='家庭管理'
+          subtitle='持卡人与卡片管理'
           onClick={() => router.push('/holders')}
         />
 
         <MineEntry
-          icon={<PromoIcon />}
-          title="优惠活动"
-          subtitle="可用优惠"
+          icon={<PromoIcon size={22} />}
+          title='优惠活动'
+          subtitle='可用优惠'
           onClick={() => router.push('/promos')}
         />
 
         <MineEntry
-          icon={<BenefitIcon />}
-          title="我的权益"
-          subtitle="权益使用进度"
+          icon={<BenefitIcon size={22} />}
+          title='我的权益'
+          subtitle='权益使用进度'
           onClick={() => router.push('/benefits')}
         />
 
         <MineEntry
-          icon={<ImportIcon />}
-          title="邮箱账单导入"
-          subtitle="专属地址直传，免登记来源邮箱"
+          icon={<ImportIcon size={22} />}
+          title='邮箱账单导入'
+          subtitle='专属地址直传，免登记来源邮箱'
           onClick={() => setOpenGmail(v => !v)}
           expanded={openGmail}
           rightSlot={
-            <Chip
-              size="small"
-              label="专属就绪"
-              color="primary"
-              variant="outlined"
-              sx={{ mr: 0.5, fontWeight: 600 }}
-            />
+            <span className='mr-0.5 shrink-0 rounded-full border border-d-accent px-2 py-0.5 text-[11px] font-semibold leading-4 text-d-accent-light'>
+              专属就绪
+            </span>
           }
         />
 
         {/* 邮箱账单导入展开区：仅保留专属地址直传 */}
-        <Collapse in={openGmail} sx={{ width: '100%' }}>
-          <Stack spacing={2} sx={{ mt: 0.5 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: -0.5 }}>
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={<ImportIcon />}
+        {openGmail && (
+          <div className='flex flex-col gap-2.5'>
+            <div className='flex justify-end'>
+              <button
+                type='button'
                 onClick={() => router.push('/gmail-ledger')}
-                sx={{ borderRadius: 'var(--radius-pill)', fontWeight: 600 }}
+                className='flex h-10 items-center gap-1.5 rounded-full border border-d-accent px-3.5 text-[12px] font-semibold text-d-accent-light'
               >
+                <ImportIcon size={14} />
                 查看邮箱账单明细流水
-              </Button>
-            </Box>
+              </button>
+            </div>
+
             {/* 账单自动录入地址 */}
-            <Card elevation={0} sx={{ border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e2)' }}>
-              <CardContent sx={{ p: 2.5 }}>
-                <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                  <Box
-                    sx={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 3,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      bgcolor: 'rgba(37,99,235,0.10)',
-                      color: 'var(--strong)',
-                    }}
+            <div className='rounded-2xl border border-d-border bg-d-surface p-4'>
+              <div className='mb-3 flex items-center gap-3'>
+                <div className='flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-d-subtle text-d-accent-light'>
+                  <ImportIcon size={20} />
+                </div>
+                <div className='min-w-0 flex-1'>
+                  <p className='text-[15px] font-semibold leading-5 text-d-text'>收账单邮箱</p>
+                  <p className='mt-0.5 text-[12px] leading-4 text-d-muted'>
+                    转发银行账单至以下地址，系统将自动解析入库
+                  </p>
+                </div>
+              </div>
+
+              <div className='my-3 border-t border-dashed border-d-border' />
+
+              {forwardAddress && (
+                <div className='flex items-center gap-2.5 rounded-xl bg-d-bg p-3'>
+                  <div className='min-w-0 flex-1'>
+                    <p className='text-[12px] font-semibold leading-4 text-d-muted'>专属地址</p>
+                    <p className='num-tabular mt-0.5 break-all font-mono text-[12px] font-semibold leading-4 text-d-text'>
+                      {forwardAddress}
+                    </p>
+                  </div>
+                  <button
+                    type='button'
+                    aria-label='复制专属地址'
+                    onClick={() => copyText(forwardAddress, '专属地址已复制')}
+                    className='h-10 shrink-0 rounded-xl border border-d-border px-3 text-[12px] font-semibold text-d-accent-light'
                   >
-                    <ForwardIcon fontSize="small" />
-                  </Box>
-                  <Box sx={{ flex: 1 }}>
-                    <Typography
-                      variant="h6"
-                      sx={{
-                        fontSize: 'var(--type-section-size)',
-                        lineHeight: 'var(--type-section-line)',
-                        fontWeight: 'var(--type-section-weight)',
-                        letterSpacing: 'var(--type-section-tracking)',
-                        color: 'var(--text)',
-                      }}
-                    >
-                      收账单邮箱
-                    </Typography>
-                    <Typography
-                      sx={{
-                        fontSize: 'var(--type-body-size)',
-                        lineHeight: 'var(--type-body-line)',
-                        letterSpacing: 'var(--type-body-tracking)',
-                        color: 'var(--muted)',
-                      }}
-                    >
-                      转发银行账单至以下地址，系统将自动解析入库
-                    </Typography>
-                  </Box>
-                </Stack>
+                    复制
+                  </button>
+                </div>
+              )}
 
-                <Divider sx={{ my: 2, borderStyle: 'dashed', borderColor: 'var(--track)' }} />
-
-                <Stack spacing={1.5}>
-                  {forwardAddress && (
-                    <Box
-                      sx={{
-                        bgcolor: 'background.default',
-                        borderRadius: 'var(--radius-depth-1)',
-                        p: 1.75,
-                        border: 0,
-                        boxShadow: 'var(--shadow-e1)',
-                      }}
-                    >
-                      <Stack direction="row" alignItems="center" spacing={1}>
-                        <Box sx={{ flex: 1, minWidth: 0 }}>
-                          <Typography
-                            sx={{
-                              fontSize: 'var(--type-body-size)',
-                              lineHeight: 'var(--type-body-line)',
-                              letterSpacing: 'var(--type-body-tracking)',
-                              color: 'var(--muted)',
-                              fontWeight: 600,
-                            }}
-                          >
-                            专属地址
-                          </Typography>
-                          <Typography
-                            variant="body2"
-                            className="num-tabular"
-                            sx={{
-                              fontFamily: 'var(--font-mono)',
-                              fontSize: 'var(--type-body-size)',
-                              lineHeight: 'var(--type-body-line)',
-                              fontWeight: 600,
-                              color: 'var(--text)',
-                              wordBreak: 'break-all',
-                              mt: 0.25,
-                            }}
-                          >
-                            {forwardAddress}
-                          </Typography>
-                        </Box>
-                        <Tooltip title="复制专属地址">
-                          <IconButton size="small" onClick={() => copyText(forwardAddress, '专属地址已复制')}>
-                            <ContentCopyIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </Stack>
-                    </Box>
-                  )}
-                </Stack>
-
-                <Alert severity="info" sx={{ mt: 2, borderRadius: 'var(--radius-depth-1)' }}>
+              <div className='mt-3 rounded-xl border-l-2 border-d-accent bg-d-subtle p-3'>
+                <p className='text-[11px] leading-4 text-d-muted'>
                   该地址包含你的用户 ID，系统按收件地址即可归属到你的账号，无需登记来源邮箱。请用自动转发规则把银行账单转到此地址。
-                </Alert>
-              </CardContent>
-            </Card>
-          </Stack>
-        </Collapse>
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 提醒偏好：折叠保留 ReminderPreferencesCard 全部功能 */}
         <MineEntry
-          icon={<BellIcon />}
-          title="提醒偏好"
-          subtitle="还款提醒通道与节点"
+          icon={<BellIcon size={22} />}
+          title='提醒偏好'
+          subtitle='还款提醒通道与节点'
           onClick={() => setOpenReminder(v => !v)}
           expanded={openReminder}
         />
-        <Collapse in={openReminder} sx={{ width: '100%' }}>
+        {openReminder && (
           <ReminderPreferencesCard
             config={reminderConfig}
             onChange={async updates => {
@@ -426,17 +246,17 @@ export default function SettingsPage() {
             }}
             disabled={loadingPrefs}
           />
-        </Collapse>
+        )}
 
         {/* 设置：折叠保留 DisplayPreferencesCard 全部功能 */}
         <MineEntry
-          icon={<SettingsIcon />}
-          title="设置"
-          subtitle="界面显示偏好与隐私模式"
+          icon={<SettingsIcon size={22} />}
+          title='设置'
+          subtitle='界面显示偏好与隐私模式'
           onClick={() => setOpenSettings(v => !v)}
           expanded={openSettings}
         />
-        <Collapse in={openSettings} sx={{ width: '100%' }}>
+        {openSettings && (
           <DisplayPreferencesCard
             config={displayConfig}
             onChange={async updates => {
@@ -445,33 +265,19 @@ export default function SettingsPage() {
             }}
             disabled={loadingPrefs}
           />
-        </Collapse>
+        )}
 
         {/* 退出登录（单独一行，避免误触） */}
-        <Paper
-          elevation={0}
-          sx={{
-            backgroundColor: 'var(--paper)',
-            border: 0,
-            borderRadius: 'var(--radius-depth-1)',
-            boxShadow: 'var(--shadow-e1)',
-            px: 2,
-            py: 1.75,
-            mt: 1,
-          }}
-        >
-          <Button
-            fullWidth
-            variant="text"
-            color="error"
-            startIcon={<LogoutIcon />}
+        <div className='mt-1 rounded-xl border border-d-border bg-d-surface px-3.5 py-2'>
+          <button
+            type='button'
             onClick={handleSignOut}
-            sx={{ fontWeight: 700, borderRadius: 'var(--radius-pill)', textTransform: 'none' }}
+            className='flex h-11 w-full items-center justify-center gap-2 rounded-full text-[14px] font-bold text-d-danger-ink'
           >
-            退出登录
-          </Button>
-        </Paper>
-      </Stack>
+            ⎋ 退出登录
+          </button>
+        </div>
+      </div>
 
       <Snackbar
         open={notice.open}
@@ -480,11 +286,11 @@ export default function SettingsPage() {
       >
         <Alert
           severity={notice.severity}
-          icon={notice.severity === 'success' ? <CheckCircleIcon fontSize="small" /> : undefined}
+          icon={notice.severity === 'success' ? <CheckCircleIcon fontSize='small' /> : undefined}
         >
           {notice.message}
         </Alert>
       </Snackbar>
-    </Container>
+    </div>
   )
 }

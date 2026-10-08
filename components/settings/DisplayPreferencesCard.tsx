@@ -1,20 +1,8 @@
 'use client'
 
-import {
-  Card,
-  CardContent,
-  Stack,
-  Box,
-  Typography,
-  Divider,
-  Switch,
-  FormControlLabel,
-  FormGroup,
-  Checkbox,
-  Chip
-} from '@mui/material'
-import DisplayIcon from '@mui/icons-material/Tune'
+import { SettingsIcon } from '@/components/icons/WcIcon'
 import type { UserDisplayConfig } from '@/lib/types'
+import { CheckRow, Toggle } from '@/components/obsidian/controls'
 
 interface DisplayPreferencesCardProps {
   config: UserDisplayConfig
@@ -22,118 +10,83 @@ interface DisplayPreferencesCardProps {
   disabled?: boolean
 }
 
+/** 显示要素与隐私保护（暗色）。props 契约与亮色版一致。 */
 export function DisplayPreferencesCard({ config, onChange, disabled }: DisplayPreferencesCardProps) {
   return (
-    <Card variant="outlined">
-      <CardContent sx={{ p: 2.5 }}>
-        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-          <Box
-            sx={{
-              width: 44,
-              height: 44,
-              borderRadius: 3,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              bgcolor: 'primary.50',
-              color: 'primary.main'
-            }}
-          >
-            <DisplayIcon fontSize="small" />
-          </Box>
-          <Box sx={{ flex: 1 }}>
-            <Typography variant="subtitle1" fontWeight={700}>
-              显示要素与隐私保护
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              自定义看板遮罩规则与卡片展示字段
-            </Typography>
-          </Box>
-        </Stack>
+    <div className='rounded-2xl border border-d-border bg-d-surface p-4'>
+      <div className='mb-3 flex items-center gap-3'>
+        <div className='flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-d-subtle text-d-accent-light'>
+          <SettingsIcon size={20} />
+        </div>
+        <div className='min-w-0 flex-1'>
+          <p className='text-[15px] font-bold leading-5 text-d-text'>显示要素与隐私保护</p>
+          <p className='mt-0.5 text-[12px] leading-4 text-d-muted'>
+            自定义看板遮罩规则与卡片展示字段
+          </p>
+        </div>
+      </div>
 
-        <Divider sx={{ my: 2, borderStyle: 'dashed' }} />
+      <div className='my-3 border-t border-dashed border-d-border' />
 
-        <Stack spacing={2}>
-          <Box
-            sx={{
-              p: 2,
-              borderRadius: 3,
-              bgcolor: config.privacy_mode ? 'primary.50' : 'grey.50',
-              border: '1px solid',
-              borderColor: config.privacy_mode ? 'primary.200' : 'divider',
-              transition: 'all 0.2s ease'
-            }}
-          >
-            <FormControlLabel
+      <div className='flex flex-col gap-3'>
+        <div
+          className={
+            'rounded-xl border p-3 transition-colors ' +
+            (config.privacy_mode ? 'border-d-accent bg-d-subtle' : 'border-d-border bg-d-bg')
+          }
+        >
+          <div className='flex items-start justify-between gap-3'>
+            <div className='min-w-0 flex-1'>
+              <div className='flex flex-wrap items-center gap-2'>
+                <p className='text-[13px] font-bold leading-5 text-d-text'>
+                  高斯模糊隐私模式 (隐匿敏感金额)
+                </p>
+                {config.privacy_mode && (
+                  <span className='rounded-full bg-d-accent px-2 py-0.5 text-[11px] font-semibold leading-[16px] text-white'>
+                    已开启
+                  </span>
+                )}
+              </div>
+              <p className='mt-1 text-[11px] leading-4 text-d-muted'>
+                开启后，看板与账单列表的敏感金额将通过高斯模糊平滑遮罩
+              </p>
+            </div>
+            <Toggle
+              checked={config.privacy_mode}
+              onChange={v => onChange({ privacy_mode: v })}
               disabled={disabled}
-              control={
-                <Switch
-                  checked={config.privacy_mode}
-                  onChange={e => onChange({ privacy_mode: e.target.checked })}
-                  color="primary"
-                />
-              }
-              label={
-                <Box sx={{ ml: 0.5 }}>
-                  <Stack direction="row" alignItems="center" spacing={1}>
-                    <Typography variant="body2" fontWeight={700}>
-                      高斯模糊隐私模式 (隐匿敏感金额)
-                    </Typography>
-                    {config.privacy_mode && (
-                      <Chip label="已开启" size="small" color="primary" sx={{ height: 20, fontSize: 11 }} />
-                    )}
-                  </Stack>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                    开启后，看板与账单列表的敏感金额将通过高斯模糊平滑遮罩
-                  </Typography>
-                </Box>
-              }
-              sx={{ m: 0, width: '100%' }}
+              ariaLabel='高斯模糊隐私模式'
             />
-          </Box>
+          </div>
+        </div>
 
-          <Box>
-            <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ display: 'block', mb: 1 }}>
-              账单卡片显隐要素定制：
-            </Typography>
-            <FormGroup row sx={{ gap: 1 }}>
-              <FormControlLabel
-                disabled={disabled}
-                control={
-                  <Checkbox
-                    size="small"
-                    checked={config.show_min_payment}
-                    onChange={e => onChange({ show_min_payment: e.target.checked })}
-                  />
-                }
-                label={<Typography variant="body2">最低还款额</Typography>}
-              />
-              <FormControlLabel
-                disabled={disabled}
-                control={
-                  <Checkbox
-                    size="small"
-                    checked={config.show_statement_date}
-                    onChange={e => onChange({ show_statement_date: e.target.checked })}
-                  />
-                }
-                label={<Typography variant="body2">账单日</Typography>}
-              />
-              <FormControlLabel
-                disabled={disabled}
-                control={
-                  <Checkbox
-                    size="small"
-                    checked={config.show_card_last4}
-                    onChange={e => onChange({ show_card_last4: e.target.checked })}
-                  />
-                }
-                label={<Typography variant="body2">卡号后4位</Typography>}
-              />
-            </FormGroup>
-          </Box>
-        </Stack>
-      </CardContent>
-    </Card>
+        <div>
+          <p className='mb-1.5 text-[11px] font-bold text-d-muted'>账单卡片显隐要素定制：</p>
+          <div className='flex flex-col gap-2'>
+            <CheckRow
+              checked={config.show_min_payment}
+              onChange={v => onChange({ show_min_payment: v })}
+              disabled={disabled}
+            >
+              最低还款额
+            </CheckRow>
+            <CheckRow
+              checked={config.show_statement_date}
+              onChange={v => onChange({ show_statement_date: v })}
+              disabled={disabled}
+            >
+              账单日
+            </CheckRow>
+            <CheckRow
+              checked={config.show_card_last4}
+              onChange={v => onChange({ show_card_last4: v })}
+              disabled={disabled}
+            >
+              卡号后4位
+            </CheckRow>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }

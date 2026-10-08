@@ -1,24 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import {
-  Card,
-  CardContent,
-  Stack,
-  Box,
-  Typography,
-  Divider,
-  Chip,
-  TextField,
-  Button,
-  Snackbar,
-  Alert
-} from '@mui/material'
-import NotificationIcon from '@mui/icons-material/NotificationsActive'
-import ClockIcon from '@mui/icons-material/AccessTime'
-import SendIcon from '@mui/icons-material/Send'
-import CheckIcon from '@mui/icons-material/CheckCircleOutline'
+import { BellIcon, ClockIcon, PlusIcon, CheckIcon } from '@/components/icons/WcIcon'
 import type { UserReminderConfig } from '@/lib/types'
+import {
+  Dialog, DialogTitle, DialogContent, DialogActions, Snackbar, Alert,
+} from '@mui/material'
 
 interface ReminderPreferencesCardProps {
   config: UserReminderConfig
@@ -26,13 +13,16 @@ interface ReminderPreferencesCardProps {
   disabled?: boolean
 }
 
+/** 还款适时提醒规则（暗色）。props 契约与亮色版一致。 */
 export function ReminderPreferencesCard({ config, onChange, disabled }: ReminderPreferencesCardProps) {
   const [testing, setTesting] = useState(false)
   const [testNotice, setTestNotice] = useState<{ open: boolean; message: string; severity: 'success' | 'info' | 'error' }>({
     open: false,
     message: '',
-    severity: 'success'
+    severity: 'success',
   })
+  // 测试推送无法在渲染里直接弹系统通知预览时，用说明弹窗承载权限引导
+  const [guideOpen, setGuideOpen] = useState(false)
 
   const handleToggleDay = (day: number) => {
     const current = config.remind_days_before || []
@@ -70,11 +60,7 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
           })
         }
       } else {
-        setTestNotice({
-          open: true,
-          message: '【测试提醒】您的应用还款提醒机制正常（当前设备暂不支持系统 Push API）。',
-          severity: 'info'
-        })
+        setGuideOpen(true)
       }
     } catch (err) {
       setTestNotice({ open: true, message: '测试发送失败: ' + (err instanceof Error ? err.message : String(err)), severity: 'error' })
@@ -84,142 +70,135 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
   }
 
   return (
-    <Card variant="outlined">
-      <CardContent sx={{ p: 2.5 }}>
-        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-          <Box
-            sx={{
-              width: 44,
-              height: 44,
-              borderRadius: 3,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              bgcolor: 'warning.light',
-              color: 'warning.dark'
-            }}
+    <div className='obsidian-dashboard rounded-2xl border border-d-border bg-d-surface p-4'>
+      <div className='mb-3 flex items-center gap-3'>
+        <div className='flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-d-gold-soft text-d-warn-ink'>
+          <BellIcon size={20} />
+        </div>
+        <div className='min-w-0 flex-1'>
+          <p className='text-[15px] font-bold leading-5 text-d-text'>还款适时提醒规则</p>
+          <p className='mt-0.5 text-[12px] leading-4 text-d-muted'>
+            定制到期前的提醒时间节点与夜间免打扰时段
+          </p>
+        </div>
+      </div>
+
+      <div className='my-3 border-t border-dashed border-d-border' />
+
+      <div className='flex flex-col gap-3'>
+        <div>
+          <p className='mb-1.5 text-[11px] font-bold text-d-muted'>提醒提前时间节点 (支持多选)：</p>
+          <div className='flex flex-wrap gap-2'>
+            {[7, 5, 3, 1, 0].map(day => {
+              const active = (config.remind_days_before || []).includes(day)
+              const label = day === 0 ? '到期当天' : '提前 ' + day + ' 天'
+              return (
+                <button
+                  key={day}
+                  type='button'
+                  disabled={disabled}
+                  onClick={() => handleToggleDay(day)}
+                  className={
+                    'rounded-full px-3.5 py-1.5 text-[13px] font-bold transition-colors disabled:opacity-50 ' +
+                    (active
+                      ? 'bg-d-accent text-white'
+                      : 'border border-d-border bg-d-surface text-d-muted')
+                  }
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className='border-t border-dashed border-d-border' />
+
+        <div>
+          <div className='mb-1.5 flex items-center gap-1.5'>
+            <ClockIcon size={14} className='text-d-muted' />
+            <p className='text-[11px] font-bold text-d-muted'>免打扰时段 (Quiet Hours)：</p>
+          </div>
+          <div className='flex items-center gap-2.5'>
+            <input
+              type='time'
+              aria-label='免打扰开始时间'
+              disabled={disabled}
+              value={config.quiet_hours_start || '22:00'}
+              onChange={e => onChange({ quiet_hours_start: e.target.value })}
+              className='h-10 rounded-xl border border-d-border bg-d-bg px-2.5 text-[13px] text-d-text [color-scheme:dark] disabled:opacity-50'
+              style={{ width: 130 }}
+            />
+            <span className='text-[12px] text-d-muted'>至</span>
+            <input
+              type='time'
+              aria-label='免打扰结束时间'
+              disabled={disabled}
+              value={config.quiet_hours_end || '08:00'}
+              onChange={e => onChange({ quiet_hours_end: e.target.value })}
+              className='h-10 rounded-xl border border-d-border bg-d-bg px-2.5 text-[13px] text-d-text [color-scheme:dark] disabled:opacity-50'
+              style={{ width: 130 }}
+            />
+          </div>
+        </div>
+
+        <div className='border-t border-dashed border-d-border' />
+
+        <div className='flex items-center justify-between gap-3 rounded-xl bg-d-bg p-3'>
+          <div className='min-w-0 flex-1'>
+            <p className='text-[13px] font-bold leading-5 text-d-text'>验证设备连通性</p>
+            <p className='mt-0.5 text-[11px] leading-4 text-d-muted'>
+              点此发送一条测试推送，验证系统通知是否正常到达
+            </p>
+          </div>
+          <button
+            type='button'
+            disabled={testing || disabled}
+            onClick={handleSendTestPush}
+            className='flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-d-accent px-3.5 text-[12px] font-semibold text-d-accent-light disabled:opacity-50'
           >
-            <NotificationIcon fontSize="small" />
-          </Box>
-          <Box sx={{ flex: 1 }}>
-            <Typography variant="subtitle1" fontWeight={700}>
-              还款适时提醒规则
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              定制到期前的提醒时间节点与夜间免打扰时段
-            </Typography>
-          </Box>
-        </Stack>
+            <PlusIcon size={14} />
+            {testing ? '测试中...' : '测试通知'}
+          </button>
+        </div>
+      </div>
 
-        <Divider sx={{ my: 2, borderStyle: 'dashed' }} />
+      {/* 当前设备不支持 Push API 时的降级说明（替代亮色版 info Alert） */}
+      <Dialog open={guideOpen} onClose={() => setGuideOpen(false)} maxWidth='xs' fullWidth>
+        <DialogTitle
+          sx={{ fontSize: 'var(--type-section-size)', fontWeight: 'var(--type-section-weight)', color: 'var(--text)' }}
+        >
+          测试提醒
+        </DialogTitle>
+        <DialogContent>
+          <p className='text-[13px] leading-5 text-d-muted'>
+            您的应用还款提醒机制正常（当前设备暂不支持系统 Push API）。
+          </p>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <button
+            type='button'
+            onClick={() => setGuideOpen(false)}
+            className='h-10 rounded-xl bg-d-accent px-5 text-sm font-semibold text-white'
+          >
+            知道了
+          </button>
+        </DialogActions>
+      </Dialog>
 
-        <Stack spacing={2.5}>
-          <Box>
-            <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ display: 'block', mb: 1.5 }}>
-              提醒提前时间节点 (支持多选)：
-            </Typography>
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ gap: 1 }}>
-              {[7, 5, 3, 1, 0].map(day => {
-                const active = (config.remind_days_before || []).includes(day)
-                const label = day === 0 ? '到期当天' : `提前 ${day} 天`
-                return (
-                  <Chip
-                    key={day}
-                    label={label}
-                    color={active ? 'primary' : 'default'}
-                    variant={active ? 'filled' : 'outlined'}
-                    disabled={disabled}
-                    onClick={() => handleToggleDay(day)}
-                    sx={{
-                      cursor: 'pointer',
-                      fontWeight: 700,
-                      px: 1,
-                      transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                      '&:hover': {
-                        transform: 'translateY(-1px)'
-                      }
-                    }}
-                  />
-                )
-              })}
-            </Stack>
-          </Box>
-
-          <Divider sx={{ borderStyle: 'dashed' }} />
-
-          <Box>
-            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
-              <ClockIcon fontSize="small" color="action" />
-              <Typography variant="caption" color="text.secondary" fontWeight={700}>
-                免打扰时段 (Quiet Hours)：
-              </Typography>
-            </Stack>
-            <Stack direction="row" spacing={2} alignItems="center">
-              <TextField
-                size="small"
-                label="开始时间"
-                type="time"
-                disabled={disabled}
-                value={config.quiet_hours_start || '22:00'}
-                onChange={e => onChange({ quiet_hours_start: e.target.value })}
-                InputLabelProps={{ shrink: true }}
-                sx={{ width: 140 }}
-              />
-              <Typography variant="body2" color="text.secondary" fontWeight={600}>至</Typography>
-              <TextField
-                size="small"
-                label="结束时间"
-                type="time"
-                disabled={disabled}
-                value={config.quiet_hours_end || '08:00'}
-                onChange={e => onChange({ quiet_hours_end: e.target.value })}
-                InputLabelProps={{ shrink: true }}
-                sx={{ width: 140 }}
-              />
-            </Stack>
-          </Box>
-
-          <Divider sx={{ borderStyle: 'dashed' }} />
-
-          <Box sx={{ bgcolor: 'background.default', borderRadius: 3, p: 2 }}>
-            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2}>
-              <Box sx={{ flex: 1 }}>
-                <Typography variant="body2" fontWeight={700}>
-                  验证设备连通性
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  点此发送一条测试推送，验证系统通知是否正常到达
-                </Typography>
-              </Box>
-              <Button
-                variant="outlined"
-                color="primary"
-                size="small"
-                startIcon={<SendIcon fontSize="small" />}
-                disabled={testing || disabled}
-                onClick={handleSendTestPush}
-                sx={{ borderRadius: 2.5, whiteSpace: 'nowrap' }}
-              >
-                {testing ? '测试中...' : '测试通知'}
-              </Button>
-            </Stack>
-          </Box>
-        </Stack>
-
-        <Snackbar
-          open={testNotice.open}
-          autoHideDuration={4000}
+      <Snackbar
+        open={testNotice.open}
+        autoHideDuration={4000}
+        onClose={() => setTestNotice(prev => ({ ...prev, open: false }))}
+      >
+        <Alert
+          severity={testNotice.severity}
+          icon={testNotice.severity === 'success' ? <CheckIcon fontSize='small' /> : undefined}
           onClose={() => setTestNotice(prev => ({ ...prev, open: false }))}
         >
-          <Alert
-            severity={testNotice.severity}
-            icon={testNotice.severity === 'success' ? <CheckIcon fontSize="small" /> : undefined}
-            onClose={() => setTestNotice(prev => ({ ...prev, open: false }))}
-          >
-            {testNotice.message}
-          </Alert>
-        </Snackbar>
-      </CardContent>
-    </Card>
+          {testNotice.message}
+        </Alert>
+      </Snackbar>
+    </div>
   )
 }
