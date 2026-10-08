@@ -1,10 +1,8 @@
 'use client'
 
-import { Box, Stack, Typography, Paper, Button, IconButton } from '@mui/material'
-import { Add as AddIcon, Edit as EditIcon } from '@mui/icons-material'
 import { categoryLabel, type PayableWithStatus } from '@/lib/api/payables'
 import { currencySymbol } from '@/lib/fx'
-import { ClockIcon, ChevronRightIcon } from '@/components/icons/WcIcon'
+import { ClockIcon, PlusIcon } from '@/components/icons/WcIcon'
 
 interface Props {
   payables: PayableWithStatus[]
@@ -21,162 +19,103 @@ interface Props {
  */
 export function PayableList({ payables, onAdd, onEdit, onPay }: Props) {
   return (
-    <Box sx={{ mb: 2.5 }}>
-      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1.25 }}>
-        <Typography
-          sx={{
-            fontSize: 'var(--type-section-size)',
-            lineHeight: 'var(--type-section-line)',
-            letterSpacing: 'var(--type-section-tracking)',
-            fontWeight: 'var(--type-section-weight)',
-            color: 'var(--text)',
-          }}
-        >
-          固定支出
-        </Typography>
-        <Button
-          size="small"
-          startIcon={<AddIcon fontSize="small" />}
+    <div>
+      <div className='mb-2 flex items-center justify-between'>
+        <p className='text-[15px] font-semibold leading-5 text-d-text'>固定支出</p>
+        <button
+          type='button'
           onClick={onAdd}
-          sx={{
-            textTransform: 'none',
-            fontWeight: 600,
-            fontSize: 14.5,
-            lineHeight: '18px',
-            color: 'var(--strong)',
-            borderRadius: 'var(--radius-pill)',
-            px: 1.25,
-          }}
+          className='flex items-center gap-1 text-[13px] font-semibold text-d-accent-light'
         >
+          <PlusIcon size={15} />
           添加
-        </Button>
-      </Stack>
+        </button>
+      </div>
 
       {payables.length === 0 ? (
-        <Paper
-          elevation={0}
-          sx={{
-            p: 2,
-            bgcolor: 'var(--paper)',
-            border: 0,
-            borderRadius: 'var(--radius-depth-2)',
-            boxShadow: 'var(--shadow-e1)',
-            textAlign: 'center',
-          }}
-        >
-          <Typography sx={{ fontSize: 'var(--type-body-size)', lineHeight: 'var(--type-body-line)', letterSpacing: 'var(--type-body-tracking)', color: 'var(--muted)' }}>
+        <div className='rounded-[14px] border border-d-border bg-d-surface px-4 py-4 text-center'>
+          <p className='text-[12px] leading-5 text-d-muted'>
             还没有固定支出。房租、贷款这类每月固定要付的可以加在这里。
-          </Typography>
-        </Paper>
+          </p>
+        </div>
       ) : (
-        <Stack spacing={1.5}>
+        <div className='flex flex-col gap-2.5'>
           {payables.map(p => {
             const paid = p.status === 'paid'
             const overdue = p.status === 'overdue'
             const label = overdue
-              ? `已逾期 ${Math.abs(p.days_until_due)} 天`
+              ? '已逾期 ' + Math.abs(p.days_until_due) + ' 天'
               : p.days_until_due === 0
                 ? '今天应付'
-                : `距离应付日 ${p.days_until_due} 天`
+                : '距离应付日 ' + p.days_until_due + ' 天'
             return (
-              <Paper
-                key={p.id}
-                elevation={0}
-                sx={{
-                  p: 2,
-                  bgcolor: 'var(--paper)',
-                  border: 0,
-                  borderRadius: 'var(--radius-depth-2)',
-                  boxShadow: 'var(--shadow-e1)',
-                }}
-              >
-                <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={1}>
-                  <Box sx={{ minWidth: 0, flex: 1 }}>
-                    <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ minWidth: 0 }}>
-                      <Typography
-                        noWrap
-                        sx={{
-                          fontSize: 'var(--type-section-size)',
-                          lineHeight: 'var(--type-section-line)',
-                          letterSpacing: 'var(--type-section-tracking)',
-                          fontWeight: 'var(--type-section-weight)',
-                          color: 'var(--text)',
-                          minWidth: 0,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                        }}
-                      >
+              <div key={p.id} className='rounded-2xl border border-d-border bg-d-surface p-4'>
+                <div className='flex items-start justify-between gap-2'>
+                  <div className='min-w-0 flex-1'>
+                    <div className='flex min-w-0 items-baseline gap-1.5'>
+                      <p className='min-w-0 truncate text-[15px] font-semibold leading-5 text-d-text'>
                         {p.name}
-                      </Typography>
-                      <Typography component="span" sx={{ flexShrink: 0, fontSize: 14.5, lineHeight: '18px', letterSpacing: '0.3px', color: 'var(--muted)' }}>
+                      </p>
+                      <span className='shrink-0 whitespace-nowrap text-[12px] text-d-muted'>
                         · {categoryLabel(p.category)}
-                      </Typography>
-                    </Stack>
-                    <Typography className="type-label" sx={{ mt: 0.5, display: 'block' }}>
+                      </span>
+                    </div>
+                    <p className='mt-1 block text-[11px] leading-4 text-d-muted'>
                       每月 {p.due_day} 日 · 本期应付日 {p.due_date.slice(5)}
-                    </Typography>
-                  </Box>
-                  <IconButton size="small" aria-label="编辑固定支出" onClick={() => onEdit(p)} sx={{ flexShrink: 0, color: 'var(--muted)' }}>
-                    <EditIcon fontSize="small" />
-                  </IconButton>
-                </Stack>
+                    </p>
+                  </div>
+                  <button
+                    type='button'
+                    aria-label='编辑固定支出'
+                    onClick={() => onEdit(p)}
+                    className='shrink-0 text-[11px] font-semibold text-d-muted'
+                  >
+                    编辑
+                  </button>
+                </div>
 
-                <Stack direction="row" alignItems="flex-end" justifyContent="space-between" sx={{ mt: 1 }}>
-                  <Box sx={{ minWidth: 0 }}>
-                    <Typography className="type-label">
-                      {paid ? '本期已付' : '本期应付'}
-                    </Typography>
-                    <Typography
-                      className="num-tabular"
-                      sx={{
-                        fontSize: 'var(--type-title-size)',
-                        lineHeight: 'var(--type-title-line)',
-                        letterSpacing: 'var(--type-title-tracking)',
-                        fontWeight: 'var(--type-title-weight)',
-                        color: paid ? 'var(--success-ink)' : overdue ? 'var(--danger-ink)' : 'var(--text)',
-                        mt: 0.25,
-                        whiteSpace: 'nowrap',
-                      }}
+                <div className='mt-2.5 flex items-end justify-between gap-3'>
+                  <div className='min-w-0'>
+                    <p className='text-[11px] text-d-muted'>{paid ? '本期已付' : '本期应付'}</p>
+                    <p
+                      className={
+                        'mt-0.5 whitespace-nowrap text-[19px] font-bold leading-none ' +
+                        (paid ? 'text-d-success-ink' : overdue ? 'text-d-danger-ink' : 'text-d-text')
+                      }
                     >
-                      {currencySymbol(p.currency)}{p.amount.toLocaleString()}
-                    </Typography>
-                  </Box>
+                      {currencySymbol(p.currency)}
+                      {p.amount.toLocaleString()}
+                    </p>
+                  </div>
                   {paid ? (
-                    <Typography sx={{ fontSize: 14.5, lineHeight: '18px', letterSpacing: '0.3px', fontWeight: 600, color: 'var(--success-ink)', flexShrink: 0 }}>
+                    <span className='shrink-0 text-[12px] font-semibold text-d-success-ink'>
                       已登记
-                    </Typography>
+                    </span>
                   ) : (
-                    <Button
-                      variant="contained"
-                      size="small"
+                    <button
+                      type='button'
                       onClick={() => onPay(p)}
-                      sx={{
-                        borderRadius: 'var(--radius-pill)',
-                        fontSize: 14.5,
-                        lineHeight: '18px',
-                        fontWeight: 600,
-                        py: 0.4,
-                        px: 1.75,
-                        textTransform: 'none',
-                        flexShrink: 0,
-                        whiteSpace: 'nowrap',
-                      }}
+                      className='h-11 shrink-0 whitespace-nowrap rounded-xl bg-d-accent px-4 text-xs font-semibold text-white'
                     >
                       登记付款
-                    </Button>
+                    </button>
                   )}
-                </Stack>
+                </div>
 
-                <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 1.25, color: overdue ? 'var(--danger-ink)' : 'var(--gold-700)', fontSize: 14.5, lineHeight: '18px', letterSpacing: '0.3px', fontWeight: 600 }}>
+                <div
+                  className={
+                    'mt-3 flex items-center gap-1.5 text-[11px] font-semibold leading-4 ' +
+                    (overdue ? 'text-d-danger-ink' : 'text-d-gold')
+                  }
+                >
                   <ClockIcon size={14} />
                   {label}
-                  <ChevronRightIcon size={12} />
-                </Stack>
-              </Paper>
+                </div>
+              </div>
             )
           })}
-        </Stack>
+        </div>
       )}
-    </Box>
+    </div>
   )
 }
