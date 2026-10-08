@@ -1,7 +1,5 @@
 'use client'
 
-import { Avatar, Card, CardActionArea, CardContent, Typography, Box, Chip, IconButton } from '@mui/material'
-import EditIcon from '@mui/icons-material/Edit'
 import type { CardHolder } from '@/lib/types'
 
 interface Props {
@@ -11,81 +9,48 @@ interface Props {
   onEdit?: () => void
 }
 
-// MUI Typography 自带样式注入在 globals.css 之后，同特异性下角色 class 会被覆盖，
-// 因此排版令牌直接写进 sx。
-const BODY = {
-  fontSize: 'var(--type-body-size)',
-  lineHeight: 'var(--type-body-line)',
-  fontWeight: 'var(--type-body-weight)',
-  letterSpacing: 'var(--type-body-tracking)',
-}
-const SECTION = {
-  fontSize: 'var(--type-section-size)',
-  lineHeight: 'var(--type-section-line)',
-  fontWeight: 'var(--type-section-weight)',
-  letterSpacing: 'var(--type-section-tracking)',
-}
-
+/** 持卡人卡片（暗色）。仅 holders 页使用。 */
 export function HolderCard({ holder, cardCount, onClick, onEdit }: Props) {
   return (
-    <Card
-      sx={{
-        mb: 1.5,
-        position: 'relative',
-        // 列表项：无边框 + 分层阴影，圆角走 12px 档
-        border: 0,
-        borderRadius: 'var(--radius-depth-1)',
-        boxShadow: 'var(--shadow-e1)',
-      }}
+    <div
+      role='button'
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={e => { if (e.key === 'Enter') onClick() }}
+      className='flex cursor-pointer items-center gap-3 rounded-xl border border-d-border bg-d-surface p-3.5 transition-colors active:bg-d-subtle'
     >
-      <CardActionArea onClick={onClick}>
-        <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <Avatar sx={{ bgcolor: holder.avatar_color, width: 48, height: 48, fontSize: 20 }}>
-            {holder.name.charAt(0)}
-          </Avatar>
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            {/* 卡片标题：19/24 · 600 · -0.6px */}
-            <Typography sx={{ ...SECTION, color: 'var(--text)' }} noWrap>
-              {holder.name}
-            </Typography>
-            {holder.aliases && holder.aliases.length > 0 && (
-              <Typography sx={{ ...BODY, color: 'var(--muted)', display: 'block', mt: 0.25 }} noWrap>
-                别名: {holder.aliases.join('、')}
-              </Typography>
-            )}
-            {holder.phone && (
-              <Typography sx={{ ...BODY, color: 'var(--muted)' }}>
-                {holder.phone}
-              </Typography>
-            )}
-          </Box>
-          <Chip
-            label={`${cardCount} 张卡`}
-            size="small"
-            sx={{
-              // 微型标签：保留 ≤12px 小字号，只统一圆角档与配色语义
-              // 计数标签是不可拆语义单元：不参与收缩，位数变多也不折行
-              flexShrink: 0,
-              whiteSpace: 'nowrap',
-              borderRadius: 'var(--radius-pill)',
-              bgcolor: 'primary.light',
-              color: 'primary.dark',
-              fontWeight: 600,
-            }}
-          />
-          {onEdit && (
-            <IconButton
-              aria-label="编辑持卡人"
-              size="small"
-              onClick={(e) => { e.stopPropagation(); onEdit() }}
-              // 图标按钮是固定触控目标，不参与被压缩
-              sx={{ color: 'var(--strong)', flexShrink: 0 }}
-            >
-              <EditIcon fontSize="small" />
-            </IconButton>
-          )}
-        </CardContent>
-      </CardActionArea>
-    </Card>
+      <span
+        className='flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-[20px] font-bold text-white'
+        style={{ backgroundColor: holder.avatar_color }}
+      >
+        {holder.name.charAt(0)}
+      </span>
+      <span className='min-w-0 flex-1'>
+        <span className='block truncate text-[15px] font-semibold leading-5 text-d-text'>
+          {holder.name}
+        </span>
+        {holder.aliases && holder.aliases.length > 0 && (
+          <span className='mt-0.5 block truncate text-[12px] leading-4 text-d-muted'>
+            别名: {holder.aliases.join('、')}
+          </span>
+        )}
+        {holder.phone && (
+          <span className='block text-[12px] leading-4 text-d-muted'>{holder.phone}</span>
+        )}
+      </span>
+      <span className='shrink-0 whitespace-nowrap rounded-full bg-d-subtle px-2.5 py-0.5 text-[11px] font-semibold text-d-accent-light'>
+        {cardCount} 张卡
+      </span>
+      {onEdit && (
+        <button
+          type='button'
+          aria-label='编辑持卡人'
+          onClick={e => { e.stopPropagation(); onEdit() }}
+          className='shrink-0 text-[12px] font-semibold text-d-muted'
+        >
+          编辑
+        </button>
+      )}
+    </div>
   )
 }
