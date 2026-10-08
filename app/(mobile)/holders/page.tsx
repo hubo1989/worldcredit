@@ -2,14 +2,13 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Box, Typography, Fab, Skeleton, Stack, Container, Button, Snackbar, Alert } from '@mui/material'
-import AddIcon from '@mui/icons-material/Add'
-import MergeTypeIcon from '@mui/icons-material/MergeType'
+import { Snackbar, Alert } from '@mui/material'
 import { getHolders, createHolder, updateHolder, getHolderCardCounts } from '@/lib/api/holders'
 import { HolderCard } from '@/components/mobile/HolderCard'
 import { HolderForm } from '@/components/mobile/HolderForm'
 import { MergeHoldersDialog } from '@/components/mobile/MergeHoldersDialog'
 import { useAuth } from '@/lib/auth'
+import { PlusIcon } from '@/components/icons/WcIcon'
 import type { CardHolder } from '@/lib/types'
 
 export default function HoldersPage() {
@@ -65,99 +64,55 @@ export default function HoldersPage() {
   }
 
   return (
-    <Container sx={{ py: 3, pb: 10 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography
-          variant="h5"
-          sx={{
-            fontSize: 'var(--type-title-size)',
-            lineHeight: 'var(--type-title-line)',
-            fontWeight: 'var(--type-title-weight)',
-            letterSpacing: 'var(--type-title-tracking)',
-            color: 'var(--text)',
-          }}
-        >
-          持卡人管理
-        </Typography>
+    <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-4 text-d-text'>
+      <div className='mb-4 flex items-center justify-between'>
+        <p className='text-[20px] font-bold leading-7 text-d-text'>持卡人管理</p>
         {holders.length > 1 && (
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={<MergeTypeIcon />}
+          <button
+            type='button'
             onClick={() => setMergeDialogOpen(true)}
-            sx={{
-              borderRadius: 'var(--radius-pill)',
-              fontWeight: 700,
-              fontSize: 'var(--type-body-size)',
-              letterSpacing: 'var(--type-body-tracking)',
-              textTransform: 'none',
-              borderColor: 'var(--navy-600)',
-              color: 'var(--navy-600)',
-            }}
+            className='h-10 rounded-full border border-d-accent px-3.5 text-[12px] font-bold text-d-accent-light'
           >
             合并归拢
-          </Button>
+          </button>
         )}
-      </Box>
+      </div>
 
       {loading ? (
-        <Stack spacing={1.5}>
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} variant="rounded" height={88} sx={{ borderRadius: 'var(--radius-depth-2)' }} />
+        <div className='flex flex-col gap-2.5'>
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className='wc-skeleton h-[88px] w-full rounded-xl' />
           ))}
-        </Stack>
+        </div>
       ) : holders.length === 0 ? (
-        <Box sx={{ mt: 8, textAlign: 'center', color: 'var(--muted)' }}>
-          <Typography
-            gutterBottom
-            sx={{
-              fontSize: 'var(--type-body-size)',
-              lineHeight: 'var(--type-body-line)',
-              letterSpacing: 'var(--type-body-tracking)',
-              color: 'var(--text)',
-            }}
-          >
-            还没有持卡人记录
-          </Typography>
-          <Typography
-            sx={{
-              fontSize: 'var(--type-body-size)',
-              lineHeight: 'var(--type-body-line)',
-              letterSpacing: 'var(--type-body-tracking)',
-              color: 'var(--muted)',
-            }}
-          >
+        <div className='mt-10 text-center'>
+          <p className='text-[13px] font-semibold leading-5 text-d-text'>还没有持卡人记录</p>
+          <p className='mt-1 text-[12px] leading-4 text-d-muted'>
             点击右下角按钮添加您的第一个持卡人
-          </Typography>
-        </Box>
+          </p>
+        </div>
       ) : (
-        <Stack spacing={1.5}>
+        <div className='flex flex-col gap-2.5'>
           {holders.map(h => (
             <HolderCard
               key={h.id}
               holder={h}
               cardCount={cardCounts[h.id] || 0}
-            onClick={() => router.push(`/holders/${h.id}`)}
-            onEdit={() => { setEditing(h); setFormOpen(true) }}
-          />
+              onClick={() => router.push('/holders/' + h.id)}
+              onEdit={() => { setEditing(h); setFormOpen(true) }}
+            />
           ))}
-        </Stack>
+        </div>
       )}
 
-      <Fab
-        aria-label="添加持卡人"
-        sx={{
-          position: 'fixed', bottom: 80, right: 24,
-          width: 'var(--button-size)', height: 'var(--button-size)', minHeight: 'var(--button-size)',
-          background: 'var(--button-face)', color: 'var(--text-on-dark)',
-          boxShadow: 'var(--button-shadow)', border: 0,
-          '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
-          '&:active': { boxShadow: 'var(--button-shadow-press)' },
-        }}
+      <button
+        type='button'
+        aria-label='添加持卡人'
         onClick={() => setFormOpen(true)}
+        className='fixed bottom-20 right-6 z-10 flex h-12 w-12 items-center justify-center rounded-full bg-d-accent text-white shadow-lg'
       >
-        <AddIcon />
-      </Fab>
+        <PlusIcon size={22} />
+      </button>
 
       <HolderForm
         open={formOpen}
@@ -179,10 +134,10 @@ export default function HoldersPage() {
         autoHideDuration={3500}
         onClose={() => setToast(prev => ({ ...prev, open: false }))}
       >
-        <Alert severity="success" sx={{ borderRadius: 'var(--radius-depth-1)', fontWeight: 600 }}>
+        <Alert severity='success' sx={{ fontWeight: 600 }}>
           {toast.message}
         </Alert>
       </Snackbar>
-    </Container>
+    </div>
   )
 }
