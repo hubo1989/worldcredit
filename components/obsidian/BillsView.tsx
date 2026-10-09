@@ -400,6 +400,13 @@ export function BillsView(vm: BillsViewProps) {
       </div>
 
       <div className='mt-4 flex flex-col gap-3 px-5'>
+        {/* 需求 BILL-02：顶部三个排序快捷切换栏 */}
+        <div className='flex gap-2 rounded-xl border border-d-border bg-d-surface p-1 text-[13px] font-semibold'>
+          <button type='button' className='flex-1 rounded-lg py-1.5 text-center bg-d-accent text-white'>最近需还款</button>
+          <button type='button' className='flex-1 rounded-lg py-1.5 text-center text-d-muted hover:text-d-text'>最大免息期</button>
+          <button type='button' className='flex-1 rounded-lg py-1.5 text-center text-d-muted hover:text-d-text'>最近账单日</button>
+        </div>
+
         {/* 逾期警示横幅 */}
         {overdueCount > 0 && (
           <div className='flex items-center gap-2.5 rounded-[14px] bg-d-danger-soft p-3'>

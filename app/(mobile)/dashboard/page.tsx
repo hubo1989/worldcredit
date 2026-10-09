@@ -273,7 +273,7 @@ export default function DashboardPage() {
         debtExpanded={debtExpanded}
         onDebtExpanded={toggleDebtExpanded}
         privacyOn={privacyOn}
-        privacyIcon={privacyOn ? <EyeOffIcon size={18} /> : <EyeIcon size={18} />}
+        privacyIcon={privacyOn ? <EyeOffIcon size={22} /> : <EyeIcon size={22} />}
         onTogglePrivacy={togglePrivacyMode}
         amountClass={amountClass}
         displayCurrency={displayCurrency}
