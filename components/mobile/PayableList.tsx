@@ -1,6 +1,8 @@
 'use client'
 
+import { format } from 'date-fns'
 import { categoryLabel, type PayableWithStatus } from '@/lib/api/payables'
+import { comparePayablesList, nextPayablePeriodOf, payableDueDate } from '@/lib/utils'
 import { currencySymbol } from '@/lib/fx'
 import { ClockIcon, PlusIcon } from '@/components/icons/WcIcon'
 
@@ -18,6 +20,8 @@ interface Props {
  * 混在一张卡里会让两套口径互相污染。
  */
 export function PayableList({ payables, onAdd, onEdit, onPay }: Props) {
+  // 与卡片区同口径：逾期 → 待付 → 已付沉底，组内距应付日升序。
+  const ordered = [...payables].sort(comparePayablesList)
   return (
     <div>
       <div className='mb-2 flex items-center justify-between'>
@@ -40,14 +44,18 @@ export function PayableList({ payables, onAdd, onEdit, onPay }: Props) {
         </div>
       ) : (
         <div className='flex flex-col gap-2.5'>
-          {payables.map(p => {
+          {ordered.map(p => {
             const paid = p.status === 'paid'
             const overdue = p.status === 'overdue'
-            const label = overdue
-              ? '已逾期 ' + Math.abs(p.days_until_due) + ' 天'
-              : p.days_until_due === 0
-                ? '今天应付'
-                : '距离应付日 ' + p.days_until_due + ' 天'
+            // 已付的不再展示「距离应付日 X 天」——过了应付日它会变成 -X 天，
+            // 语义错乱；改为指向下一期的「待出账单」。
+            const label = paid
+              ? '待出账单 · 下期应付日 ' + format(payableDueDate(p.due_day, nextPayablePeriodOf(p.period)), 'MM-dd')
+              : overdue
+                ? '已逾期 ' + Math.abs(p.days_until_due) + ' 天'
+                : p.days_until_due === 0
+                  ? '今天应付'
+                  : '距离应付日 ' + p.days_until_due + ' 天'
             return (
               <div key={p.id} className='rounded-2xl border border-d-border bg-d-surface p-4'>
                 <div className='flex items-start justify-between gap-2'>
@@ -105,7 +113,11 @@ export function PayableList({ payables, onAdd, onEdit, onPay }: Props) {
                 <div
                   className={
                     'mt-3 flex items-center gap-1.5 text-[11px] font-semibold leading-4 ' +
-                    (overdue ? 'text-d-danger-ink' : 'text-d-gold')
+                    (paid
+                      ? 'text-d-success-ink'
+                      : overdue
+                        ? 'text-d-danger-ink'
+                        : 'text-d-gold')
                   }
                 >
                   <ClockIcon size={14} />

@@ -232,6 +232,40 @@ export function payableDueDate(dueDay: number, period: string): Date {
   return getActualBillingDate(dueDay, monthDate)
 }
 
+/** 当前账期的下一期（'YYYY-MM'）：本期已结清后用它指向下期应付日。 */
+export function nextPayablePeriodOf(period: string): string {
+  const [year, month] = period.split('-').map(Number)
+  const next = addMonths(new Date(year, month - 1, 1), 1)
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`
+}
+
+/**
+ * 固定支出在账单页的排序分组：逾期(0) → 待付(1) → 已付(2)。
+ *
+ * 与 compareBillsListCards 同一套「最紧要的在前」哲学：本期登记付款后沉底
+ * （否则付完还占着上面的位置，挡住真正要付的）；组内按距应付日升序。
+ */
+export type PayableUrgencyStatus = 'unpaid' | 'paid' | 'overdue'
+
+export function payableUrgencyRank(status: PayableUrgencyStatus): number {
+  if (status === 'overdue') return 0
+  if (status === 'unpaid') return 1
+  return 2
+}
+
+/** 固定支出排序所需的最小形状（便于单测，不依赖完整 RPC 类型）。 */
+export interface PayableListItem {
+  status: PayableUrgencyStatus
+  days_until_due: number
+}
+
+export function comparePayablesList(a: PayableListItem, b: PayableListItem): number {
+  const ra = payableUrgencyRank(a.status)
+  const rb = payableUrgencyRank(b.status)
+  if (ra !== rb) return ra - rb
+  return a.days_until_due - b.days_until_due
+}
+
 /**
  * 账单页卡片排序分组：逾期(0) → 待还款(1) → 其他(2)。
  *

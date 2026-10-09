@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { payablePeriodOf, payableDueDate } from '../utils'
+import { payablePeriodOf, payableDueDate, nextPayablePeriodOf, comparePayablesList } from '../utils'
 import { categoryLabel, PAYABLE_CATEGORIES } from '../api/payables.shared'
 
 const ROOT = join(__dirname, '../..')
@@ -49,6 +49,40 @@ describe('到期日', () => {
     // 9/20 的应付日在 9/25 看仍然是 2026-09 账期（只是已逾期），不是 10 月
     expect(payablePeriodOf(new Date(2026, 8, 25))).toBe('2026-09')
     expect(fmt(payableDueDate(20, payablePeriodOf(new Date(2026, 8, 25))))).toBe('2026-09-20')
+  })
+})
+
+describe('列表排序：登记付款后沉底', () => {
+  const item = (status: 'unpaid' | 'paid' | 'overdue', days: number) => ({
+    status,
+    days_until_due: days,
+  })
+
+  it('三段固定：逾期 → 待付 → 已付（与卡片区同口径）', () => {
+    const paid = item('paid', -3)
+    const unpaid = item('unpaid', 10)
+    const overdue = item('overdue', -5)
+    expect([unpaid, paid, overdue].sort(comparePayablesList)).toEqual([overdue, unpaid, paid])
+  })
+
+  it('组内按距应付日升序：逾期最久在前 / 最近到期在前', () => {
+    expect(comparePayablesList(item('overdue', -9), item('overdue', -2))).toBeLessThan(0)
+    expect(comparePayablesList(item('unpaid', 3), item('unpaid', 20))).toBeLessThan(0)
+  })
+
+  it('已付项的天数（可能为负）不再影响其沉底位置', () => {
+    expect(comparePayablesList(item('paid', -20), item('unpaid', 25))).toBeGreaterThan(0)
+  })
+})
+
+describe('下期应付日（待出账单文案）', () => {
+  it('下一期账期跨年正确', () => {
+    expect(nextPayablePeriodOf('2026-09')).toBe('2026-10')
+    expect(nextPayablePeriodOf('2026-12')).toBe('2027-01')
+  })
+
+  it('应付日大于下月天数时落到月末（31 日 → 11-30）', () => {
+    expect(fmt(payableDueDate(31, nextPayablePeriodOf('2026-10')))).toBe('2026-11-30')
   })
 })
 
