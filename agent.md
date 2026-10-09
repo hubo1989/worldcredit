@@ -93,11 +93,10 @@ worldcredit/
 │       ├── dashboard.ts        # 管理后台数据聚合 API
 │       └── ai.ts               # AI补全逻辑（Wikipedia搜索增强 + LLM调用）
 ├── db/
-│   ├── migrations/             # D1 SQL 迁移（wrangler d1 migrations）
-│   └── seed*.ts                # 旧 InsForge 时代的种子脚本（已不适用，仅存档）
+│   └── migrations/             # D1 SQL 迁移（wrangler d1 migrations）
 ├── worker/                    # Cloudflare Worker 入口（index.ts + cron.ts 每日 9 点账单提醒）
 ├── email-worker/               # 独立 Email Worker（Cloudflare Email Routing，直写 D1）
-├── scripts/                    # 旧 InsForge 时代脚本（已不适用，仅存档）
+├── scripts/                    # 运维脚本（import-gmail-ledger-data.mjs 导入 Gmail 账单数据）
 ├── docs/
 │   ├── plans/2026-03-20-credit-card-manager-design.md  # 原始设计文档
 │   └── plan/admin-dashboard.md # 管理后台实施计划
@@ -234,7 +233,7 @@ wc_user（自建账号表）
 - **Email Routing**：`email-worker/` 接收 `bills+{userId}@20160325.xyz` 转发账单邮件，直写 D1
 - **Cron**：每日 09:00（`0 9 * * *`）账单提醒 + Web Push 通知扫描（`worker/cron.ts`）
 - **部署**：`npx vinext deploy`（本地 build + wrangler 上传）；密钥用 `wrangler secret put`
-- 历史备注：项目曾用 InsForge（Supabase 兼容 BaaS），2026 年已完全迁出，相关脚本仅存档
+- 历史备注：项目曾用 InsForge（Supabase 兼容 BaaS），2026 年已完全迁出，InsForge 时代脚本已删除（git 历史可追溯）
 
 ### AI 服务（可选，通过系统设置配置）
 

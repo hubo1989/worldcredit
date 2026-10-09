@@ -33,10 +33,5 @@
   ],
   "exclude": [
     "node_modules",
-    "email-worker",
-    "db/seed-mainstream.ts",
-    "db/seed.ts",
-    "scripts/create-admin.ts",
-    "scripts/test-full-flow.mjs"
-  ]
-}
+    "email-worker"
+  ]}
