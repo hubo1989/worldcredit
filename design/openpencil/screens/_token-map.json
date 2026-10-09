@@ -1,149 +1,321 @@
 {
   "version": 1,
   "reviewStatus": "proposed",
- "updatedAt": "2026-09-30",
-  "note": "设计源 token 与运行时 token（app/globals.css 亮色 :root + lib/theme.ts lightTheme）的映射。漂移必须在 knownDrift 逐条登记；登记值一旦与实测不符即失败，因此白名单不能掩盖回归。由 verify-batch.sh --source-only 与 CI 执行。",
+  "updatedAt": "2026-10-09",
+  "note": "设计源 token 与运行时 token（app/globals.css 亮色 :root）的映射。lib/theme.ts 已随 MUI→ObsidianUI 迁移退役（2026-10-09），token 真源收敛到 globals.css；原 theme-only 条目转为 designOnly 待暗色体系纳管。漂移必须在 knownDrift 逐条登记；登记值一旦与实测不符即失败。由 verify-batch.sh --source-only 与 CI 执行。",
   "worlds": {
     "design": "design/openpencil/vars/foundations.json",
-    "css": "app/globals.css（首个 :root）",
-    "theme": "lib/theme.ts（lightTheme）"
+    "css": "app/globals.css（首个 :root）"
   },
   "mappings": [
-    { "id": "brand.navy800", "design": "color.brand.navy800", "css": "--navy-800" },
-    { "id": "brand.navy600", "design": "color.brand.navy600", "css": "--navy-600" },
-    { "id": "brand.blue400", "design": "color.brand.blue400", "css": "--blue-400" },
-    { "id": "brand.gold500", "design": "color.brand.gold500", "css": "--gold-500" },
-    { "id": "brand.gold700", "design": "color.brand.gold700", "css": "--gold-700" },
-    { "id": "runtime.primary", "design": "color.runtime.primary", "theme": "light.primary.main" },
-    { "id": "runtime.primaryDark", "design": "color.runtime.primaryDark", "theme": "light.primary.dark" },
-    { "id": "runtime.secondary", "design": "color.runtime.secondary", "theme": "light.secondary.main" },
-    { "id": "bg.canvas", "design": "color.bg.canvas", "css": "--bg" },
-    { "id": "bg.surface", "design": "color.bg.surface", "css": "--paper" },
-    { "id": "bg.subtle", "design": "color.bg.subtle", "theme": "light.background.default" },
-    { "id": "text.primary", "design": "color.text.primary", "css": "--text-primary", "theme": "light.text.primary" },
-    { "id": "text.secondary", "design": "color.text.secondary", "css": "--text-secondary", "theme": "light.text.secondary" },
-    { "id": "text.disabled", "design": "color.text.disabled", "css": "--text-disabled", "theme": "light.text.disabled" },
-    { "id": "text.onDark", "design": "color.text.onDark", "css": "--text-on-dark" },
-    { "id": "status.success", "design": "color.status.success", "css": "--success", "theme": "light.success.main" },
-    { "id": "status.successInk", "design": "color.status.successInk", "css": "--success-ink" },
-    { "id": "status.warning", "design": "color.status.warning", "css": "--warn" },
-    { "id": "status.warningInk", "design": "color.status.warningInk", "css": "--warning-ink" },
-    { "id": "status.danger", "design": "color.status.danger", "css": "--danger", "theme": "light.error.main" },
-    { "id": "status.dangerInk", "design": "color.status.dangerInk", "css": "--danger-ink" },
-    { "id": "status.info", "design": "color.status.info", "css": "--info", "theme": "light.info.main" },
-    { "id": "status.infoInk", "design": "color.status.infoInk", "css": "--info-ink" },
-    { "id": "text.adminMuted", "design": "color.text.adminMuted", "theme": "admin.text.secondary" },
-    { "id": "runtime.adminPrimary", "design": "color.runtime.adminPrimary", "theme": "admin.primary.main" },
-    { "id": "runtime.adminAccent", "design": "color.runtime.adminAccent", "theme": "admin.primary.light" }
+    {
+      "id": "brand.navy800",
+      "design": "color.brand.navy800",
+      "css": "--navy-800"
+    },
+    {
+      "id": "brand.navy600",
+      "design": "color.brand.navy600",
+      "css": "--navy-600"
+    },
+    {
+      "id": "brand.blue400",
+      "design": "color.brand.blue400",
+      "css": "--blue-400"
+    },
+    {
+      "id": "brand.gold500",
+      "design": "color.brand.gold500",
+      "css": "--gold-500"
+    },
+    {
+      "id": "brand.gold700",
+      "design": "color.brand.gold700",
+      "css": "--gold-700"
+    },
+    {
+      "id": "bg.canvas",
+      "design": "color.bg.canvas",
+      "css": "--bg"
+    },
+    {
+      "id": "bg.surface",
+      "design": "color.bg.surface",
+      "css": "--paper"
+    },
+    {
+      "id": "text.primary",
+      "design": "color.text.primary",
+      "css": "--text-primary"
+    },
+    {
+      "id": "text.secondary",
+      "design": "color.text.secondary",
+      "css": "--text-secondary"
+    },
+    {
+      "id": "text.disabled",
+      "design": "color.text.disabled",
+      "css": "--text-disabled"
+    },
+    {
+      "id": "text.onDark",
+      "design": "color.text.onDark",
+      "css": "--text-on-dark"
+    },
+    {
+      "id": "status.success",
+      "design": "color.status.success",
+      "css": "--success"
+    },
+    {
+      "id": "status.successInk",
+      "design": "color.status.successInk",
+      "css": "--success-ink"
+    },
+    {
+      "id": "status.warning",
+      "design": "color.status.warning",
+      "css": "--warn"
+    },
+    {
+      "id": "status.warningInk",
+      "design": "color.status.warningInk",
+      "css": "--warning-ink"
+    },
+    {
+      "id": "status.danger",
+      "design": "color.status.danger",
+      "css": "--danger"
+    },
+    {
+      "id": "status.dangerInk",
+      "design": "color.status.dangerInk",
+      "css": "--danger-ink"
+    },
+    {
+      "id": "status.info",
+      "design": "color.status.info",
+      "css": "--info"
+    },
+    {
+      "id": "status.infoInk",
+      "design": "color.status.infoInk",
+      "css": "--info-ink"
+    }
   ],
- "designOnly": [
-  "color.text.link",
-  "color.border.default",
-  "color.border.input",
-  "color.bg.neutral",
-  "color.bg.skeleton",
-  "color.text.adminFaint",
-  "color.bg.admin.canvas",
-  "color.bg.admin.surface",
-  "color.bg.admin.panel",
-  "color.status.successDark",
-  "color.status.dangerDark",
-  "color.status.dangerOnDark",
-  "color.status.successSoft",
-  "color.status.warningSoft",
-  "color.status.dangerSoft",
-  "color.status.infoSoft",
-  "color.brand.goldSoft"
- ],
- "numericMappings": [
-  {"id": "num.font.size.display", "design": "font.size.display", "css": "--type-title-size"},
-  {"id": "num.font.size.section", "design": "font.size.section", "css": "--type-section-size"},
-  {"id": "num.font.size.body", "design": "font.size.body", "css": "--type-body-size"},
-  {"id": "num.space.5", "design": "space.5", "css": "--sp-5"},
-  {"id": "num.space.6", "design": "space.6", "css": "--sp-8"}
- ],
- "numericDesignOnly": [
-  "font.size.title", "font.size.caption",
-  "font.weight.regular", "font.weight.semibold", "font.weight.bold",
-  "font.lineHeight.body", "font.lineHeight.caption",
-  "space.0", "space.1", "space.2", "space.3", "space.4",
-  "radius.card", "radius.input", "radius.pill", "radius.sheet",
-  "motion.fast", "motion.enter",
-  "layout.mobile.width", "layout.mobile.height", "layout.mobile.widthLg",
-  "layout.admin.width", "layout.admin.height",
-  "layout.touch.min", "layout.statusbar.height", "layout.safearea.bottom",
-  "layout.bottomnav.height", "layout.navbar.height"
- ],
- "stringMappings": [
-  {"id": "str.font.family.body", "design": "font.family.body", "css": "--font-sans"},
-  {"id": "str.font.family.amount", "design": "font.family.amount", "css": "--font-display"},
-  {"id": "str.font.family.mono", "design": "font.family.mono", "css": "--font-mono"}
- ],
- "stringDesignOnly": [
-  "shadow.card", "shadow.raised", "color.border.onDark"
- ],
+  "designOnly": [
+    "color.text.link",
+    "color.border.default",
+    "color.border.input",
+    "color.bg.neutral",
+    "color.bg.skeleton",
+    "color.text.adminFaint",
+    "color.bg.admin.canvas",
+    "color.bg.admin.surface",
+    "color.bg.admin.panel",
+    "color.status.successDark",
+    "color.status.dangerDark",
+    "color.status.dangerOnDark",
+    "color.status.successSoft",
+    "color.status.warningSoft",
+    "color.status.dangerSoft",
+    "color.status.infoSoft",
+    "color.brand.goldSoft",
+    "color.runtime.primary",
+    "color.runtime.primaryDark",
+    "color.runtime.secondary",
+    "color.bg.subtle",
+    "color.text.adminMuted",
+    "color.runtime.adminPrimary",
+    "color.runtime.adminAccent"
+  ],
+  "numericMappings": [
+    {
+      "id": "num.font.size.display",
+      "design": "font.size.display",
+      "css": "--type-title-size"
+    },
+    {
+      "id": "num.font.size.section",
+      "design": "font.size.section",
+      "css": "--type-section-size"
+    },
+    {
+      "id": "num.font.size.body",
+      "design": "font.size.body",
+      "css": "--type-body-size"
+    },
+    {
+      "id": "num.space.5",
+      "design": "space.5",
+      "css": "--sp-5"
+    },
+    {
+      "id": "num.space.6",
+      "design": "space.6",
+      "css": "--sp-8"
+    }
+  ],
+  "numericDesignOnly": [
+    "font.size.title",
+    "font.size.caption",
+    "font.weight.regular",
+    "font.weight.semibold",
+    "font.weight.bold",
+    "font.lineHeight.body",
+    "font.lineHeight.caption",
+    "space.0",
+    "space.1",
+    "space.2",
+    "space.3",
+    "space.4",
+    "radius.card",
+    "radius.input",
+    "radius.pill",
+    "radius.sheet",
+    "motion.fast",
+    "motion.enter",
+    "layout.mobile.width",
+    "layout.mobile.height",
+    "layout.mobile.widthLg",
+    "layout.admin.width",
+    "layout.admin.height",
+    "layout.touch.min",
+    "layout.statusbar.height",
+    "layout.safearea.bottom",
+    "layout.bottomnav.height",
+    "layout.navbar.height"
+  ],
+  "stringMappings": [
+    {
+      "id": "str.font.family.body",
+      "design": "font.family.body",
+      "css": "--font-sans"
+    },
+    {
+      "id": "str.font.family.amount",
+      "design": "font.family.amount",
+      "css": "--font-display"
+    },
+    {
+      "id": "str.font.family.mono",
+      "design": "font.family.mono",
+      "css": "--font-mono"
+    }
+  ],
+  "stringDesignOnly": [
+    "shadow.card",
+    "shadow.raised",
+    "color.border.onDark"
+  ],
   "knownDrift": [],
   "contrastChecks": [
     {
       "id": "design.danger-ink.on-danger-soft",
-      "fg": { "css": "--danger-ink" },
-      "bg": { "design": "color.status.dangerSoft" },
+      "fg": {
+        "css": "--danger-ink"
+      },
+      "bg": {
+        "design": "color.status.dangerSoft"
+      },
       "min": 4.5
     },
     {
       "id": "design.success-ink.on-success-soft",
-      "fg": { "css": "--success-ink" },
-      "bg": { "design": "color.status.successSoft" },
+      "fg": {
+        "css": "--success-ink"
+      },
+      "bg": {
+        "design": "color.status.successSoft"
+      },
       "min": 4.5
     },
     {
       "id": "design.info-ink.on-info-soft",
-      "fg": { "css": "--info-ink" },
-      "bg": { "design": "color.status.infoSoft" },
+      "fg": {
+        "css": "--info-ink"
+      },
+      "bg": {
+        "design": "color.status.infoSoft"
+      },
       "min": 4.5
     },
     {
       "id": "design.warning-ink.on-warning-soft",
-      "fg": { "design": "color.status.warningInk" },
-      "bg": { "design": "color.status.warningSoft" },
+      "fg": {
+        "design": "color.status.warningInk"
+      },
+      "bg": {
+        "design": "color.status.warningSoft"
+      },
       "min": 4.5
     },
     {
       "id": "design.navy800.on-gold-soft",
-      "fg": { "design": "color.brand.navy800" },
-      "bg": { "design": "color.brand.goldSoft" },
+      "fg": {
+        "design": "color.brand.navy800"
+      },
+      "bg": {
+        "design": "color.brand.goldSoft"
+      },
       "min": 4.5
     },
     {
       "id": "app.danger-ink.on-danger-tint",
-      "fg": { "css": "--danger-ink" },
-      "bg": { "css": "--danger", "pct": 12 },
+      "fg": {
+        "css": "--danger-ink"
+      },
+      "bg": {
+        "css": "--danger",
+        "pct": 12
+      },
       "min": 4.5
     },
     {
       "id": "app.success-ink.on-success-tint",
-      "fg": { "css": "--success-ink" },
-      "bg": { "css": "--success", "pct": 12 },
+      "fg": {
+        "css": "--success-ink"
+      },
+      "bg": {
+        "css": "--success",
+        "pct": 12
+      },
       "min": 4.5
     },
     {
       "id": "app.info-ink.on-info-tint",
-      "fg": { "css": "--info-ink" },
-      "bg": { "css": "--info", "pct": 10 },
+      "fg": {
+        "css": "--info-ink"
+      },
+      "bg": {
+        "css": "--info",
+        "pct": 10
+      },
       "min": 4.5
     }
   ],
   "documentedFailures": [
     {
       "id": "app.success-base.on-own-tint",
-      "fg": { "css": "--success" },
-      "bg": { "css": "--success", "pct": 12 },
+      "fg": {
+        "css": "--success"
+      },
+      "bg": {
+        "css": "--success",
+        "pct": 12
+      },
       "max": 4.5
     },
     {
       "id": "app.danger-base.on-own-tint",
-      "fg": { "css": "--danger" },
-      "bg": { "css": "--danger", "pct": 12 },
+      "fg": {
+        "css": "--danger"
+      },
+      "bg": {
+        "css": "--danger",
+        "pct": 12
+      },
       "max": 4.5
     }
   ]

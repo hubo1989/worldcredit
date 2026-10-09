@@ -55,7 +55,8 @@ MAPF = json.loads(MAP_PATH.read_text(encoding="utf-8"))
 DESIGN = CHK.load_design_tokens(DESIGN_PATH)
 OP = CHK.load_op_tokens(OP_PATH)
 CSS = CHK.load_css_tokens(CSS_PATH)
-THEME = CHK.load_theme_tokens(THEME_PATH, CSS)
+THEME = (CHK.load_theme_tokens(THEME_PATH, CSS) if THEME_PATH.exists()
+         else {})  # theme.ts 已随 MUI→ObsidianUI 迁移退役（2026-10-09）
 
 
 def run(mapf: dict | None = None):
@@ -292,9 +293,10 @@ class MapStructure(unittest.TestCase):
                             for e in validate(m)))
 
     def test_unknown_theme_path_rejected(self):
+        """theme.ts 退役后 theme 源为空：任何 theme 键都应被拒绝（提示退役语义）。"""
         m = copy.deepcopy(MAPF)
         m["mappings"][0]["theme"] = "light.nope.main"
-        self.assertTrue(any("不在 lib/theme.ts" in e
+        self.assertTrue(any("theme" in e and "退役" in e
                             for e in validate(m)))
 
     def test_mapping_without_app_side_rejected(self):
@@ -367,29 +369,16 @@ class ParserAndRepo(unittest.TestCase):
         self.assertEqual(OP["color.status.danger"], "#d32f2f")
         self.assertEqual(OP["color.status.success"], "#2e7d32")
 
-    def test_theme_text_css_variables_resolve_from_css_source(self):
-        altered_css = dict(CSS)
-        altered_css["--text-primary"] = "#010203"
-        theme = CHK.load_theme_tokens(THEME_PATH, altered_css)
-        self.assertEqual(theme["light.text.primary"], "#010203")
-
-    def test_light_text_mappings_cover_runtime_theme_tokens(self):
-        """light.text 三个状态必须同时映射到 lib/theme.ts。"""
-        by_id = {entry["id"]: entry for entry in MAPF["mappings"]}
-        for mapping_id, design_token, theme_token, css_var in (
-            ("text.primary", "color.text.primary", "light.text.primary", "--text-primary"),
-            ("text.secondary", "color.text.secondary", "light.text.secondary", "--text-secondary"),
-            ("text.disabled", "color.text.disabled", "light.text.disabled", "--text-disabled"),
-        ):
-            with self.subTest(mapping=mapping_id):
-                entry = by_id[mapping_id]
-                self.assertEqual(entry.get("theme"), theme_token)
-                resolved = CHK.resolve(entry, DESIGN, OP, CSS, THEME)
-                self.assertEqual(resolved["design"], DESIGN[design_token])
-                self.assertEqual(resolved["op"], OP[design_token])
-                self.assertEqual(resolved["css"], CSS[css_var])
-                self.assertEqual(resolved["theme"], THEME[theme_token])
-                self.assertEqual(len(set(resolved.values())), 1, resolved)
+    def test_light_text_mappings_cover_runtime_css_vars(self):
+        """light.text 三个状态必须映射到 globals.css 变量（theme.ts 退役后 css 是唯一运行时源）。"""
+        for mapping_id, design_token, css_var in (
+                ("text.primary", "color.text.primary", "--text-primary"),
+                ("text.secondary", "color.text.secondary", "--text-secondary"),
+                ("text.disabled", "color.text.disabled", "--text-disabled")):
+            entry = next((e for e in MAPF["mappings"] if e["id"] == mapping_id), None)
+            self.assertIsNotNone(entry, f"缺映射 {mapping_id}")
+            self.assertEqual(entry.get("css"), css_var)
+            self.assertNotIn("theme", entry, "theme.ts 已退役，映射表不应再有 theme 键")
 
     def test_ink_mappings_resolve_across_sources(self):
         """新增的 ink 档在三个源里必须一致。"""
@@ -413,11 +402,6 @@ class ParserAndRepo(unittest.TestCase):
         self.assertEqual(CSS["--danger"], "#d32f2f")
         # 暗色块里 --danger 是 #F87171；若被误读会不等于 #d32f2f
         self.assertNotEqual(CSS["--danger"], "#f87171")
-
-    def test_theme_worlds_are_separate(self):
-        self.assertIn("light.error.main", THEME)
-        self.assertIn("admin.error.main", THEME)
-        self.assertNotEqual(THEME["light.error.main"], THEME["admin.error.main"])
 
     def test_design_tokens_are_lowercased_hex(self):
         for name, value in DESIGN.items():
