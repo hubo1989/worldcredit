@@ -1,11 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { BellIcon, ClockIcon, PlusIcon, CheckIcon } from '@/components/icons/WcIcon'
+import { BellIcon, ClockIcon, PlusIcon } from '@/components/icons/WcIcon'
 import type { UserReminderConfig } from '@/lib/types'
-import {
-  Dialog, DialogTitle, DialogContent, DialogActions, Snackbar, Alert,
-} from '@mui/material'
+import { ConfirmDialog, Toast } from '@/components/obsidian/overlays'
 
 interface ReminderPreferencesCardProps {
   config: UserReminderConfig
@@ -163,19 +161,12 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
         </div>
       </div>
 
-      {/* 当前设备不支持 Push API 时的降级说明（替代亮色版 info Alert） */}
-      <Dialog open={guideOpen} onClose={() => setGuideOpen(false)} maxWidth='xs' fullWidth>
-        <DialogTitle
-          sx={{ fontSize: 'var(--type-section-size)', fontWeight: 'var(--type-section-weight)', color: 'var(--text)' }}
-        >
-          测试提醒
-        </DialogTitle>
-        <DialogContent>
-          <p className='text-[13px] leading-5 text-d-muted'>
-            您的应用还款提醒机制正常（当前设备暂不支持系统 Push API）。
-          </p>
-        </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
+      {/* 当前设备不支持 Push API 时的降级说明 */}
+      <ConfirmDialog
+        open={guideOpen}
+        title='测试提醒'
+        onClose={() => setGuideOpen(false)}
+        actions={
           <button
             type='button'
             onClick={() => setGuideOpen(false)}
@@ -183,22 +174,20 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
           >
             知道了
           </button>
-        </DialogActions>
-      </Dialog>
-
-      <Snackbar
-        open={testNotice.open}
-        autoHideDuration={4000}
-        onClose={() => setTestNotice(prev => ({ ...prev, open: false }))}
+        }
       >
-        <Alert
-          severity={testNotice.severity}
-          icon={testNotice.severity === 'success' ? <CheckIcon fontSize='small' /> : undefined}
-          onClose={() => setTestNotice(prev => ({ ...prev, open: false }))}
-        >
-          {testNotice.message}
-        </Alert>
-      </Snackbar>
+        <p className='text-[13px] leading-5 text-d-muted'>
+          您的应用还款提醒机制正常（当前设备暂不支持系统 Push API）。
+        </p>
+      </ConfirmDialog>
+
+      <Toast
+        open={testNotice.open}
+        message={testNotice.message}
+        severity={testNotice.severity}
+        autoHideMs={4000}
+        onClose={() => setTestNotice(prev => ({ ...prev, open: false }))}
+      />
     </div>
   )
 }

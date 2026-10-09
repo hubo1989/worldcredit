@@ -2,7 +2,6 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Box, CircularProgress } from '@mui/material'
 
 /**
  * AI 助手页已下线：LLM 能力重新定位为表单内嵌的 AI 智能填充（§2.3）。
@@ -15,8 +14,12 @@ export default function AiRedirectPage() {
   }, [router])
 
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
-      <CircularProgress size={24} sx={{ color: 'var(--navy-600)' }} />
-    </Box>
+    <div className='flex min-h-[60vh] items-center justify-center'>
+      <span
+        role='status'
+        aria-label='正在跳转'
+        className='h-6 w-6 animate-spin rounded-full border-2 border-d-border border-t-d-accent'
+      />
+    </div>
   )
 }

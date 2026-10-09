@@ -1,113 +1,55 @@
 'use client'
 
-import { Box } from '@mui/material'
 import type { ReactNode } from 'react'
 
 /**
- * WorldCredit 状态徽章 / 来源徽章。
- * 状态四色：绿已还 / 黄部分 / 红逾期 / 蓝待还（§7.3）。
+ * WorldCredit 状态徽章 / 来源徽章（暗色）。
+ * 状态四色：绿已还 / 黄部分 / 红逾期 / 蓝待还。
  */
 
-// 状态与来源徽章的颜色一律走语义令牌，只用 color-mix 生成淡底，不再散落字面色值。
-//
-// 文字用 `-ink` 档（语义色的深档）而不是语义色本色：本色压在自己 10~14% 的
-// 淡底上只有 2.66~4.18:1，全部不达 AA（实测 --success 本色 2.89:1、--info 4.49:1）。
-// 语义本色留给填充、描边和大字号，正文一律下沉到 ink 档。
-const tint = (token: string, pct: number) => `color-mix(in srgb, var(${token}) ${pct}%, transparent)`
-
-const STATUS_STYLES: Record<string, { bg: string; fg: string; label: string }> = {
-  paid:    { bg: tint('--success', 12), fg: 'var(--success-ink)', label: '已还' },
-  partial: { bg: tint('--warn', 18),    fg: 'var(--gold-700)', label: '部分' },
-  overdue: { bg: tint('--danger', 12),  fg: 'var(--danger-ink)', label: '逾期' },
-  unpaid:  { bg: tint('--info', 10),    fg: 'var(--info-ink)', label: '待还' },
+const STATUS_STYLES: Record<string, { className: string; label: string }> = {
+  paid: { className: 'bg-d-success-soft text-d-success-ink', label: '已还' },
+  partial: { className: 'bg-d-gold-soft text-d-warn-ink', label: '部分' },
+  overdue: { className: 'bg-d-danger-soft text-d-danger-ink', label: '逾期' },
+  unpaid: { className: 'bg-d-subtle text-d-accent-light', label: '待还' },
 }
 
 export function StatusBadge({ status, label, size = 'sm' }: { status: string; label?: string; size?: 'sm' | 'md' }) {
   const cfg = STATUS_STYLES[status] ?? STATUS_STYLES.unpaid
-  const px = size === 'md' ? 1.5 : 1
-  const py = size === 'md' ? 0.5 : 0.25
-  const fs = size === 'md' ? 12 : 11
+  const sizing = size === 'md' ? 'px-2.5 py-1 text-[12px]' : 'px-2 py-0.5 text-[11px]'
   return (
-    <Box
-      component="span"
-      sx={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        bgcolor: cfg.bg,
-        color: cfg.fg,
-        borderRadius: 'var(--radius-pill)',
-        px,
-        py,
-        fontSize: fs,
-        fontWeight: 600,
-        lineHeight: 1.4,
-        whiteSpace: 'nowrap',
-      }}
-    >
+    <span className={'inline-flex items-center whitespace-nowrap rounded-full font-semibold leading-snug ' + sizing + ' ' + cfg.className}>
       {label ?? cfg.label}
-    </Box>
+    </span>
   )
 }
 
-const SOURCE_STYLES: Record<string, { bg: string; fg: string; label: string }> = {
-  email:  { bg: tint('--info', 10),   fg: 'var(--info-ink)', label: '邮件' },
-  manual: { bg: tint('--muted', 14),  fg: 'var(--muted)', label: '手动' },
-  ai:     { bg: tint('--gold-500', 18), fg: 'var(--gold-700)', label: 'AI' },
+const SOURCE_STYLES: Record<string, { className: string; label: string }> = {
+  email: { className: 'bg-d-subtle text-d-accent-light', label: '邮件' },
+  manual: { className: 'bg-d-subtle text-d-muted', label: '手动' },
+  ai: { className: 'bg-d-gold-soft text-d-warn-ink', label: 'AI' },
 }
 
 export function SourceBadge({ source, size = 'sm' }: { source: string; size?: 'sm' | 'md' }) {
   const cfg = SOURCE_STYLES[source] ?? SOURCE_STYLES.manual
-  const px = size === 'md' ? 1.5 : 1
-  const py = size === 'md' ? 0.5 : 0.25
-  const fs = size === 'md' ? 12 : 11
+  const sizing = size === 'md' ? 'px-2.5 py-1 text-[12px]' : 'px-2 py-0.5 text-[11px]'
   return (
-    <Box
-      component="span"
-      sx={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 0.5,
-        bgcolor: cfg.bg,
-        color: cfg.fg,
-        borderRadius: 'var(--radius-pill)',
-        px,
-        py,
-        fontSize: fs,
-        fontWeight: 600,
-        lineHeight: 1.4,
-        whiteSpace: 'nowrap',
-      }}
-    >
+    <span className={'inline-flex items-center gap-1 whitespace-nowrap rounded-full font-semibold leading-snug ' + sizing + ' ' + cfg.className}>
       {source === 'ai' && (
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z" />
+        <svg width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' aria-hidden='true'>
+          <path d='M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z' />
         </svg>
       )}
       {cfg.label}
-    </Box>
+    </span>
   )
 }
 
 /** 通用胶囊徽章 */
-export function PillBadge({ children, color = 'var(--muted)', bg }: { children: ReactNode; color?: string; bg?: string }) {
+export function PillBadge({ children, className = 'bg-d-subtle text-d-muted' }: { children: ReactNode; className?: string }) {
   return (
-    <Box
-      component="span"
-      sx={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        bgcolor: bg ?? tint('--muted', 14),
-        color,
-        borderRadius: 'var(--radius-pill)',
-        px: 1,
-        py: 0.25,
-        fontSize: 11,
-        fontWeight: 600,
-        lineHeight: 1.4,
-        whiteSpace: 'nowrap',
-      }}
-    >
+    <span className={'inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold leading-snug ' + className}>
       {children}
-    </Box>
+    </span>
   )
 }

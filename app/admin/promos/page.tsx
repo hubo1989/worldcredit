@@ -1,21 +1,12 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import {
-  Box, Typography, Paper, Button, TextField, InputAdornment,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  IconButton, Switch, Chip, Dialog, DialogTitle, DialogContent,
-  DialogActions, Grid, MenuItem, CircularProgress, Autocomplete, TablePagination,
-  Checkbox, Snackbar, Alert
-} from '@mui/material'
-import {
-  Add as AddIcon,
-  Search as SearchIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
-  Refresh as RefreshIcon,
-  AutoAwesome as AiIcon
-} from '@mui/icons-material'
+import { Button, Toggle } from '@/components/obsidian/controls'
+import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
+import { Modal, Toast } from '@/components/obsidian/overlays'
+import { Alert, Spinner } from '@/components/obsidian/feedback'
+import { AdminPagination, AdminCheckbox } from '@/components/admin/AdminShell'
+import { PlusIcon, SearchIcon, NoteIcon, TrashIcon, SyncIcon, AiSparkleIcon } from '@/components/icons/WcIcon'
 import { getAdminPromos, createPromo, updatePromo, deletePromo, getAdminCardProducts } from '@/lib/api/admin'
 import { Promo, CardProduct } from '@/lib/types'
 import { suggestPromosFromWeb, type PromoSuggestion } from '@/lib/api/ai'
@@ -81,15 +72,6 @@ export default function PromosPage() {
 
   const paginatedPromos = filteredPromos.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
 
-  const handleChangePage = (event: unknown, newPage: number) => {
-    setPage(newPage)
-  }
-
-  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setRowsPerPage(parseInt(event.target.value, 10))
-    setPage(0)
-  }
-
   const handleOpenDialog = (promo?: AdminPromoRow) => {
     if (promo) {
       setCurrentPromo(promo)
@@ -108,7 +90,7 @@ export default function PromosPage() {
   const handleToggleStatus = async (promo: AdminPromoRow) => {
     try {
       await updatePromo(promo.id, { is_active: !promo.is_active })
-      setPromos(promos.map(p => p.id === promo.id ? { ...p, is_active: !p.is_active } : p))
+      setPromos(promos.map(p => p.id === promo.id ? { ...p, is_active: !promo.is_active } : p))
     } catch (error) {
       console.error('Failed to toggle status:', error)
     }
@@ -224,290 +206,332 @@ export default function PromosPage() {
   }
 
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
-        <Box>
-          <Typography variant="h4" sx={{ color: '#e4e6eb', fontWeight: 700, mb: 0.5 }}>
-            优惠活动管理
-          </Typography>
-          <Typography variant="body2" sx={{ color: '#9ca3af' }}>
-            管理全平台银行优惠活动，支持设置满减、返现、折扣等活动细节
-          </Typography>
-        </Box>
-        <Box sx={{ display: 'flex', gap: 1 }}>
+    <div>
+      <div className='mb-8 flex items-center justify-between gap-4'>
+        <div>
+          <h1 className='mb-1 text-[26px] font-bold'>优惠活动管理</h1>
+          <p className='text-[13px] text-d-muted'>管理全平台银行优惠活动，支持设置满减、返现、折扣等活动细节</p>
+        </div>
+        <div className='flex gap-2'>
           <Button
-            variant="outlined"
-            startIcon={<AiIcon />}
+            variant='secondary'
             onClick={() => { setAiOpen(true); setAiError(null); setAiRows([]); setAiChecked([]) }}
-            sx={{ color: '#c7d2fe', borderColor: 'rgba(199,210,254,0.4)', textTransform: 'none', borderRadius: 2, px: 3 }}
           >
+            <AiSparkleIcon size={16} />
             AI 获取活动
           </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => handleOpenDialog()}
-            sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, textTransform: 'none', borderRadius: 2, px: 3 }}
-          >
+          <Button onClick={() => handleOpenDialog()}>
+            <PlusIcon size={16} />
             发布新活动
           </Button>
-        </Box>
-      </Box>
+        </div>
+      </div>
 
       {/* 搜索 */}
-      <Paper sx={{ p: 2, mb: 3, bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2 }}>
-        <Grid container spacing={2} alignItems="center">
-          <Grid size={{ xs: 12, md: 4 }}>
+      <div className='mb-6 rounded-2xl border border-d-border bg-d-surface p-4'>
+        <div className='flex items-center justify-between gap-4'>
+          <div className='w-full sm:max-w-sm'>
             <TextField
-              fullWidth
-              size="small"
               placeholder="搜索银行或活动..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon sx={{ color: '#9ca3af', fontSize: 20 }} />
-                  </InputAdornment>
-                ),
-                sx: { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' }
-              }}
+              startAdornment={<SearchIcon size={18} />}
             />
-          </Grid>
-          <Grid size={{ xs: 12, md: 8 }} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <IconButton aria-label="刷新" onClick={fetchData} sx={{ color: '#9ca3af' }}>
-              <RefreshIcon />
-            </IconButton>
-          </Grid>
-        </Grid>
-      </Paper>
+          </div>
+          <button
+            type='button'
+            aria-label="刷新"
+            onClick={fetchData}
+            className='shrink-0 rounded-xl p-2 text-d-muted hover:bg-d-subtle'
+          >
+            <SyncIcon size={18} />
+          </button>
+        </div>
+      </div>
 
       {/* 列表 */}
-      <TableContainer component={Paper} sx={{ bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2 }}>
-        <Table sx={{ minWidth: 650 }}>
-          <TableHead sx={{ bgcolor: 'rgba(255,255,255,0.02)' }}>
-            <TableRow>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>银行</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>活动名称</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>关联产品</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>折扣类型</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>有效期</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>状态</TableCell>
-              <TableCell align="right" sx={{ color: '#9ca3af', fontWeight: 600 }}>操作</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {loading ? (
-              <TableRow><TableCell colSpan={7} align="center" sx={{ py: 10 }}><CircularProgress size={24} sx={{ color: '#818cf8' }} /></TableCell></TableRow>
-            ) : filteredPromos.length === 0 ? (
-              <TableRow><TableCell colSpan={7} align="center" sx={{ py: 10, color: '#9ca3af' }}>未找到优惠活动</TableCell></TableRow>
-            ) : (
-              paginatedPromos.map((promo) => (
-                <TableRow key={promo.id} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' }, borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                  <TableCell sx={{ color: '#e4e6eb', fontWeight: 500 }}>{promo.bank_name}</TableCell>
-                  <TableCell sx={{ color: '#e4e6eb' }}>{promo.title}</TableCell>
-                  <TableCell sx={{ color: '#9ca3af' }}>{promo.product_card_name || '全门类'}</TableCell>
-                  <TableCell>
-                    <Chip label={promo.discount_type} size="small" variant="outlined" sx={{ color: '#818cf8', borderColor: '#818cf8', fontSize: 11 }} />
-                  </TableCell>
-                  <TableCell sx={{ color: '#9ca3af', fontSize: 13 }}>
-                    {promo.start_date || '即日起'} 至 {promo.end_date || '长期'}
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      size="small"
-                      checked={promo.is_active}
-                      onChange={() => handleToggleStatus(promo)}
-                      sx={{ '& .MuiSwitch-switchBase.Mui-checked': { color: '#10b981' }, '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { bgcolor: '#10b981' } }}
-                    />
-                  </TableCell>
-                  <TableCell align="right">
-                    <IconButton aria-label="编辑" size="small" onClick={() => handleOpenDialog(promo)} sx={{ color: '#9ca3af' }}><EditIcon fontSize="small" /></IconButton>
-                    <IconButton aria-label="删除" size="small" onClick={() => handleDelete(promo.id)} sx={{ color: '#f43f5e', ml: 1 }}><DeleteIcon fontSize="small" /></IconButton>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-        <TablePagination
-          component="div"
+      <div className='overflow-hidden rounded-2xl border border-d-border bg-d-surface'>
+        <div className='overflow-x-auto'>
+          <table className='w-full min-w-[650px] border-collapse text-[13px]'>
+            <thead className='bg-d-subtle/50'>
+              <tr className='[&>th]:px-3 [&>th]:py-2.5 [&>th]:text-left [&>th]:font-semibold [&>th]:text-d-muted'>
+                <th>银行</th>
+                <th>活动名称</th>
+                <th>关联产品</th>
+                <th>折扣类型</th>
+                <th>有效期</th>
+                <th>状态</th>
+                <th className='text-right'>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className='px-3 py-10 text-center'>
+                    <Spinner size={24} />
+                  </td>
+                </tr>
+              ) : filteredPromos.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className='px-3 py-10 text-center text-d-muted'>未找到优惠活动</td>
+                </tr>
+              ) : (
+                paginatedPromos.map((promo) => (
+                  <tr key={promo.id} className='border-t border-d-border/60 transition-colors hover:bg-d-subtle/40'>
+                    <td className='px-3 py-2 font-medium'>{promo.bank_name}</td>
+                    <td className='px-3 py-2'>{promo.title}</td>
+                    <td className='px-3 py-2 text-d-muted'>{promo.product_card_name || '全门类'}</td>
+                    <td className='px-3 py-2'>
+                      <span className='rounded-md border border-d-accent-light/60 px-2 py-0.5 text-[11px] text-d-accent-light'>
+                        {promo.discount_type}
+                      </span>
+                    </td>
+                    <td className='px-3 py-2 whitespace-nowrap text-d-muted'>
+                      {promo.start_date || '即日起'} 至 {promo.end_date || '长期'}
+                    </td>
+                    <td className='px-3 py-2'>
+                      <Toggle
+                        checked={promo.is_active}
+                        onChange={() => handleToggleStatus(promo)}
+                        ariaLabel={`启用 ${promo.title}`}
+                      />
+                    </td>
+                    <td className='px-3 py-2 text-right'>
+                      <button
+                        type='button'
+                        aria-label="编辑"
+                        onClick={() => handleOpenDialog(promo)}
+                        className='rounded-lg p-1.5 text-d-muted hover:bg-d-subtle hover:text-d-text'
+                      >
+                        <NoteIcon size={16} />
+                      </button>
+                      <button
+                        type='button'
+                        aria-label="删除"
+                        onClick={() => handleDelete(promo.id)}
+                        className='ml-1 rounded-lg p-1.5 text-d-danger-ink hover:bg-d-danger-soft'
+                      >
+                        <TrashIcon size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <AdminPagination
           count={filteredPromos.length}
           page={page}
-          onPageChange={handleChangePage}
           rowsPerPage={rowsPerPage}
-          onRowsPerPageChange={handleChangeRowsPerPage}
-          labelRowsPerPage="每页行数:"
-          sx={{ color: '#9ca3af', borderTop: '1px solid rgba(255,255,255,0.06)' }}
+          onPageChange={setPage}
+          onRowsPerPageChange={(n) => { setRowsPerPage(n); setPage(0) }}
         />
-      </TableContainer>
+      </div>
 
       {/* AI 获取活动：先复核再落库 */}
-      <Dialog open={aiOpen} onClose={() => !aiSaving && setAiOpen(false)} maxWidth="md" fullWidth PaperProps={{ sx: { bgcolor: '#1e2028', color: '#e4e6eb', borderRadius: 3, p: 1 } }}>
-        <DialogTitle sx={{ fontWeight: 700 }}>AI 获取活动</DialogTitle>
-        <DialogContent>
-          <Typography sx={{ color: '#9ca3af', fontSize: 13, mb: 2 }}>
-            按银行（可选指定卡片）检索当前可查到的优惠活动。抓得到官网活动页时以页面正文为准，
-            标为「官网」；仅来自模型记忆的标为「待确认」。默认只勾选「官网」项，写入前请自行核对。
-          </Typography>
-          <Grid container spacing={2} sx={{ mb: 1 }}>
-            <Grid size={{ xs: 12, md: 5 }}>
-              <TextField
-                fullWidth size="small" label="银行名称" required value={aiBank}
-                onChange={e => setAiBank(e.target.value)}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' } }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 5 }}>
-              <TextField
-                fullWidth size="small" label="卡片名称（可选）" value={aiCardName}
-                onChange={e => setAiCardName(e.target.value)}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' } }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 2 }} sx={{ display: 'flex', alignItems: 'center' }}>
-              <Button
-                fullWidth variant="contained" onClick={handleFetchSuggestions}
-                disabled={aiLoading}
-                startIcon={aiLoading ? <CircularProgress size={16} color="inherit" /> : <AiIcon />}
-                sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, textTransform: 'none' }}
-              >
-                {aiLoading ? '获取中' : '获取'}
-              </Button>
-            </Grid>
-          </Grid>
+      <Modal
+        open={aiOpen}
+        onClose={() => !aiSaving && setAiOpen(false)}
+        maxWidth='md'
+        title='AI 获取活动'
+        footer={
+          <>
+            <Button variant='ghost' onClick={() => setAiOpen(false)} disabled={aiSaving}>取消</Button>
+            <Button onClick={handleImportSuggestions} disabled={aiSaving || aiRows.length === 0}>
+              {aiSaving ? '写入中...' : `写入勾选 (${aiChecked.filter(Boolean).length})`}
+            </Button>
+          </>
+        }
+      >
+        <p className='mb-4 text-[13px] leading-5 text-d-muted'>
+          按银行（可选指定卡片）检索当前可查到的优惠活动。抓得到官网活动页时以页面正文为准，
+          标为「官网」；仅来自模型记忆的标为「待确认」。默认只勾选「官网」项，写入前请自行核对。
+        </p>
+        <div className='mb-4 grid grid-cols-1 gap-4 md:grid-cols-5'>
+          <div className='md:col-span-2'>
+            <TextField
+              label="银行名称"
+              required
+              value={aiBank}
+              onChange={e => setAiBank(e.target.value)}
+            />
+          </div>
+          <div className='md:col-span-2'>
+            <TextField
+              label="卡片名称（可选）"
+              value={aiCardName}
+              onChange={e => setAiCardName(e.target.value)}
+            />
+          </div>
+          <div className='flex items-end'>
+            <Button onClick={handleFetchSuggestions} loading={aiLoading} className='w-full'>
+              {aiLoading ? '获取中' : '获取'}
+            </Button>
+          </div>
+        </div>
 
-          {aiError && <Alert severity="warning" sx={{ mb: 2 }}>{aiError}</Alert>}
+        {aiError && (
+          <div className='mb-4'>
+            <Alert severity="warning">{aiError}</Alert>
+          </div>
+        )}
 
-          {aiRows.length > 0 && (
-            <TableContainer component={Paper} sx={{ bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell padding="checkbox" sx={{ color: '#9ca3af' }}>
-                      <Checkbox
-                        size="small"
+        {aiRows.length > 0 && (
+          <div className='overflow-hidden rounded-xl border border-d-border'>
+            <div className='overflow-x-auto'>
+              <table className='w-full border-collapse text-[12px]'>
+                <thead className='bg-d-subtle/50'>
+                  <tr className='[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold [&>th]:text-d-muted'>
+                    <th className='w-10'>
+                      <AdminCheckbox
+                        ariaLabel='全选活动'
                         checked={aiChecked.length > 0 && aiChecked.every(Boolean)}
                         indeterminate={aiChecked.some(Boolean) && !aiChecked.every(Boolean)}
-                        onChange={e => setAiChecked(aiRows.map(() => e.target.checked))}
-                        sx={{ color: '#6b7280', '&.Mui-checked': { color: 'primary.main' } }}
+                        onChange={checked => setAiChecked(aiRows.map(() => checked))}
                       />
-                    </TableCell>
-                    <TableCell sx={{ color: '#9ca3af' }}>活动名称</TableCell>
-                    <TableCell sx={{ color: '#9ca3af' }}>类型</TableCell>
-                    <TableCell sx={{ color: '#9ca3af' }}>有效期</TableCell>
-                    <TableCell sx={{ color: '#9ca3af' }}>依据</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
+                    </th>
+                    <th>活动名称</th>
+                    <th>类型</th>
+                    <th>有效期</th>
+                    <th>依据</th>
+                  </tr>
+                </thead>
+                <tbody>
                   {aiRows.map((row, i) => (
-                    <TableRow key={i}>
-                      <TableCell padding="checkbox">
-                        <Checkbox
-                          size="small"
+                    <tr key={i} className='border-t border-d-border/60 align-top'>
+                      <td className='px-3 py-2'>
+                        <AdminCheckbox
+                          ariaLabel={`选择 ${row.title}`}
                           checked={aiChecked[i] || false}
-                          onChange={e => setAiChecked(aiChecked.map((v, j) => j === i ? e.target.checked : v))}
-                          sx={{ color: '#6b7280', '&.Mui-checked': { color: 'primary.main' } }}
+                          onChange={checked => setAiChecked(aiChecked.map((v, j) => j === i ? checked : v))}
                         />
-                      </TableCell>
-                      <TableCell sx={{ color: '#e4e6eb', fontSize: 13 }}>
+                      </td>
+                      <td className='px-3 py-2 text-[13px]'>
                         {row.title}
                         {row.description && (
-                          <Typography sx={{ color: '#9ca3af', fontSize: 12 }}>{row.description}</Typography>
+                          <span className='block text-[12px] text-d-muted'>{row.description}</span>
                         )}
-                      </TableCell>
-                      <TableCell sx={{ color: '#e4e6eb', fontSize: 12 }}>{row.discount_type || '—'}</TableCell>
-                      <TableCell sx={{ color: '#9ca3af', fontSize: 12 }}>
+                      </td>
+                      <td className='px-3 py-2'>{row.discount_type || '—'}</td>
+                      <td className='px-3 py-2 text-d-muted'>
                         {row.start_date || '即日起'} 至 {row.end_date || '长期'}
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          size="small"
-                          label={row.provenance === 'site' ? '官网' : '待确认'}
-                          sx={{
-                            height: 18, fontSize: 11,
-                            bgcolor: row.provenance === 'site' ? 'rgba(74,222,128,0.15)' : 'rgba(251,191,36,0.15)',
-                            color: row.provenance === 'site' ? '#4ade80' : '#fbbf24',
-                          }}
-                        />
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                      <td className='px-3 py-2'>
+                        <span
+                          className={
+                            'rounded px-1.5 py-0.5 text-[11px] font-semibold ' +
+                            (row.provenance === 'site'
+                              ? 'bg-d-success-soft text-d-success-ink'
+                              : 'bg-d-warn-ink/15 text-d-warn-ink')
+                          }
+                        >
+                          {row.provenance === 'site' ? '官网' : '待确认'}
+                        </span>
+                      </td>
+                    </tr>
                   ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
-          <Button onClick={() => setAiOpen(false)} disabled={aiSaving} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button
-            onClick={handleImportSuggestions}
-            variant="contained"
-            disabled={aiSaving || aiRows.length === 0}
-            sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, px: 4, borderRadius: 2 }}
-          >
-            {aiSaving ? '写入中...' : `写入勾选 (${aiChecked.filter(Boolean).length})`}
-          </Button>
-        </DialogActions>
-      </Dialog>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </Modal>
 
-      <Snackbar open={Boolean(notice)} autoHideDuration={6000} onClose={() => setNotice(null)}>
-        <Alert onClose={() => setNotice(null)} severity="success" variant="filled" sx={{ width: '100%' }}>
-          {notice}
-        </Alert>
-      </Snackbar>
+      <Toast
+        open={Boolean(notice)}
+        message={notice ?? ''}
+        severity='success'
+        autoHideMs={6000}
+        onClose={() => setNotice(null)}
+      />
 
       {/* 对话框 */}
-      <Dialog open={dialogOpen} onClose={() => !submitting && setDialogOpen(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { bgcolor: '#1e2028', color: '#e4e6eb', borderRadius: 3, p: 1 } }}>
-        <DialogTitle sx={{ fontWeight: 700 }}>{currentPromo?.id ? '编辑优惠活动' : '发布新优惠活动'}</DialogTitle>
-        <DialogContent>
-          <Grid container spacing={2} sx={{ mt: 1 }}>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="银行名称" required value={currentPromo?.bank_name || ''} onChange={(e) => setCurrentPromo({ ...currentPromo, bank_name: e.target.value })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="活动标题" required value={currentPromo?.title || ''} onChange={(e) => setCurrentPromo({ ...currentPromo, title: e.target.value })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <Autocomplete
-                options={cardProducts}
-                getOptionLabel={(option) => `${option.bank_name} - ${option.card_name}`}
-                value={cardProducts.find(cp => cp.id === currentPromo?.card_product_id) || null}
-                onChange={(_, newValue) => setCurrentPromo({ ...currentPromo, card_product_id: newValue?.id, bank_name: newValue?.bank_name || currentPromo?.bank_name })}
-                renderInput={(params) => (
-                  <TextField {...params} label="关联卡产品 (可选)" InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
-                )}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="开始日期" type="date" value={currentPromo?.start_date || ''} onChange={(e) => setCurrentPromo({ ...currentPromo, start_date: e.target.value })} InputLabelProps={{ shrink: true, style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="结束日期" type="date" value={currentPromo?.end_date || ''} onChange={(e) => setCurrentPromo({ ...currentPromo, end_date: e.target.value })} InputLabelProps={{ shrink: true, style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="折扣类型" select value={currentPromo?.discount_type || '满减'} onChange={(e) => setCurrentPromo({ ...currentPromo, discount_type: e.target.value })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}>
-                <MenuItem value="满减">满减</MenuItem>
-                <MenuItem value="折扣">折扣</MenuItem>
-                <MenuItem value="积分">积分</MenuItem>
-                <MenuItem value="返现">返现</MenuItem>
-              </TextField>
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="最大使用次数" type="number" value={currentPromo?.max_uses || ''} onChange={(e) => setCurrentPromo({ ...currentPromo, max_uses: Number(e.target.value) })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField fullWidth label="详细描述/条件" multiline rows={3} value={currentPromo?.description || ''} onChange={(e) => setCurrentPromo({ ...currentPromo, description: e.target.value })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
-          <Button onClick={() => setDialogOpen(false)} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, px: 4, borderRadius: 2 }}>确定</Button>
-        </DialogActions>
-      </Dialog>
-    </Box>
+      <Modal
+        open={dialogOpen}
+        onClose={() => !submitting && setDialogOpen(false)}
+        maxWidth='md'
+        title={currentPromo?.id ? '编辑优惠活动' : '发布新优惠活动'}
+        footer={
+          <>
+            <Button variant='ghost' onClick={() => setDialogOpen(false)}>取消</Button>
+            <Button onClick={handleSubmit} loading={submitting}>确定</Button>
+          </>
+        }
+      >
+        <div className='flex flex-col gap-4'>
+          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+            <TextField
+              label="银行名称"
+              required
+              value={currentPromo?.bank_name || ''}
+              onChange={(e) => setCurrentPromo({ ...currentPromo, bank_name: e.target.value })}
+            />
+            <TextField
+              label="活动标题"
+              required
+              value={currentPromo?.title || ''}
+              onChange={(e) => setCurrentPromo({ ...currentPromo, title: e.target.value })}
+            />
+          </div>
+          <SelectField
+            label="关联卡产品 (可选)"
+            value={currentPromo?.card_product_id || ''}
+            placeholder="不关联（全门类）"
+            onChange={(e) => {
+              const product = cardProducts.find(cp => cp.id === e.target.value)
+              setCurrentPromo({
+                ...currentPromo,
+                card_product_id: product?.id,
+                bank_name: product?.bank_name || currentPromo?.bank_name,
+              })
+            }}
+            options={cardProducts.map(cp => ({
+              value: cp.id,
+              label: `${cp.bank_name} - ${cp.card_name}`,
+            }))}
+          />
+          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+            <TextField
+              label="开始日期"
+              type="date"
+              value={currentPromo?.start_date || ''}
+              onChange={(e) => setCurrentPromo({ ...currentPromo, start_date: e.target.value })}
+            />
+            <TextField
+              label="结束日期"
+              type="date"
+              value={currentPromo?.end_date || ''}
+              onChange={(e) => setCurrentPromo({ ...currentPromo, end_date: e.target.value })}
+            />
+          </div>
+          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+            <SelectField
+              label="折扣类型"
+              value={currentPromo?.discount_type || '满减'}
+              onChange={(e) => setCurrentPromo({ ...currentPromo, discount_type: e.target.value })}
+              options={[
+                { value: '满减', label: '满减' },
+                { value: '折扣', label: '折扣' },
+                { value: '积分', label: '积分' },
+                { value: '返现', label: '返现' },
+              ]}
+            />
+            <TextField
+              label="最大使用次数"
+              type="number"
+              value={currentPromo?.max_uses || ''}
+              onChange={(e) => setCurrentPromo({ ...currentPromo, max_uses: Number(e.target.value) })}
+            />
+          </div>
+          <TextArea
+            label="详细描述/条件"
+            rows={3}
+            value={currentPromo?.description || ''}
+            onChange={(e) => setCurrentPromo({ ...currentPromo, description: e.target.value })}
+          />
+        </div>
+      </Modal>
+    </div>
   )
 }

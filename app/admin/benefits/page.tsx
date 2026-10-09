@@ -1,19 +1,12 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import {
-  Box, Typography, Paper, Button, TextField, InputAdornment,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  IconButton, Switch, Chip, Dialog, DialogTitle, DialogContent,
-  DialogActions, Grid, MenuItem, CircularProgress, Autocomplete, TablePagination
-} from '@mui/material'
-import {
-  Add as AddIcon,
-  Search as SearchIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
-  Refresh as RefreshIcon
-} from '@mui/icons-material'
+import { Button, Toggle } from '@/components/obsidian/controls'
+import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
+import { Modal } from '@/components/obsidian/overlays'
+import { Spinner } from '@/components/obsidian/feedback'
+import { AdminPagination } from '@/components/admin/AdminShell'
+import { PlusIcon, SearchIcon, NoteIcon, TrashIcon, SyncIcon } from '@/components/icons/WcIcon'
 import { getAdminBenefits, createBenefit, updateBenefit, deleteBenefit, getAdminCardProducts } from '@/lib/api/admin'
 import { Benefit, CardProduct } from '@/lib/types'
 
@@ -68,15 +61,6 @@ export default function BenefitsPage() {
 
   const paginatedBenefits = filteredBenefits.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
 
-  const handleChangePage = (event: unknown, newPage: number) => {
-    setPage(newPage)
-  }
-
-  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setRowsPerPage(parseInt(event.target.value, 10))
-    setPage(0)
-  }
-
   const handleOpenDialog = (benefit?: AdminBenefitRow) => {
     if (benefit) {
       setCurrentBenefit(benefit)
@@ -94,7 +78,7 @@ export default function BenefitsPage() {
   const handleToggleStatus = async (benefit: AdminBenefitRow) => {
     try {
       await updateBenefit(benefit.id, { is_active: !benefit.is_active } as unknown as Partial<Benefit>)
-      setBenefits(benefits.map(b => b.id === benefit.id ? { ...b, is_active: !b.is_active } : b))
+      setBenefits(benefits.map(b => b.id === benefit.id ? { ...b, is_active: !benefit.is_active } : b))
     } catch (error) {
       console.error('Failed to toggle status:', error)
     }
@@ -139,165 +123,192 @@ export default function BenefitsPage() {
   }
 
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
-        <Box>
-          <Typography variant="h4" sx={{ color: '#e4e6eb', fontWeight: 700, mb: 0.5 }}>
-            卡产品权益管理
-          </Typography>
-          <Typography variant="body2" sx={{ color: '#9ca3af' }}>
-            配置信用卡的各类权益（如接送机、贵宾厅、酒店积分等）及其使用限额
-          </Typography>
-        </Box>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenDialog()}
-          sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, textTransform: 'none', borderRadius: 2, px: 3 }}
-        >
+    <div>
+      <div className='mb-8 flex items-center justify-between gap-4'>
+        <div>
+          <h1 className='mb-1 text-[26px] font-bold'>卡产品权益管理</h1>
+          <p className='text-[13px] text-d-muted'>配置信用卡的各类权益（如接送机、贵宾厅、酒店积分等）及其使用限额</p>
+        </div>
+        <Button onClick={() => handleOpenDialog()}>
+          <PlusIcon size={16} />
           添加权益
         </Button>
-      </Box>
+      </div>
 
       {/* 搜索 */}
-      <Paper sx={{ p: 2, mb: 3, bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2 }}>
-        <Grid container spacing={2} alignItems="center">
-          <Grid size={{ xs: 12, md: 4 }}>
+      <div className='mb-6 rounded-2xl border border-d-border bg-d-surface p-4'>
+        <div className='flex items-center justify-between gap-4'>
+          <div className='w-full sm:max-w-sm'>
             <TextField
-              fullWidth
-              size="small"
               placeholder="搜索权益名称或所属卡片..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon sx={{ color: '#9ca3af', fontSize: 20 }} />
-                  </InputAdornment>
-                ),
-                sx: { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' }
-              }}
+              startAdornment={<SearchIcon size={18} />}
             />
-          </Grid>
-          <Grid size={{ xs: 12, md: 8 }} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <IconButton aria-label="刷新" onClick={fetchData} sx={{ color: '#9ca3af' }}>
-              <RefreshIcon />
-            </IconButton>
-          </Grid>
-        </Grid>
-      </Paper>
+          </div>
+          <button
+            type='button'
+            aria-label="刷新"
+            onClick={fetchData}
+            className='shrink-0 rounded-xl p-2 text-d-muted hover:bg-d-subtle'
+          >
+            <SyncIcon size={18} />
+          </button>
+        </div>
+      </div>
 
       {/* 列表 */}
-      <TableContainer component={Paper} sx={{ bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2 }}>
-        <Table sx={{ minWidth: 650 }}>
-          <TableHead sx={{ bgcolor: 'rgba(255,255,255,0.02)' }}>
-            <TableRow>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>所属卡产品</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>权益名称</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>配额/频率</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>重置规则</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>状态</TableCell>
-              <TableCell align="right" sx={{ color: '#9ca3af', fontWeight: 600 }}>操作</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {loading ? (
-              <TableRow><TableCell colSpan={6} align="center" sx={{ py: 10 }}><CircularProgress size={24} sx={{ color: '#818cf8' }} /></TableCell></TableRow>
-            ) : filteredBenefits.length === 0 ? (
-              <TableRow><TableCell colSpan={6} align="center" sx={{ py: 10, color: '#9ca3af' }}>当前暂无权益数据</TableCell></TableRow>
-            ) : (
-              paginatedBenefits.map((benefit) => (
-                <TableRow key={benefit.id} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' }, borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                  <TableCell sx={{ color: '#e4e6eb', fontWeight: 500 }}>
-                    {benefit.product_bank_name} - {benefit.product_card_name}
-                  </TableCell>
-                  <TableCell sx={{ color: '#e4e6eb' }}>{benefit.name}</TableCell>
-                  <TableCell>
-                    <Chip
-                      label={`${benefit.quota} 次 / ${benefit.period === 'yearly' ? '年' : benefit.period === 'monthly' ? '月' : '终身'}`}
-                      size="small"
-                      sx={{ bgcolor: 'rgba(99, 102, 241, 0.1)', color: '#818cf8', fontSize: 11 }}
-                    />
-                  </TableCell>
-                  <TableCell sx={{ color: '#9ca3af', fontSize: 13 }}>
-                    {benefit.period === 'yearly' ? `${benefit.reset_month || 1} 月重置` : benefit.period === 'monthly' ? '每月末重置' : '不重置'}
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      size="small"
-                      checked={benefit.is_active}
-                      onChange={() => handleToggleStatus(benefit)}
-                      sx={{ '& .MuiSwitch-switchBase.Mui-checked': { color: '#10b981' }, '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { bgcolor: '#10b981' } }}
-                    />
-                  </TableCell>
-                  <TableCell align="right">
-                    <IconButton aria-label="编辑" size="small" onClick={() => handleOpenDialog(benefit)} sx={{ color: '#9ca3af' }}><EditIcon fontSize="small" /></IconButton>
-                    <IconButton aria-label="删除" size="small" onClick={() => handleDelete(benefit.id)} sx={{ color: '#f43f5e', ml: 1 }}><DeleteIcon fontSize="small" /></IconButton>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-        <TablePagination
-          component="div"
+      <div className='overflow-hidden rounded-2xl border border-d-border bg-d-surface'>
+        <div className='overflow-x-auto'>
+          <table className='w-full min-w-[650px] border-collapse text-[13px]'>
+            <thead className='bg-d-subtle/50'>
+              <tr className='[&>th]:px-3 [&>th]:py-2.5 [&>th]:text-left [&>th]:font-semibold [&>th]:text-d-muted'>
+                <th>所属卡产品</th>
+                <th>权益名称</th>
+                <th>配额/频率</th>
+                <th>重置规则</th>
+                <th>状态</th>
+                <th className='text-right'>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className='px-3 py-10 text-center'>
+                    <Spinner size={24} />
+                  </td>
+                </tr>
+              ) : filteredBenefits.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className='px-3 py-10 text-center text-d-muted'>当前暂无权益数据</td>
+                </tr>
+              ) : (
+                paginatedBenefits.map((benefit) => (
+                  <tr key={benefit.id} className='border-t border-d-border/60 transition-colors hover:bg-d-subtle/40'>
+                    <td className='px-3 py-2 font-medium'>
+                      {benefit.product_bank_name} - {benefit.product_card_name}
+                    </td>
+                    <td className='px-3 py-2'>{benefit.name}</td>
+                    <td className='px-3 py-2'>
+                      <span className='rounded-md bg-d-accent/10 px-2 py-1 text-[11px] text-d-accent-light'>
+                        {benefit.quota} 次 / {benefit.period === 'yearly' ? '年' : benefit.period === 'monthly' ? '月' : '终身'}
+                      </span>
+                    </td>
+                    <td className='px-3 py-2 text-d-muted'>
+                      {benefit.period === 'yearly' ? `${benefit.reset_month || 1} 月重置` : benefit.period === 'monthly' ? '每月末重置' : '不重置'}
+                    </td>
+                    <td className='px-3 py-2'>
+                      <Toggle
+                        checked={benefit.is_active}
+                        onChange={() => handleToggleStatus(benefit)}
+                        ariaLabel={`启用 ${benefit.name}`}
+                      />
+                    </td>
+                    <td className='px-3 py-2 text-right'>
+                      <button
+                        type='button'
+                        aria-label="编辑"
+                        onClick={() => handleOpenDialog(benefit)}
+                        className='rounded-lg p-1.5 text-d-muted hover:bg-d-subtle hover:text-d-text'
+                      >
+                        <NoteIcon size={16} />
+                      </button>
+                      <button
+                        type='button'
+                        aria-label="删除"
+                        onClick={() => handleDelete(benefit.id)}
+                        className='ml-1 rounded-lg p-1.5 text-d-danger-ink hover:bg-d-danger-soft'
+                      >
+                        <TrashIcon size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <AdminPagination
           count={filteredBenefits.length}
           page={page}
-          onPageChange={handleChangePage}
           rowsPerPage={rowsPerPage}
-          onRowsPerPageChange={handleChangeRowsPerPage}
-          labelRowsPerPage="每页行数:"
-          sx={{ color: '#9ca3af', borderTop: '1px solid rgba(255,255,255,0.06)' }}
+          onPageChange={setPage}
+          onRowsPerPageChange={(n) => { setRowsPerPage(n); setPage(0) }}
         />
-      </TableContainer>
+      </div>
 
       {/* 对话框 */}
-      <Dialog open={dialogOpen} onClose={() => !submitting && setDialogOpen(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { bgcolor: '#1e2028', color: '#e4e6eb', borderRadius: 3, p: 1 } }}>
-        <DialogTitle sx={{ fontWeight: 700 }}>{currentBenefit?.id ? '编辑权益配置' : '添加新权益'}</DialogTitle>
-        <DialogContent>
-          <Grid container spacing={2} sx={{ mt: 1 }}>
-            <Grid size={{ xs: 12 }}>
-              <Autocomplete
-                options={cardProducts}
-                getOptionLabel={(option) => `${option.bank_name} - ${option.card_name}`}
-                value={cardProducts.find(cp => cp.id === currentBenefit?.card_product_id) || null}
-                onChange={(_, newValue) => setCurrentBenefit({ ...currentBenefit, card_product_id: newValue?.id })}
-                renderInput={(params) => (
-                  <TextField {...params} label="所属卡产品" required InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
-                )}
-              />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField fullWidth label="权益名称" placeholder="例如：机场贵宾厅服务" required value={currentBenefit?.name || ''} onChange={(e) => setCurrentBenefit({ ...currentBenefit, name: e.target.value })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="权益配额 (次)" type="number" value={currentBenefit?.quota || 1} onChange={(e) => setCurrentBenefit({ ...currentBenefit, quota: Number(e.target.value) })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="重置周期" select value={currentBenefit?.period || 'yearly'} onChange={(e) => setCurrentBenefit({ ...currentBenefit, period: e.target.value as Benefit['period'] })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}>
-                <MenuItem value="yearly">按年重置</MenuItem>
-                <MenuItem value="monthly">按月重置</MenuItem>
-                <MenuItem value="one_time">终身一次性</MenuItem>
-              </TextField>
-            </Grid>
-            {currentBenefit?.period === 'yearly' && (
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth label="重置月份 (1-12)" type="number" value={currentBenefit?.reset_month || 1} onChange={(e) => setCurrentBenefit({ ...currentBenefit, reset_month: Number(e.target.value) })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
-              </Grid>
-            )}
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="到期日期 (可选)" type="date" value={currentBenefit?.expiry_date || ''} onChange={(e) => setCurrentBenefit({ ...currentBenefit, expiry_date: e.target.value })} InputLabelProps={{ shrink: true, style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField fullWidth label="权益说明" multiline rows={3} value={currentBenefit?.description || ''} onChange={(e) => setCurrentBenefit({ ...currentBenefit, description: e.target.value })} InputLabelProps={{ style: { color: '#9ca3af' } }} sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }} />
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
-          <Button onClick={() => setDialogOpen(false)} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, px: 4, borderRadius: 2 }}>确认添加</Button>
-        </DialogActions>
-      </Dialog>
-    </Box>
+      <Modal
+        open={dialogOpen}
+        onClose={() => !submitting && setDialogOpen(false)}
+        maxWidth='md'
+        title={currentBenefit?.id ? '编辑权益配置' : '添加新权益'}
+        footer={
+          <>
+            <Button variant='ghost' onClick={() => setDialogOpen(false)}>取消</Button>
+            <Button onClick={handleSubmit} loading={submitting}>确认添加</Button>
+          </>
+        }
+      >
+        <div className='flex flex-col gap-4'>
+          <SelectField
+            label="所属卡产品"
+            required
+            placeholder="选择卡产品"
+            value={currentBenefit?.card_product_id || ''}
+            onChange={(e) => setCurrentBenefit({ ...currentBenefit, card_product_id: e.target.value })}
+            options={cardProducts.map(cp => ({
+              value: cp.id,
+              label: `${cp.bank_name} - ${cp.card_name}`,
+            }))}
+          />
+          <TextField
+            label="权益名称"
+            placeholder="例如：机场贵宾厅服务"
+            required
+            value={currentBenefit?.name || ''}
+            onChange={(e) => setCurrentBenefit({ ...currentBenefit, name: e.target.value })}
+          />
+          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+            <TextField
+              label="权益配额 (次)"
+              type="number"
+              value={currentBenefit?.quota || 1}
+              onChange={(e) => setCurrentBenefit({ ...currentBenefit, quota: Number(e.target.value) })}
+            />
+            <SelectField
+              label="重置周期"
+              value={currentBenefit?.period || 'yearly'}
+              onChange={(e) => setCurrentBenefit({ ...currentBenefit, period: e.target.value as Benefit['period'] })}
+              options={[
+                { value: 'yearly', label: '按年重置' },
+                { value: 'monthly', label: '按月重置' },
+                { value: 'one_time', label: '终身一次性' },
+              ]}
+            />
+          </div>
+          {currentBenefit?.period === 'yearly' && (
+            <TextField
+              label="重置月份 (1-12)"
+              type="number"
+              value={currentBenefit?.reset_month || 1}
+              onChange={(e) => setCurrentBenefit({ ...currentBenefit, reset_month: Number(e.target.value) })}
+            />
+          )}
+          <TextField
+            label="到期日期 (可选)"
+            type="date"
+            value={currentBenefit?.expiry_date || ''}
+            onChange={(e) => setCurrentBenefit({ ...currentBenefit, expiry_date: e.target.value })}
+          />
+          <TextArea
+            label="权益说明"
+            rows={3}
+            value={currentBenefit?.description || ''}
+            onChange={(e) => setCurrentBenefit({ ...currentBenefit, description: e.target.value })}
+          />
+        </div>
+      </Modal>
+    </div>
   )
 }

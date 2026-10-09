@@ -104,3 +104,21 @@ design/openpencil/baseline/manifest.json
 
 # OpenPencil 运行时产物
 design/openpencil/**/.DS_Store
+
+# >>> magpie: library skills placed here (magpie adds and removes these lines) >>>
+/.agents/skills/gsd-ui-phase
+/.agents/skills/gsd-ui-review
+/.agents/skills/impeccable
+/.agents/skills/improve-animations
+/.agents/skills/openpencil-design
+/.claude/skills/gsd-ui-phase
+/.claude/skills/gsd-ui-review
+/.claude/skills/impeccable
+/.claude/skills/improve-animations
+/.claude/skills/openpencil-design
+/.codex/config.toml
+/.mcp.json
+/.pi/mcp.json
+/.zcode/config.json
+/opencode.json
+# <<< magpie <<<

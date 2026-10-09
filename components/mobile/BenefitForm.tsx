@@ -1,10 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, Button, FormControl, InputLabel, Select, MenuItem,
-} from '@mui/material'
+import { Modal } from '@/components/obsidian/overlays'
+import { Button } from '@/components/obsidian/controls'
+import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
 import { format } from 'date-fns'
 import type { Benefit } from '@/lib/types'
 
@@ -64,100 +63,69 @@ export function BenefitForm({ open, onClose, onSubmit, initial }: Props) {
   }
 
   return (
-    <Dialog
+    <Modal
       open={open}
       onClose={onClose}
-      fullWidth
-      maxWidth="xs"
-      // 弹窗浮层：18px 圆角 + float 阴影 + 无边框
-      slotProps={{
-        paper: {
-          sx: {
-            border: 0,
-            borderRadius: 'var(--radius-depth-3)',
-            boxShadow: 'var(--shadow-float)',
-          },
-        },
-      }}
+      title={initial ? '编辑权益' : '添加权益'}
+      footer={
+        <>
+          <Button variant='ghost' onClick={onClose}>取消</Button>
+          <Button onClick={handleSubmit} disabled={!isValid()}>
+            保存
+          </Button>
+        </>
+      }
     >
-      {/* 弹窗标题：22/28 · 600 · -0.7px */}
-      <DialogTitle
-        sx={{
-          fontSize: 'var(--type-title-size)',
-          lineHeight: 'var(--type-title-line)',
-          fontWeight: 'var(--type-title-weight)',
-          letterSpacing: 'var(--type-title-tracking)',
-          color: 'var(--text)',
-        }}
-      >
-        {initial ? '编辑权益' : '添加权益'}
-      </DialogTitle>
-      <DialogContent>
+      <div className='flex flex-col gap-4'>
         <TextField
-          fullWidth label="权益名称" margin="normal"
+          label="权益名称"
           value={name}
           onChange={e => setName(e.target.value)}
           placeholder="如：机场贵宾厅、接送机"
           required
         />
-        <TextField
-          fullWidth label="权益说明" margin="normal"
-          multiline rows={2}
+        <TextArea
+          label="权益说明"
+          rows={2}
           value={description}
           onChange={e => setDescription(e.target.value)}
           placeholder="权益的具体说明"
         />
         <TextField
-          fullWidth label="总额度" margin="normal"
+          label="总额度"
           type="number"
           value={quota}
           onChange={e => setQuota(Math.max(1, Number(e.target.value)))}
-          inputProps={{ min: 1, step: 1 }}
+          min={1}
+          step={1}
           required
         />
-        <FormControl fullWidth margin="normal">
-          <InputLabel>周期</InputLabel>
-          <Select
-            value={period}
-            onChange={e => setPeriod(e.target.value as Benefit['period'])}
-            label="周期"
-          >
-            {PERIOD_OPTIONS.map(opt => (
-              <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+        <SelectField
+          label="周期"
+          value={period}
+          onChange={e => setPeriod(e.target.value as Benefit['period'])}
+          options={PERIOD_OPTIONS}
+        />
         {period === 'yearly' && (
           <TextField
-            fullWidth label="重置月份" margin="normal"
+            label="重置月份"
             type="number"
             value={resetMonth ?? ''}
             onChange={e => setResetMonth(e.target.value ? Number(e.target.value) : undefined)}
-            inputProps={{ min: 1, max: 12 }}
+            min={1}
+            max={12}
             placeholder="1-12"
             required
           />
         )}
         <TextField
-          fullWidth label="到期日" margin="normal"
+          label="到期日"
           type="date"
           value={expiryDate}
           onChange={e => setExpiryDate(e.target.value)}
-          InputLabelProps={{ shrink: true }}
-          inputProps={{ min: format(new Date(), 'yyyy-MM-dd') }}
+          min={format(new Date(), 'yyyy-MM-dd')}
         />
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} sx={{ borderRadius: 'var(--radius-pill)' }}>取消</Button>
-        <Button
-          variant="contained"
-          onClick={handleSubmit}
-          disabled={!isValid()}
-          sx={{ borderRadius: 'var(--radius-pill)' }}
-        >
-          保存
-        </Button>
-      </DialogActions>
-    </Dialog>
+      </div>
+    </Modal>
   )
 }

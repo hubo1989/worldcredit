@@ -1,13 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import {
-  Typography, Paper, Box, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, TablePagination, TextField, InputAdornment,
-  IconButton, Chip, Collapse, CircularProgress, ToggleButtonGroup, ToggleButton,
-  Tooltip, Alert, Dialog, DialogTitle, DialogContent, DialogActions, Button, Stack, MenuItem
-} from '@mui/material'
-import { Search as SearchIcon, Refresh as RefreshIcon, KeyboardArrowDown, KeyboardArrowUp } from '@mui/icons-material'
+import { Button } from '@/components/obsidian/controls'
+import { TextField, SelectField } from '@/components/obsidian/fields'
+import { Modal } from '@/components/obsidian/overlays'
+import { Alert, Spinner } from '@/components/obsidian/feedback'
+import { AdminPagination } from '@/components/admin/AdminShell'
+import { SearchIcon, SyncIcon, ChevronDownIcon, ChevronUpIcon } from '@/components/icons/WcIcon'
 import {
   getEmailParseLogs,
   getEmailParseLogHolders,
@@ -35,10 +34,10 @@ function decodeMimeSubject(raw: string | null): string {
   }).replace(/\s+/g, ' ').trim()
 }
 
-const STATUS_COLOR: Record<string, 'success' | 'error' | 'default'> = {
-  success: 'success',
-  failed: 'error',
-  skipped: 'default',
+const STATUS_CLS: Record<string, string> = {
+  success: 'bg-d-success-soft text-d-success-ink',
+  failed: 'bg-d-danger-soft text-d-danger-ink',
+  skipped: 'bg-d-subtle text-d-muted',
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -123,53 +122,44 @@ function LogRowDetail({
 }) {
   const parsed = parseEmailBill(row.raw_ai_response)
   return (
-    <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
-      <Typography variant="body2" color="text.secondary" gutterBottom>
-        邮件 ID：{row.id}
-      </Typography>
-      <Typography variant="body2" color="text.secondary" gutterBottom>
-        用户：{row.user_id.slice(0, 8)}…
-      </Typography>
+    <div className='rounded-xl bg-d-subtle/60 p-4 text-[13px]'>
+      <p className='mb-1 text-d-muted'>邮件 ID：{row.id}</p>
+      <p className='mb-1 text-d-muted'>用户：{row.user_id.slice(0, 8)}…</p>
       {row.bill_id && (
-        <Typography variant="body2" color="text.secondary" gutterBottom>
-          关联账单：{row.bill_id}
-        </Typography>
+        <p className='mb-1 text-d-muted'>关联账单：{row.bill_id}</p>
       )}
       {row.error_msg && (
-        <Typography variant="body2" sx={{ mt: 1, wordBreak: 'break-all' }}>
-          错误/说明：{row.error_msg}
-        </Typography>
+        <p className='mt-1 break-all'>错误/说明：{row.error_msg}</p>
       )}
       {needsManualBankCard(row) && parsed?.bank_name && (
-        <Alert
-          severity="warning"
-          sx={{ mt: 2 }}
-          action={
-            <Stack direction="row" spacing={1} sx={{ pt: 0.5 }}>
-              <Button size="small" color="inherit" disabled={resolving} onClick={() => onDiscard(row)}>
-                丢弃
-              </Button>
-              <Button size="small" variant="contained" disabled={resolving} onClick={() => onCreate(row)}>
-                新建银行和卡片
-              </Button>
-            </Stack>
-          }
-        >
-          这封账单已解析出银行「{parsed.bank_name}」和尾号「{parsed.card_last4 ?? '—'}」，但产品目录没有匹配项。
-          请选择丢弃这条待处理记录，或确认信息后新建银行/卡片并导入账单。
-        </Alert>
+        <div className='mt-3'>
+          <Alert
+            severity="warning"
+            action={
+              <div className='flex gap-2'>
+                <Button size='sm' variant='secondary' disabled={resolving} onClick={() => onDiscard(row)}>
+                  丢弃
+                </Button>
+                <Button size='sm' disabled={resolving} onClick={() => onCreate(row)}>
+                  新建银行和卡片
+                </Button>
+              </div>
+            }
+          >
+            这封账单已解析出银行「{parsed.bank_name}」和尾号「{parsed.card_last4 ?? '—'}」，但产品目录没有匹配项。
+            请选择丢弃这条待处理记录，或确认信息后新建银行/卡片并导入账单。
+          </Alert>
+        </div>
       )}
       {row.raw_ai_response && (
         <>
-          <Typography variant="body2" sx={{ mt: 2, fontWeight: 600 }}>
-            AI 解析结果
-          </Typography>
-          <Box component="pre" sx={{ mt: 0.5, p: 1.5, bgcolor: 'grey.900', color: 'grey.100', borderRadius: 1, fontSize: 12, overflow: 'auto', maxHeight: 300, whiteSpace: 'pre-wrap' }}>
+          <p className='mt-3 font-semibold'>AI 解析结果</p>
+          <pre className='mt-1 max-h-[300px] overflow-auto whitespace-pre-wrap rounded-lg bg-d-bg p-3 text-[12px] text-d-text/80'>
             {formatJson(row.raw_ai_response)}
-          </Box>
+          </pre>
         </>
       )}
-    </Box>
+    </div>
   )
 }
 
@@ -187,43 +177,53 @@ function Row({
   const [open, setOpen] = useState(false)
   return (
     <>
-      <TableRow hover>
-        <TableCell sx={{ width: 40 }}>
-          <IconButton size="small" onClick={() => setOpen(!open)}>
-            {open ? <KeyboardArrowUp /> : <KeyboardArrowDown />}
-          </IconButton>
-        </TableCell>
-        <TableCell>{formatTime(row.created_at)}</TableCell>
-        <TableCell>{row.from_email || '—'}</TableCell>
-        <TableCell sx={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          <Tooltip title={decodeMimeSubject(row.subject ?? null)}>
-            <span>{decodeMimeSubject(row.subject ?? null) || '—'}</span>
-          </Tooltip>
-        </TableCell>
-        <TableCell>
-          <Chip size="small" color={STATUS_COLOR[row.status]} label={STATUS_LABEL[row.status] ?? row.status} />
-        </TableCell>
-        <TableCell sx={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          <Tooltip title={row.error_msg ?? ''}>
-            <span>{row.error_msg ?? '—'}</span>
-          </Tooltip>
-        </TableCell>
-      </TableRow>
-      <TableRow>
-        <TableCell sx={{ pb: 1, pt: 1, border: 0 }} colSpan={6}>
-          <Collapse in={open} timeout="auto" unmountOnExit>
+      <tr className='border-t border-d-border/60 transition-colors hover:bg-d-subtle/40'>
+        <td className='w-10 px-3 py-2'>
+          <button
+            type='button'
+            aria-label={open ? '收起详情' : '展开详情'}
+            onClick={() => setOpen(!open)}
+            className='rounded-lg p-1 text-d-muted hover:bg-d-subtle'
+          >
+            {open ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
+          </button>
+        </td>
+        <td className='px-3 py-2 whitespace-nowrap tabular-nums'>{formatTime(row.created_at)}</td>
+        <td className='px-3 py-2'>{row.from_email || '—'}</td>
+        <td className='max-w-[300px] truncate px-3 py-2' title={decodeMimeSubject(row.subject ?? null)}>
+          {decodeMimeSubject(row.subject ?? null) || '—'}
+        </td>
+        <td className='px-3 py-2'>
+          <span className={'rounded-md px-2 py-0.5 text-[11px] font-semibold ' + (STATUS_CLS[row.status] ?? '')}>
+            {STATUS_LABEL[row.status] ?? row.status}
+          </span>
+        </td>
+        <td className='max-w-[250px] truncate px-3 py-2 text-d-muted' title={row.error_msg ?? ''}>
+          {row.error_msg ?? '—'}
+        </td>
+      </tr>
+      {open ? (
+        <tr>
+          <td colSpan={6} className='px-3 pb-3 pt-1'>
             <LogRowDetail
               row={row}
               resolving={resolving}
               onDiscard={onDiscard}
               onCreate={onCreate}
             />
-          </Collapse>
-        </TableCell>
-      </TableRow>
+          </td>
+        </tr>
+      ) : null}
     </>
   )
 }
+
+const STATUS_FILTERS = [
+  { value: 'all', label: '全部' },
+  { value: 'success', label: '成功' },
+  { value: 'failed', label: '失败' },
+  { value: 'skipped', label: '跳过' },
+]
 
 export default function EmailLogsPage() {
   const [loading, setLoading] = useState(true)
@@ -332,70 +332,89 @@ export default function EmailLogsPage() {
 
 
   return (
-    <Box sx={{ p: 3 }}>
-      <Box sx={{ mb: 3, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div className='p-2'>
+      <div className='mb-6 flex items-center justify-between gap-4'>
         <div>
-          <Typography variant="h5">邮件日志</Typography>
-          <Typography variant="body2" color="text.secondary">每封收到的邮件及其处理结果（共 {total} 条）</Typography>
+          <h1 className='text-[26px] font-bold'>邮件日志</h1>
+          <p className='text-[13px] text-d-muted'>每封收到的邮件及其处理结果（共 {total} 条）</p>
         </div>
-        <IconButton onClick={() => void loadLogs()} disabled={loading}>
-          <RefreshIcon />
-        </IconButton>
-      </Box>
+        <button
+          type='button'
+          aria-label='刷新'
+          onClick={() => void loadLogs()}
+          disabled={loading}
+          className='rounded-xl p-2 text-d-muted hover:bg-d-subtle disabled:opacity-50'
+        >
+          <SyncIcon size={18} />
+        </button>
+      </div>
 
-      <Paper sx={{ mb: 2, p: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-        <TextField size="small" placeholder="搜索发件人或主题" value={searchInput}
-          onChange={e => setSearchInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { setSearch(searchInput); setPage(0) } }}
-          sx={{ minWidth: 260 }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon />
-              </InputAdornment>
-            ),
-          }}
-        />
-        <ToggleButtonGroup size="small" value={statusFilter} exclusive
-          onChange={(_, v) => { if (v) { setStatusFilter(v); setPage(0) } }}>
-          <ToggleButton value="all">全部</ToggleButton>
-          <ToggleButton value="success">成功</ToggleButton>
-          <ToggleButton value="failed">失败</ToggleButton>
-          <ToggleButton value="skipped">跳过</ToggleButton>
-        </ToggleButtonGroup>
-      </Paper>
+      <div className='mb-4 flex flex-wrap items-center gap-4 rounded-2xl border border-d-border bg-d-surface p-4'>
+        <div className='min-w-[260px] flex-1 sm:max-w-sm'>
+          <TextField
+            placeholder="搜索发件人或主题"
+            value={searchInput}
+            onChange={e => setSearchInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { setSearch(searchInput); setPage(0) } }}
+            startAdornment={<SearchIcon size={18} />}
+          />
+        </div>
+        <div
+          className='inline-flex overflow-hidden rounded-xl border border-d-border'
+          role='group'
+          aria-label='状态筛选'
+        >
+          {STATUS_FILTERS.map(f => (
+            <button
+              key={f.value}
+              type='button'
+              onClick={() => { setStatusFilter(f.value); setPage(0) }}
+              className={
+                'h-9 px-3.5 text-[13px] font-semibold transition-colors ' +
+                (statusFilter === f.value
+                  ? 'bg-d-accent text-white'
+                  : 'bg-d-surface text-d-muted hover:bg-d-subtle')
+              }
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>
+        <div className='mb-4'>
+          <Alert severity="error">{error}</Alert>
+        </div>
       )}
       {resolutionError && !resolutionOpen && (
-        <Alert severity="error" sx={{ mb: 2 }}>{resolutionError}</Alert>
+        <div className='mb-4'>
+          <Alert severity="error">{resolutionError}</Alert>
+        </div>
       )}
 
-      <Paper>
+      <div className='rounded-2xl border border-d-border bg-d-surface'>
         {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-            <CircularProgress />
-          </Box>
+          <div className='flex justify-center py-12'>
+            <Spinner size={24} />
+          </div>
         ) : rows.length === 0 ? (
-          <Box sx={{ textAlign: 'center', py: 8 }}>
-            <Typography color="text.secondary">暂无记录</Typography>
-          </Box>
+          <div className='py-12 text-center text-d-muted'>暂无记录</div>
         ) : (
           <>
-            <TableContainer>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell />
-                    <TableCell>时间</TableCell>
-                    <TableCell>发件人</TableCell>
-                    <TableCell>主题</TableCell>
-                    <TableCell>状态</TableCell>
-                    <TableCell>说明</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
+            <div className='overflow-x-auto'>
+              <table className='w-full border-collapse text-[13px]'>
+                <thead className='bg-d-subtle/50'>
+                  <tr className='[&>th]:px-3 [&>th]:py-2.5 [&>th]:text-left [&>th]:font-semibold [&>th]:text-d-muted'>
+                    <th />
+                    <th>时间</th>
+                    <th>发件人</th>
+                    <th>主题</th>
+                    <th>状态</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody>
                   {rows.map(r => (
                     <Row
                       key={r.id}
@@ -405,126 +424,120 @@ export default function EmailLogsPage() {
                       onCreate={row => void openResolution(row)}
                     />
                   ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-            <TablePagination
-              component="div"
+                </tbody>
+              </table>
+            </div>
+            <AdminPagination
               count={total}
               page={page}
               rowsPerPage={rowsPerPage}
               rowsPerPageOptions={[10, 20, 50]}
-              onPageChange={(_, p) => setPage(p)}
-              onRowsPerPageChange={e => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0) }}
+              onPageChange={setPage}
+              onRowsPerPageChange={n => { setRowsPerPage(n); setPage(0) }}
             />
           </>
         )}
-      </Paper>
+      </div>
 
-      <Dialog
+      <Modal
         open={resolutionOpen && !!resolutionLog}
         onClose={() => setResolutionOpen(false)}
-        fullWidth
-        maxWidth="sm"
+        title='新建银行和卡片'
+        footer={
+          <>
+            <Button variant='ghost' onClick={() => setResolutionOpen(false)} disabled={resolving}>
+              取消
+            </Button>
+            <Button
+              onClick={() => void submitResolution()}
+              disabled={
+                resolving ||
+                resolutionLoading ||
+                !holderId ||
+                !bankName.trim() ||
+                !cardName.trim() ||
+                !currency.trim() ||
+                !country.trim()
+              }
+            >
+              新建并导入账单
+            </Button>
+          </>
+        }
       >
-        <DialogTitle>新建银行和卡片</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            将按以下信息补齐银行目录、卡产品和卡片，并把原邮件中的账单写入账本；同名且同币种的产品、同持卡人同尾号卡片会直接复用。
-          </Typography>
-          {resolutionError && (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              {resolutionError}
-            </Alert>
-          )}
-          {resolutionLoading ? (
-            <Stack alignItems="center" sx={{ py: 4 }}>
-              <CircularProgress size={24} />
-            </Stack>
-          ) : (
-            <Stack spacing={2} sx={{ pt: 1 }}>
+        <p className='mb-4 text-[13px] leading-5 text-d-muted'>
+          将按以下信息补齐银行目录、卡产品和卡片，并把原邮件中的账单写入账本；同名且同币种的产品、同持卡人同尾号卡片会直接复用。
+        </p>
+        {resolutionError && (
+          <div className='mb-4'>
+            <Alert severity="error">{resolutionError}</Alert>
+          </div>
+        )}
+        {resolutionLoading ? (
+          <div className='flex justify-center py-8'>
+            <Spinner size={24} />
+          </div>
+        ) : (
+          <div className='flex flex-col gap-4'>
+            <SelectField
+              required
+              label="持卡人"
+              placeholder="选择持卡人"
+              value={holderId}
+              onChange={(e) => setHolderId(e.target.value)}
+              disabled={resolving}
+              options={holders.map((holder) => ({
+                value: holder.id,
+                label: holder.name,
+              }))}
+            />
+            <TextField
+              required
+              label="银行名称"
+              value={bankName}
+              onChange={(e) => setBankName(e.target.value)}
+              disabled={resolving}
+            />
+            <TextField
+              required
+              label="卡片名称"
+              value={cardName}
+              onChange={(e) => setCardName(e.target.value)}
+              disabled={resolving}
+            />
+            <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
               <TextField
-                select
                 required
-                label="持卡人"
-                value={holderId}
-                onChange={(e) => setHolderId(e.target.value)}
-                disabled={resolving}
-              >
-                {holders.map((holder) => (
-                  <MenuItem key={holder.id} value={holder.id}>
-                    {holder.name}
-                  </MenuItem>
-                ))}
-              </TextField>
-              <TextField
-                required
-                label="银行名称"
-                value={bankName}
-                onChange={(e) => setBankName(e.target.value)}
+                label="币种"
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value.toUpperCase())}
                 disabled={resolving}
               />
               <TextField
                 required
-                label="卡片名称"
-                value={cardName}
-                onChange={(e) => setCardName(e.target.value)}
+                label="国家/地区"
+                value={country}
+                onChange={(e) => setCountry(e.target.value.toUpperCase())}
                 disabled={resolving}
               />
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+            </div>
+            {resolutionLog && (
+              <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
                 <TextField
-                  required
-                  label="币种"
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value.toUpperCase())}
-                  disabled={resolving}
+                  label="卡尾号"
+                  value={parseEmailBill(resolutionLog.raw_ai_response)?.card_last4 ?? ''}
+                  disabled
                 />
                 <TextField
-                  required
-                  label="国家/地区"
-                  value={country}
-                  onChange={(e) => setCountry(e.target.value.toUpperCase())}
-                  disabled={resolving}
+                  label="账单金额"
+                  value={parseEmailBill(resolutionLog.raw_ai_response)?.bill_amount ?? ''}
+                  disabled
                 />
-              </Stack>
-              {resolutionLog && (
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                  <TextField
-                    label="卡尾号"
-                    value={parseEmailBill(resolutionLog.raw_ai_response)?.card_last4 ?? ''}
-                    disabled
-                  />
-                  <TextField
-                    label="账单金额"
-                    value={parseEmailBill(resolutionLog.raw_ai_response)?.bill_amount ?? ''}
-                    disabled
-                  />
-                </Stack>
-              )}
-            </Stack>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setResolutionOpen(false)} disabled={resolving}>
-            取消
-          </Button>
-          <Button
-            variant="contained"
-            onClick={() => void submitResolution()}
-            disabled={
-              resolving ||
-              resolutionLoading ||
-              !holderId ||
-              !bankName.trim() ||
-              !cardName.trim() ||
-              !currency.trim() ||
-              !country.trim()
-            }
-          >
-            新建并导入账单
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Box>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+    </div>
   )
 }

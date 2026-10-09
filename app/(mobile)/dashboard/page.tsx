@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { Container, Box } from '@mui/material'
 import { useRouter } from 'next/navigation'
 import { getBillDashboardItems, markBillAsPaid, markAllOverdueBillsAsPaid, type BillDashboardItem } from '@/lib/api/bills'
 import { getHolders } from '@/lib/api/holders'
@@ -19,7 +18,6 @@ import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
 import { fetchRates, type FxRates } from '@/lib/fx'
 import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
 import { useAuth } from '@/lib/auth'
-import { WcSkeleton } from '@/components/mobile/WcStates'
 import { QuickActionSheet } from '@/components/mobile/QuickActionSheet'
 import { DashboardView } from '@/components/obsidian/DashboardView'
 import { DashboardOverlays } from '@/components/obsidian/DashboardOverlays'
@@ -242,32 +240,24 @@ export default function DashboardPage() {
   // ---- 加载态：骨架屏 ----
   if (loading) {
     return (
-      <Container maxWidth="sm" sx={{ py: 3, pb: 10, px: 2 }}>
-        <Box sx={{ mb: 3 }}>
-          <WcSkeleton height={36} count={1} radius={8} />
-          <WcSkeleton height={14} count={1} radius={4} />
-        </Box>
-        <Box sx={{ mb: 3 }}>
-          <WcSkeleton height={40} count={1} radius={999} />
-        </Box>
-        <Box sx={{ mb: 3 }}>
-          <WcSkeleton height={140} count={1} radius={12} />
-        </Box>
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: 1.5,
-            mb: 3,
-          }}
-        >
-          <WcSkeleton height={96} count={1} radius={12} />
-          <WcSkeleton height={96} count={1} radius={12} />
-          <WcSkeleton height={96} count={1} radius={12} />
-          <WcSkeleton height={96} count={1} radius={12} />
-        </Box>
-        <WcSkeleton height={72} count={2} radius={12} />
-      </Container>
+      <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-5 text-d-text'>
+        <div className='mb-4 space-y-2'>
+          <div className='wc-skeleton h-9 w-40 rounded-lg' />
+          <div className='wc-skeleton h-3.5 w-24 rounded' />
+        </div>
+        <div className='wc-skeleton mb-4 h-10 w-full rounded-full' />
+        <div className='wc-skeleton mb-4 h-[140px] w-full rounded-xl' />
+        <div className='mb-4 grid grid-cols-2 gap-3'>
+          <div className='wc-skeleton h-24 rounded-xl' />
+          <div className='wc-skeleton h-24 rounded-xl' />
+          <div className='wc-skeleton h-24 rounded-xl' />
+          <div className='wc-skeleton h-24 rounded-xl' />
+        </div>
+        <div className='space-y-3'>
+          <div className='wc-skeleton h-[72px] w-full rounded-xl' />
+          <div className='wc-skeleton h-[72px] w-full rounded-xl' />
+        </div>
+      </div>
     )
   }
 

@@ -1,24 +1,16 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { Button, Toggle } from '@/components/obsidian/controls'
+import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
+import { Modal, Toast } from '@/components/obsidian/overlays'
+import { Spinner } from '@/components/obsidian/feedback'
+import { AdminPagination, AdminCheckbox } from '@/components/admin/AdminShell'
+import { PlusIcon, SearchIcon, NoteIcon, TrashIcon, SyncIcon } from '@/components/icons/WcIcon'
 import {
-  Box, Typography, Paper, Button, TextField, InputAdornment,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  IconButton, Switch, Chip, Dialog, DialogTitle, DialogContent,
-  DialogActions, Grid, MenuItem, CircularProgress, Autocomplete, TablePagination,
-  Checkbox, Snackbar, Alert
-} from '@mui/material'
-import {
-  Add as AddIcon,
-  Search as SearchIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
-  Refresh as RefreshIcon
-} from '@mui/icons-material'
-import { 
-  getAdminCardProducts, 
-  createCardProduct, 
-  updateCardProduct, 
+  getAdminCardProducts,
+  createCardProduct,
+  updateCardProduct,
   deleteCardProduct,
   getAdminBanks
 } from '@/lib/api/admin'
@@ -81,15 +73,6 @@ export default function CardProductsPage() {
 
   const paginatedProducts = filteredProducts.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
 
-  const handleChangePage = (event: unknown, newPage: number) => {
-    setPage(newPage)
-  }
-
-  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setRowsPerPage(parseInt(event.target.value, 10))
-    setPage(0)
-  }
-
   const handleOpenDialog = (product?: CardProduct & { is_active: boolean }) => {
     if (product) {
       setCurrentProduct(product)
@@ -109,7 +92,7 @@ export default function CardProductsPage() {
   const handleToggleStatus = async (product: CardProduct & { is_active: boolean }) => {
     try {
       await updateCardProduct(product.id, { is_active: !product.is_active })
-      setProducts(products.map(p => p.id === product.id ? { ...p, is_active: !p.is_active } : p))
+      setProducts(products.map(p => p.id === product.id ? { ...p, is_active: !product.is_active } : p))
     } catch (error) {
       console.error('Failed to toggle status:', error)
     }
@@ -243,467 +226,336 @@ export default function CardProductsPage() {
   }
 
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
-        <Box>
-          <Typography variant="h4" sx={{ color: '#e4e6eb', fontWeight: 700, mb: 0.5 }}>
-            卡产品管理
-          </Typography>
-          <Typography variant="body2" sx={{ color: '#9ca3af' }}>
-            管理全平台信用卡产品目录、年费政策及账期规则
-          </Typography>
-        </Box>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenDialog()}
-          sx={{
-            bgcolor: 'primary.main',
-            '&:hover': { bgcolor: 'primary.dark' },
-            textTransform: 'none',
-            borderRadius: 2,
-            px: 3
-          }}
-        >
+    <div>
+      <div className='mb-8 flex items-center justify-between gap-4'>
+        <div>
+          <h1 className='mb-1 text-[26px] font-bold'>卡产品管理</h1>
+          <p className='text-[13px] text-d-muted'>管理全平台信用卡产品目录、年费政策及账期规则</p>
+        </div>
+        <Button onClick={() => handleOpenDialog()}>
+          <PlusIcon size={16} />
           新增卡产品
         </Button>
-      </Box>
+      </div>
 
       {/* 过滤器 */}
-      <Paper sx={{ p: 2, mb: 3, bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2 }}>
-        <Grid container spacing={2} alignItems="center">
-          <Grid size={{ xs: 12, md: 4 }}>
-            <TextField
-              fullWidth
-              size="small"
-              placeholder="搜索银行或卡片名称..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon sx={{ color: '#9ca3af', fontSize: 20 }} />
-                  </InputAdornment>
-                ),
-                sx: { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' }
-              }}
-            />
-          </Grid>
-          <Grid size={{ xs: 12, md: 2.5 }}>
-            <TextField
-              fullWidth
-              size="small"
-              select
-              label="按银行筛选"
-              value={filterBank}
-              onChange={(e) => setFilterBank(e.target.value)}
-              InputLabelProps={{ shrink: true, style: { color: '#9ca3af' } }}
-              sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' } }}
+      <div className='mb-6 rounded-2xl border border-d-border bg-d-surface p-4'>
+        <div className='grid grid-cols-1 items-center gap-4 md:grid-cols-2 lg:grid-cols-4'>
+          <TextField
+            placeholder="搜索银行或卡片名称..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            startAdornment={<SearchIcon size={18} />}
+          />
+          <SelectField
+            label="按银行筛选"
+            value={filterBank}
+            onChange={(e) => setFilterBank(e.target.value)}
+            options={[
+              { value: 'all', label: '全部银行' },
+              ...banks.map(bank => ({ value: bank.id, label: bank.name })),
+            ]}
+          />
+          <SelectField
+            label="按国家筛选"
+            value={filterCountry}
+            onChange={(e) => setFilterCountry(e.target.value)}
+            options={[
+              { value: 'all', label: '全部国家' },
+              ...COUNTRIES.map(c => ({ value: c.code, label: c.label })),
+            ]}
+          />
+          <div className='flex items-center justify-end gap-3'>
+            <p className='text-[13px] text-d-muted'>共 {filteredProducts.length} 项</p>
+            <button
+              type='button'
+              aria-label="刷新"
+              onClick={fetchData}
+              className='rounded-xl p-2 text-d-muted hover:bg-d-subtle'
             >
-              <MenuItem value="all">全部银行</MenuItem>
-              {banks.map(bank => (
-                <MenuItem key={bank.id} value={bank.id}>{bank.name}</MenuItem>
-              ))}
-            </TextField>
-          </Grid>
-          <Grid size={{ xs: 12, md: 2.5 }}>
-            <TextField
-              fullWidth
-              size="small"
-              select
-              label="按国家筛选"
-              value={filterCountry}
-              onChange={(e) => setFilterCountry(e.target.value)}
-              InputLabelProps={{ shrink: true, style: { color: '#9ca3af' } }}
-              sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' } }}
-            >
-              <MenuItem value="all">全部国家</MenuItem>
-              {COUNTRIES.map(c => (
-                <MenuItem key={c.code} value={c.code}>{c.label}</MenuItem>
-              ))}
-            </TextField>
-          </Grid>
-          <Grid size={{ xs: 12, md: 3 }} sx={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 1 }}>
-            <Typography sx={{ color: '#9ca3af', fontSize: 13 }}>
-              共 {filteredProducts.length} 项
-            </Typography>
-            <IconButton aria-label="刷新" onClick={fetchData} sx={{ color: '#9ca3af' }}>
-              <RefreshIcon />
-            </IconButton>
-          </Grid>
-        </Grid>
-      </Paper>
+              <SyncIcon size={18} />
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* 数据表格 */}
-      <TableContainer component={Paper} sx={{ bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2 }}>
+      <div className='overflow-hidden rounded-2xl border border-d-border bg-d-surface'>
         {/* 批量操作条：只在有选中项时出现，免得平时占位 */}
         {selectedIds.length > 0 && (
-          <Box sx={{
-            px: 2, py: 1.25, display: 'flex', alignItems: 'center', gap: 1,
-            bgcolor: 'rgba(79,70,229,0.10)', borderBottom: '1px solid rgba(255,255,255,0.06)',
-          }}>
-            <Typography sx={{ color: '#c7d2fe', fontSize: 13, fontWeight: 600, mr: 1 }}>
+          <div className='flex flex-wrap items-center gap-2 border-b border-d-border bg-d-accent/10 px-3 py-2'>
+            <span className='mr-1 text-[13px] font-semibold text-d-accent-light'>
               已选 {selectedIds.length} 项
-            </Typography>
-            <Button
-              size="small" variant="outlined" disabled={submitting}
-              onClick={handleBatchAI}
-              sx={{ color: '#c7d2fe', borderColor: 'rgba(199,210,254,0.4)', textTransform: 'none' }}
-            >
+            </span>
+            <Button size='sm' variant='secondary' disabled={submitting} onClick={handleBatchAI}>
               AI 补全
             </Button>
-            <Button
-              size="small" variant="outlined" disabled={submitting}
-              onClick={handleBatchEnable}
-              sx={{ color: '#4ade80', borderColor: 'rgba(74,222,128,0.4)', textTransform: 'none' }}
-            >
+            <Button size='sm' variant='secondary' disabled={submitting} onClick={handleBatchEnable}>
               启用
             </Button>
-            <Button
-              size="small" variant="outlined" disabled={submitting}
-              onClick={handleBatchDisable}
-              sx={{ color: '#9ca3af', borderColor: 'rgba(156,163,175,0.4)', textTransform: 'none' }}
-            >
+            <Button size='sm' variant='secondary' disabled={submitting} onClick={handleBatchDisable}>
               禁用
             </Button>
-            <Button
-              size="small" variant="outlined" disabled={submitting}
-              onClick={handleBatchDelete}
-              sx={{ color: '#f87171', borderColor: 'rgba(248,113,113,0.4)', textTransform: 'none' }}
-            >
+            <Button size='sm' variant='danger' disabled={submitting} onClick={handleBatchDelete}>
               删除
             </Button>
-            <Box sx={{ flex: 1 }} />
-            <Button size="small" onClick={() => setSelectedIds([])} sx={{ color: '#9ca3af', textTransform: 'none' }}>
+            <div className='flex-1' />
+            <button
+              type='button'
+              onClick={() => setSelectedIds([])}
+              className='text-[13px] text-d-muted hover:text-d-text'
+            >
               取消选择
-            </Button>
-          </Box>
+            </button>
+          </div>
         )}
-        <Table sx={{ minWidth: 650 }}>
-          <TableHead sx={{ bgcolor: 'rgba(255,255,255,0.02)' }}>
-            <TableRow>
-              <TableCell padding="checkbox" sx={{ color: '#9ca3af', fontWeight: 600, width: 48 }}>
-                <Checkbox
-                  size="small"
-                  indeterminate={selectedIds.length > 0 && selectedIds.length < paginatedProducts.length}
-                  checked={paginatedProducts.length > 0 && paginatedProducts.every(p => selectedIds.includes(p.id))}
-                  onChange={(e) => {
-                    const pageIds = paginatedProducts.map(p => p.id)
-                    setSelectedIds(e.target.checked
-                      ? [...new Set([...selectedIds, ...pageIds])]
-                      : selectedIds.filter(id => !pageIds.includes(id)))
-                  }}
-                  sx={{ color: '#6b7280', '&.Mui-checked': { color: 'primary.main' } }}
-                />
-              </TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>银行名称</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>卡片名称</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>年费</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>还款宽限</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>状态</TableCell>
-              <TableCell align="right" sx={{ color: '#9ca3af', fontWeight: 600 }}>操作</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={7} align="center" sx={{ py: 10 }}>
-                  <CircularProgress size={24} sx={{ color: '#818cf8' }} />
-                </TableCell>
-              </TableRow>
-            ) : filteredProducts.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} align="center" sx={{ py: 10, color: '#9ca3af' }}>
-                  {fetchError ? `加载失败: ${fetchError}` : '未检索到卡产品数据'}
-                </TableCell>
-              </TableRow>
-            ) : (
-              paginatedProducts.map((product) => (
-                <TableRow
-                  key={product.id}
-                  sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' }, borderBottom: '1px solid rgba(255,255,255,0.04)' }}
-                >
-                  <TableCell padding="checkbox">
-                    <Checkbox
-                      size="small"
-                      checked={selectedIds.includes(product.id)}
-                      onChange={(e) => setSelectedIds(e.target.checked
-                        ? [...selectedIds, product.id]
-                        : selectedIds.filter(id => id !== product.id))}
-                      sx={{ color: '#6b7280', '&.Mui-checked': { color: 'primary.main' } }}
-                    />
-                  </TableCell>
-                  <TableCell sx={{ color: '#e4e6eb', fontWeight: 500 }}>{product.bank_name}</TableCell>
-                  <TableCell sx={{ color: '#e4e6eb' }}>{product.card_name}</TableCell>
-                  <TableCell sx={{ color: '#e4e6eb' }}>
-                    {product.annual_fee ? `${product.currency} ${product.annual_fee}` : '免费'}
-                  </TableCell>
-                  <TableCell sx={{ color: '#9ca3af', fontSize: 13 }}>
-                    {product.payment_due_type === 'after_billing' ? `账单日后 ${product.payment_due_value} 天` : `每月固定 ${product.payment_due_value} 日`}
-                  </TableCell>
-                  <TableCell>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Switch
-                        size="small"
-                        checked={product.is_active}
-                        onChange={() => handleToggleStatus(product)}
-                        sx={{
-                          '& .MuiSwitch-switchBase.Mui-checked': { color: '#10b981' },
-                          '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { bgcolor: '#10b981' }
-                        }}
+        <div className='overflow-x-auto'>
+          <table className='w-full min-w-[650px] border-collapse text-[13px]'>
+            <thead className='bg-d-subtle/50'>
+              <tr className='[&>th]:px-3 [&>th]:py-2.5 [&>th]:text-left [&>th]:font-semibold [&>th]:text-d-muted'>
+                <th className='w-12'>
+                  <AdminCheckbox
+                    ariaLabel='全选本页'
+                    indeterminate={selectedIds.length > 0 && selectedIds.length < paginatedProducts.length}
+                    checked={paginatedProducts.length > 0 && paginatedProducts.every(p => selectedIds.includes(p.id))}
+                    onChange={(checked) => {
+                      const pageIds = paginatedProducts.map(p => p.id)
+                      setSelectedIds(checked
+                        ? [...new Set([...selectedIds, ...pageIds])]
+                        : selectedIds.filter(id => !pageIds.includes(id)))
+                    }}
+                  />
+                </th>
+                <th>银行名称</th>
+                <th>卡片名称</th>
+                <th>年费</th>
+                <th>还款宽限</th>
+                <th>状态</th>
+                <th className='text-right'>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className='px-3 py-10 text-center'>
+                    <Spinner size={24} />
+                  </td>
+                </tr>
+              ) : filteredProducts.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className='px-3 py-10 text-center text-d-muted'>
+                    {fetchError ? `加载失败: ${fetchError}` : '未检索到卡产品数据'}
+                  </td>
+                </tr>
+              ) : (
+                paginatedProducts.map((product) => (
+                  <tr key={product.id} className='border-t border-d-border/60 transition-colors hover:bg-d-subtle/40'>
+                    <td className='px-3 py-2'>
+                      <AdminCheckbox
+                        ariaLabel={`选择 ${product.card_name}`}
+                        checked={selectedIds.includes(product.id)}
+                        onChange={(checked) => setSelectedIds(checked
+                          ? [...selectedIds, product.id]
+                          : selectedIds.filter(id => id !== product.id))}
                       />
-                      <Chip
-                        label={product.is_active ? '启用中' : '已禁用'}
-                        size="small"
-                        sx={{
-                          bgcolor: product.is_active ? 'rgba(16, 185, 129, 0.1)' : 'rgba(244, 63, 94, 0.1)',
-                          color: product.is_active ? '#10b981' : '#f43f5e',
-                          fontSize: 11,
-                          fontWeight: 600
-                        }}
-                      />
-                    </Box>
-                  </TableCell>
-                  <TableCell align="right">
-                    <IconButton aria-label="编辑" size="small" onClick={() => handleOpenDialog(product)} sx={{ color: '#9ca3af' }}>
-                      <EditIcon fontSize="small" />
-                    </IconButton>
-                    <IconButton aria-label="删除" size="small" onClick={() => handleDelete(product.id)} sx={{ color: '#f43f5e', ml: 1 }}>
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-        <TablePagination
-          component="div"
+                    </td>
+                    <td className='px-3 py-2 font-medium'>{product.bank_name}</td>
+                    <td className='px-3 py-2'>{product.card_name}</td>
+                    <td className='px-3 py-2 tabular-nums'>
+                      {product.annual_fee ? `${product.currency} ${product.annual_fee}` : '免费'}
+                    </td>
+                    <td className='px-3 py-2 text-d-muted'>
+                      {product.payment_due_type === 'after_billing' ? `账单日后 ${product.payment_due_value} 天` : `每月固定 ${product.payment_due_value} 日`}
+                    </td>
+                    <td className='px-3 py-2'>
+                      <div className='flex items-center gap-2'>
+                        <Toggle
+                          checked={product.is_active}
+                          onChange={() => handleToggleStatus(product)}
+                          ariaLabel={`启用 ${product.card_name}`}
+                        />
+                        <span
+                          className={
+                            'rounded-md px-2 py-1 text-[11px] font-semibold ' +
+                            (product.is_active
+                              ? 'bg-d-success-soft text-d-success-ink'
+                              : 'bg-d-danger-soft text-d-danger-ink')
+                          }
+                        >
+                          {product.is_active ? '启用中' : '已禁用'}
+                        </span>
+                      </div>
+                    </td>
+                    <td className='px-3 py-2 text-right'>
+                      <button
+                        type='button'
+                        aria-label="编辑"
+                        onClick={() => handleOpenDialog(product)}
+                        className='rounded-lg p-1.5 text-d-muted hover:bg-d-subtle hover:text-d-text'
+                      >
+                        <NoteIcon size={16} />
+                      </button>
+                      <button
+                        type='button'
+                        aria-label="删除"
+                        onClick={() => handleDelete(product.id)}
+                        className='ml-1 rounded-lg p-1.5 text-d-danger-ink hover:bg-d-danger-soft'
+                      >
+                        <TrashIcon size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <AdminPagination
           count={filteredProducts.length}
           page={page}
-          onPageChange={handleChangePage}
           rowsPerPage={rowsPerPage}
-          onRowsPerPageChange={handleChangeRowsPerPage}
-          labelRowsPerPage="每页行数:"
-          sx={{ color: '#9ca3af', borderTop: '1px solid rgba(255,255,255,0.06)' }}
+          onPageChange={setPage}
+          onRowsPerPageChange={(n) => { setRowsPerPage(n); setPage(0) }}
         />
-      </TableContainer>
+      </div>
 
       {/* 新增/编辑对话框 */}
-      <Dialog
+      <Modal
         open={dialogOpen}
         onClose={() => !submitting && setDialogOpen(false)}
-        maxWidth="sm"
-        fullWidth
-        PaperProps={{
-          sx: { bgcolor: '#1e2028', color: '#e4e6eb', borderRadius: 3, p: 1 }
-        }}
+        maxWidth='md'
+        title={currentProduct?.id ? '编辑卡产品' : '新增卡产品'}
+        footer={
+          <>
+            <Button variant='ghost' onClick={() => setDialogOpen(false)}>取消</Button>
+            <Button onClick={handleSubmit} loading={submitting}>
+              {submitting ? '保存中...' : '确定'}
+            </Button>
+          </>
+        }
       >
-        <DialogTitle sx={{ fontWeight: 700 }}>
-          {currentProduct?.id ? '编辑卡产品' : '新增卡产品'}
-        </DialogTitle>
-        <DialogContent sx={{ bgcolor: '#1e2028', pt: 1 }}>
-          <Box sx={{ mb: 2, display: 'flex', justifyContent: 'flex-end' }}>
-            <AiCompleteButton
-              type="card_product"
-              formData={currentProduct || {}}
-              onComplete={(data) => setCurrentProduct({ ...currentProduct, ...data })}
-              availableFields={[
-                { key: 'description_md', label: '详细介绍 (Markdown)' },
-                { key: 'apply_url', label: '申请链接' },
-                { key: 'rewards_summary', label: '积分/返现规则' },
-                { key: 'annual_fee', label: '年费金额' },
-                { key: 'annual_fee_waiver', label: '年费减免政策' }
+        <div className='mb-4 flex justify-end'>
+          <AiCompleteButton
+            type="card_product"
+            formData={currentProduct || {}}
+            onComplete={(data) => setCurrentProduct({ ...currentProduct, ...data })}
+            availableFields={[
+              { key: 'description_md', label: '详细介绍 (Markdown)' },
+              { key: 'apply_url', label: '申请链接' },
+              { key: 'rewards_summary', label: '积分/返现规则' },
+              { key: 'annual_fee', label: '年费金额' },
+              { key: 'annual_fee_waiver', label: '年费减免政策' }
+            ]}
+          />
+        </div>
+        <div className='flex flex-col gap-4'>
+          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+            <SelectField
+              label="银行名称"
+              required
+              placeholder="选择银行"
+              value={currentProduct?.bank_id || ''}
+              onChange={(e) => {
+                const bank = banks.find(b => b.id === e.target.value)
+                setCurrentProduct({
+                  ...currentProduct,
+                  bank_id: e.target.value,
+                  bank_name: bank?.name || '',
+                })
+              }}
+              options={banks.map(b => ({ value: b.id, label: b.name }))}
+            />
+            <TextField
+              label="卡片全称"
+              required
+              value={currentProduct?.card_name || ''}
+              onChange={(e) => setCurrentProduct({ ...currentProduct, card_name: e.target.value })}
+            />
+          </div>
+          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+            <SelectField
+              label="币种"
+              value={currentProduct?.currency || 'CNY'}
+              onChange={(e) => setCurrentProduct({ ...currentProduct, currency: e.target.value })}
+              options={[
+                { value: 'CNY', label: 'CNY - 人民币' },
+                { value: 'USD', label: 'USD - 美元' },
+                { value: 'HKD', label: 'HKD - 港币' },
               ]}
             />
-          </Box>
-          <Grid container spacing={2}>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <Autocomplete
-                fullWidth
-                options={banks}
-                getOptionLabel={(option) => option.name || ''}
-                value={banks.find(b => b.id === currentProduct?.bank_id) || null}
-                onChange={(_, newValue) => {
-                  setCurrentProduct({ 
-                    ...currentProduct, 
-                    bank_id: newValue?.id || '',
-                    bank_name: newValue?.name || ''
-                  })
-                }}
-                renderInput={(params) => (
-                  <TextField 
-                    {...params} 
-                    label="银行名称" 
-                    required 
-                    InputLabelProps={{ style: { color: '#9ca3af' } }}
-                    sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-                  />
-                )}
-                slotProps={{
-                  paper: { sx: { bgcolor: '#1e2028', color: '#e4e6eb' } }
-                }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                fullWidth
-                label="卡片全称"
-                required
-                value={currentProduct?.card_name || ''}
-                onChange={(e) => setCurrentProduct({ ...currentProduct, card_name: e.target.value })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
-              <TextField
-                fullWidth
-                label="币种"
-                select
-                value={currentProduct?.currency || 'CNY'}
-                onChange={(e) => setCurrentProduct({ ...currentProduct, currency: e.target.value })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              >
-                <MenuItem value="CNY">CNY - 人民币</MenuItem>
-                <MenuItem value="USD">USD - 美元</MenuItem>
-                <MenuItem value="HKD">HKD - 港币</MenuItem>
-              </TextField>
-            </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
-              <TextField
-                fullWidth
-                label="年费"
-                type="number"
-                value={currentProduct?.annual_fee || 0}
-                onChange={(e) => setCurrentProduct({ ...currentProduct, annual_fee: Number(e.target.value) })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              />
-            </Grid>
-
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                fullWidth
-                label="申请链接"
-                value={currentProduct?.apply_url || ''}
-                onChange={(e) => setCurrentProduct({ ...currentProduct, apply_url: e.target.value })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                fullWidth
-                label="积分/返现规则摘要"
-                multiline
-                rows={2}
-                value={currentProduct?.rewards_summary || ''}
-                onChange={(e) => setCurrentProduct({ ...currentProduct, rewards_summary: e.target.value })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
-              <Autocomplete
-                fullWidth
-                options={[{ code: 'CN', name: '中国', label: 'CN - 中国' }, ...COUNTRIES.filter(c => c.code !== 'CN')]}
-                getOptionLabel={(option) => option.label}
-                value={COUNTRIES.find(c => c.code === currentProduct?.country) || COUNTRIES[0]}
-                onChange={(_, newValue) => {
-                  setCurrentProduct({ ...currentProduct, country: newValue?.code || 'CN' })
-                }}
-                renderInput={(params) => (
-                  <TextField 
-                    {...params} 
-                    label="国家" 
-                    InputLabelProps={{ style: { color: '#9ca3af' } }}
-                    sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-                  />
-                )}
-                slotProps={{
-                  paper: { sx: { bgcolor: '#1e2028', color: '#e4e6eb' } }
-                }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                fullWidth
-                label="卡片详细介绍 (Markdown)"
-                multiline
-                rows={4}
-                placeholder="支持 Markdown 格式..."
-                value={currentProduct?.description_md || ''}
-                onChange={(e) => setCurrentProduct({ ...currentProduct, description_md: e.target.value })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                fullWidth
-                label="年费减免政策"
-                multiline
-                rows={2}
-                placeholder="例如：刷卡 5 次免次年年费"
-                value={currentProduct?.annual_fee_waiver || ''}
-                onChange={(e) => setCurrentProduct({ ...currentProduct, annual_fee_waiver: e.target.value })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                fullWidth
-                label="还款日规则"
-                select
-                value={currentProduct?.payment_due_type || 'after_billing'}
-                onChange={(e) => setCurrentProduct({ ...currentProduct, payment_due_type: e.target.value as 'after_billing' | 'fixed' })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              >
-                <MenuItem value="after_billing">账单日后 N 天</MenuItem>
-                <MenuItem value="fixed">每月固定日期</MenuItem>
-              </TextField>
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                fullWidth
-                label="规则数值 (天/日)"
-                type="number"
-                value={currentProduct?.payment_due_value || 20}
-                onChange={(e) => setCurrentProduct({ ...currentProduct, payment_due_value: Number(e.target.value) })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              />
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
-          <Button onClick={() => setDialogOpen(false)} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button
-            onClick={handleSubmit}
-            variant="contained"
-            disabled={submitting}
-            sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' }, px: 4, borderRadius: 2 }}
-          >
-            {submitting ? '保存中...' : '确定'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+            <TextField
+              label="年费"
+              type="number"
+              value={currentProduct?.annual_fee || 0}
+              onChange={(e) => setCurrentProduct({ ...currentProduct, annual_fee: Number(e.target.value) })}
+            />
+          </div>
+          <TextField
+            label="申请链接"
+            value={currentProduct?.apply_url || ''}
+            onChange={(e) => setCurrentProduct({ ...currentProduct, apply_url: e.target.value })}
+          />
+          <TextArea
+            label="积分/返现规则摘要"
+            rows={2}
+            value={currentProduct?.rewards_summary || ''}
+            onChange={(e) => setCurrentProduct({ ...currentProduct, rewards_summary: e.target.value })}
+          />
+          <SelectField
+            label="国家"
+            value={currentProduct?.country || 'CN'}
+            onChange={(e) => setCurrentProduct({ ...currentProduct, country: e.target.value })}
+            options={COUNTRIES.map(c => ({ value: c.code, label: c.label }))}
+          />
+          <TextArea
+            label="卡片详细介绍 (Markdown)"
+            rows={4}
+            placeholder="支持 Markdown 格式..."
+            value={currentProduct?.description_md || ''}
+            onChange={(e) => setCurrentProduct({ ...currentProduct, description_md: e.target.value })}
+          />
+          <TextArea
+            label="年费减免政策"
+            rows={2}
+            placeholder="例如：刷卡 5 次免次年年费"
+            value={currentProduct?.annual_fee_waiver || ''}
+            onChange={(e) => setCurrentProduct({ ...currentProduct, annual_fee_waiver: e.target.value })}
+          />
+          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+            <SelectField
+              label="还款日规则"
+              value={currentProduct?.payment_due_type || 'after_billing'}
+              onChange={(e) => setCurrentProduct({ ...currentProduct, payment_due_type: e.target.value as 'after_billing' | 'fixed' })}
+              options={[
+                { value: 'after_billing', label: '账单日后 N 天' },
+                { value: 'fixed', label: '每月固定日期' },
+              ]}
+            />
+            <TextField
+              label="规则数值 (天/日)"
+              type="number"
+              value={currentProduct?.payment_due_value || 20}
+              onChange={(e) => setCurrentProduct({ ...currentProduct, payment_due_value: Number(e.target.value) })}
+            />
+          </div>
+        </div>
+      </Modal>
 
       {/* 批量结果反馈：部分成功必须说清楚，不能静默 */}
-      <Snackbar open={Boolean(notice)} autoHideDuration={6000} onClose={() => setNotice(null)}>
-        <Alert onClose={() => setNotice(null)} severity="success" variant="filled" sx={{ width: '100%' }}>
-          {notice}
-        </Alert>
-      </Snackbar>
-      <Snackbar open={Boolean(saveError)} autoHideDuration={10000} onClose={() => setSaveError(null)}>
-        <Alert onClose={() => setSaveError(null)} severity="error" variant="filled" sx={{ width: '100%' }}>
-          {saveError}
-        </Alert>
-      </Snackbar>
-    </Box>
+      <Toast
+        open={Boolean(notice)}
+        message={notice ?? ''}
+        severity='success'
+        autoHideMs={6000}
+        onClose={() => setNotice(null)}
+      />
+      <Toast
+        open={Boolean(saveError)}
+        message={saveError ?? ''}
+        severity='error'
+        autoHideMs={10000}
+        onClose={() => setSaveError(null)}
+      />
+    </div>
   )
 }

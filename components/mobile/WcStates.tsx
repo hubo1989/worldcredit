@@ -1,23 +1,23 @@
 'use client'
 
-import { Box, Typography, Button } from '@mui/material'
 import { RetryIcon } from '@/components/icons/WcIcon'
 import type { ReactNode } from 'react'
 
 /**
  * WorldCredit 通用状态组件：骨架屏 / 空态 / 错误态。
- * 所有列表与详情页必须覆盖这三态（§7.5）。
+ * 走 ObsidianUI 暗色 token，不依赖 MUI。
  */
 
-/** 骨架卡片（shimmer） */
-export function WcSkeleton({ height = 96, count = 3, radius = 'var(--radius-depth-1)' }: { height?: number; count?: number; radius?: number | string }) {
+/** 骨架卡片（shimmer）。需放在 .obsidian-dashboard 内才会用暗色渐变。 */
+export function WcSkeleton({ height = 96, count = 3, radius = 12 }: { height?: number; count?: number; radius?: number | string }) {
+  const borderRadius = typeof radius === 'number' ? `${radius}px` : radius
   return (
     <>
       {Array.from({ length: count }).map((_, i) => (
-        <Box
+        <div
           key={i}
-          className="wc-skeleton"
-          sx={{ height, borderRadius: radius, mb: 1.5, width: '100%' }}
+          className='wc-skeleton mb-3 w-full'
+          style={{ height, borderRadius }}
         />
       ))}
     </>
@@ -39,63 +39,29 @@ export function WcEmptyState({
   icon?: ReactNode
 }) {
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        textAlign: 'center',
-        py: 6,
-        px: 3,
-      }}
-    >
-      <Box
-        sx={{
-          width: 72,
-          height: 72,
-          borderRadius: '50%',
-          // 空态色块走令牌即可，不做第二套色阶
-          background: 'linear-gradient(135deg, var(--track), var(--border))',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          mb: 2,
-          color: 'var(--strong)',
-          boxShadow: 'var(--shadow-e1)',
-        }}
-      >
+    <div className='flex flex-col items-center justify-center px-6 py-12 text-center'>
+      <div className='mb-4 flex h-[72px] w-[72px] items-center justify-center rounded-full bg-d-subtle text-d-accent-light'>
         {icon ?? (
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M3 10.5 12 3l9 7.5" />
-            <path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5" />
+          <svg width='32' height='32' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='1.6' strokeLinecap='round' strokeLinejoin='round' aria-hidden='true'>
+            <path d='M3 10.5 12 3l9 7.5' />
+            <path d='M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5' />
           </svg>
         )}
-      </Box>
-      <Typography className="type-title" sx={{ mb: 0.5 }}>
-        {title}
-      </Typography>
+      </div>
+      <p className='text-[17px] font-semibold leading-6 text-d-text'>{title}</p>
       {description && (
-        <Typography className="type-label" sx={{ mb: 2, maxWidth: 280 }}>
-          {description}
-        </Typography>
+        <p className='mt-1 max-w-[280px] text-[13px] leading-5 text-d-muted'>{description}</p>
       )}
       {actionLabel && onAction && (
-        <Button
-          variant="contained"
-          disableElevation
+        <button
+          type='button'
           onClick={onAction}
-          sx={{
-            borderRadius: 'var(--radius-pill)',
-            fontWeight: 600,
-            textTransform: 'none',
-            px: 3,
-          }}
+          className='mt-4 h-10 rounded-full bg-d-accent px-5 text-sm font-semibold text-white'
         >
           {actionLabel}
-        </Button>
+        </button>
       )}
-    </Box>
+    </div>
   )
 }
 
@@ -110,36 +76,18 @@ export function WcErrorState({
   retryLabel?: string
 }) {
   return (
-    <Box
-      sx={{
-        // 语义错误态：保留 danger 语义色底与 1px 语义描边（非分层边框）
-        background: 'rgba(207, 46, 46, 0.06)',
-        border: '1px solid rgba(207, 46, 46, 0.20)',
-        borderRadius: 'var(--radius-depth-2)',
-        p: 3,
-        textAlign: 'center',
-      }}
-    >
-      <Typography className="type-body" sx={{ color: 'var(--danger-ink)', mb: 1.5 }}>
-        {message}
-      </Typography>
+    <div className='rounded-2xl border border-d-danger/30 bg-d-danger-soft p-5 text-center'>
+      <p className='text-[13px] leading-5 text-d-danger-ink'>{message}</p>
       {onRetry && (
-        <Button
-          size="small"
-          variant="contained"
-          startIcon={<RetryIcon size={16} />}
+        <button
+          type='button'
           onClick={onRetry}
-          sx={{
-            bgcolor: 'var(--danger)',
-            '&:hover': { bgcolor: '#B32525' },
-            borderRadius: 'var(--radius-pill)',
-            textTransform: 'none',
-            fontWeight: 600,
-          }}
+          className='mt-3 inline-flex h-9 items-center gap-1.5 rounded-full bg-d-danger px-4 text-[13px] font-semibold text-white'
         >
+          <RetryIcon size={16} />
           {retryLabel}
-        </Button>
+        </button>
       )}
-    </Box>
+    </div>
   )
 }

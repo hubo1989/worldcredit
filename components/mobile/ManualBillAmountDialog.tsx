@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, Button, Stack, Typography, Alert, InputAdornment,
-} from '@mui/material'
+import { Modal } from '@/components/obsidian/overlays'
+import { Button } from '@/components/obsidian/controls'
+import { TextField } from '@/components/obsidian/fields'
+import { Alert } from '@/components/obsidian/feedback'
 import { setCardManualBillAmount } from '@/lib/api/bills'
 import { currencySymbol } from '@/lib/fx'
 import { format } from 'date-fns'
@@ -64,46 +64,42 @@ export function ManualBillAmountDialog({
   }
 
   return (
-    <Dialog open={open} onClose={() => !submitting && onClose()} maxWidth="xs" fullWidth>
-      <DialogTitle sx={{ fontWeight: 800, fontSize: 'var(--type-section-size)' }}>
-        {isPinned ? '修改账单金额' : '填写账单金额'}
-      </DialogTitle>
-      <DialogContent>
-        <Stack spacing={1.5}>
-          <Typography className="type-label">
-            {cardLabel} · {format(new Date(), 'yyyy-MM')} 账期
-          </Typography>
-          <TextField
-            autoFocus
-            fullWidth
-            type="number"
-            value={value}
-            onChange={e => setValue(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }}
-            placeholder="0.00"
-            InputProps={{
-              startAdornment: <InputAdornment position="start">{currencySymbol(currency)}</InputAdornment>,
-            }}
-            inputProps={{ inputMode: 'decimal', min: 0, step: '0.01' }}
-          />
-          {/* 说清优先级，避免用户以为下次导入会覆盖它（或反过来以为它不会生效） */}
-          <Alert severity="info" sx={{ borderRadius: 'var(--radius-depth-1)' }}>
-            手动填写的金额优先级最高；邮件导入、Gmail 同步得到的金额不会覆盖它。
-          </Alert>
-          {error && <Alert severity="error" sx={{ borderRadius: 'var(--radius-depth-1)' }}>{error}</Alert>}
-        </Stack>
-      </DialogContent>
-      <DialogActions sx={{ p: 2 }}>
-        <Button onClick={onClose} disabled={submitting}>取消</Button>
-        <Button
-          variant="contained"
-          onClick={handleSubmit}
-          disabled={submitting}
-          sx={{ fontWeight: 700, borderRadius: 'var(--radius-pill)', textTransform: 'none' }}
-        >
-          {submitting ? '保存中...' : '保存'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+    <Modal
+      open={open}
+      title={isPinned ? '修改账单金额' : '填写账单金额'}
+      onClose={() => !submitting && onClose()}
+      dismissible={!submitting}
+      footer={
+        <>
+          <Button variant='ghost' onClick={onClose} disabled={submitting}>取消</Button>
+          <Button onClick={handleSubmit} loading={submitting}>
+            {submitting ? '保存中...' : '保存'}
+          </Button>
+        </>
+      }
+    >
+      <div className='flex flex-col gap-3'>
+        <p className='text-[13px] leading-5 text-d-muted'>
+          {cardLabel} · {format(new Date(), 'yyyy-MM')} 账期
+        </p>
+        <TextField
+          autoFocus
+          type='number'
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }}
+          placeholder='0.00'
+          inputMode='decimal'
+          min={0}
+          step='0.01'
+          startAdornment={<span className='text-[14px]'>{currencySymbol(currency)}</span>}
+        />
+        {/* 说清优先级，避免用户以为下次导入会覆盖它（或反过来以为它不会生效） */}
+        <Alert severity='info'>
+          手动填写的金额优先级最高；邮件导入、Gmail 同步得到的金额不会覆盖它。
+        </Alert>
+        {error && <Alert severity='error'>{error}</Alert>}
+      </div>
+    </Modal>
   )
 }

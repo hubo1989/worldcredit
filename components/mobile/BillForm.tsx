@@ -1,11 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, Button, MenuItem, Stack, InputAdornment, Alert,
-  CircularProgress
-} from '@mui/material'
+import { Modal } from '@/components/obsidian/overlays'
+import { Button } from '@/components/obsidian/controls'
+import { TextField, SelectField } from '@/components/obsidian/fields'
+import { Alert } from '@/components/obsidian/feedback'
 import { format } from 'date-fns'
 import { createBill, updateBill, getBillByCardMonth } from '@/lib/api/bills'
 import { getAllCardsWithProduct } from '@/lib/api/cards'
@@ -164,122 +163,97 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
   }
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle className="type-title">
-        {existingBillId ? '更新账单' : '录入账单'}
-      </DialogTitle>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={existingBillId ? '更新账单' : '录入账单'}
+      footer={
+        <>
+          <Button variant='ghost' onClick={onClose} disabled={submitting}>取消</Button>
+          <Button onClick={handleSubmit} loading={submitting}>
+            {submitting ? '提交中...' : existingBillId ? '更新' : '录入'}
+          </Button>
+        </>
+      }
+    >
+      <div className='flex flex-col gap-4'>
+        {error && <Alert severity="error">{error}</Alert>}
+        <AiFillBox mode="bill" onFill={(data) => {
+          setForm(prev => ({
+            ...prev,
+            ...(data.bill_amount != null ? { bill_amount: String(data.bill_amount).replace(/[,¥元\s]/g, '') } : {}),
+            ...(data.min_payment != null ? { min_payment: String(data.min_payment).replace(/[,¥元\s]/g, '') } : {}),
+            ...(data.due_date ? { due_date: String(data.due_date).slice(0, 10) } : {}),
+            ...(data.statement_date ? { statement_date: String(data.statement_date).slice(0, 10) } : {}),
+            ...(data.bill_month ? { bill_month: String(data.bill_month).slice(0, 7) } : {}),
+          }))
+        }} />
 
-      <DialogContent>
-        <Stack spacing={2} sx={{ mt: 1 }}>
-          {error && <Alert severity="error">{error}</Alert>}
-          <AiFillBox mode="bill" onFill={(data) => {
-            setForm(prev => ({
-              ...prev,
-              ...(data.bill_amount != null ? { bill_amount: String(data.bill_amount).replace(/[,¥元\s]/g, '') } : {}),
-              ...(data.min_payment != null ? { min_payment: String(data.min_payment).replace(/[,¥元\s]/g, '') } : {}),
-              ...(data.due_date ? { due_date: String(data.due_date).slice(0, 10) } : {}),
-              ...(data.statement_date ? { statement_date: String(data.statement_date).slice(0, 10) } : {}),
-              ...(data.bill_month ? { bill_month: String(data.bill_month).slice(0, 7) } : {}),
-            }))
-          }} />
+        {existingBillId && !existingBill && (
+          <Alert severity="info">当月账单已存在，将更新金额</Alert>
+        )}
 
-          {existingBillId && !existingBill && (
-            <Alert severity="info" sx={{ py: 0.5 }}>
-              当月账单已存在，将更新金额
-            </Alert>
-          )}
+        {/* 信用卡 */}
+        <SelectField
+          label="信用卡"
+          required
+          value={form.card_id}
+          onChange={e => setForm(prev => ({ ...prev, card_id: e.target.value }))}
+          disabled={!!existingBill}
+          placeholder="暂无信用卡"
+          options={cards.map(c => ({ value: c.id, label: cardLabel(c) }))}
+        />
 
-          {/* 信用卡 */}
-          <TextField
-            select
-            fullWidth
-            label="信用卡 *"
-            value={form.card_id}
-            onChange={set('card_id')}
-            disabled={!!existingBill}
-          >
-            {cards.length === 0 && (
-              <MenuItem value="" disabled>暂无信用卡</MenuItem>
-            )}
-            {cards.map(c => (
-              <MenuItem key={c.id} value={c.id}>
-                {cardLabel(c)}
-              </MenuItem>
-            ))}
-          </TextField>
+        {/* 账单月份 */}
+        <TextField
+          label="账单月份"
+          required
+          type="month"
+          value={form.bill_month}
+          onChange={set('bill_month')}
+          disabled={!!existingBill}
+        />
 
-          {/* 账单月份 */}
-          <TextField
-            fullWidth
-            label="账单月份 *"
-            type="month"
-            value={form.bill_month}
-            onChange={set('bill_month')}
-            disabled={!!existingBill}
-            InputLabelProps={{ shrink: true }}
-          />
+        {/* 账单金额 */}
+        <TextField
+          label="账单金额"
+          required
+          type="number"
+          min={0}
+          step={0.01}
+          value={form.bill_amount}
+          onChange={set('bill_amount')}
+          startAdornment={<span>¥</span>}
+        />
 
-          {/* 账单金额 */}
-          <TextField
-            fullWidth
-            label="账单金额 *"
-            type="number"
-            inputProps={{ min: 0, step: 0.01 }}
-            value={form.bill_amount}
-            onChange={set('bill_amount')}
-            InputProps={{
-              startAdornment: <InputAdornment position="start">¥</InputAdornment>,
-            }}
-          />
+        {/* 最低还款额 */}
+        <TextField
+          label="最低还款额（选填）"
+          type="number"
+          min={0}
+          step={0.01}
+          value={form.min_payment}
+          onChange={set('min_payment')}
+          startAdornment={<span>¥</span>}
+        />
 
-          {/* 最低还款额 */}
-          <TextField
-            fullWidth
-            label="最低还款额（选填）"
-            type="number"
-            inputProps={{ min: 0, step: 0.01 }}
-            value={form.min_payment}
-            onChange={set('min_payment')}
-            InputProps={{
-              startAdornment: <InputAdornment position="start">¥</InputAdornment>,
-            }}
-          />
+        {/* 账单日 */}
+        <TextField
+          label="账单日（选填）"
+          type="date"
+          value={form.statement_date}
+          onChange={set('statement_date')}
+        />
 
-          {/* 账单日 */}
-          <TextField
-            fullWidth
-            label="账单日（选填）"
-            type="date"
-            value={form.statement_date}
-            onChange={set('statement_date')}
-            InputLabelProps={{ shrink: true }}
-          />
-
-          {/* 到期日 */}
-          <TextField
-            fullWidth
-            label="还款到期日 *"
-            type="date"
-            value={form.due_date}
-            onChange={set('due_date')}
-            InputLabelProps={{ shrink: true }}
-          />
-        </Stack>
-      </DialogContent>
-
-      <DialogActions sx={{ p: 2, pt: 0 }}>
-        <Button onClick={onClose} color="inherit" disabled={submitting}>
-          取消
-        </Button>
-        <Button
-          variant="contained"
-          onClick={handleSubmit}
-          disabled={submitting}
-          startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : null}
-        >
-          {submitting ? '提交中...' : existingBillId ? '更新' : '录入'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+        {/* 到期日 */}
+        <TextField
+          label="还款到期日"
+          required
+          type="date"
+          value={form.due_date}
+          onChange={set('due_date')}
+        />
+      </div>
+    </Modal>
   )
 }

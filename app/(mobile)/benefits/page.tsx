@@ -1,9 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import {
-  Dialog, DialogTitle, DialogContent, DialogActions, TextField,
-} from '@mui/material'
+import { ConfirmDialog } from '@/components/obsidian/overlays'
 import {
   BenefitIcon, AiSparkleIcon, PlusIcon,
 } from '@/components/icons/WcIcon'
@@ -273,54 +271,45 @@ export default function BenefitsPage() {
         </div>
       )}
 
-      {/* 登记享用 Dialog */}
-      <Dialog open={useOpen} onClose={() => setUseOpen(false)} fullWidth maxWidth='xs'>
-        <DialogTitle
-          sx={{
-            fontSize: 'var(--type-section-size)',
-            lineHeight: 'var(--type-section-line)',
-            fontWeight: 'var(--type-section-weight)',
-            letterSpacing: 'var(--type-section-tracking)',
-            color: 'var(--text)',
-            fontFamily: 'var(--font-display)',
-          }}
-        >
-          登记权益享用
-        </DialogTitle>
-        <DialogContent>
-          <div className='mt-2 flex flex-col gap-3'>
-            <p className='text-[13px] leading-5 text-d-muted'>
-              正在登记享用: <strong className='text-d-text'>{selectedBenefit?.name}</strong>
-            </p>
-            <TextField
-              label='使用场景与备注 (选填)'
-              placeholder='例如: 浦东机场 T2 专车接送'
-              fullWidth
-              multiline
-              rows={3}
-              value={note}
-              onChange={e => setNote(e.target.value)}
-            />
-          </div>
-        </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
-          <button
-            type='button'
-            onClick={() => setUseOpen(false)}
-            className='h-10 rounded-xl px-5 text-sm font-semibold text-d-muted'
-          >
-            取消
-          </button>
-          <button
-            type='button'
-            onClick={handleUseBenefit}
-            disabled={submitting}
-            className='h-10 rounded-xl bg-d-accent px-5 text-sm font-semibold text-white disabled:opacity-50'
-          >
-            {submitting ? '登记中...' : '确认登记享用'}
-          </button>
-        </DialogActions>
-      </Dialog>
+      <ConfirmDialog
+        open={useOpen}
+        title='登记权益享用'
+        onClose={submitting ? () => {} : () => setUseOpen(false)}
+        actions={
+          <>
+            <button
+              type='button'
+              onClick={() => setUseOpen(false)}
+              disabled={submitting}
+              className='h-10 rounded-xl px-5 text-sm font-semibold text-d-muted disabled:opacity-50'
+            >
+              取消
+            </button>
+            <button
+              type='button'
+              onClick={handleUseBenefit}
+              disabled={submitting}
+              className='h-10 rounded-xl bg-d-accent px-5 text-sm font-semibold text-white disabled:opacity-50'
+            >
+              {submitting ? '登记中...' : '确认登记享用'}
+            </button>
+          </>
+        }
+      >
+        <p className='text-[13px] leading-5 text-d-muted'>
+          正在登记享用: <strong className='text-d-text'>{selectedBenefit?.name}</strong>
+        </p>
+        <label className='mt-3 block'>
+          <span className='mb-1 block text-[12px] font-semibold text-d-muted'>使用场景与备注 (选填)</span>
+          <textarea
+            rows={3}
+            value={note}
+            placeholder='例如: 浦东机场 T2 专车接送'
+            onChange={e => setNote(e.target.value)}
+            className='w-full rounded-xl border border-d-border bg-d-bg px-3 py-2 text-[16px] text-d-text outline-none placeholder:text-d-muted focus:border-d-accent'
+          />
+        </label>
+      </ConfirmDialog>
 
       {/* 手动新增/编辑 Dialog */}
       <BenefitEditDialog

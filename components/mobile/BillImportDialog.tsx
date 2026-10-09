@@ -2,16 +2,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { Modal } from '@/components/obsidian/overlays'
+import { Button } from '@/components/obsidian/controls'
+import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
+import { Alert } from '@/components/obsidian/feedback'
 import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, Button, FormControl, InputLabel, Select, MenuItem,
-  Box, Typography, IconButton, Stepper, Step, StepLabel,
-  Alert, Stack, Chip, CircularProgress, Divider,
-} from '@mui/material'
-import {
-  ArrowBack, ArrowForward, Check, DeleteOutline,
-  ContentPaste, UploadFile, Warning as WarningIcon,
-} from '@mui/icons-material'
+  ChevronLeftIcon, ChevronRightIcon, CheckIcon, TrashIcon,
+  UploadIcon, AlertIcon,
+} from '@/components/icons/WcIcon'
 import { recognizeBillFromText, validateBillDraft, generateWarnings, type BillDraftPayload, type BillDraftItem } from '@/lib/billRecognizer'
 import { createBillImportDraft, confirmBillImportDraft, discardBillImportDraft } from '@/lib/api/billDrafts'
 import type { CreditCard } from '@/lib/types'
@@ -32,6 +30,43 @@ interface Props {
   onImportSuccess: () => void
   cards: CardOption[]
   userId: string
+}
+
+/** 横向步骤条（替代 MUI Stepper）：完成步打勾，当前步高亮。 */
+function StepBar({ activeStep }: { activeStep: number }) {
+  return (
+    <ol className='flex items-center justify-between gap-1 px-1 pt-1' aria-label='导入步骤'>
+      {steps.map((label, i) => {
+        const done = i < activeStep
+        const active = i === activeStep
+        return (
+          <li key={label} className='flex min-w-0 flex-1 flex-col items-center gap-1'>
+            <span
+              aria-hidden='true'
+              className={
+                'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold leading-none transition-colors ' +
+                (done
+                  ? 'bg-d-accent text-white'
+                  : active
+                    ? 'border-2 border-d-accent text-d-accent-light'
+                    : 'border border-d-border text-d-muted')
+              }
+            >
+              {done ? <CheckIcon size={12} /> : i + 1}
+            </span>
+            <span
+              className={
+                'max-w-full truncate text-[10px] leading-3 ' +
+                (active ? 'font-semibold text-d-accent-light' : 'text-d-muted')
+              }
+            >
+              {label}
+            </span>
+          </li>
+        )
+      })}
+    </ol>
+  )
 }
 
 export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId }: Props) {
@@ -202,10 +237,10 @@ export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId
     }
   }
 
-  const getConfidenceColor = () => {
-    if (confidence >= 0.8) return 'success'
-    if (confidence >= 0.5) return 'warning'
-    return 'error'
+  const getConfidenceTone = () => {
+    if (confidence >= 0.8) return 'border-d-success-ink/40 bg-d-success-soft text-d-success-ink'
+    if (confidence >= 0.5) return 'border-d-warn-ink/40 bg-d-gold-soft text-d-warn-ink'
+    return 'border-d-danger/40 bg-d-danger-soft text-d-danger-ink'
   }
 
   const getConfidenceLabel = () => {
@@ -216,98 +251,62 @@ export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId
 
   // Step 1: Select card
   const renderStep1 = () => (
-    <Box sx={{ pt: 2 }}>
-      <FormControl fullWidth>
-        <InputLabel>选择信用卡 *</InputLabel>
-        <Select
-          value={cardId}
-          onChange={e => setCardId(e.target.value)}
-          label="选择信用卡 *"
-        >
-          {cards.map(c => (
-            <MenuItem key={c.id} value={c.id}>{c.label}</MenuItem>
-          ))}
-        </Select>
-      </FormControl>
-    </Box>
+    <div className='pt-2'>
+      <SelectField
+        label='选择信用卡'
+        required
+        value={cardId}
+        onChange={e => setCardId(e.target.value)}
+        options={cards.map(c => ({ value: c.id, label: c.label }))}
+      />
+    </div>
   )
 
   // Step 2: Select source type
   const renderStep2 = () => (
-    <Box sx={{ pt: 2 }}>
-      <FormControl fullWidth>
-        <InputLabel>导入来源</InputLabel>
-        <Select
-          value={sourceType}
-          onChange={e => setSourceType(e.target.value as SourceType)}
-          label="导入来源"
-        >
-          <MenuItem value="text">
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <ContentPaste fontSize="small" />
-              粘贴文本 (推荐)
-            </Box>
-          </MenuItem>
-          <MenuItem value="image" disabled>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <UploadFile fontSize="small" />
-              上传图片 (即将推出)
-            </Box>
-          </MenuItem>
-          <MenuItem value="pdf" disabled>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <UploadFile fontSize="small" />
-              上传 PDF (即将推出)
-            </Box>
-          </MenuItem>
-        </Select>
-      </FormControl>
+    <div className='pt-2'>
+      <SelectField
+        label='导入来源'
+        value={sourceType}
+        onChange={e => setSourceType(e.target.value as SourceType)}
+        options={[
+          { value: 'text', label: '粘贴文本 (推荐)' },
+          { value: 'image', label: '上传图片 (即将推出)', disabled: true },
+          { value: 'pdf', label: '上传 PDF (即将推出)', disabled: true },
+        ]}
+      />
 
       {sourceType === 'text' && (
-        <Alert severity="info" sx={{ mt: 2 }}>
-          支持粘贴银行短信或邮件内容，系统将自动识别账单信息
-        </Alert>
+        <div className='mt-4'>
+          <Alert severity='info'>
+            支持粘贴银行短信或邮件内容，系统将自动识别账单信息
+          </Alert>
+        </div>
       )}
-    </Box>
+    </div>
   )
 
   // Step 3: Input content
   const renderStep3 = () => (
-    <Box sx={{ pt: 2 }}>
+    <div className='pt-2'>
       {sourceType === 'text' ? (
-        <>
-          <TextField
-            fullWidth
-            multiline
-            rows={12}
-            label="粘贴账单内容"
-            placeholder="例如：
-招商银行：您账户1234的03月账单金额¥1234.56，最低还款额¥123.45，到期还款日03月25日。
-交易明细：
-03月01日 星巴克咖啡 38.00
-03月03日 地铁出行 12.00"
-            value={inputText}
-            onChange={e => setInputText(e.target.value)}
-            sx={{ fontFamily: 'monospace' }}
-          />
-        </>
+        <TextArea
+          label='粘贴账单内容'
+          rows={12}
+          placeholder={'例如：\n招商银行：您账户1234的03月账单金额¥1234.56，最低还款额¥123.45，到期还款日03月25日。\n交易明细：\n03月01日 星巴克咖啡 38.00\n03月03日 地铁出行 12.00'}
+          value={inputText}
+          onChange={e => setInputText(e.target.value)}
+          style={{ fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: 13 }}
+        />
       ) : (
-        <Box
-          sx={{
-            // 上传放置区语义：虚线提示（非分层边框），圆角走令牌
-            border: '2px dashed',
-            borderColor: 'var(--track)',
-            borderRadius: 'var(--radius-depth-2)',
-            p: 4,
-            textAlign: 'center',
-            color: 'var(--muted)',
-          }}
-        >
-          <UploadFile sx={{ fontSize: 48, mb: 1, color: 'var(--strong)' }} />
-          <Typography className="type-body" sx={{ color: 'var(--muted)' }}>文件上传功能即将推出</Typography>
-        </Box>
+        <div className='rounded-2xl border-2 border-dashed border-d-border p-10 text-center'>
+          <div className='mb-2 flex justify-center text-d-text'>
+            <UploadIcon size={48} />
+          </div>
+          <p className='text-[14px] leading-5 text-d-muted'>文件上传功能即将推出</p>
+        </div>
       )}
-    </Box>
+    </div>
   )
 
   // Step 4: Preview and edit draft
@@ -317,174 +316,167 @@ export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId
     const itemsTotal = (draft.items || []).reduce((sum, item) => sum + (item.amount || 0), 0)
 
     return (
-      <Box sx={{ pt: 2 }}>
+      <div className='pt-2'>
         {/* Confidence indicator */}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-          <Typography className="type-body" sx={{ fontWeight: 600 }}>识别置信度:</Typography>
-          <Chip
-            label={getConfidenceLabel()}
-            color={getConfidenceColor()}
-            size="small"
-          />
-          <Typography className="type-label">
+        <div className='mb-4 flex items-center gap-2'>
+          <p className='text-[14px] font-semibold leading-5 text-d-text'>识别置信度:</p>
+          <span
+            className={'inline-flex h-6 items-center rounded-full border px-2.5 text-[12px] font-semibold leading-none ' + getConfidenceTone()}
+          >
+            {getConfidenceLabel()}
+          </span>
+          <p className='text-[13px] leading-5 text-d-muted'>
             ({(confidence * 100).toFixed(0)}%)
-          </Typography>
-        </Box>
+          </p>
+        </div>
 
         {/* Warnings */}
         {warnings.length > 0 && (
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            {warnings.map((warn, i) => (
-              <Box key={i} sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5 }}>
-                <WarningIcon fontSize="inherit" sx={{ mt: 0.25 }} />
-                <Typography className="type-body">{warn}</Typography>
-              </Box>
-            ))}
-          </Alert>
+          <div className='mb-4'>
+            <Alert severity='warning'>
+              <div className='flex flex-col gap-1'>
+                {warnings.map((warn, i) => (
+                  <p key={i} className='flex items-start gap-1.5'>
+                    <AlertIcon size={14} className='mt-0.5 shrink-0' />
+                    <span>{warn}</span>
+                  </p>
+                ))}
+              </div>
+            </Alert>
+          </div>
         )}
 
         {/* Bill fields */}
-        <Stack spacing={2}>
+        <div className='flex flex-col gap-4'>
           <TextField
-            fullWidth
-            label="账单月份"
-            type="month"
+            label='账单月份'
+            type='month'
             value={draft.bill_month || ''}
             onChange={e => updateDraftField('bill_month', e.target.value)}
-            InputLabelProps={{ shrink: true }}
           />
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <TextField
-              fullWidth
-              label="账单金额"
-              type="number"
-              value={draft.bill_amount || ''}
-              onChange={e => updateDraftField('bill_amount', Number(e.target.value))}
-              inputProps={{ step: 0.01 }}
-            />
-            <TextField
-              fullWidth
-              label="最低还款额"
-              type="number"
-              value={draft.min_payment || ''}
-              onChange={e => updateDraftField('min_payment', Number(e.target.value))}
-              inputProps={{ step: 0.01 }}
-            />
-          </Box>
+          <div className='flex gap-3'>
+            <div className='min-w-0 flex-1'>
+              <TextField
+                label='账单金额'
+                type='number'
+                value={draft.bill_amount || ''}
+                onChange={e => updateDraftField('bill_amount', Number(e.target.value))}
+                step={0.01}
+              />
+            </div>
+            <div className='min-w-0 flex-1'>
+              <TextField
+                label='最低还款额'
+                type='number'
+                value={draft.min_payment || ''}
+                onChange={e => updateDraftField('min_payment', Number(e.target.value))}
+                step={0.01}
+              />
+            </div>
+          </div>
           <TextField
-            fullWidth
-            label="还款截止日"
-            type="date"
+            label='还款截止日'
+            type='date'
             value={draft.due_date || ''}
             onChange={e => updateDraftField('due_date', e.target.value)}
-            InputLabelProps={{ shrink: true }}
           />
-        </Stack>
+        </div>
 
         {/* Items */}
-        <Divider sx={{ my: 2, borderColor: 'var(--track)' }} />
-        <Typography className="type-section" gutterBottom>
+        <div className='my-4 h-px bg-d-border' />
+        <p className='mb-2 text-[17px] font-semibold leading-6 text-d-text'>
           交易明细 (合计: ¥{itemsTotal.toFixed(2)})
-        </Typography>
+        </p>
 
         {draft.items && draft.items.length > 0 ? (
-          <Stack spacing={1}>
+          <div className='flex flex-col gap-3'>
             {draft.items.map((item, index) => (
-              <Box
-                key={index}
-                sx={{
-                  // 分层阴影代替边框
-                  borderRadius: 'var(--radius-depth-2)',
-                  boxShadow: 'var(--shadow-e1)',
-                  p: 1.5,
-                }}
-              >
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                  <Typography className="type-label">
+              <div key={index} className='rounded-2xl border border-d-border bg-d-surface p-3'>
+                <div className='mb-2 flex items-center justify-between'>
+                  <p className='text-[13px] leading-4 text-d-muted'>
                     #{index + 1}
-                  </Typography>
-                  <IconButton
-                    size="small"
+                  </p>
+                  <button
+                    type='button'
                     onClick={() => removeDraftItem(index)}
-                    aria-label="删除明细"
+                    aria-label='删除明细'
+                    className='rounded-full p-1.5 text-d-muted transition-colors hover:text-d-danger'
                   >
-                    <DeleteOutline fontSize="small" />
-                  </IconButton>
-                </Box>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="商户说明"
-                  value={item.description}
-                  onChange={e => updateDraftItem(index, 'description', e.target.value)}
-                  sx={{ mb: 1 }}
-                />
-                <Box sx={{ display: 'flex', gap: 1 }}>
+                    <TrashIcon size={16} />
+                  </button>
+                </div>
+                <div className='mb-2'>
                   <TextField
-                    size="small"
-                    label="金额"
-                    type="number"
-                    value={item.amount}
-                    onChange={e => updateDraftItem(index, 'amount', Number(e.target.value))}
-                    inputProps={{ step: 0.01 }}
-                    sx={{ flex: 1 }}
+                    label='商户说明'
+                    value={item.description}
+                    onChange={e => updateDraftItem(index, 'description', e.target.value)}
                   />
-                  <TextField
-                    size="small"
-                    label="分类"
-                    value={item.category || ''}
-                    onChange={e => updateDraftItem(index, 'category', e.target.value)}
-                    sx={{ flex: 1 }}
-                  />
-                </Box>
-              </Box>
+                </div>
+                <div className='flex gap-3'>
+                  <div className='min-w-0 flex-1'>
+                    <TextField
+                      label='金额'
+                      type='number'
+                      value={item.amount}
+                      onChange={e => updateDraftItem(index, 'amount', Number(e.target.value))}
+                      step={0.01}
+                    />
+                  </div>
+                  <div className='min-w-0 flex-1'>
+                    <TextField
+                      label='分类'
+                      value={item.category || ''}
+                      onChange={e => updateDraftItem(index, 'category', e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
             ))}
-          </Stack>
+          </div>
         ) : (
-          <Alert severity="info">未识别到交易明细，可手动添加</Alert>
+          <Alert severity='info'>未识别到交易明细，可手动添加</Alert>
         )}
-      </Box>
+      </div>
     )
   }
 
   // Step 5: Complete
   const renderStep5 = () => (
-    <Box sx={{ pt: 2, textAlign: 'center' }}>
+    <div className='pt-2 text-center'>
       {success ? (
         <>
-          <Check sx={{ fontSize: 64, color: 'success.main', mb: 2 }} />
-          <Typography className="type-title" gutterBottom>导入成功</Typography>
-          <Typography className="type-body" sx={{ color: 'var(--muted)' }}>
+          <div className='mb-4 flex justify-center text-d-success-ink'>
+            <CheckIcon size={64} />
+          </div>
+          <p className='mb-1 text-[22px] font-semibold leading-7 text-d-text'>导入成功</p>
+          <p className='text-[14px] leading-5 text-d-muted'>
             账单已创建完成
-          </Typography>
+          </p>
         </>
       ) : (
         <>
-          <Typography className="type-title" gutterBottom>确认导入</Typography>
-          <Typography className="type-body" sx={{ color: 'var(--muted)', mb: 2 }}>
+          <p className='mb-1 text-[22px] font-semibold leading-7 text-d-text'>确认导入</p>
+          <p className='mb-4 text-[14px] leading-5 text-d-muted'>
             草稿已保存，确认后将创建正式账单
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
+          </p>
+          <div className='flex justify-center gap-2'>
             <Button
-              variant="outlined"
-              color="error"
+              variant='danger'
               onClick={handleDiscard}
               disabled={loading}
             >
               放弃
             </Button>
             <Button
-              variant="contained"
               onClick={handleConfirmImport}
-              disabled={loading}
-              startIcon={loading ? <CircularProgress size={16} /> : <Check />}
+              loading={loading}
             >
               确认导入
             </Button>
-          </Box>
+          </div>
         </>
       )}
-    </Box>
+    </div>
   )
 
   const isNextDisabled = () => {
@@ -495,59 +487,49 @@ export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId
   }
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
-      <DialogTitle className="type-title">智能导入账单</DialogTitle>
+    <Modal
+      open={open}
+      onClose={handleClose}
+      maxWidth='md'
+      title='智能导入账单'
+      footer={
+        activeStep < 4 ? (
+          <>
+            <Button
+              variant='ghost'
+              onClick={handleBack}
+              disabled={activeStep === 0 || loading}
+            >
+              <ChevronLeftIcon size={16} /> 上一步
+            </Button>
+            <Button
+              onClick={handleNext}
+              disabled={isNextDisabled()}
+              loading={loading}
+            >
+              {loading ? '处理中...' : activeStep === 3 ? '保存草稿' : <>下一步 <ChevronRightIcon size={16} /></>}
+            </Button>
+          </>
+        ) : success ? (
+          <Button onClick={handleClose}>完成</Button>
+        ) : undefined
+      }
+    >
+      <StepBar activeStep={activeStep} />
 
-      <Stepper activeStep={activeStep} sx={{ px: 2, pt: 1 }}>
-        {steps.map((label) => (
-          <Step key={label}>
-            <StepLabel>{label}</StepLabel>
-          </Step>
-        ))}
-      </Stepper>
+      {error && (
+        <div className='mt-4'>
+          <Alert severity='error'>{error}</Alert>
+        </div>
+      )}
 
-      <DialogContent>
-        {error && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {error}
-          </Alert>
-        )}
-
+      <div className='mt-2'>
         {activeStep === 0 && renderStep1()}
         {activeStep === 1 && renderStep2()}
         {activeStep === 2 && renderStep3()}
         {activeStep === 3 && renderStep4()}
         {activeStep === 4 && renderStep5()}
-      </DialogContent>
-
-      {activeStep < 4 && (
-        <DialogActions>
-          <Button
-            onClick={handleBack}
-            disabled={activeStep === 0 || loading}
-            startIcon={<ArrowBack />}
-          >
-            上一步
-          </Button>
-          <Button
-            variant="contained"
-            onClick={handleNext}
-            disabled={isNextDisabled()}
-            endIcon={loading ? null : <ArrowForward />}
-            startIcon={loading ? <CircularProgress size={16} /> : null}
-          >
-            {loading ? '处理中...' : activeStep === 3 ? '保存草稿' : '下一步'}
-          </Button>
-        </DialogActions>
-      )}
-
-      {activeStep === 4 && success && (
-        <DialogActions>
-          <Button onClick={handleClose} variant="contained">
-            完成
-          </Button>
-        </DialogActions>
-      )}
-    </Dialog>
+      </div>
+    </Modal>
   )
 }

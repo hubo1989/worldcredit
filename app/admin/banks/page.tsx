@@ -1,25 +1,38 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import {
-  Box, Typography, Paper, Button, TextField, InputAdornment,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TablePagination,
-  IconButton, Switch, Dialog, DialogTitle, DialogContent,
-  DialogActions, Grid, CircularProgress, Autocomplete, Tooltip,
-  Snackbar, Alert, Avatar, Chip
-} from '@mui/material'
-import {
-  Add as AddIcon,
-  Search as SearchIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
-  Refresh as RefreshIcon
-} from '@mui/icons-material'
+import { Button } from '@/components/obsidian/controls'
+import { Toggle } from '@/components/obsidian/controls'
+import { TextField, SelectField } from '@/components/obsidian/fields'
+import { Toast, Modal } from '@/components/obsidian/overlays'
+import { Spinner } from '@/components/obsidian/feedback'
+import { AdminPagination } from '@/components/admin/AdminShell'
+import { PlusIcon, SearchIcon, NoteIcon, TrashIcon, SyncIcon } from '@/components/icons/WcIcon'
 import { getAdminBanks, createBank, updateBank, deleteBank } from '@/lib/api/admin'
 import { Bank } from '@/lib/types'
 import { COUNTRIES } from '@/lib/constants'
 import AiCompleteButton from '@/components/admin/AiCompleteButton'
 import { enrichBankFromWeb, type BankEnrichment } from '@/lib/api/ai'
+
+/** 银行图标：有 logo 用图，加载失败回退首字。 */
+function BankLogo({ logoUrl, name }: { logoUrl?: string | null; name: string }) {
+  const [failed, setFailed] = useState(false)
+  if (logoUrl && !failed) {
+    return (
+      <img
+        src={logoUrl}
+        alt={name}
+        onError={() => setFailed(true)}
+        className='h-9 w-9 rounded-lg bg-d-subtle object-cover'
+      />
+    )
+  }
+  return (
+    <span className='flex h-9 w-9 items-center justify-center rounded-lg bg-d-subtle text-[14px] text-d-muted'>
+      {name?.charAt(0)}
+    </span>
+  )
+}
 
 export default function BanksPage() {
   const [loading, setLoading] = useState(true)
@@ -166,15 +179,6 @@ export default function BanksPage() {
 
   const paginatedBanks = filteredBanks.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
 
-  const handleChangePage = (event: unknown, newPage: number) => {
-    setPage(newPage)
-  }
-
-  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setRowsPerPage(parseInt(event.target.value, 10))
-    setPage(0)
-  }
-
   const handleOpenDialog = (bank?: Bank) => {
     if (bank) {
       setCurrentBank(bank)
@@ -241,358 +245,280 @@ export default function BanksPage() {
   }
 
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
-        <Box>
-          <Typography variant="h4" sx={{ color: '#e4e6eb', fontWeight: 700, mb: 0.5 }}>
-            银行管理
-          </Typography>
-          <Typography variant="body2" sx={{ color: '#9ca3af' }}>
-            维护系统中支持的银行列表及所属国家
-          </Typography>
-        </Box>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenDialog()}
-          sx={{
-            bgcolor: 'primary.main',
-            '&:hover': { bgcolor: 'primary.dark' },
-            textTransform: 'none',
-            borderRadius: 2,
-            px: 3
-          }}
-        >
+    <div>
+      <div className='mb-8 flex items-center justify-between gap-4'>
+        <div>
+          <h1 className='mb-1 text-[26px] font-bold'>银行管理</h1>
+          <p className='text-[13px] text-d-muted'>维护系统中支持的银行列表及所属国家</p>
+        </div>
+        <Button onClick={() => handleOpenDialog()}>
+          <PlusIcon size={16} />
           新增银行
         </Button>
-      </Box>
+      </div>
 
-      <Paper sx={{ p: 2, mb: 3, bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2 }}>
-        <Grid container spacing={2} alignItems="center">
-          <Grid size={{ xs: 12, md: 4 }}>
-            <TextField
-              fullWidth
-              size="small"
-              placeholder="搜索银行名称..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon sx={{ color: '#9ca3af', fontSize: 20 }} />
-                  </InputAdornment>
-                ),
-                sx: { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' }
-              }}
-            />
-          </Grid>
-          <Grid size={{ xs: 12, md: 4 }}>
-            <Autocomplete
-              size="small"
-              options={[{ code: 'all', label: '全部国家', name: '全部' }, ...COUNTRIES]}
-              getOptionLabel={(option) => option.label}
-              value={[{ code: 'all', label: '全部国家', name: '全部' }, ...COUNTRIES].find(c => c.code === filterCountry) || null}
-              onChange={(_, newValue) => setFilterCountry(newValue?.code || 'all')}
-              renderInput={(params) => (
-                <TextField 
-                  {...params} 
-                  label="按国家筛选" 
-                  InputLabelProps={{ style: { color: '#9ca3af' } }}
-                  sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb', bgcolor: 'rgba(255,255,255,0.03)' } }}
-                />
-              )}
-              slotProps={{
-                paper: { sx: { bgcolor: '#1e2028', color: '#e4e6eb' } }
-              }}
-            />
-          </Grid>
-          <Grid size={{ xs: 12, md: 4 }} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <div className='mb-6 rounded-2xl border border-d-border bg-d-surface p-4'>
+        <div className='grid grid-cols-1 items-center gap-4 md:grid-cols-3'>
+          <TextField
+            placeholder="搜索银行名称..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            startAdornment={<SearchIcon size={18} />}
+          />
+          <SelectField
+            label="按国家筛选"
+            value={filterCountry}
+            onChange={(e) => setFilterCountry(e.target.value)}
+            options={[
+              { value: 'all', label: '全部国家' },
+              ...COUNTRIES.map(c => ({ value: c.code, label: c.label })),
+            ]}
+          />
+          <div className='flex items-center justify-end gap-2'>
             {/* 明确这是「一次一批」，否则点完只补了 8 家会被当成没生效 */}
-            <Tooltip
+            <button
+              type='button'
               title={`每次最多补 ${ENRICH_BATCH_SIZE} 家（每家要抓官网，全部一起跑会超时）。补完可再次点击继续。`}
-              arrow
-            >
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={enriching ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon />}
               disabled={enriching || banksMissingFields(filteredBanks).length === 0}
               onClick={() => handleEnrich(banksMissingFields(filteredBanks))}
-              sx={{ mr: 1, color: '#a5b4fc', borderColor: 'rgba(165,180,252,0.4)', textTransform: 'none' }}
+              className='flex h-9 items-center gap-1.5 rounded-xl border border-d-accent-light/40 px-3.5 text-[13px] font-semibold text-d-accent-light disabled:opacity-50'
             >
+              {enriching ? <Spinner size={14} className='border-d-border/50 border-t-d-accent-light' /> : <SyncIcon size={14} />}
               {enriching
                 ? `补全中 ${enrichProgress.done}/${enrichProgress.total}`
                 : `按真实内容补全 (${Math.min(ENRICH_BATCH_SIZE, banksMissingFields(filteredBanks).length)}/${banksMissingFields(filteredBanks).length})`}
-            </Button>
-            </Tooltip>
-            <IconButton aria-label="刷新" onClick={fetchData} sx={{ color: '#9ca3af' }}>
-              <RefreshIcon />
-            </IconButton>
-          </Grid>
-        </Grid>
-      </Paper>
+            </button>
+            <button
+              type='button'
+              aria-label="刷新"
+              onClick={fetchData}
+              className='rounded-xl p-2 text-d-muted hover:bg-d-subtle'
+            >
+              <SyncIcon size={18} />
+            </button>
+          </div>
+        </div>
+      </div>
 
-      <TableContainer component={Paper} sx={{ bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2 }}>
-        <Table>
-          <TableHead sx={{ bgcolor: 'rgba(255,255,255,0.02)' }}>
-            <TableRow>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600, width: 60 }}>图标</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>银行名称</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600, width: 100 }}>简称</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>国家</TableCell>
-              <TableCell sx={{ color: '#9ca3af', fontWeight: 600 }}>状态</TableCell>
-              <TableCell align="right" sx={{ color: '#9ca3af', fontWeight: 600 }}>操作</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={6} align="center" sx={{ py: 10 }}>
-                  <CircularProgress size={24} sx={{ color: '#818cf8' }} />
-                </TableCell>
-              </TableRow>
-            ) : filteredBanks.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} align="center" sx={{ py: 10, color: '#9ca3af' }}>
-                  {fetchError ? `加载失败: ${fetchError}` : '暂无银行数据'}
-                </TableCell>
-              </TableRow>
-            ) : (
-              paginatedBanks.map((bank) => (
-                <TableRow key={bank.id} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' } }}>
-                  <TableCell sx={{ py: 1 }}>
-                    <Avatar
-                      src={bank.logo_url || undefined}
-                      variant="rounded"
-                      sx={{ width: 36, height: 36, bgcolor: '#2a2d3a', fontSize: 14, color: '#9ca3af' }}
-                    >
-                      {bank.name?.charAt(0)}
-                    </Avatar>
-                  </TableCell>
-                  <TableCell sx={{ color: '#e4e6eb', fontWeight: 500 }}>{bank.name}</TableCell>
-                  <TableCell sx={{ color: bank.short_name ? '#e4e6eb' : '#6b7280', fontSize: 13 }}>
-                    {bank.short_name || '—'}
-                  </TableCell>
-                  <TableCell sx={{ color: '#e4e6eb' }}>
-                    {COUNTRIES.find(c => c.code === bank.country)?.label || bank.country}
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      size="small"
-                      checked={bank.is_active}
-                      onChange={() => handleToggleStatus(bank)}
-                      sx={{
-                        '& .MuiSwitch-switchBase.Mui-checked': { color: '#10b981' },
-                        '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { bgcolor: '#10b981' }
-                      }}
-                    />
-                  </TableCell>
-                  <TableCell align="right">
-                    <IconButton aria-label="编辑" size="small" onClick={() => handleOpenDialog(bank)} sx={{ color: '#9ca3af' }}>
-                      <EditIcon fontSize="small" />
-                    </IconButton>
-                    <IconButton aria-label="删除" size="small" onClick={() => handleDelete(bank.id)} sx={{ color: '#f43f5e', ml: 1 }}>
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-        <TablePagination
-          component="div"
+      <div className='overflow-hidden rounded-2xl border border-d-border bg-d-surface'>
+        <div className='overflow-x-auto'>
+          <table className='w-full border-collapse text-[13px]'>
+            <thead className='bg-d-subtle/50'>
+              <tr className='[&>th]:px-3 [&>th]:py-2.5 [&>th]:text-left [&>th]:font-semibold [&>th]:text-d-muted'>
+                <th className='w-[60px]'>图标</th>
+                <th>银行名称</th>
+                <th className='w-[100px]'>简称</th>
+                <th>国家</th>
+                <th>状态</th>
+                <th className='text-right'>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className='px-3 py-10 text-center'>
+                    <Spinner size={24} />
+                  </td>
+                </tr>
+              ) : filteredBanks.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className='px-3 py-10 text-center text-d-muted'>
+                    {fetchError ? `加载失败: ${fetchError}` : '暂无银行数据'}
+                  </td>
+                </tr>
+              ) : (
+                paginatedBanks.map((bank) => (
+                  <tr key={bank.id} className='border-t border-d-border/60 transition-colors hover:bg-d-subtle/40'>
+                    <td className='px-3 py-2'>
+                      <BankLogo logoUrl={bank.logo_url} name={bank.name} />
+                    </td>
+                    <td className='px-3 py-2 font-medium'>{bank.name}</td>
+                    <td className={'px-3 py-2 ' + (bank.short_name ? '' : 'text-d-muted/60')}>
+                      {bank.short_name || '—'}
+                    </td>
+                    <td className='px-3 py-2'>
+                      {COUNTRIES.find(c => c.code === bank.country)?.label || bank.country}
+                    </td>
+                    <td className='px-3 py-2'>
+                      <Toggle
+                        checked={bank.is_active}
+                        onChange={() => handleToggleStatus(bank)}
+                        ariaLabel={`启用 ${bank.name}`}
+                      />
+                    </td>
+                    <td className='px-3 py-2 text-right'>
+                      <button
+                        type='button'
+                        aria-label="编辑"
+                        onClick={() => handleOpenDialog(bank)}
+                        className='rounded-lg p-1.5 text-d-muted hover:bg-d-subtle hover:text-d-text'
+                      >
+                        <NoteIcon size={16} />
+                      </button>
+                      <button
+                        type='button'
+                        aria-label="删除"
+                        onClick={() => handleDelete(bank.id)}
+                        className='ml-1 rounded-lg p-1.5 text-d-danger-ink hover:bg-d-danger-soft'
+                      >
+                        <TrashIcon size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <AdminPagination
           count={filteredBanks.length}
           page={page}
-          onPageChange={handleChangePage}
           rowsPerPage={rowsPerPage}
-          onRowsPerPageChange={handleChangeRowsPerPage}
-          labelRowsPerPage="每页行数:"
-          sx={{ color: '#9ca3af', borderTop: '1px solid rgba(255,255,255,0.06)' }}
+          onPageChange={setPage}
+          onRowsPerPageChange={(n) => { setRowsPerPage(n); setPage(0) }}
         />
-      </TableContainer>
+      </div>
 
-      <Dialog open={dialogOpen} onClose={() => !submitting && setDialogOpen(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { bgcolor: '#1e2028', color: '#e4e6eb', borderRadius: 3 } }}>
-        <DialogTitle>{currentBank?.id ? '编辑银行' : '新增银行'}</DialogTitle>
-        <DialogContent sx={{ bgcolor: '#1e2028', pt: 1 }}>
-          <Box sx={{ mb: 2, display: 'flex', justifyContent: 'flex-end' }}>
-            <AiCompleteButton
-              type="bank"
-              formData={currentBank || {}}
-              onComplete={(data) => setCurrentBank({ ...currentBank, ...data })}
-              availableFields={[
-                { key: 'full_name', label: '银行全称' },
-                { key: 'customer_service_phone', label: '客服电话' },
-                { key: 'website_url', label: '官方网站' }
-              ]}
+      <Modal
+        open={dialogOpen}
+        onClose={() => !submitting && setDialogOpen(false)}
+        title={currentBank?.id ? '编辑银行' : '新增银行'}
+        footer={
+          <>
+            <Button variant='ghost' onClick={() => setDialogOpen(false)}>取消</Button>
+            <Button onClick={handleSubmit} loading={submitting}>
+              {submitting ? '保存中...' : '确定'}
+            </Button>
+          </>
+        }
+      >
+        <div className='mb-4 flex justify-end'>
+          <AiCompleteButton
+            type="bank"
+            formData={currentBank || {}}
+            onComplete={(data) => setCurrentBank({ ...currentBank, ...data })}
+            availableFields={[
+              { key: 'full_name', label: '银行全称' },
+              { key: 'customer_service_phone', label: '客服电话' },
+              { key: 'website_url', label: '官方网站' }
+            ]}
+          />
+        </div>
+        <div className='flex flex-col gap-4'>
+          <TextField
+            label="银行名称 (如 招商银行)"
+            required
+            value={currentBank?.name || ''}
+            onChange={(e) => setCurrentBank({ ...currentBank, name: e.target.value })}
+          />
+          <TextField
+            label="简称 (如 招行)"
+            value={currentBank?.short_name || ''}
+            onChange={(e) => setCurrentBank({ ...currentBank, short_name: e.target.value })}
+            helperText="用于列表窄栏与卡片标题"
+          />
+          <TextField
+            label="银行全称"
+            value={currentBank?.full_name || ''}
+            onChange={(e) => setCurrentBank({ ...currentBank, full_name: e.target.value })}
+          />
+          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+            <TextField
+              label="客服电话"
+              value={currentBank?.customer_service_phone || ''}
+              onChange={(e) => setCurrentBank({ ...currentBank, customer_service_phone: e.target.value })}
             />
-          </Box>
-          <Grid container spacing={2}>
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                fullWidth
-                label="银行名称 (如 招商银行)"
-                required
-                value={currentBank?.name || ''}
-                onChange={(e) => setCurrentBank({ ...currentBank, name: e.target.value })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                fullWidth
-                label="简称 (如 招行)"
-                value={currentBank?.short_name || ''}
-                onChange={(e) => setCurrentBank({ ...currentBank, short_name: e.target.value })}
-                helperText="用于列表窄栏与卡片标题"
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                FormHelperTextProps={{ style: { color: '#6b7280' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                fullWidth
-                label="银行全称"
-                value={currentBank?.full_name || ''}
-                onChange={(e) => setCurrentBank({ ...currentBank, full_name: e.target.value })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                fullWidth
-                label="客服电话"
-                value={currentBank?.customer_service_phone || ''}
-                onChange={(e) => setCurrentBank({ ...currentBank, customer_service_phone: e.target.value })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                fullWidth
-                label="官网地址"
-                value={currentBank?.website_url || ''}
-                onChange={(e) => setCurrentBank({ ...currentBank, website_url: e.target.value })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                fullWidth
-                label="Logo URL"
-                value={currentBank?.logo_url || ''}
-                onChange={(e) => setCurrentBank({ ...currentBank, logo_url: e.target.value })}
-                InputLabelProps={{ style: { color: '#9ca3af' } }}
-                sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <Autocomplete
-                fullWidth
-                options={COUNTRIES}
-                getOptionLabel={(option) => option.label}
-                value={COUNTRIES.find(c => c.code === currentBank?.country) || COUNTRIES[0]}
-                onChange={(_, newValue) => {
-                  setCurrentBank({ ...currentBank, country: newValue?.code || 'CN' })
-                }}
-                renderInput={(params) => (
-                  <TextField 
-                    {...params} 
-                    label="国家" 
-                    InputLabelProps={{ style: { color: '#9ca3af' } }}
-                    sx={{ '& .MuiOutlinedInput-root': { color: '#e4e6eb' } }}
-                  />
-                )}
-                slotProps={{
-                  paper: { sx: { bgcolor: '#1e2028', color: '#e4e6eb' } }
-                }}
-              />
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
-          <Button onClick={() => setDialogOpen(false)} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button onClick={handleSubmit} variant="contained" disabled={submitting} sx={{ bgcolor: 'primary.main', px: 4 }}>
-            {submitting ? '保存中...' : '确定'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+            <TextField
+              label="官网地址"
+              value={currentBank?.website_url || ''}
+              onChange={(e) => setCurrentBank({ ...currentBank, website_url: e.target.value })}
+            />
+          </div>
+          <TextField
+            label="Logo URL"
+            value={currentBank?.logo_url || ''}
+            onChange={(e) => setCurrentBank({ ...currentBank, logo_url: e.target.value })}
+          />
+          <SelectField
+            label="国家"
+            value={currentBank?.country || 'CN'}
+            onChange={(e) => setCurrentBank({ ...currentBank, country: e.target.value })}
+            options={COUNTRIES.map(c => ({ value: c.code, label: c.label }))}
+          />
+        </div>
+      </Modal>
 
-      <Snackbar
+      <Toast
         open={Boolean(saveError)}
-        autoHideDuration={8000}
+        message={saveError ?? ''}
+        severity='error'
+        autoHideMs={8000}
         onClose={() => setSaveError(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-      >
-        <Alert
-          onClose={() => setSaveError(null)}
-          severity="error"
-          variant="filled"
-          sx={{ width: '100%', whiteSpace: 'pre-wrap' }}
-        >
-          {saveError}
-        </Alert>
-      </Snackbar>
+      />
 
-      <Snackbar
+      <Toast
         open={Boolean(notice)}
-        autoHideDuration={6000}
+        message={notice ?? ''}
+        severity='success'
+        autoHideMs={6000}
         onClose={() => setNotice(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-      >
-        <Alert onClose={() => setNotice(null)} severity="success" variant="filled" sx={{ width: '100%' }}>
-          {notice}
-        </Alert>
-      </Snackbar>
+      />
 
       {/* 审阅弹窗：只有官网页面上直接读到的字段会被写入，模型凭记忆给的候选只展示不落库 */}
-      <Dialog open={enrichOpen} onClose={() => !submitting && setEnrichOpen(false)} maxWidth="md" fullWidth PaperProps={{ sx: { bgcolor: '#1e2028', color: '#e4e6eb', borderRadius: 3 } }}>
-        <DialogTitle>按真实内容补全（以官网页面为证）</DialogTitle>
-        <DialogContent sx={{ bgcolor: '#1e2028' }}>
-          <Typography sx={{ color: '#9ca3af', fontSize: 13, mb: 2 }}>
-            来源标记：「官网」= 在该行官网页面上直接读到；「第三方」= 取自权威第三方来源
-            （Wikidata / 维基百科条目，用于官网拒绝抓取的银行）；「待确认」= 仅模型记忆，不写入，
-            需你核对后手动填写。写入时只取前两类。
-          </Typography>
-          <TableContainer component={Paper} sx={{ bgcolor: '#181a24', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell sx={{ color: '#9ca3af' }}>银行</TableCell>
-                  <TableCell sx={{ color: '#9ca3af' }}>全称</TableCell>
-                  <TableCell sx={{ color: '#9ca3af' }}>客服电话</TableCell>
-                  <TableCell sx={{ color: '#9ca3af' }}>官网</TableCell>
-                  <TableCell sx={{ color: '#9ca3af' }}>依据</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
+      <Modal
+        open={enrichOpen}
+        onClose={() => !submitting && setEnrichOpen(false)}
+        maxWidth='md'
+        title='按真实内容补全（以官网页面为证）'
+        footer={
+          <>
+            <Button variant='ghost' onClick={() => setEnrichOpen(false)} disabled={submitting}>取消</Button>
+            <Button onClick={handleApplyEnrichment} loading={submitting}>
+              {submitting ? '写入中...' : '写入已确认字段'}
+            </Button>
+          </>
+        }
+      >
+        <p className='mb-4 text-[13px] leading-5 text-d-muted'>
+          来源标记：「官网」= 在该行官网页面上直接读到；「第三方」= 取自权威第三方来源
+          （Wikidata / 维基百科条目，用于官网拒绝抓取的银行）；「待确认」= 仅模型记忆，不写入，
+          需你核对后手动填写。写入时只取前两类。
+        </p>
+        <div className='overflow-hidden rounded-xl border border-d-border'>
+          <div className='overflow-x-auto'>
+            <table className='w-full border-collapse text-[12px]'>
+              <thead className='bg-d-subtle/50'>
+                <tr className='[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold [&>th]:text-d-muted'>
+                  <th>银行</th>
+                  <th>全称</th>
+                  <th>客服电话</th>
+                  <th>官网</th>
+                  <th>依据</th>
+                </tr>
+              </thead>
+              <tbody>
                 {enrichRows.map(row => {
                   const tag = (p: 'site' | 'thirdparty' | 'model' | 'none') =>
                     p === 'site' ? (
-                      <Chip size="small" label="官网" sx={{ height: 18, fontSize: 11, bgcolor: 'rgba(74,222,128,0.15)', color: '#4ade80' }} />
+                      <span className='ml-1 rounded bg-d-success-soft px-1.5 py-0.5 text-[11px] text-d-success-ink'>官网</span>
                     ) : p === 'thirdparty' ? (
-                      <Chip size="small" label="第三方" sx={{ height: 18, fontSize: 11, bgcolor: 'rgba(147,197,253,0.15)', color: '#93c5fd' }} />
+                      <span className='ml-1 rounded bg-d-accent/15 px-1.5 py-0.5 text-[11px] text-d-accent-light'>第三方</span>
                     ) : p === 'model' ? (
-                      <Chip size="small" label="待确认" sx={{ height: 18, fontSize: 11, bgcolor: 'rgba(251,191,36,0.15)', color: '#fbbf24' }} />
+                      <span className='ml-1 rounded bg-d-warn-ink/15 px-1.5 py-0.5 text-[11px] text-d-warn-ink'>待确认</span>
                     ) : null
                   return (
-                    <TableRow key={row.id}>
-                      <TableCell sx={{ color: '#e4e6eb' }}>{row.name}</TableCell>
-                      <TableCell sx={{ color: '#e4e6eb', fontSize: 12 }}>
+                    <tr key={row.id} className='border-t border-d-border/60 align-top'>
+                      <td className='px-3 py-2'>{row.name}</td>
+                      <td className='px-3 py-2'>
                         {row.full_name || '—'} {tag(row.provenance.full_name)}
-                      </TableCell>
-                      <TableCell sx={{ color: '#e4e6eb', fontSize: 12 }}>
+                      </td>
+                      <td className='px-3 py-2'>
                         {row.customer_service_phone || '—'} {tag(row.provenance.customer_service_phone)}
-                      </TableCell>
-                      <TableCell sx={{ color: '#93c5fd', fontSize: 12 }}>
+                      </td>
+                      <td className='px-3 py-2 text-d-accent-light'>
                         {row.website_url || '—'} {tag(row.provenance.website_url)}
-                      </TableCell>
-                      <TableCell sx={{ color: '#9ca3af', fontSize: 11 }}>
+                      </td>
+                      <td className='px-3 py-2 text-[11px] text-d-muted'>
                         {row.fetched.length > 0
                           ? `已抓 ${row.fetched.length} 页${row.domainConsistent ? '' : '（域名未能对上，请留意）'}`
                           : row.thirdPartySources.length > 0
@@ -600,21 +526,15 @@ export default function BanksPage() {
                             : row.fetchErrors.length > 0
                               ? `未抓到：${row.fetchErrors[0]}`.slice(0, 60)
                               : '无依据'}
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                    </tr>
                   )
                 })}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
-          <Button onClick={() => setEnrichOpen(false)} disabled={submitting} sx={{ color: '#9ca3af' }}>取消</Button>
-          <Button onClick={handleApplyEnrichment} variant="contained" disabled={submitting} sx={{ bgcolor: 'primary.main', px: 4 }}>
-            {submitting ? '写入中...' : '写入已确认字段'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Box>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Modal>
+    </div>
   )
 }

@@ -1,28 +1,11 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
-import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Button,
-  Typography,
-  Box,
-  Stack,
-  Avatar,
-  Checkbox,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Chip,
-  Paper,
-  Alert,
-  CircularProgress,
-} from '@mui/material'
-import MergeTypeIcon from '@mui/icons-material/MergeType'
-import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh'
+import { Modal } from '@/components/obsidian/overlays'
+import { Button } from '@/components/obsidian/controls'
+import { SelectField } from '@/components/obsidian/fields'
+import { Alert } from '@/components/obsidian/feedback'
+import { MergeIcon, AiSparkleIcon } from '@/components/icons/WcIcon'
 import type { CardHolder } from '@/lib/types'
 import { mergeHolders } from '@/lib/api/holders'
 
@@ -32,6 +15,21 @@ interface Props {
   holders: CardHolder[]
   cardCounts: Record<string, number>
   onSuccess: () => void
+}
+
+/** 小标签 pill（对应 MUI Chip 的降级自绘）。 */
+function Pill({ children, tone = 'default' }: { children: React.ReactNode; tone?: 'default' | 'accent' | 'warn' }) {
+  const toneCls =
+    tone === 'accent'
+      ? 'border-d-accent/40 text-d-accent-light'
+      : tone === 'warn'
+        ? 'border-d-warn-ink/40 bg-d-gold-soft text-d-warn-ink'
+        : 'border-d-border text-d-muted'
+  return (
+    <span className={'inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[11px] font-semibold leading-none ' + toneCls}>
+      {children}
+    </span>
+  )
 }
 
 export function MergeHoldersDialog({
@@ -142,237 +140,170 @@ export function MergeHoldersDialog({
   }
 
   return (
-    <Dialog open={open} onClose={() => !loading && onClose()} maxWidth="sm" fullWidth>
-      <DialogTitle className="type-title" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <MergeTypeIcon sx={{ color: 'var(--strong)' }} />
-        持卡人归拢合并
-      </DialogTitle>
-      <DialogContent dividers sx={{ borderColor: 'var(--track)' }}>
-        <Typography className="type-body" sx={{ color: 'var(--muted)', mb: 2.5 }}>
-          由于邮件账单中常出现脱敏姓名（如 <strong>张*</strong>、<strong>张先生</strong>、<strong>ZHANG SAN</strong>），您可以将这些重复身份一键归拢合并到真实主持卡人名下。其名下卡片将自动转移，同时沉淀为别名库。
-        </Typography>
-
-        {error && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {error}
-          </Alert>
-        )}
-
-        {/* 1. 选择保留的主身份 */}
-        <Typography className="type-section" sx={{ mb: 1 }}>
-          1. 选择保留的主持卡人 (目标主身份)
-        </Typography>
-        <FormControl fullWidth size="small" sx={{ mb: 3 }}>
-          <InputLabel id="primary-holder-label">主持卡人</InputLabel>
-          <Select
-            labelId="primary-holder-label"
-            value={primaryId}
-            label="主持卡人"
-            onChange={e => {
-              setPrimaryId(e.target.value)
-              setSourceIds([]) // 切换主持卡人时重置被合并项
-            }}
+    <Modal
+      open={open}
+      onClose={() => !loading && onClose()}
+      dismissible={!loading}
+      maxWidth='md'
+      title={
+        <span className='flex items-center gap-2'>
+          <MergeIcon size={20} className='text-d-text' />
+          持卡人归拢合并
+        </span>
+      }
+      footer={
+        <>
+          <Button variant='ghost' onClick={onClose} disabled={loading}>取消</Button>
+          <Button
+            onClick={handleMerge}
+            disabled={loading || sourceIds.length === 0}
+            loading={loading}
           >
-            {holders.map(h => (
-              <MenuItem key={h.id} value={h.id}>
-                <Stack direction="row" alignItems="center" spacing={1.5}>
-                  <Avatar sx={{ bgcolor: h.avatar_color, width: 24, height: 24, fontSize: 12 }}>
-                    {h.name.charAt(0)}
-                  </Avatar>
-                  <Typography variant="body2" fontWeight={600}>
-                    {h.name}
-                  </Typography>
-                  <Chip
-                    label={`${cardCounts[h.id] || 0} 张卡`}
-                    size="small"
-                    variant="outlined"
-                    sx={{ height: 20, fontSize: 11 }}
-                  />
-                </Stack>
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+            {sourceIds.length > 0 ? `确认归拢合并 (${sourceIds.length} 个身份)` : '请选择合并项'}
+          </Button>
+        </>
+      }
+    >
+      <p className='mb-5 text-[14px] leading-5 text-d-muted'>
+        由于邮件账单中常出现脱敏姓名（如 <strong className='text-d-text'>张*</strong>、<strong className='text-d-text'>张先生</strong>、<strong className='text-d-text'>ZHANG SAN</strong>），您可以将这些重复身份一键归拢合并到真实主持卡人名下。其名下卡片将自动转移，同时沉淀为别名库。
+      </p>
 
-        {/* 2. 选择被归拢的重复持卡人 */}
-        {/* 长标题 + 操作按钮同行：标题可换行(minWidth:0)，按钮文案不可拆且不收缩 */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1, mb: 1 }}>
-          <Typography className="type-section" sx={{ minWidth: 0 }}>
-            2. 选择需要归拢合并进来的重复身份 ({sourceIds.length}/{candidateHolders.length})
-          </Typography>
-          {autoSuggestedIds.length > 0 && (
-            <Button
-              size="small"
-              variant="text"
-              startIcon={<AutoFixHighIcon fontSize="small" />}
-              onClick={handleSelectSuggested}
-              sx={{
-                flexShrink: 0,
-                whiteSpace: 'nowrap',
-                fontSize: 11.5,
-                fontWeight: 700,
-                textTransform: 'none',
-              }}
-            >
-              智能全选相似 ({autoSuggestedIds.length})
-            </Button>
-          )}
-        </Box>
+      {error && (
+        <div className='mb-4'>
+          <Alert severity='error'>{error}</Alert>
+        </div>
+      )}
 
-        {candidateHolders.length === 0 ? (
-          <Typography className="type-label" sx={{ py: 2, textAlign: 'center' }}>
-            没有其他可合并的持卡人
-          </Typography>
-        ) : (
-          <Paper
-            elevation={0}
-            sx={{
-              maxHeight: 220,
-              overflowY: 'auto',
-              // 分层阴影代替边框
-              borderRadius: 'var(--radius-depth-2)',
-              boxShadow: 'var(--shadow-e1)',
-              p: 0.5,
-              bgcolor: 'var(--bg)',
-              mb: 2.5,
-            }}
+      {/* 1. 选择保留的主身份 */}
+      <p className='mb-2 text-[17px] font-semibold leading-6 text-d-text'>
+        1. 选择保留的主持卡人 (目标主身份)
+      </p>
+      <div className='mb-6'>
+        <SelectField
+          label='主持卡人'
+          value={primaryId}
+          onChange={e => {
+            setPrimaryId(e.target.value)
+            setSourceIds([]) // 切换主持卡人时重置被合并项
+          }}
+          options={holders.map(h => ({
+            value: h.id,
+            label: `${h.name} · ${cardCounts[h.id] || 0} 张卡`,
+          }))}
+        />
+      </div>
+
+      {/* 2. 选择被归拢的重复持卡人 */}
+      {/* 长标题 + 操作按钮同行：标题可换行(min-w-0)，按钮文案不可拆且不收缩 */}
+      <div className='mb-2 flex items-center justify-between gap-2'>
+        <p className='min-w-0 text-[17px] font-semibold leading-6 text-d-text'>
+          2. 选择需要归拢合并进来的重复身份 ({sourceIds.length}/{candidateHolders.length})
+        </p>
+        {autoSuggestedIds.length > 0 && (
+          <Button
+            variant='ghost'
+            size='sm'
+            onClick={handleSelectSuggested}
+            className='shrink-0 whitespace-nowrap text-[12px]'
           >
-            <Stack spacing={0.5}>
-              {candidateHolders.map(c => {
-                const isSelected = sourceIds.includes(c.id)
-                const isSuggested = autoSuggestedIds.includes(c.id)
-                const count = cardCounts[c.id] || 0
-
-                return (
-                  <Paper
-                    key={c.id}
-                    elevation={0}
-                    onClick={() => handleToggleSource(c.id)}
-                    sx={{
-                      p: 1,
-                      px: 1.5,
-                      borderRadius: 'var(--radius-depth-1)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      cursor: 'pointer',
-                      bgcolor: isSelected
-                        ? 'color-mix(in srgb, var(--navy-600) 10%, var(--paper))'
-                        : 'var(--paper)',
-                      // 选中态是语义强调（不是分层），未选中态用阴影表达层级
-                      border: '1px solid',
-                      borderColor: isSelected ? 'var(--navy-600)' : 'transparent',
-                      boxShadow: isSelected ? 'none' : 'var(--shadow-e1)',
-                      transition: 'all 120ms ease',
-                    }}
-                  >
-                    <Stack direction="row" alignItems="center" spacing={1.5} sx={{ minWidth: 0 }}>
-                      <Checkbox
-                        size="small"
-                        checked={isSelected}
-                        onClick={e => e.stopPropagation()}
-                        onChange={() => handleToggleSource(c.id)}
-                        sx={{ p: 0 }}
-                      />
-                      <Avatar sx={{ bgcolor: c.avatar_color, width: 28, height: 28, fontSize: 13 }}>
-                        {c.name.charAt(0)}
-                      </Avatar>
-                      <Box sx={{ minWidth: 0 }}>
-                        <Stack direction="row" spacing={0.75} alignItems="center">
-                          <Typography variant="body2" fontWeight={600} noWrap>
-                            {c.name}
-                          </Typography>
-                          {isSuggested && (
-                            <Chip
-                              label="相似推荐"
-                              size="small"
-                              color="warning"
-                              variant="filled"
-                              sx={{ height: 18, fontSize: 10, px: 0.5 }}
-                            />
-                          )}
-                        </Stack>
-                        {c.aliases && c.aliases.length > 0 && (
-                          <Typography className="type-label" sx={{ display: 'block' }} noWrap>
-                            已有别名: {c.aliases.join('、')}
-                          </Typography>
-                        )}
-                      </Box>
-                    </Stack>
-
-                    <Chip
-                      label={`${count} 张卡`}
-                      size="small"
-                      color={count > 0 ? 'primary' : 'default'}
-                      variant="outlined"
-                      sx={{ height: 22, fontSize: 11, fontWeight: 600, flexShrink: 0 }}
-                    />
-                  </Paper>
-                )
-              })}
-            </Stack>
-          </Paper>
+            <AiSparkleIcon size={14} />
+            智能全选相似 ({autoSuggestedIds.length})
+          </Button>
         )}
+      </div>
 
-        {/* 3. 合并预览卡片 */}
-        {sourceIds.length > 0 && primaryHolder && (
-          <Paper
-            elevation={0}
-            sx={{
-              p: 2,
-              borderRadius: 'var(--radius-depth-2)',
-              // 语义成功态：保留 1px 语义绿描边与淡绿底（非分层边框）
-              bgcolor: 'color-mix(in srgb, var(--success) 8%, var(--paper))',
-              border: '1px solid',
-              borderColor: 'color-mix(in srgb, var(--success) 28%, transparent)',
-            }}
-          >
-            <Typography className="type-section" sx={{ color: 'var(--success-ink)', mb: 1 }}>
-              🎯 合并生效预览
-            </Typography>
-            <Stack className="type-body" spacing={0.5}>
-              <Box>
-                • 目标主持卡人：<strong>{primaryHolder.name}</strong>
-              </Box>
-              <Box>
-                • 转移卡片数：
-                <strong>
-                  原 {cardCounts[primaryHolder.id] || 0} 张 + 迁入 {transferCardsCount} 张 = 合计{' '}
-                  {(cardCounts[primaryHolder.id] || 0) + transferCardsCount} 张
-                </strong>
-              </Box>
-              {collectedAliases.length > 0 && (
-                <Box>
-                  • 沉淀别名库：
-                  {collectedAliases.map(a => (
-                    <Chip
-                      key={a}
-                      label={a}
-                      size="small"
-                      sx={{ height: 20, fontSize: 11, mr: 0.5, mb: 0.5, bgcolor: 'var(--paper)' }}
-                    />
-                  ))}
-                </Box>
-              )}
-            </Stack>
-          </Paper>
-        )}
-      </DialogContent>
+      {candidateHolders.length === 0 ? (
+        <p className='py-4 text-center text-[13px] leading-5 text-d-muted'>
+          没有其他可合并的持卡人
+        </p>
+      ) : (
+        <div className='mb-5 max-h-[220px] overflow-y-auto rounded-2xl border border-d-border bg-d-bg p-1'>
+          <div className='flex flex-col gap-1'>
+            {candidateHolders.map(c => {
+              const isSelected = sourceIds.includes(c.id)
+              const isSuggested = autoSuggestedIds.includes(c.id)
+              const count = cardCounts[c.id] || 0
 
-      <DialogActions sx={{ p: 2 }}>
-        <Button onClick={onClose} disabled={loading}>
-          取消
-        </Button>
-        <Button
-          variant="contained"
-          onClick={handleMerge}
-          disabled={loading || sourceIds.length === 0}
-          startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <MergeTypeIcon />}
-          sx={{ fontWeight: 700, borderRadius: 'var(--radius-depth-1)', boxShadow: 'var(--shadow-e2)' }}
-        >
-          {sourceIds.length > 0 ? `确认归拢合并 (${sourceIds.length} 个身份)` : '请选择合并项'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+              return (
+                <button
+                  key={c.id}
+                  type='button'
+                  onClick={() => handleToggleSource(c.id)}
+                  aria-pressed={isSelected}
+                  className={
+                    'flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left transition-colors ' +
+                    (isSelected
+                      ? 'border-d-accent bg-d-subtle'
+                      : 'border-transparent bg-d-surface hover:bg-d-subtle')
+                  }
+                >
+                  <span className='flex min-w-0 items-center gap-2.5'>
+                    <span
+                      className={
+                        'flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded border text-[10px] font-bold leading-none ' +
+                        (isSelected ? 'border-d-accent bg-d-accent text-white' : 'border-d-border')
+                      }
+                      style={{ width: 18, height: 18 }}
+                    >
+                      {isSelected ? '✓' : ''}
+                    </span>
+                    <span
+                      className='flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold text-white'
+                      style={{ backgroundColor: c.avatar_color }}
+                    >
+                      {c.name.charAt(0)}
+                    </span>
+                    <span className='min-w-0'>
+                      <span className='flex items-center gap-1.5'>
+                        <span className='truncate text-[14px] font-semibold leading-5 text-d-text'>
+                          {c.name}
+                        </span>
+                        {isSuggested && <Pill tone='warn'>相似推荐</Pill>}
+                      </span>
+                      {c.aliases && c.aliases.length > 0 && (
+                        <span className='block truncate text-[13px] leading-4 text-d-muted'>
+                          已有别名: {c.aliases.join('、')}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+
+                  <Pill tone={count > 0 ? 'accent' : 'default'}>{count} 张卡</Pill>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 3. 合并预览卡片 */}
+      {sourceIds.length > 0 && primaryHolder && (
+        <div className='rounded-2xl border border-d-success-ink/30 bg-d-success-soft p-4'>
+          <p className='mb-2 text-[17px] font-semibold leading-6 text-d-success-ink'>
+            🎯 合并生效预览
+          </p>
+          <div className='flex flex-col gap-1 text-[14px] leading-5 text-d-text'>
+            <p>
+              • 目标主持卡人：<strong>{primaryHolder.name}</strong>
+            </p>
+            <p>
+              • 转移卡片数：
+              <strong>
+                原 {cardCounts[primaryHolder.id] || 0} 张 + 迁入 {transferCardsCount} 张 = 合计{' '}
+                {(cardCounts[primaryHolder.id] || 0) + transferCardsCount} 张
+              </strong>
+            </p>
+            {collectedAliases.length > 0 && (
+              <p className='flex flex-wrap items-center gap-1'>
+                • 沉淀别名库：
+                {collectedAliases.map(a => (
+                  <Pill key={a}>{a}</Pill>
+                ))}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </Modal>
   )
 }

@@ -1,6 +1,5 @@
 'use client'
 
-import { Box, Typography, Paper, Stack, LinearProgress, Chip } from '@mui/material'
 import type { BenefitStat } from '@/lib/api/dashboard'
 
 interface BenefitOverviewProps {
@@ -21,73 +20,58 @@ const PERIOD_COLOR: Record<string, string> = {
 
 export function BenefitOverview({ data }: BenefitOverviewProps) {
   return (
-    <Paper sx={{
-      p: 3, borderRadius: 3,
-      bgcolor: '#181a24',
-      border: '1px solid rgba(255,255,255,0.06)',
-    }}>
-      <Typography variant="subtitle2" sx={{ color: '#e4e6eb', fontWeight: 600, mb: 2.5 }}>
-        权益使用概览
-      </Typography>
+    <div className='rounded-2xl border border-d-border bg-d-surface p-6'>
+      <p className='mb-5 text-[15px] font-semibold'>权益使用概览</p>
 
       {data.length === 0 ? (
-        <Box sx={{ py: 4, textAlign: 'center' }}>
-          <Typography variant="body2" sx={{ color: '#9ca3af' }}>暂无权益数据</Typography>
-        </Box>
+        <p className='py-8 text-center text-[13px] text-d-muted'>暂无权益数据</p>
       ) : (
-        <Stack spacing={2}>
-          {data.map(b => {
+        <div className='flex flex-col gap-4'>
+          {data.map((b) => {
             const usageRate = b.quota > 0 ? Math.min((b.usage_count / b.quota) * 100, 100) : 0
-            const periodColor = PERIOD_COLOR[b.period] || '#9ca3af'
+            const periodColor = PERIOD_COLOR[b.period] || '#9aa6bc'
 
             return (
-              <Box key={b.id} sx={{
-                p: 2, borderRadius: 2,
-                bgcolor: 'rgba(255,255,255,0.02)',
-                border: '1px solid rgba(255,255,255,0.03)',
-              }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="body2" sx={{ color: '#e4e6eb', fontWeight: 500, fontSize: 13 }}>
-                      {b.name}
-                    </Typography>
-                    <Chip
-                      label={PERIOD_LABEL[b.period] || b.period}
-                      size="small"
-                      sx={{
-                        height: 18, fontSize: 10,
-                        bgcolor: `${periodColor}18`,
-                        color: periodColor,
-                        fontWeight: 600,
-                      }}
-                    />
-                  </Box>
-                  <Typography variant="caption" sx={{ color: '#9ca3af', fontSize: 11 }}>
+              <div key={b.id} className='rounded-xl border border-d-border/60 bg-d-subtle/50 p-4'>
+                <div className='mb-2 flex items-center justify-between'>
+                  <div className='flex items-center gap-2'>
+                    <p className='text-[13px] font-medium'>{b.name}</p>
+                    <span
+                      className='rounded-md px-1.5 py-0.5 text-[10px] font-semibold'
+                      style={{ backgroundColor: `${periodColor}26`, color: periodColor }}
+                    >
+                      {PERIOD_LABEL[b.period] || b.period}
+                    </span>
+                  </div>
+                  <p className='text-[11px] tabular-nums text-d-muted'>
                     {b.usage_count}/{b.quota}
-                  </Typography>
-                </Box>
+                  </p>
+                </div>
 
-                <LinearProgress
-                  variant="determinate"
-                  value={usageRate}
-                  sx={{
-                    height: 6, borderRadius: 3, mb: 1,
-                    bgcolor: 'rgba(255,255,255,0.05)',
-                    '& .MuiLinearProgress-bar': {
-                      borderRadius: 3,
+                <div
+                  className='mb-2 h-1.5 w-full overflow-hidden rounded-full bg-d-border'
+                  role='progressbar'
+                  aria-valuenow={Math.round(usageRate)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                >
+                  <div
+                    className='h-full rounded-full transition-[width] duration-300'
+                    style={{
+                      width: `${usageRate}%`,
                       background: `linear-gradient(90deg, ${periodColor}, ${periodColor}cc)`,
-                    },
-                  }}
-                />
+                    }}
+                  />
+                </div>
 
-                <Typography variant="caption" sx={{ color: '#9ca3af', fontSize: 11 }}>
+                <p className='text-[11px] text-d-muted'>
                   {b.bank_name} · {b.card_product_name}
-                </Typography>
-              </Box>
+                </p>
+              </div>
             )
           })}
-        </Stack>
+        </div>
       )}
-    </Paper>
+    </div>
   )
 }

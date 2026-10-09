@@ -1,21 +1,12 @@
-// app/(mobile)/holders/[id]/page.tsx
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import {
-  Box, Typography, IconButton, Skeleton, Fab,
-  Avatar
-} from '@mui/material'
-import {
-  ArrowBack as ArrowBackIcon,
-  Add as AddIcon,
-  CreditCard as CreditCardIcon
-} from '@mui/icons-material'
 import { getHolder } from '@/lib/api/holders'
 import { createCard, getCardsByHolder, updateCard, type CreditCardWithProduct } from '@/lib/api/cards'
 import { CardForm } from '@/components/mobile/CardForm'
 import { CreditCardVisual } from '@/components/mobile/CreditCardVisual'
+import { PlusIcon } from '@/components/icons/WcIcon'
 import type { CardHolder } from '@/lib/types'
 
 export default function HolderDetailPage() {
@@ -38,73 +29,41 @@ export default function HolderDetailPage() {
 
   useEffect(() => { loadData() }, [loadData])
 
-  if (!holder) return <Skeleton variant="rounded" height={200} sx={{ m: 2 }} />
+  if (!holder) {
+    return (
+      <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-4'>
+        <div className='wc-skeleton h-[200px] w-full rounded-2xl' />
+      </div>
+    )
+  }
 
   return (
-    <Box sx={{ p: 2, pb: 2 }}>
-      {/* Header */}
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-        <IconButton
-          aria-label="返回"
+    <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-4 text-d-text'>
+      <div className='mb-4 flex items-center gap-3'>
+        <button
+          type='button'
+          aria-label='返回'
           onClick={() => router.back()}
-          sx={{
-            width: 'var(--button-size)',
-            height: 'var(--button-size)',
-            background: 'var(--button-face)',
-            color: 'var(--text-on-dark)',
-            boxShadow: 'var(--button-shadow)',
-            '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
-            '&:active': { boxShadow: 'var(--button-shadow-press)' },
-          }}
+          className='flex h-11 w-11 items-center justify-center rounded-full border border-d-border bg-d-surface text-d-text'
         >
-          <ArrowBackIcon />
-        </IconButton>
-        <Avatar sx={{ bgcolor: holder.avatar_color, width: 40, height: 40, ml: 1, mr: 1.5 }}>
+          <BackIcon />
+        </button>
+        <span
+          className='flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white'
+          style={{ background: holder.avatar_color || '#3b6fe0' }}
+        >
           {holder.name.charAt(0)}
-        </Avatar>
-        <Typography
-          variant="h6"
-          sx={{
-            fontSize: 'var(--type-section-size)',
-            lineHeight: 'var(--type-section-line)',
-            fontWeight: 'var(--type-section-weight)',
-            letterSpacing: 'var(--type-section-tracking)',
-            color: 'var(--text)',
-          }}
-        >
-          {holder.name}
-        </Typography>
-        <Typography
-          sx={{
-            fontSize: 'var(--type-body-size)',
-            lineHeight: 'var(--type-body-line)',
-            letterSpacing: 'var(--type-body-tracking)',
-            color: 'var(--muted)',
-            ml: 1,
-          }}
-        >
-          ({cards.length} 张卡)
-        </Typography>
-      </Box>
+        </span>
+        <div className='min-w-0'>
+          <p className='truncate text-[17px] font-semibold leading-6'>{holder.name}</p>
+          <p className='text-[12px] leading-4 text-d-muted'>{cards.length} 张卡</p>
+        </div>
+      </div>
 
-      {/* Card List */}
       {cards.length === 0 ? (
-        <Box sx={{
-          textAlign: 'center', p: 4, bgcolor: 'var(--paper)', borderRadius: 'var(--radius-depth-3)',
-          border: '2px dashed', borderColor: 'var(--track)',
-        }}>
-          <CreditCardIcon sx={{ fontSize: 48, color: 'var(--text-disabled)', mb: 1 }} />
-          <Typography
-            sx={{
-              fontSize: 'var(--type-body-size)',
-              lineHeight: 'var(--type-body-line)',
-              letterSpacing: 'var(--type-body-tracking)',
-              color: 'var(--muted)',
-            }}
-          >
-            暂无信用卡，点击右下角添加
-          </Typography>
-        </Box>
+        <div className='rounded-2xl border border-dashed border-d-border px-6 py-10 text-center'>
+          <p className='text-[13px] leading-5 text-d-muted'>暂无信用卡，点击右下角添加</p>
+        </div>
       ) : (
         cards.map(card => (
           <CreditCardVisual
@@ -116,20 +75,14 @@ export default function HolderDetailPage() {
         ))
       )}
 
-      <Fab
-        aria-label="添加信用卡"
-        sx={{
-          position: 'fixed', bottom: 72, right: 16,
-          width: 'var(--button-size)', height: 'var(--button-size)', minHeight: 'var(--button-size)',
-          background: 'var(--button-face)', color: 'var(--text-on-dark)',
-          boxShadow: 'var(--button-shadow)', border: 0,
-          '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
-          '&:active': { boxShadow: 'var(--button-shadow-press)' },
-        }}
+      <button
+        type='button'
+        aria-label='添加信用卡'
         onClick={() => { setEditingCard(undefined); setFormOpen(true) }}
+        className='fixed bottom-20 right-6 z-10 flex h-12 w-12 items-center justify-center rounded-full bg-d-accent text-white shadow-lg'
       >
-        <AddIcon />
-      </Fab>
+        <PlusIcon size={22} />
+      </button>
 
       <CardForm
         open={formOpen}
@@ -145,6 +98,14 @@ export default function HolderDetailPage() {
         }}
         initial={editingCard}
       />
-    </Box>
+    </div>
+  )
+}
+
+function BackIcon() {
+  return (
+    <svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' aria-hidden='true'>
+      <path d='M15 18 9 12l6-6' />
+    </svg>
   )
 }

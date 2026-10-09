@@ -2,13 +2,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  Button, FormControl, InputLabel, Select, MenuItem,
-  TextField, Stack, Alert,
-  CircularProgress,
-} from '@mui/material'
-import { FileDownload } from '@mui/icons-material'
+import { Modal } from '@/components/obsidian/overlays'
+import { Button } from '@/components/obsidian/controls'
+import { TextField, SelectField } from '@/components/obsidian/fields'
+import { Alert } from '@/components/obsidian/feedback'
+import { DownloadIcon } from '@/components/icons/WcIcon'
 import { format, startOfMonth, endOfMonth } from 'date-fns'
 import {
   getExportData,
@@ -233,175 +231,152 @@ export function ExportDialog({ open, onClose, holderId, holders, cards }: Props)
   }
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle className="type-title">导出数据</DialogTitle>
+    <Modal
+      open={open}
+      onClose={onClose}
+      maxWidth='md'
+      title='导出数据'
+      footer={
+        <>
+          <Button variant='ghost' onClick={onClose} disabled={loading}>取消</Button>
+          <Button onClick={handleExport} loading={loading}>
+            {loading ? '导出中...' : <><DownloadIcon size={16} /> 导出</>}
+          </Button>
+        </>
+      }
+    >
+      {error && (
+        <div className='mb-4'>
+          <Alert severity='error'>{error}</Alert>
+        </div>
+      )}
 
-      <DialogContent>
-        {error && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {error}
-          </Alert>
+      <div className='flex flex-col gap-4'>
+        {/* Export Mode */}
+        <SelectField
+          label='导出类型'
+          value={mode}
+          onChange={e => setMode(e.target.value as ExportMode)}
+          options={[
+            { value: 'data', label: '明细数据 (CSV)' },
+            { value: 'monthly_report', label: '月报摘要' },
+            { value: 'annual_report', label: '年报摘要' },
+          ]}
+        />
+
+        {/* Holder Selection */}
+        {holders.length > 1 && (
+          <SelectField
+            label='持卡人'
+            value={selectedHolderId}
+            onChange={e => setSelectedHolderId(e.target.value)}
+            options={holders.map(h => ({ value: h.id, label: h.name }))}
+          />
         )}
 
-        <Stack spacing={2} sx={{ mt: 1 }}>
-          {/* Export Mode */}
-          <FormControl fullWidth>
-            <InputLabel>导出类型</InputLabel>
-            <Select
-              value={mode}
-              onChange={e => setMode(e.target.value as ExportMode)}
-              label="导出类型"
-            >
-              <MenuItem value="data">明细数据 (CSV)</MenuItem>
-              <MenuItem value="monthly_report">月报摘要</MenuItem>
-              <MenuItem value="annual_report">年报摘要</MenuItem>
-            </Select>
-          </FormControl>
+        {/* Card Filter */}
+        <SelectField
+          label='卡片筛选 (可选)'
+          value={selectedCardId}
+          onChange={e => setSelectedCardId(e.target.value)}
+          options={[
+            { value: '', label: '全部卡片' },
+            ...cards
+              .filter(c => {
+                if (!selectedHolderId) return false
+                return c.card.holder_id === selectedHolderId
+              })
+              .map(c => ({ value: c.id, label: c.label })),
+          ]}
+        />
 
-          {/* Holder Selection */}
-          {holders.length > 1 && (
-            <FormControl fullWidth>
-              <InputLabel>持卡人</InputLabel>
-              <Select
-                value={selectedHolderId}
-                onChange={e => setSelectedHolderId(e.target.value)}
-                label="持卡人"
-              >
-                {holders.map(h => (
-                  <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          )}
+        {/* Data Export Options */}
+        {mode === 'data' && (
+          <>
+            <SelectField
+              label='数据类型'
+              value={exportType}
+              onChange={e => setExportType(e.target.value as ExportType)}
+              options={[
+                { value: 'bills', label: '账单' },
+                { value: 'payments', label: '还款' },
+                { value: 'benefit_usages', label: '权益使用' },
+                { value: 'promo_usages', label: '优惠使用' },
+              ]}
+            />
 
-          {/* Card Filter */}
-          <FormControl fullWidth>
-            <InputLabel>卡片筛选 (可选)</InputLabel>
-            <Select
-              value={selectedCardId}
-              onChange={e => setSelectedCardId(e.target.value)}
-              label="卡片筛选 (可选)"
-            >
-              <MenuItem value="">全部卡片</MenuItem>
-              {cards
-                .filter(c => {
-                  if (!selectedHolderId) return false
-                  return c.card.holder_id === selectedHolderId
-                })
-                .map(c => (
-                  <MenuItem key={c.id} value={c.id}>{c.label}</MenuItem>
-                ))}
-            </Select>
-          </FormControl>
+            <SelectField
+              label='时间范围'
+              value={dateRange}
+              onChange={e => handleDateRangeChange(e.target.value as 'current_month' | 'last_month' | 'custom')}
+              options={[
+                { value: 'current_month', label: '本月' },
+                { value: 'last_month', label: '上月' },
+                { value: 'custom', label: '自定义' },
+              ]}
+            />
 
-          {/* Data Export Options */}
-          {mode === 'data' && (
-            <>
-              <FormControl fullWidth>
-                <InputLabel>数据类型</InputLabel>
-                <Select
-                  value={exportType}
-                  onChange={e => setExportType(e.target.value as ExportType)}
-                  label="数据类型"
-                >
-                  <MenuItem value="bills">账单</MenuItem>
-                  <MenuItem value="payments">还款</MenuItem>
-                  <MenuItem value="benefit_usages">权益使用</MenuItem>
-                  <MenuItem value="promo_usages">优惠使用</MenuItem>
-                </Select>
-              </FormControl>
-
-              <FormControl fullWidth>
-                <InputLabel>时间范围</InputLabel>
-                <Select
-                  value={dateRange}
-                  onChange={e => handleDateRangeChange(e.target.value as 'current_month' | 'last_month' | 'custom')}
-                  label="时间范围"
-                >
-                  <MenuItem value="current_month">本月</MenuItem>
-                  <MenuItem value="last_month">上月</MenuItem>
-                  <MenuItem value="custom">自定义</MenuItem>
-                </Select>
-              </FormControl>
-
-              {dateRange === 'custom' && (
-                <Stack direction="row" spacing={1}>
+            {dateRange === 'custom' && (
+              <div className='flex gap-3'>
+                <div className='min-w-0 flex-1'>
                   <TextField
-                    fullWidth
-                    label="开始日期"
-                    type="date"
+                    label='开始日期'
+                    type='date'
                     value={startDate}
                     onChange={e => setStartDate(e.target.value)}
-                    InputLabelProps={{ shrink: true }}
                   />
+                </div>
+                <div className='min-w-0 flex-1'>
                   <TextField
-                    fullWidth
-                    label="结束日期"
-                    type="date"
+                    label='结束日期'
+                    type='date'
                     value={endDate}
                     onChange={e => setEndDate(e.target.value)}
-                    InputLabelProps={{ shrink: true }}
                   />
-                </Stack>
-              )}
+                </div>
+              </div>
+            )}
 
-              <Alert severity="info">
-                将导出 {getExportTypeLabel(exportType)} 数据为 CSV 文件
-              </Alert>
-            </>
-          )}
+            <Alert severity='info'>
+              将导出 {getExportTypeLabel(exportType)} 数据为 CSV 文件
+            </Alert>
+          </>
+        )}
 
-          {/* Monthly Report Options */}
-          {mode === 'monthly_report' && (
-            <>
-              <TextField
-                fullWidth
-                label="报表月份"
-                type="month"
-                value={reportPeriod}
-                onChange={e => setReportPeriod(e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
+        {/* Monthly Report Options */}
+        {mode === 'monthly_report' && (
+          <>
+            <TextField
+              label='报表月份'
+              type='month'
+              value={reportPeriod}
+              onChange={e => setReportPeriod(e.target.value)}
+            />
 
-              <Alert severity="info">
-                将导出 {reportPeriod} 月度摘要报告
-              </Alert>
-            </>
-          )}
+            <Alert severity='info'>
+              将导出 {reportPeriod} 月度摘要报告
+            </Alert>
+          </>
+        )}
 
-          {/* Annual Report Options */}
-          {mode === 'annual_report' && (
-            <>
-              <TextField
-                fullWidth
-                label="报表年份"
-                type="number"
-                value={reportYear}
-                onChange={e => setReportYear(e.target.value)}
-                inputProps={{ min: 2020, max: 2030 }}
-              />
+        {/* Annual Report Options */}
+        {mode === 'annual_report' && (
+          <>
+            <TextField
+              label='报表年份'
+              type='number'
+              value={reportYear}
+              onChange={e => setReportYear(e.target.value)}
+              min={2020}
+              max={2030}
+            />
 
-              <Alert severity="info">
-                将导出 {reportYear} 年度摘要报告（含月度分解）
-              </Alert>
-            </>
-          )}
-        </Stack>
-      </DialogContent>
-
-      <DialogActions>
-        <Button onClick={onClose} disabled={loading}>
-          取消
-        </Button>
-        <Button
-          variant="contained"
-          onClick={handleExport}
-          disabled={loading}
-          startIcon={loading ? <CircularProgress size={16} /> : <FileDownload />}
-        >
-          {loading ? '导出中...' : '导出'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+            <Alert severity='info'>
+              将导出 {reportYear} 年度摘要报告（含月度分解）
+            </Alert>
+          </>
+        )}
+      </div>
+    </Modal>
   )
 }

@@ -1,11 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import {
-  TextField, Dialog, DialogTitle,
-  DialogContent, DialogActions,
-  Snackbar, Alert
-} from '@mui/material'
+import { ConfirmDialog, Toast } from '@/components/obsidian/overlays'
 import {
   PromoIcon, PlusIcon, ClockIcon, CardIcon,
 } from '@/components/icons/WcIcon'
@@ -396,97 +392,83 @@ export default function PromosPage() {
         </div>
       )}
 
-      {/* 新增活动 Dialog */}
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} fullWidth maxWidth='xs'>
-        <DialogTitle
-          sx={{
-            fontSize: 'var(--type-section-size)',
-            lineHeight: 'var(--type-section-line)',
-            fontWeight: 'var(--type-section-weight)',
-            letterSpacing: 'var(--type-section-tracking)',
-            color: 'var(--text)',
-            fontFamily: 'var(--font-display)',
-          }}
-        >
-          添加信用卡优惠活动
-        </DialogTitle>
-        <DialogContent>
-          <div className='mt-2 flex flex-col gap-3'>
-            <TextField
-              label='发卡银行 *'
-              fullWidth
-              size='small'
-              value={newBank}
-              onChange={e => setNewBank(e.target.value)}
-              placeholder='例如 招商银行 / 工商银行'
-            />
-            <TextField
-              label='活动名称 *'
-              fullWidth
-              size='small'
-              value={newTitle}
-              onChange={e => setNewTitle(e.target.value)}
-              placeholder='例如 周三 5 折美食日'
-            />
-            <TextField
-              label='优惠标签'
-              fullWidth
-              size='small'
-              value={newType}
-              onChange={e => setNewType(e.target.value)}
-              placeholder='例如 5折立减 / 满50减10 / 积分兑换'
-            />
-            <TextField
-              label='活动截止日期'
-              type='date'
-              fullWidth
-              size='small'
-              value={newEndDate}
-              onChange={e => setNewEndDate(e.target.value)}
-              InputLabelProps={{ shrink: true }}
-            />
-            <TextField
-              label='活动说明与规则'
-              fullWidth
-              multiline
-              rows={3}
-              size='small'
-              value={newDesc}
-              onChange={e => setNewDesc(e.target.value)}
-              placeholder='描述参与方式、达标条件及使用渠道等'
-            />
-          </div>
-        </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
-          <button
-            type='button'
-            onClick={() => setAddOpen(false)}
-            className='h-10 rounded-xl px-5 text-sm font-semibold text-d-muted'
-          >
-            取消
-          </button>
-          <button
-            type='button'
-            onClick={handleAddPromo}
-            disabled={submitting}
-            className='h-10 rounded-full bg-d-accent px-5 text-sm font-bold text-white disabled:opacity-50'
-          >
-            {submitting ? '保存中...' : '确认添加'}
-          </button>
-        </DialogActions>
-      </Dialog>
-
-      {/* 提示 Toast */}
-      <Snackbar
-        open={toast.open}
-        autoHideDuration={3000}
-        onClose={() => setToast(prev => ({ ...prev, open: false }))}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      <ConfirmDialog
+        open={addOpen}
+        title='添加信用卡优惠活动'
+        onClose={submitting ? () => {} : () => setAddOpen(false)}
+        actions={
+          <>
+            <button
+              type='button'
+              onClick={() => setAddOpen(false)}
+              disabled={submitting}
+              className='h-10 rounded-xl px-5 text-sm font-semibold text-d-muted disabled:opacity-50'
+            >
+              取消
+            </button>
+            <button
+              type='button'
+              onClick={handleAddPromo}
+              disabled={submitting}
+              className='h-10 rounded-full bg-d-accent px-5 text-sm font-bold text-white disabled:opacity-50'
+            >
+              {submitting ? '保存中...' : '确认添加'}
+            </button>
+          </>
+        }
       >
-        <Alert severity={toast.severity} sx={{ fontWeight: 600 }}>
-          {toast.message}
-        </Alert>
-      </Snackbar>
+        <div className='flex max-h-[60vh] flex-col gap-3 overflow-y-auto'>
+          <Field label='发卡银行 *' value={newBank} onChange={setNewBank} placeholder='例如 招商银行 / 工商银行' />
+          <Field label='活动名称 *' value={newTitle} onChange={setNewTitle} placeholder='例如 周三 5 折美食日' />
+          <Field label='优惠标签' value={newType} onChange={setNewType} placeholder='例如 5折立减 / 满50减10 / 积分兑换' />
+          <Field label='活动截止日期' type='date' value={newEndDate} onChange={setNewEndDate} />
+          <Field label='活动说明与规则' value={newDesc} onChange={setNewDesc} placeholder='描述参与方式、达标条件及使用渠道等' multiline />
+        </div>
+      </ConfirmDialog>
+
+      <Toast
+        open={toast.open}
+        message={toast.message}
+        severity={toast.severity}
+        autoHideMs={3000}
+        onClose={() => setToast(prev => ({ ...prev, open: false }))}
+      />
     </div>
+  )
+}
+
+const fieldClass = 'h-11 w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none placeholder:text-d-muted focus:border-d-accent'
+
+function Field({
+  label, value, onChange, placeholder, type = 'text', multiline = false,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  type?: string
+  multiline?: boolean
+}) {
+  return (
+    <label className='block'>
+      <span className='mb-1 block text-[12px] font-semibold text-d-muted'>{label}</span>
+      {multiline ? (
+        <textarea
+          value={value}
+          rows={3}
+          placeholder={placeholder}
+          onChange={e => onChange(e.target.value)}
+          className='w-full rounded-xl border border-d-border bg-d-bg px-3 py-2 text-[16px] text-d-text outline-none placeholder:text-d-muted focus:border-d-accent'
+        />
+      ) : (
+        <input
+          type={type}
+          value={value}
+          placeholder={placeholder}
+          onChange={e => onChange(e.target.value)}
+          className={fieldClass}
+        />
+      )}
+    </label>
   )
 }

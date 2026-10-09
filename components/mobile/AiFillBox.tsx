@@ -1,8 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { Box, Button, TextField, CircularProgress, Alert, Stack } from '@mui/material'
+import { TextArea } from '@/components/obsidian/fields'
+import { Alert } from '@/components/obsidian/feedback'
 import { AiSparkleIcon } from '@/components/icons/WcIcon'
+import { Spinner } from '@/components/obsidian/feedback'
 import { aiComplete } from '@/lib/api/ai'
 
 /**
@@ -112,82 +114,32 @@ export function AiFillBox({ onFill, mode }: Props) {
   }
 
   return (
-    <Box
-      sx={{
-        // AI 区语义：金色虚线框（非分层边框），圆角走令牌
-        border: '1.5px dashed var(--gold-500)',
-        bgcolor: 'rgba(201,162,39,0.04)',
-        borderRadius: 'var(--radius-depth-2)',
-        boxShadow: 'var(--shadow-e1)',
-        p: 1.5,
-      }}
-    >
-      <Stack spacing={1.25}>
-        <TextField
-          multiline
-          minRows={2}
-          maxRows={5}
-          fullWidth
-          size="small"
+    // AI 区语义：金色虚线框 + 极淡金底
+    <div className='rounded-2xl border-[1.5px] border-dashed border-d-gold bg-d-gold/5 p-1.5'>
+      <div className='flex flex-col gap-2'>
+        <TextArea
+          rows={2}
           placeholder={PLACEHOLDER[mode]}
           value={text}
           onChange={e => setText(e.target.value)}
-          sx={{
-            '& .MuiOutlinedInput-root': {
-              bgcolor: 'var(--paper)',
-              fontSize: 'var(--type-control-size)',
-            },
-          }}
         />
 
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Button
-            variant="outlined"
-            size="small"
+        <div className='flex items-center'>
+          <button
+            type='button'
             onClick={handleFill}
             disabled={loading || !text.trim()}
-            startIcon={
-              loading ? (
-                <CircularProgress size={16} color="inherit" />
-              ) : (
-                <AiSparkleIcon size={16} />
-              )
-            }
-            sx={{
-              borderRadius: 'var(--radius-pill)',
-              borderColor: 'var(--gold-500)',
-              color: 'var(--gold-700)',
-              fontWeight: 600,
-              textTransform: 'none',
-              '&:hover': {
-                borderColor: 'var(--gold-700)',
-                bgcolor: 'rgba(201,162,39,0.08)',
-              },
-            }}
+            className='inline-flex h-9 items-center gap-1.5 rounded-full border border-d-gold px-3.5 text-[13px] font-semibold text-d-gold transition-colors active:bg-d-gold/10 disabled:pointer-events-none disabled:opacity-50'
           >
+            {loading ? <Spinner size={16} className='border-d-gold/40 border-t-d-gold' /> : <AiSparkleIcon size={16} />}
             {loading ? '识别中…' : '智能填充'}
-          </Button>
-        </Stack>
+          </button>
+        </div>
 
         {error && (
-          <Alert
-            severity="warning"
-            sx={{
-              py: 0.5,
-              fontSize: 'var(--type-body-size)',
-              letterSpacing: 'var(--type-body-tracking)',
-              lineHeight: 'var(--type-body-line)',
-              '& .MuiAlert-message': {
-                fontSize: 'var(--type-body-size)',
-                letterSpacing: 'var(--type-body-tracking)',
-                lineHeight: 'var(--type-body-line)',
-              },
-            }}
-          >
-            {error}
-          </Alert>
+          <Alert severity='warning'>{error}</Alert>
         )}
-      </Stack>
-    </Box>
+      </div>
+    </div>
   )
 }

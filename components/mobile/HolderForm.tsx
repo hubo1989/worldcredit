@@ -2,13 +2,13 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, Button, Box
-} from '@mui/material'
+import { Modal } from '@/components/obsidian/overlays'
+import { Button } from '@/components/obsidian/controls'
+import { TextField } from '@/components/obsidian/fields'
 import type { CardHolder } from '@/lib/types'
 
-const COLORS = ['#1976d2', '#d32f2f', '#388e3c', '#f57c00', '#7b1fa2', '#00796b']
+// 暗色底上可辨的持卡人色板（原 MUI 亮色色板在 #131a2a 面板上发灰）。
+const COLORS = ['#7aadff', '#ff8a8a', '#6ee7a0', '#ffc46b', '#c4a5ff', '#5fd4d0']
 
 interface Props {
   open: boolean
@@ -39,70 +39,48 @@ export function HolderForm({ open, onClose, onSubmit, initial }: Props) {
   }
 
   return (
-    <Dialog
+    <Modal
       open={open}
+      title={initial ? '编辑持卡人' : '添加持卡人'}
       onClose={onClose}
-      fullWidth
-      maxWidth="xs"
-      // 弹窗浮层：18px 圆角 + float 阴影 + 无边框
-      slotProps={{
-        paper: {
-          sx: {
-            border: 0,
-            borderRadius: 'var(--radius-depth-3)',
-            boxShadow: 'var(--shadow-float)',
-          },
-        },
-      }}
+      footer={
+        <>
+          <Button variant='ghost' onClick={onClose}>取消</Button>
+          <Button onClick={handleSubmit} disabled={!name.trim()}>保存</Button>
+        </>
+      }
     >
-      {/* 弹窗标题：22/28 · 600 · -0.7px */}
-      <DialogTitle
-        sx={{
-          fontSize: 'var(--type-title-size)',
-          lineHeight: 'var(--type-title-line)',
-          fontWeight: 'var(--type-title-weight)',
-          letterSpacing: 'var(--type-title-tracking)',
-          color: 'var(--text)',
-        }}
-      >
-        {initial ? '编辑持卡人' : '添加持卡人'}
-      </DialogTitle>
-      <DialogContent>
+      <div className='flex flex-col gap-4'>
         <TextField
-          fullWidth label="姓名" margin="normal" required
+          label='姓名' required
           value={name} onChange={e => setName(e.target.value)}
           autoFocus
         />
         <TextField
-          fullWidth label="手机号" margin="normal"
+          label='手机号'
           value={phone} onChange={e => setPhone(e.target.value)}
         />
         <TextField
-          fullWidth label="邮箱（选填，仅作记录）" margin="normal"
-          type="email" value={email} onChange={e => setEmail(e.target.value)}
+          label='邮箱（选填，仅作记录）'
+          type='email' value={email} onChange={e => setEmail(e.target.value)}
         />
-        <Box sx={{ display: 'flex', gap: 1, mt: 2, flexWrap: 'wrap' }}>
+        <div className='flex flex-wrap gap-2.5 pt-1'>
           {COLORS.map(c => (
-            <Box
+            <button
               key={c}
+              type='button'
+              aria-label={`选择颜色 ${c}`}
               onClick={() => setColor(c)}
-              sx={{
-                // 色块选择器不是图标按钮，保持 36px 原尺寸
-                width: 36, height: 36, borderRadius: '50%', bgcolor: c, cursor: 'pointer',
-                border: '3px solid',
-                borderColor: c === color ? 'primary.main' : 'transparent',
-                transition: 'border-color 200ms var(--ease-out)',
+              className='h-9 w-9 rounded-full transition-[box-shadow] '
+              style={{
+                backgroundColor: c,
+                // 选中态用同色外环，避免亮色 border token 在暗底上突兀
+                boxShadow: c === color ? `0 0 0 3px var(--color-d-surface), 0 0 0 5px ${c}` : 'none',
               }}
             />
           ))}
-        </Box>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} sx={{ borderRadius: 'var(--radius-pill)' }}>取消</Button>
-        <Button variant="contained" onClick={handleSubmit} sx={{ borderRadius: 'var(--radius-pill)' }}>
-          保存
-        </Button>
-      </DialogActions>
-    </Dialog>
+        </div>
+      </div>
+    </Modal>
   )
 }
