@@ -84,5 +84,5 @@ jobs:
         run: npx vinext build
         env:
           # 构建期不需要真实密钥；仅提供占位以满足 required 校验
-          NEXT_PUBLIC_INSFORGE_URL: https://example.invalid
-          NEXT_PUBLIC_INSFORGE_ANON_KEY: ci-placeholder
+          # 已脱离 InsForge；保留占位避免脚本读到空值
+          CI_PLACEHOLDER: 1

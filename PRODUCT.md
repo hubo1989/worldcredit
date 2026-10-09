@@ -24,7 +24,7 @@ WorldCredit 是一个家庭自用的信用卡管理 PWA：把全家分散在各�
 - 单管理员操作模式：管理员录入/维护持卡人、信用卡、账单、还款、权益使用、优惠参与。
 - 账单按月（`bill_month`）管理，还款支持多次登记（含幂等键防重）。
 - 移动端 H5/PWA 免安装使用；管理后台为深色桌面端控制台。
-- 后端为 InsForge（Postgres + Auth + Edge Functions）；AI 补全走 OpenAI 兼容 API + Wikipedia 搜索增强。
+- 后端为 Cloudflare Workers + D1（SQLite）+ R2，自建认证（密码/OTP/Google OAuth）；AI 补全走 OpenAI 兼容 API + Wikipedia 搜索增强。
 - 界面语言全中文（经确认：中文优先，暂不考虑英文）。
 
 ## Capabilities and Constraints

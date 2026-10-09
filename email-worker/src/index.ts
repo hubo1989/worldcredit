@@ -8,7 +8,7 @@
  * The shared public inbox (bills@20160325.xyz) is intentionally not supported:
  * attribution is derived exclusively from the recipient address.
  *
- * Uses D1 binding directly (no InsForge REST client).
+ * Uses D1 binding directly.
  */
 
 import type { Env, AiConfig, BillParseResult, EmailParseLogRow } from './types'

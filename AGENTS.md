@@ -1,22 +1,32 @@
-# AGENTS.md
+# AGENTS.md — WorldCredit 工程约定
 
-<!-- INSFORGE:START -->
-## InsForge backend
+## 架构（2026-10 起，已完全脱离 InsForge）
 
-This project uses [InsForge](https://insforge.dev): an all-in-one, open-source Postgres-based backend (BaaS) that gives this app a database, authentication, file storage, edge functions, realtime, an AI model gateway, and payments through one platform.
+本项目跑在 **Cloudflare** 上，不是 InsForge/Supabase：
 
-- **Project:** **worldcredit** (API base `https://pxjywhe6.us-east.insforge.app`)
-- **Skills:** these InsForge skills are installed for supported coding agents. Reach for them before implementing any InsForge feature instead of guessing the API:
-  - `insforge`: app code with the `@insforge/sdk` client (database CRUD, auth, storage, edge functions, realtime, AI, email, and Stripe payments).
-  - `insforge-cli`: backend and infrastructure via the `insforge` CLI (projects, SQL, migrations, RLS policies, storage buckets, functions, secrets, payment setup, schedules, deploys).
-  - `insforge-debug`: diagnosing failures (SDK/HTTP errors, RLS denials, auth and OAuth issues) and running security or performance audits.
-  - `insforge-integrations`: wiring external auth providers (Clerk, Auth0, WorkOS, Better Auth, etc.) for JWT-based RLS, or the OKX x402 payment facilitator.
-  - `find-skills`: discovering additional skills on demand.
-- **Credentials:** app code reads keys from `.env.local`; the CLI reads `.insforge/project.json`. Never hardcode or commit keys.
+- **运行时**：Cloudflare Workers，入口 `worker/index.ts`，vinext（Next.js App Router 的 Vite 实现）构建
+- **数据库**：Cloudflare D1（SQLite）。binding 由 worker 注入，代码经 `lib/db/` 的 `getDb()` 使用；迁移在 `db/migrations/`（`wrangler d1 migrations apply worldcredit --remote`）
+- **存储**：R2 桶 `worldcredit-attachments`（账单附件）；图片走 Images binding
+- **认证**：自建——PBKDF2 密码 + 邮箱 OTP + Google OAuth（ID token 验证），HMAC 签名 session cookie（`lib/session.ts`，secret 是 Worker 变量 `SESSION_SECRET`）
+- **邮件**：独立 `email-worker/` 接 Cloudflare Email Routing（`bills+{userId}@20160325.xyz`），直写 D1
+- **定时**：cron `0 9 * * *`（`worker/cron.ts`）——每日账单提醒 + Web Push
+- **生产域名**：`https://app.all-bill.com`（Google OAuth 回调登记在这里）
 
-Key patterns:
+## 关键约定
 
-- Database inserts take an array: `insert([{ ... }])`.
-- Reference users with `auth.users(id)`; use `auth.uid()` in RLS policies.
-- For storage uploads, persist both the returned `url` and `key`.
-<!-- INSFORGE:END -->
+- 浏览器端**不写 SQL**：组件只调 `lib/api/*.ts` 包装函数，走 `/api/rpc/<module>/<fn>` 命名白名单路由（`lib/api/rpc-client.ts` + `lib/api/registry.ts`）
+- UI 用 ObsidianUI 暗色体系：`components/obsidian/` 原语 + `globals.css` 的 `d-*` token（Tailwind v4 `@theme`）。不要再引入 MUI
+- 设计源在 `design/openpencil/`：`.op` 文件是唯一真源，token 三方对齐（foundations.json ↔ .op ↔ globals.css），CI 门禁 `verify-batch.sh --source-only` 会拦漂移
+- 部署：`npx vinext deploy`（本地构建 + 上传）；密钥用 `wrangler secret put`
+- `db/seed*.ts`、`scripts/*.mjs` 里残留的 `@insforge/sdk` 脚本是历史存档，SDK 已从依赖移除，跑不动了——别照着它们写新代码
+
+## 测试与门禁
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm run lint        # eslint --max-warnings=0
+npm test            # vitest run
+bash design/openpencil/verify-batch.sh --source-only   # 设计源五项检查
+```
+
+CI（`.github/workflows/ci.yml`）：代码质量 + 设计源质量，PR 到 main 时跑。

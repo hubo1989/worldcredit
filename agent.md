@@ -11,10 +11,12 @@
 | 层级 | 技术 | 版本/说明 |
 |------|------|----------|
 | 框架 | vinext | Next.js App Router 的 Vite 实现（`^0.0.32`） |
-| 运行时 | React 19 + React DOM 19 | |
-| UI 组件库 | MUI (Material UI) | v7，Emotion 驱动 |
-| 图标 | @mui/icons-material | v7 |
-| 后端 / 数据库 | InsForge | Supabase 兼容 API，包含 Postgres + Auth + Edge Functions |
+| UI 框架 | React 19 + React DOM 19 | |
+| UI 组件库 | ObsidianUI（自建暗色体系） | d-* token（Tailwind v4 `@theme`），组件在 `components/obsidian/` |
+| 图标 | 自建 WcIcon 线性图标集 | |
+| 运行时 | Cloudflare Workers | vinext 构建，`worker/index.ts` 为入口 |
+| 数据库 | Cloudflare D1（SQLite） | 通过 `lib/db/` 的 `getDb()` 取 binding |
+| 对象存储 | Cloudflare R2 | `worldcredit-attachments` 桶（账单附件） |
 | 日期处理 | date-fns | v4 |
 | 构建工具 | Vite 7 + @vitejs/plugin-rsc | |
 | PWA | vite-plugin-pwa | v1（manifest/service worker） |
@@ -56,7 +58,7 @@ worldcredit/
 │       ├── promos/page.tsx     # 优惠活动管理（CRUD）
 │       └── settings/page.tsx   # 系统设置（平台信息+AI配置）
 ├── components/
-│   ├── ThemeRegistry.tsx       # MUI 主题注入（蓝色主色调）
+│   ├── ThemeRegistry.tsx       # 字体注册 + 透传（主题职责已由 globals.css 的 d-* token 接管）
 │   ├── mobile/
 │   │   ├── MobileShell.tsx     # 移动端布局壳（未登录重定向）
 │   │   ├── BottomNav.tsx       # 底部导航（首页/持卡人/账单/优惠）
@@ -75,13 +77,15 @@ worldcredit/
 │       ├── BenefitOverview.tsx # 权益使用概览
 │       └── AiCompleteButton.tsx    # AI一键补全按钮组件
 ├── lib/
-│   ├── insforge.ts             # InsForge 客户端初始化（export: insforge, db）
-│   ├── auth.tsx                # AuthContext + AuthProvider（用 insforge.auth）
+│   ├── db/                     # D1 客户端（worker 注入 binding，globalThis 共享）
+│   ├── session.ts              # HMAC 签名 session cookie（服务端）
+│   ├── auth.tsx                # AuthContext + AuthProvider（自建 auth，走 /api/rpc）
 │   ├── types.ts                # 全局 TypeScript 类型定义
 │   ├── constants.ts            # COUNTRIES 国家列表常量
 │   ├── utils.ts                # 工具函数（账单日计算、金额格式化、幂等键）
 │   └── api/
 │       ├── admin.ts            # 管理后台 API（银行/卡产品/权益/优惠/系统设置 CRUD）
+│       ├── rpc-client.ts       # 浏览器端 RPC 传输（/api/rpc/<module>/<fn> 白名单调用）
 │       ├── holders.ts          # 持卡人 API（CRUD + 统计聚合）
 │       ├── cards.ts            # 信用卡 API（CRUD）
 │       ├── bills.ts            # 账单 API（查询/创建/还款登记）
@@ -89,19 +93,16 @@ worldcredit/
 │       ├── dashboard.ts        # 管理后台数据聚合 API
 │       └── ai.ts               # AI补全逻辑（Wikipedia搜索增强 + LLM调用）
 ├── db/
-│   ├── schema.sql              # 完整数据库建表 SQL
-│   ├── seed.ts                 # 基础种子数据（少量银行+卡产品）
-│   └── seed-mainstream.ts      # 大规模种子数据（70+银行，500+卡产品）
-├── insforge/
-│   └── functions/ai-complete/index.ts  # Edge Function：AI补全 HTTP handler
-├── scripts/
-│   └── create-admin.ts         # 脚本：创建管理员账号
+│   ├── migrations/             # D1 SQL 迁移（wrangler d1 migrations）
+│   └── seed*.ts                # 旧 InsForge 时代的种子脚本（已不适用，仅存档）
+├── worker/                    # Cloudflare Worker 入口（index.ts + cron.ts 每日 9 点账单提醒）
+├── email-worker/               # 独立 Email Worker（Cloudflare Email Routing，直写 D1）
+├── scripts/                    # 旧 InsForge 时代脚本（已不适用，仅存档）
 ├── docs/
 │   ├── plans/2026-03-20-credit-card-manager-design.md  # 原始设计文档
 │   └── plan/admin-dashboard.md # 管理后台实施计划
 ├── public/                     # PWA 图标资源
-├── .env.local                  # 环境变量（InsForge URL + Anon Key）
-├── .insforge/project.json      # InsForge 项目配置
+├── wrangler.jsonc              # Cloudflare Workers 配置（D1/R2/cron/vars，生产域名 app.all-bill.com）
 ├── vite.config.mts           # Vite 配置（端口3050 + vinext插件，.mts 保证 ESM 加载）
 ├── tsconfig.json               # TypeScript 配置
 └── package.json
@@ -111,7 +112,7 @@ worldcredit/
 
 ## 4. 数据模型
 
-所有表均使用 UUID 主键，存储在 InsForge（PostgreSQL）。
+所有表均使用 UUID 主键，存储在 Cloudflare D1（SQLite）。
 
 ### 平台基础数据（管理员维护）
 
@@ -137,7 +138,7 @@ worldcredit/
 ### 关系图
 
 ```
-InsForge Auth User
+wc_user（自建账号表）
     └─(created_by)─► card_holders
                          └─(holder_id)─► credit_cards
                                              ├─(card_id)─► bills
@@ -190,7 +191,7 @@ InsForge Auth User
 - 邮箱 OTP 验证码登录
 - Google OAuth 登录
 - 邮箱注册（两步：填信息 → OTP 验证激活）
-- 基于 InsForge Auth，登录态持久化（cookie）
+- 自建认证：密码（PBKDF2）、邮箱 OTP、Google OAuth（ID token 验证）；HMAC 签名 session cookie（`lib/session.ts`），secret 走 Worker 环境变量 SESSION_SECRET
 
 **移动端**
 - 概览仪表盘：总负债、总授信、已开卡数、授信利用率计算、临近还款账单
@@ -212,7 +213,7 @@ InsForge Auth User
 - 系统设置：平台名称/支持邮箱/默认币种、注册开关、维护模式开关、AI API配置（BaseURL/Model/APIKey）
 
 **AI 补全**
-- 前端直接调用 OpenAI 兼容 API（`lib/api/ai.ts`），同时有 InsForge Edge Function 版本（`insforge/functions/ai-complete/`）
+- 服务端调用 OpenAI 兼容 API（`lib/api/ai.server.ts`），配置存 `system_settings` 表
 - 流程：Wikipedia 中英文搜索增强 → 拼接上下文 → 调用 LLM → 解析 JSON → 后处理（自动生成 logo_url）
 - 支持全字段一键补全和逐字段单独补全
 
@@ -224,13 +225,16 @@ InsForge Auth User
 
 ## 7. 外部依赖
 
-### InsForge（核心依赖）
+### Cloudflare（核心依赖）
 
-- 项目 appkey：`dr7vjx28`，地区：`us-east`
-- 服务地址：`https://dr7vjx28.us-east.insforge.app`
-- Anon Key：存于 `.env.local`
-- 提供：PostgreSQL 数据库（Supabase 兼容 API）、Auth（邮箱/OTP/Google OAuth）、Edge Functions 运行时
-- SDK：`@insforge/sdk`，初始化在 `lib/insforge.ts`
+- **Workers**：主应用（`worldcredit`），生产域名 `https://app.all-bill.com`，wrangler.jsonc 定义 bindings
+- **D1**：`worldcredit` 数据库（SQLite），迁移在 `db/migrations/`，`wrangler d1 migrations apply worldcredit`
+- **R2**：`worldcredit-attachments` 桶存账单附件
+- **Images**：图片优化 binding
+- **Email Routing**：`email-worker/` 接收 `bills+{userId}@20160325.xyz` 转发账单邮件，直写 D1
+- **Cron**：每日 09:00（`0 9 * * *`）账单提醒 + Web Push 通知扫描（`worker/cron.ts`）
+- **部署**：`npx vinext deploy`（本地 build + wrangler 上传）；密钥用 `wrangler secret put`
+- 历史备注：项目曾用 InsForge（Supabase 兼容 BaaS），2026 年已完全迁出，相关脚本仅存档
 
 ### AI 服务（可选，通过系统设置配置）
 
@@ -282,31 +286,26 @@ npm run dev        # 监听 localhost:3050
 
 访问 `http://credit.localhost:3050`（需 portless）或 `http://127.0.0.1:3050`
 
-### 数据库初始化
+### 数据库迁移
 
 ```bash
-npx tsx db/seed.ts                # 少量基础数据
-npx tsx db/seed-mainstream.ts     # 完整银行+卡产品（70+银行，500+卡产品）
+npx wrangler d1 migrations apply worldcredit --remote   # 生产 D1
+npx wrangler d1 migrations apply worldcredit --local    # 本地 D1
 ```
 
-### 创建管理员
+### 部署
 
 ```bash
-npx tsx scripts/create-admin.ts
-```
-
-### 构建
-
-```bash
-npm run build
-npm run start
+npx vinext deploy    # build + 上传 Cloudflare Workers（生产 app.all-bill.com）
 ```
 
 ### 数据操作模式
 
-所有数据操作通过 `lib/insforge.ts` 导出的 `db` 客户端，语法与 Supabase JS SDK 一致：
+服务端（API 路由 / server 组件）通过 `lib/db/` 取 D1 binding 执行 SQL：
 
 ```typescript
-import { db } from '@/lib/insforge'
-const { data, error } = await db.from('table_name').select('*').eq('id', id)
+import { getDb } from '@/lib/db'
+const { results } = await getDb().prepare('SELECT * FROM bills WHERE id = ?').bind(id).all()
 ```
+
+浏览器端不碰 SQL：组件调用 `lib/api/*.ts` 包装函数，经 `/api/rpc/<module>/<fn>` 命名白名单路由到服务端函数（`lib/api/rpc-client.ts`）。

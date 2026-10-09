@@ -139,7 +139,7 @@ export function generateIdempotencyKey(): string {
  * 归一化持卡人别名。
  *
  * D1 把 `card_holders.aliases` 声明为 TEXT，读回来是 JSON 字符串（如
- * `'["呼金堂"]'`）而不是数组；旧 Postgres/InsForge 形态才是 `text[]`。
+ * `'["呼金堂"]'`）而不是数组；旧 Postgres 形态才是 `text[]`。
  * 组件里存在 `aliases.join('、')`、`aliases.length`、`aliases.forEach` 这类
  * 数组用法，直接吃字符串会抛 `aliases.join is not a function` 并让整页白屏。
  *

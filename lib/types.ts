@@ -77,7 +77,7 @@ export interface Promo {
 export type UserRole = 'admin' | 'member'
 
 /**
- * 应用层用户（由 InsForge Auth 的 UserSchema 派生，见 lib/permissions.ts 的 toUser）
+ * 应用层用户（自建 wc_user 表，见 lib/permissions.ts 的 toUser）
  */
 export interface User {
   id: string
@@ -228,7 +228,7 @@ export interface EmailParseLog {
 }
 
 /**
- * 通用记录附件 metadata。文件保存在 InsForge Storage。
+ * 通用记录附件 metadata。文件保存在 R2 桶 worldcredit-attachments。
  */
 export interface RecordAttachment {
   id: string
