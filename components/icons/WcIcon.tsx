@@ -331,3 +331,298 @@ export function SortIcon(props: IconProps) {
     </Base>
   )
 }
+
+/** 日历 */
+export function CalendarIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <rect x="3.5" y="5" width="17" height="16" rx="2" />
+      <path d="M3.5 10h17" />
+      <path d="M8 3v4M16 3v4" />
+      <path d="M8 14h2M14 14h2M8 17.5h2M14 17.5h2" />
+    </Base>
+  )
+}
+
+/** 删除 · 垃圾桶 */
+export function TrashIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M4 7h16" />
+      <path d="M9.5 7V5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2" />
+      <path d="M6.5 7l.8 12.1a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9L17.5 7" />
+      <path d="M10 11v6M14 11v6" />
+    </Base>
+  )
+}
+
+/** 退出登录 · 门+箭头 */
+export function LogoutIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M14 4H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h8" />
+      <path d="M10 12h11" />
+      <path d="M17.5 8.5 21 12l-3.5 3.5" />
+    </Base>
+  )
+}
+
+/** 搜索 · 放大镜 */
+export function SearchIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M15.8 15.8 21 21" />
+    </Base>
+  )
+}
+
+/** 收起/向上 */
+export function ChevronUpIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M5 15l7-7 7 7" />
+    </Base>
+  )
+}
+
+/** 剪贴板 · 粘贴 */
+export function ClipboardIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <rect x="5" y="4" width="14" height="17" rx="2" />
+      <path d="M9 4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1H9V4z" />
+      <path d="M9 10h6M9 13.5h6M9 17h4" />
+    </Base>
+  )
+}
+
+/** 邮件 · 信封 */
+export function MailIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M3.5 7l8.5 6 8.5-6" />
+    </Base>
+  )
+}
+
+/** 全部完成 · 双勾 */
+export function DoneAllIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M2 12.5l4.5 4.5L15 8.5" />
+      <path d="M9.5 15.5 11 17l8-8" />
+    </Base>
+  )
+}
+
+/** 合并 · 分支汇入 */
+export function MergeIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M6 4v3.5c0 2 1 3.8 2.6 5L12 15" />
+      <path d="M18 4v3.5c0 2-1 3.8-2.6 5L12 15" />
+      <path d="M12 15v5" />
+      <circle cx="6" cy="4" r="0.6" fill="currentColor" />
+      <circle cx="18" cy="4" r="0.6" fill="currentColor" />
+      <circle cx="12" cy="20.5" r="0.6" fill="currentColor" />
+    </Base>
+  )
+}
+
+/** 添加用户 */
+export function UserPlusIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <circle cx="10" cy="8" r="3.5" />
+      <path d="M3.5 20a6.5 6.5 0 0 1 13 0" />
+      <path d="M18.5 8v5M16 10.5h5" />
+    </Base>
+  )
+}
+
+/** 多人 · 持卡人组 */
+export function PeopleIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <circle cx="9" cy="8.5" r="3" />
+      <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+      <path d="M16 6.2a3 3 0 0 1 0 5.6" />
+      <path d="M17.5 14.2a5.5 5.5 0 0 1 3 4.8" />
+    </Base>
+  )
+}
+
+/** 手机 */
+export function PhoneIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <rect x="7" y="2.5" width="10" height="19" rx="2" />
+      <path d="M11 18.5h2" />
+    </Base>
+  )
+}
+
+/** 火箭 · 启程 */
+export function RocketIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M12 15c-1.5-3.5-1.5-7.5.5-11 3.5 1.5 5.5 5 5 9l-2.7 2.7a1 1 0 0 1-1.4 0L12 15z" />
+      <path d="M12 15c-3.5 1.5-7.5 1.5-8.5.5-.5-2 1-4.5 4-6.5" />
+      <path d="M14.5 17.5c0 3-1 4.5-2.5 5-1.5-.5-2.5-2-2.5-5" />
+      <circle cx="14" cy="9" r="1.2" />
+    </Base>
+  )
+}
+
+/** 盾牌 · 安全 */
+export function ShieldIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M12 3l7 2.5v5.5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V5.5L12 3z" />
+      <path d="M9 12l2 2 4-4.5" />
+    </Base>
+  )
+}
+
+/** 速度 · 仪表 */
+export function GaugeIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M4 17a9 9 0 1 1 16 0" />
+      <path d="M12 14l4-4" />
+      <circle cx="12" cy="14" r="1.2" fill="currentColor" />
+    </Base>
+  )
+}
+
+/** 钱包 */
+export function WalletIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18a1 1 0 0 1 1 1v1.5" />
+      <rect x="4" y="7.5" width="17" height="12" rx="2" />
+      <path d="M15.5 13.5h2" />
+    </Base>
+  )
+}
+
+/** 上传 · 托盘箭头上 */
+export function UploadIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M12 16V4" />
+      <path d="M7.5 8.5 12 4l4.5 4.5" />
+      <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+    </Base>
+  )
+}
+
+/** 下载 · 托盘箭头下 */
+export function DownloadIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M12 4v12" />
+      <path d="M7.5 11.5 12 16l4.5-4.5" />
+      <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+    </Base>
+  )
+}
+
+/** 文档 */
+export function FileIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M6 3h8l4 4v14H6z" />
+      <path d="M13.5 3v4.5H18" />
+      <path d="M9 12h6M9 15.5h6" />
+    </Base>
+  )
+}
+
+/** 外链 · 新窗口 */
+export function OpenInNewIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M14 4h6v6" />
+      <path d="M20 4l-8.5 8.5" />
+      <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
+    </Base>
+  )
+}
+
+/** 上升趋势 */
+export function TrendUpIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M3 17l6-6 4 4 8-8" />
+      <path d="M15 7h6v6" />
+    </Base>
+  )
+}
+
+/** 圆叉 · 取消/失效 */
+export function XCircleIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9 9l6 6M15 9l-6 6" />
+    </Base>
+  )
+}
+
+/** 圆叹号 · 错误 */
+export function AlertCircleIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7.5V13" />
+      <circle cx="12" cy="16.5" r="0.6" fill="currentColor" />
+    </Base>
+  )
+}
+
+/** 纸币 · 金额 */
+export function PaymentsIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <rect x="2.5" y="6" width="19" height="12" rx="2" />
+      <circle cx="12" cy="12" r="2.5" />
+      <path d="M6 9.5v5M18 9.5v5" />
+    </Base>
+  )
+}
+
+/** 汉堡菜单 */
+export function MenuIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <path d="M4 6.5h16M4 12h16M4 17.5h16" />
+    </Base>
+  )
+}
+
+/** Google 品牌标识（四色填充，不走 Base 线性体系） */
+export function GoogleIcon({ size = 18, ...rest }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...rest}>
+      <path
+        fill="#4285F4"
+        d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47a5.54 5.54 0 0 1-2.4 3.63v3.02h3.86c2.26-2.09 3.56-5.17 3.56-8.89z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3.02c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.13A11.99 11.99 0 0 0 12 24z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.27 14.27A7.2 7.2 0 0 1 4.89 12c0-.79.14-1.55.38-2.27V6.6H1.29a12 12 0 0 0 0 10.8l3.98-3.13z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42A11.98 11.98 0 0 0 12 0 11.99 11.99 0 0 0 1.29 6.6l3.98 3.13C6.22 6.86 8.87 4.75 12 4.75z"
+      />
+    </svg>
+  )
+}

@@ -1,25 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Snackbar, Alert, Button } from '@mui/material'
-import BellIcon from '@mui/icons-material/NotificationsActive'
+import { BellIcon } from '@/components/icons/WcIcon'
 import { subscribePush } from '@/lib/api/push'
 import { useAuth } from '@/lib/auth'
-
-// 按钮是可点目标：文案必须整体可见（nowrap），且不参与被压缩（flexShrink: 0）。
-// 徽标文字同理，避免「开启提醒」被折成「开启/提醒」。
-const ALERT_ACTION_BTN = {
-  whiteSpace: 'nowrap' as const,
-  flexShrink: 0,
-  minWidth: 'auto',
-  // 收紧横向内边距：按钮合计从 ~154px 降到 ~137px，留给 message 的宽度
-  // 足以让「开启还款提醒，到期前不再遗忘」保持单行。高度仍为 40px 触控目标。
-  px: 1.25,
-  borderRadius: 'var(--radius-pill)',
-  fontSize: 'var(--type-body-size)',
-  lineHeight: 'var(--type-body-line)',
-  letterSpacing: 'var(--type-body-tracking)',
-}
 
 /** Fetch the VAPID public key at runtime so production works without a rebuild. */
 async function fetchVapidPublicKey(): Promise<string | null> {
@@ -137,60 +121,34 @@ export function PushPermission() {
 
   if (!supported || subscribed) return null
 
+  // 顶部居中横幅：窄屏放不下时按钮整行下移，文字保持完整（nowrap + 不收缩）
+  if (!show) return null
+
   return (
-    <Snackbar
-      open={show}
-      anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-      sx={{ top: { xs: 8, sm: 8 } }}
-    >
-      <Alert
-        icon={<BellIcon fontSize="inherit" />}
-        severity="info"
-        sx={{
-          width: '100%',
-          alignItems: 'center',
-          // 390px 下 message + 两个按钮无法并排：允许换行，空间不足时按钮整行下移，
-          // 而不是把 message 压成 3 行、按钮文字拦腰折断。
-          flexWrap: 'wrap',
-          py: 0.75,
-          '& .MuiAlert-message': {
-            minWidth: 0,
-            fontSize: 'var(--type-body-size)',
-            lineHeight: 'var(--type-body-line)',
-            letterSpacing: 'var(--type-body-tracking)',
-          },
-          '& .MuiAlert-action': {
-            // 保证按钮文字完整：既不换行也不被压缩
-            flexShrink: 0,
-            flexWrap: 'nowrap',
-            alignItems: 'center',
-            gap: 0.75,
-            mr: 0,
-            pt: 0,
-            pb: 0,
-            // 换行到下一行时贴右；与 message 同行时保持原间距
-            ml: 'auto',
-          },
-        }}
-        action={
-          <>
-            <Button color="inherit" size="small" onClick={() => setShow(false)} sx={ALERT_ACTION_BTN}>
-              稍后
-            </Button>
-            <Button
-              color="primary"
-              size="small"
-              variant="contained"
-              onClick={handleAllow}
-              sx={ALERT_ACTION_BTN}
-            >
-              开启提醒
-            </Button>
-          </>
-        }
+    <div className='pointer-events-none fixed inset-x-0 top-2 z-[1400] flex justify-center px-4'>
+      <div
+        role='status'
+        className='pointer-events-auto flex w-full max-w-md flex-wrap items-center gap-x-2 gap-y-1.5 rounded-2xl border border-d-accent/40 bg-d-surface px-3 py-2 text-d-text shadow-2xl'
       >
-        开启还款提醒，到期前不再遗忘
-      </Alert>
-    </Snackbar>
+        <BellIcon size={18} className='shrink-0 text-d-accent-light' />
+        <span className='min-w-0 flex-1 text-[14.5px] leading-[18px]'>开启还款提醒，到期前不再遗忘</span>
+        <span className='ml-auto flex shrink-0 flex-nowrap items-center gap-1.5'>
+          <button
+            type='button'
+            onClick={() => setShow(false)}
+            className='whitespace-nowrap rounded-full px-2 py-1 text-[14.5px] leading-[18px] font-semibold text-d-muted active:text-d-text'
+          >
+            稍后
+          </button>
+          <button
+            type='button'
+            onClick={handleAllow}
+            className='whitespace-nowrap rounded-full bg-d-accent px-2 py-1 text-[14.5px] leading-[18px] font-semibold text-white'
+          >
+            开启提醒
+          </button>
+        </span>
+      </div>
+    </div>
   )
 }

@@ -1,107 +1,65 @@
 'use client'
 
-import {
-  Box, Typography, Paper, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, Chip
-} from '@mui/material'
 import type { CardProductStat } from '@/lib/api/dashboard'
 
 interface CardProductOverviewProps {
   data: CardProductStat[]
 }
 
-const cellSx = {
-  color: 'text.secondary',
-  borderBottom: '1px solid rgba(255,255,255,0.04)',
-  fontSize: 13,
-  py: 1.5,
-}
-
-const headSx = {
-  ...cellSx,
-  color: '#9ca3af',
-  fontWeight: 600,
-  fontSize: 12,
-  textTransform: 'uppercase' as const,
-  letterSpacing: 0.5,
-}
+const TH_CLS =
+  'border-b border-d-border px-3 py-2 text-left text-[12px] font-semibold uppercase tracking-wide text-d-muted'
+const TD_CLS = 'border-b border-d-border/60 px-3 py-2.5 text-[13px] text-d-muted'
 
 export function CardProductOverview({ data }: CardProductOverviewProps) {
   return (
-    <Paper sx={{
-      borderRadius: 3,
-      bgcolor: '#181a24',
-      border: '1px solid rgba(255,255,255,0.06)',
-      overflow: 'hidden',
-    }}>
-      <Box sx={{ p: 3, pb: 1 }}>
-        <Typography variant="subtitle2" sx={{ color: '#e4e6eb', fontWeight: 600 }}>
-          信用卡产品目录
-        </Typography>
-        <Typography variant="caption" sx={{ color: '#9ca3af' }}>
-          共 {data.length} 个在册产品
-        </Typography>
-      </Box>
+    <div className='overflow-hidden rounded-2xl border border-d-border bg-d-surface'>
+      <div className='px-6 pb-1 pt-6'>
+        <p className='text-[15px] font-semibold'>信用卡产品目录</p>
+        <p className='text-[12px] text-d-muted'>共 {data.length} 个在册产品</p>
+      </div>
 
-      <TableContainer>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell sx={headSx}>银行</TableCell>
-              <TableCell sx={headSx}>卡片名称</TableCell>
-              <TableCell sx={headSx}>币种</TableCell>
-              <TableCell sx={headSx} align="right">年费</TableCell>
-              <TableCell sx={headSx}>年费减免</TableCell>
-              <TableCell sx={headSx} align="right">开卡数</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
+      <div className='overflow-x-auto'>
+        <table className='w-full border-collapse'>
+          <thead>
+            <tr>
+              <th className={TH_CLS}>银行</th>
+              <th className={TH_CLS}>卡片名称</th>
+              <th className={TH_CLS}>币种</th>
+              <th className={`${TH_CLS} text-right`}>年费</th>
+              <th className={TH_CLS}>年费减免</th>
+              <th className={`${TH_CLS} text-right`}>开卡数</th>
+            </tr>
+          </thead>
+          <tbody>
             {data.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} sx={{ ...cellSx, textAlign: 'center', py: 4, color: '#9ca3af' }}>
+              <tr>
+                <td colSpan={6} className={`${TD_CLS} py-8 text-center text-d-muted`}>
                   暂无卡产品数据
-                </TableCell>
-              </TableRow>
+                </td>
+              </tr>
             ) : (
-              data.map(p => (
-                <TableRow key={p.id} sx={{
-                  transition: 'background-color 0.15s',
-                  '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' },
-                }}>
-                  <TableCell sx={cellSx}>
-                    <Chip
-                      label={p.bank_name}
-                      size="small"
-                      sx={{
-                        bgcolor: 'rgba(99, 102, 241, 0.12)',
-                        color: '#818cf8',
-                        fontWeight: 600,
-                        fontSize: 12,
-                        height: 24,
-                      }}
-                    />
-                  </TableCell>
-                  <TableCell sx={{ ...cellSx, fontWeight: 500, color: '#e4e6eb' }}>
-                    {p.card_name}
-                  </TableCell>
-                  <TableCell sx={cellSx}>{p.currency}</TableCell>
-                  <TableCell sx={cellSx} align="right">
+              data.map((p) => (
+                <tr key={p.id} className='transition-colors hover:bg-d-subtle/50'>
+                  <td className={TD_CLS}>
+                    <span className='rounded-md bg-d-accent/15 px-2 py-1 text-[12px] font-semibold text-d-accent-light'>
+                      {p.bank_name}
+                    </span>
+                  </td>
+                  <td className={`${TD_CLS} font-medium text-d-text`}>{p.card_name}</td>
+                  <td className={TD_CLS}>{p.currency}</td>
+                  <td className={`${TD_CLS} text-right tabular-nums`}>
                     {p.annual_fee ? `¥${Number(p.annual_fee).toLocaleString()}` : '免年费'}
-                  </TableCell>
-                  <TableCell sx={{ ...cellSx, fontSize: 12 }}>
-                    {p.annual_fee_waiver || '—'}
-                  </TableCell>
-                  <TableCell sx={cellSx} align="right">
-                    <Typography component="span" sx={{ color: 'success.main', fontWeight: 700, fontSize: 14 }}>
-                      {p.card_count}
-                    </Typography>
-                  </TableCell>
-                </TableRow>
+                  </td>
+                  <td className={`${TD_CLS} text-[12px]`}>{p.annual_fee_waiver || '—'}</td>
+                  <td className={`${TD_CLS} text-right`}>
+                    <span className='text-[14px] font-bold tabular-nums text-d-success-ink'>{p.card_count}</span>
+                  </td>
+                </tr>
               ))
             )}
-          </TableBody>
-        </Table>
-      </TableContainer>
-    </Paper>
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }

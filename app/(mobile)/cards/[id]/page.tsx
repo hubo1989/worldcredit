@@ -2,10 +2,12 @@
 
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
-import { Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, InputAdornment, Alert } from '@mui/material'
 import { format } from 'date-fns'
 import { getCardDetail, updateCard, getCardHolders } from '@/lib/api/cards'
 import { ChevronLeftIcon, ChevronRightIcon, ClockIcon } from '@/components/icons/WcIcon'
+import { Modal } from '@/components/obsidian/overlays'
+import { TextField, SelectField } from '@/components/obsidian/fields'
+import { Alert } from '@/components/obsidian/feedback'
 import { getEffectiveBillingDay, getEffectiveDueConfig, formatCardTail, getEffectiveCardName, getEffectiveAnnualFee } from '@/lib/utils'
 import type { CreditCard, CardProduct, CardHolder, Bill, Benefit } from '@/lib/types'
 
@@ -220,19 +222,19 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
         className='relative mb-2.5 flex flex-col justify-between overflow-hidden rounded-2xl p-4 text-white'
         style={{
           background: 'linear-gradient(135deg, var(--navy-800), var(--navy-600))',
-          boxShadow: 'var(--shadow-dark)',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.35)',
           minHeight: 150,
         }}
       >
         <span
           aria-hidden='true'
           className='absolute -right-9 -top-9 h-[140px] w-[140px] rounded-full'
-          style={{ background: 'radial-gradient(circle, color-mix(in srgb, var(--gold-500) 45%, transparent), transparent)' }}
+          style={{ background: 'radial-gradient(circle, color-mix(in srgb, var(--color-d-gold) 45%, transparent), transparent)' }}
         />
         <span
           aria-hidden='true'
           className='absolute bottom-[-50px] right-[18px] h-[110px] w-[110px] rounded-full border'
-          style={{ borderColor: 'color-mix(in srgb, var(--gold-500) 35%, transparent)' }}
+          style={{ borderColor: 'color-mix(in srgb, var(--color-d-gold) 35%, transparent)' }}
         />
         <div className='relative z-10 flex items-start justify-between'>
           <div>
@@ -313,112 +315,109 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       </Section>
 
       {/* 编辑卡片对话框：保存后卡级别内容优先于卡产品默认 */}
-      <Dialog open={editOpen} onClose={() => !saving && setEditOpen(false)} fullWidth maxWidth='xs'>
-        <DialogTitle sx={{ fontWeight: 700, fontSize: 'var(--type-section-size)', color: 'var(--text)' }}>编辑卡片</DialogTitle>
-        <DialogContent>
-          {editError && <Alert severity='error' sx={{ mb: 2 }}>{editError}</Alert>}
-          <div className='mt-1 flex flex-col gap-4'>
-            {holders.length > 0 && (
-              <TextField
-                label='持卡人'
-                select
-                value={holderId}
-                onChange={e => setHolderId(e.target.value)}
-                helperText='邮件自动建卡挂错人时，在这里转移归属'
-                fullWidth
-              >
-                {holders.map(h => (
-                  <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>
-                ))}
-              </TextField>
-            )}
-            <TextField
-              label='卡片名称'
-              placeholder={product?.card_name || '输入卡片名称'}
-              value={nameOverride}
-              onChange={e => setNameOverride(e.target.value)}
-              helperText={product?.card_name ? '留空则使用卡产品默认名称「' + product.card_name + '」' : ' '}
-              fullWidth
-            />
-            <TextField
-              label='总额度'
-              type='number'
-              value={limitInput}
-              onChange={e => setLimitInput(e.target.value)}
-              required
-              fullWidth
-              InputProps={{ startAdornment: <InputAdornment position='start'>¥</InputAdornment> }}
-            />
-            <TextField
-              label='账单日'
-              type='number'
-              value={billingDayInput}
-              onChange={e => setBillingDayInput(e.target.value)}
-              required
-              helperText='每月出账日期（1-31）'
-              fullWidth
-              inputProps={{ min: 1, max: 31 }}
-              InputProps={{ endAdornment: <InputAdornment position='end'>日</InputAdornment> }}
-            />
-            <TextField
-              select
-              label='还款日规则'
-              value={dueType}
-              onChange={e => setDueType(e.target.value as typeof dueType)}
-              helperText='修改后以此规则优先计算各期账单还款日'
-              fullWidth
+      <Modal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        dismissible={!saving}
+        title='编辑卡片'
+        footer={
+          <>
+            <button
+              type='button'
+              onClick={() => setEditOpen(false)}
+              disabled={saving}
+              className='h-10 rounded-xl px-5 text-sm font-semibold text-d-muted disabled:opacity-50'
             >
-              <MenuItem value='default' disabled={!product}>
-                跟随卡产品默认
-                {product ? ('（' + (product.payment_due_type === 'after_billing' ? '账单日后 ' + product.payment_due_value + ' 天' : '每月 ' + product.payment_due_value + ' 日') + '）') : ''}
-              </MenuItem>
-              <MenuItem value='after_billing'>账单日后 X 天</MenuItem>
-              <MenuItem value='fixed'>每月固定还款日</MenuItem>
-              <MenuItem value='fixed_before_billing'>每月固定还款日（账单日倒推）</MenuItem>
-            </TextField>
-            {dueType !== 'default' && (
-              <TextField
-                label={dueType === 'after_billing' ? '账单日后天数' : '每月还款日'}
-                type='number'
-                value={dueValue}
-                onChange={e => setDueValue(e.target.value)}
-                required
-                fullWidth
-                inputProps={dueType === 'after_billing' ? { min: 1 } : { min: 1, max: 31 }}
-                InputProps={{ endAdornment: <InputAdornment position='end'>{dueType === 'after_billing' ? '天' : '日'}</InputAdornment> }}
-              />
-            )}
-            <TextField
-              label='年费'
-              type='number'
-              value={annualFeeInput}
-              onChange={e => setAnnualFeeInput(e.target.value)}
-              helperText={product?.annual_fee != null && Number(product.annual_fee) > 0 ? '留空则使用卡产品默认年费 ¥' + Number(product.annual_fee).toLocaleString() : '留空表示无年费'}
-              fullWidth
-              InputProps={{ startAdornment: <InputAdornment position='start'>¥</InputAdornment> }}
+              取消
+            </button>
+            <button
+              type='button'
+              onClick={handleSave}
+              disabled={saving}
+              className='h-10 rounded-xl bg-d-accent px-5 text-sm font-semibold text-white disabled:opacity-50'
+            >
+              {saving ? '保存中…' : '保存'}
+            </button>
+          </>
+        }
+      >
+        {editError && <div className='mb-3'><Alert severity='error'>{editError}</Alert></div>}
+        <div className='flex flex-col gap-4'>
+          {holders.length > 0 && (
+            <SelectField
+              label='持卡人'
+              value={holderId}
+              onChange={e => setHolderId(e.target.value)}
+              helperText='邮件自动建卡挂错人时，在这里转移归属'
+              options={holders.map(h => ({ value: h.id, label: h.name }))}
             />
-          </div>
-        </DialogContent>
-        <DialogActions sx={{ p: 2, pt: 0 }}>
-          {/* 原生按钮：MUI Button 解析不了 var() 色值（存量崩溃路径） */}
-          <button
-            type='button'
-            onClick={() => setEditOpen(false)}
-            disabled={saving}
-            className='h-10 rounded-xl px-5 text-sm font-semibold text-d-muted disabled:opacity-50'
-          >
-            取消
-          </button>
-          <button
-            type='button'
-            onClick={handleSave}
-            disabled={saving}
-            className='h-10 rounded-xl bg-d-accent px-5 text-sm font-semibold text-white disabled:opacity-50'
-          >
-            {saving ? '保存中…' : '保存'}
-          </button>
-        </DialogActions>
-      </Dialog>
+          )}
+          <TextField
+            label='卡片名称'
+            placeholder={product?.card_name || '输入卡片名称'}
+            value={nameOverride}
+            onChange={e => setNameOverride(e.target.value)}
+            helperText={product?.card_name ? '留空则使用卡产品默认名称「' + product.card_name + '」' : undefined}
+          />
+          <TextField
+            label='总额度'
+            type='number'
+            value={limitInput}
+            onChange={e => setLimitInput(e.target.value)}
+            required
+            startAdornment={<span className='text-[14px]'>¥</span>}
+          />
+          <TextField
+            label='账单日'
+            type='number'
+            value={billingDayInput}
+            onChange={e => setBillingDayInput(e.target.value)}
+            required
+            helperText='每月出账日期（1-31）'
+            min={1}
+            max={31}
+            endAdornment={<span className='text-[14px]'>日</span>}
+          />
+          <SelectField
+            label='还款日规则'
+            value={dueType}
+            onChange={e => setDueType(e.target.value as typeof dueType)}
+            helperText='修改后以此规则优先计算各期账单还款日'
+            options={[
+              {
+                value: 'default',
+                label: '跟随卡产品默认' + (product
+                  ? ('（' + (product.payment_due_type === 'after_billing' ? '账单日后 ' + product.payment_due_value + ' 天' : '每月 ' + product.payment_due_value + ' 日') + '）')
+                  : ''),
+                disabled: !product,
+              },
+              { value: 'after_billing', label: '账单日后 X 天' },
+              { value: 'fixed', label: '每月固定还款日' },
+              { value: 'fixed_before_billing', label: '每月固定还款日（账单日倒推）' },
+            ]}
+          />
+          {dueType !== 'default' && (
+            <TextField
+              label={dueType === 'after_billing' ? '账单日后天数' : '每月还款日'}
+              type='number'
+              value={dueValue}
+              onChange={e => setDueValue(e.target.value)}
+              required
+              min={1}
+              max={dueType === 'after_billing' ? undefined : 31}
+              endAdornment={<span className='text-[14px]'>{dueType === 'after_billing' ? '天' : '日'}</span>}
+            />
+          )}
+          <TextField
+            label='年费'
+            type='number'
+            value={annualFeeInput}
+            onChange={e => setAnnualFeeInput(e.target.value)}
+            helperText={product?.annual_fee != null && Number(product.annual_fee) > 0 ? '留空则使用卡产品默认年费 ¥' + Number(product.annual_fee).toLocaleString() : '留空表示无年费'}
+            startAdornment={<span className='text-[14px]'>¥</span>}
+          />
+        </div>
+      </Modal>
 
       {/* 最近账单 */}
       <Section title='最近账单'>

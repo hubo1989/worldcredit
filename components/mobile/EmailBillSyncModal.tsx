@@ -1,11 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, Button, MenuItem, Stack, Typography,
-  InputAdornment, Box, CircularProgress, Alert
-} from '@mui/material'
+import { Modal } from '@/components/obsidian/overlays'
+import { Button } from '@/components/obsidian/controls'
+import { TextField, SelectField } from '@/components/obsidian/fields'
+import { Alert } from '@/components/obsidian/feedback'
 import type { EmailParseLogWithParsed } from '@/lib/api/emailBills'
 import { syncEmailBillToAccount } from '@/lib/api/emailBills'
 import { getCardHolders } from '@/lib/api/cards'
@@ -29,7 +28,7 @@ export function EmailBillSyncModal({ open, onClose, onSuccess, log }: Props) {
   const [billMonth, setBillMonth] = useState('')
   const [billAmount, setBillAmount] = useState('')
   const [minPayment, setMinPayment] = useState('')
-  
+
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -51,7 +50,7 @@ export function EmailBillSyncModal({ open, onClose, onSuccess, log }: Props) {
       setBankName(bName)
       setCardName(`${bName}信用卡`)
       setLast4(parsed.card_last4 || '')
-      
+
       // 推算账单日数字
       if (parsed.statement_date) {
         const dayStr = parsed.statement_date.split('-')[2]
@@ -112,127 +111,106 @@ export function EmailBillSyncModal({ open, onClose, onSuccess, log }: Props) {
   }
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle className="type-title">
-        同步账单到本账户
-      </DialogTitle>
-      <DialogContent>
-        <Typography className="type-body" sx={{ color: 'var(--muted)', mb: 2 }}>
-          根据邮件解析结果，自动建立对应的持卡账户（发卡行、卡片尾号、账单日、还款日），并将此笔账单导入您的账户中。
-        </Typography>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title='同步账单到本账户'
+      footer={
+        <>
+          <Button variant='ghost' onClick={onClose} disabled={submitting}>取消</Button>
+          <Button onClick={handleSubmit} loading={submitting}>
+            {submitting ? '建立中...' : '建立账户并同步账单'}
+          </Button>
+        </>
+      }
+    >
+      <p className='mb-4 text-[14px] leading-5 text-d-muted'>
+        根据邮件解析结果，自动建立对应的持卡账户（发卡行、卡片尾号、账单日、还款日），并将此笔账单导入您的账户中。
+      </p>
 
-        {errorMsg && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {errorMsg}
-          </Alert>
-        )}
+      {errorMsg && (
+        <div className='mb-4'>
+          <Alert severity='error'>{errorMsg}</Alert>
+        </div>
+      )}
 
-        <Stack spacing={2}>
-          {/* 持卡人选择 */}
-          <TextField
-            select
-            fullWidth
-            label="持卡对象"
-            value={selectedHolderId}
-            onChange={e => setSelectedHolderId(e.target.value)}
-            helperText={holders.length === 0 ? '若无持卡人，系统将自动创建“本人”' : ''}
-          >
-            {holders.map(h => (
-              <MenuItem key={h.id} value={h.id}>
-                {h.name}
-              </MenuItem>
-            ))}
-          </TextField>
+      <div className='flex flex-col gap-4'>
+        {/* 持卡人选择 */}
+        <SelectField
+          label='持卡对象'
+          value={selectedHolderId}
+          onChange={e => setSelectedHolderId(e.target.value)}
+          options={holders.map(h => ({ value: h.id, label: h.name }))}
+          helperText={holders.length === 0 ? '若无持卡人，系统将自动创建“本人”' : undefined}
+        />
 
-          {/* 银行名称 */}
-          <TextField
-            fullWidth
-            label="发卡银行"
-            value={bankName}
-            onChange={e => setBankName(e.target.value)}
-            required
-          />
+        {/* 银行名称 */}
+        <TextField
+          label='发卡银行' required
+          value={bankName}
+          onChange={e => setBankName(e.target.value)}
+        />
 
-          {/* 卡片名称 */}
-          <TextField
-            fullWidth
-            label="卡片名称"
-            value={cardName}
-            onChange={e => setCardName(e.target.value)}
-            required
-          />
+        {/* 卡片名称 */}
+        <TextField
+          label='卡片名称' required
+          value={cardName}
+          onChange={e => setCardName(e.target.value)}
+        />
 
-          {/* 卡尾号 */}
-          <TextField
-            fullWidth
-            label="卡号末4位"
-            value={last4}
-            onChange={e => setLast4(e.target.value)}
-            inputProps={{ maxLength: 4 }}
-            placeholder="如 8888"
-          />
+        {/* 卡尾号 */}
+        <TextField
+          label='卡号末4位'
+          value={last4}
+          onChange={e => setLast4(e.target.value)}
+          maxLength={4}
+          placeholder='如 8888'
+        />
 
-          {/* 账单日与还款日 */}
-          <Box sx={{ display: 'flex', gap: 1.5 }}>
+        {/* 账单日与还款日 */}
+        <div className='flex gap-3'>
+          <div className='min-w-0 flex-1'>
             <TextField
-              sx={{ flex: 1 }}
-              label="账单日"
-              type="number"
+              label='账单日'
+              type='number'
               value={billingDay}
               onChange={e => setBillingDay(e.target.value)}
-              InputProps={{
-                endAdornment: <InputAdornment position="end">日</InputAdornment>,
-              }}
-              helperText="每月生成账单的日期(1-31)"
+              endAdornment={<span className='text-[13px]'>日</span>}
+              helperText='每月生成账单的日期(1-31)'
             />
-
+          </div>
+          <div className='min-w-0 flex-[1.5]'>
             <TextField
-              sx={{ flex: 1.5 }}
-              label="还款截止日"
-              type="date"
+              label='还款截止日' required
+              type='date'
               value={dueDate}
               onChange={e => setDueDate(e.target.value)}
-              InputLabelProps={{ shrink: true }}
-              required
             />
-          </Box>
+          </div>
+        </div>
 
-          {/* 金额相关 */}
-          <Box sx={{ display: 'flex', gap: 1.5 }}>
+        {/* 金额相关 */}
+        <div className='flex gap-3'>
+          <div className='min-w-0 flex-1'>
             <TextField
-              sx={{ flex: 1 }}
-              label="本期账单金额"
-              type="number"
+              label='本期账单金额'
+              type='number'
               value={billAmount}
               onChange={e => setBillAmount(e.target.value)}
-              InputProps={{
-                startAdornment: <InputAdornment position="start">¥</InputAdornment>,
-              }}
+              startAdornment={<span className='text-[14px]'>¥</span>}
             />
+          </div>
+          <div className='min-w-0 flex-1'>
             <TextField
-              sx={{ flex: 1 }}
-              label="最低还款额"
-              type="number"
+              label='最低还款额'
+              type='number'
               value={minPayment}
               onChange={e => setMinPayment(e.target.value)}
-              InputProps={{
-                startAdornment: <InputAdornment position="start">¥</InputAdornment>,
-              }}
+              startAdornment={<span className='text-[14px]'>¥</span>}
             />
-          </Box>
-        </Stack>
-      </DialogContent>
-      <DialogActions sx={{ p: 2, pt: 0 }}>
-        <Button onClick={onClose} color="inherit">取消</Button>
-        <Button
-          variant="contained"
-          onClick={handleSubmit}
-          disabled={submitting}
-          startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : null}
-        >
-          {submitting ? '建立中...' : '建立账户并同步账单'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+          </div>
+        </div>
+      </div>
+    </Modal>
   )
 }

@@ -153,11 +153,14 @@ class ReviewedSourcesSyncTests(unittest.TestCase):
         self.assertEqual(color_value(disabled_label), "$color.text.disabled")
 
     def test_theme_registry_uses_the_shared_text_variable(self) -> None:
+        """MUI→ObsidianUI 迁移（2026-10-09）后：ThemeRegistry 退化为字体注册 + 透传，
+        主题职责由 globals.css 的 d-* token 接管，组件内不得再有硬编码色值。"""
         source = (REPO / "components" / "ThemeRegistry.tsx").read_text(encoding="utf-8")
-        self.assertIn("var(--text-primary)", source)
-        self.assertNotIn("color: '#0A1F44'", source)
-        info_box = source.split("'.info-box':", 1)[1].split("},", 1)[0]
-        self.assertIn("color: 'var(--info-ink)'", info_box)
+        self.assertNotIn("createTheme", source)
+        self.assertNotIn("#0A1F44", source)
+        css = (REPO / "app" / "globals.css").read_text(encoding="utf-8")
+        self.assertIn("--color-d-text:", css)  # 暗色正文 token 存在
+        self.assertIn("--text-primary", css)   # 亮色旧 token 仍被设计基线引用
         self.assertIn("color.bg.neutral", " ".join(
             path.read_text(encoding="utf-8")
             for path in (

@@ -1,19 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Button,
-  TextField,
-  Stack,
-  MenuItem,
-  Select,
-  FormControl,
-  InputLabel
-} from '@mui/material'
+import { Modal } from '@/components/obsidian/overlays'
+import { Button } from '@/components/obsidian/controls'
+import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
 import type { Benefit } from '@/lib/types'
 
 interface BenefitEditDialogProps {
@@ -78,104 +68,69 @@ export function BenefitEditDialog({
   }
 
   return (
-    <Dialog
+    <Modal
       open={open}
       onClose={onClose}
-      fullWidth
-      maxWidth="xs"
-      // 弹窗浮层：18px 圆角 + float 阴影 + 无边框
-      slotProps={{
-        paper: {
-          sx: {
-            border: 0,
-            borderRadius: 'var(--radius-depth-3)',
-            boxShadow: 'var(--shadow-float)',
-          },
-        },
-      }}
+      title={benefit ? '编辑卡片权益' : '新增专属权益'}
+      footer={
+        <>
+          <Button variant='ghost' onClick={onClose}>取消</Button>
+          <Button onClick={handleSubmit} loading={submitting} disabled={!name.trim()}>
+            {submitting ? '保存中...' : '保存权益'}
+          </Button>
+        </>
+      }
     >
-      {/* 弹窗标题：22/28 · 600 · -0.7px */}
-      <DialogTitle
-        sx={{
-          fontSize: 'var(--type-title-size)',
-          lineHeight: 'var(--type-title-line)',
-          fontWeight: 'var(--type-title-weight)',
-          letterSpacing: 'var(--type-title-tracking)',
-          color: 'var(--text)',
-        }}
-      >
-        {benefit ? '编辑卡片权益' : '新增专属权益'}
-      </DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ mt: 1 }}>
-          <TextField
-            label="权益名称 *"
-            placeholder="例如: 每年免费机场接送"
-            fullWidth
-            size="small"
-            value={name}
-            onChange={e => setName(e.target.value)}
-          />
-          <TextField
-            label="权益描述说明"
-            placeholder="例如: 境内指定机场接送机服务，每年2次"
-            fullWidth
-            multiline
-            rows={2}
-            size="small"
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-          />
-          <Stack direction="row" spacing={2}>
+      <div className='flex flex-col gap-4'>
+        <TextField
+          label="权益名称"
+          required
+          placeholder="例如: 每年免费机场接送"
+          value={name}
+          onChange={e => setName(e.target.value)}
+        />
+        <TextArea
+          label="权益描述说明"
+          placeholder="例如: 境内指定机场接送机服务，每年2次"
+          rows={2}
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+        />
+        <div className='flex items-start gap-3'>
+          <div className='min-w-0 flex-1'>
             <TextField
               label="享用额度(次数)"
               type="number"
-              size="small"
-              fullWidth
               value={quota}
               onChange={e => setQuota(Math.max(1, Number(e.target.value)))}
             />
-            <FormControl fullWidth size="small">
-              <InputLabel>周期类型</InputLabel>
-              <Select
-                value={period}
-                label="周期类型"
-                onChange={e => setPeriod(e.target.value as 'yearly' | 'monthly' | 'one_time')}
-              >
-                <MenuItem value="yearly">每年 (Yearly)</MenuItem>
-                <MenuItem value="monthly">每月 (Monthly)</MenuItem>
-                <MenuItem value="one_time">一次性 (One Time)</MenuItem>
-              </Select>
-            </FormControl>
-          </Stack>
+          </div>
+          <div className='w-40 shrink-0'>
+            <SelectField
+              label="周期类型"
+              value={period}
+              onChange={e => setPeriod(e.target.value as 'yearly' | 'monthly' | 'one_time')}
+              options={[
+                { value: 'yearly', label: '每年 (Yearly)' },
+                { value: 'monthly', label: '每月 (Monthly)' },
+                { value: 'one_time', label: '一次性 (One Time)' },
+              ]}
+            />
+          </div>
+        </div>
 
-          {period === 'yearly' && (
-            <FormControl fullWidth size="small">
-              <InputLabel>年度重置月份</InputLabel>
-              <Select
-                value={resetMonth}
-                label="年度重置月份"
-                onChange={e => setResetMonth(Number(e.target.value))}
-              >
-                {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
-                  <MenuItem key={m} value={m}>{m} 月重置</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          )}
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} sx={{ borderRadius: 'var(--radius-pill)' }}>取消</Button>
-        <Button
-          variant="contained"
-          onClick={handleSubmit}
-          disabled={submitting || !name.trim()}
-          sx={{ borderRadius: 'var(--radius-pill)' }}
-        >
-          {submitting ? '保存中...' : '保存权益'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+        {period === 'yearly' && (
+          <SelectField
+            label="年度重置月份"
+            value={resetMonth}
+            onChange={e => setResetMonth(Number(e.target.value))}
+            options={Array.from({ length: 12 }, (_, i) => i + 1).map(m => ({
+              value: String(m),
+              label: `${m} 月重置`,
+            }))}
+          />
+        )}
+      </div>
+    </Modal>
   )
 }

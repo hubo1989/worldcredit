@@ -268,7 +268,7 @@ def validate_map(
             errors.append(f"{mid} 的 css 变量 {cssvar!r} 不在 globals.css :root")
         tpath = entry.get("theme")
         if tpath and tpath not in theme:
-            errors.append(f"{mid} 的 theme 路径 {tpath!r} 不在 lib/theme.ts")
+            errors.append(f"{mid} 的 theme 路径 {tpath!r} 不在已加载的 theme 源（theme.ts 退役后该键应已移除）")
         if dtok not in op:
             errors.append(f"{mid} 的 design token {dtok!r} 不在 .op 的 variables（两者必须同名同步）")
         if not cssvar and not tpath:
@@ -510,7 +510,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     for label, path in (("映射表", args.map), ("设计源", args.design), ("设计源 .op", args.op),
-                        ("globals.css", args.css), ("theme.ts", args.theme)):
+                        ("globals.css", args.css)):
+        # theme.ts 已随 MUI→ObsidianUI 迁移退役：不再必查，缺失时该源加载为空。
         if not Path(path).exists():
             print(f"找不到{label}: {path}", file=sys.stderr)
             return 2
@@ -520,7 +521,9 @@ def main(argv: list[str] | None = None) -> int:
         design = load_design_tokens(Path(args.design))
         op = load_op_tokens(Path(args.op))
         css = load_css_tokens(Path(args.css))
-        theme = load_theme_tokens(Path(args.theme), css)
+        theme_path = Path(args.theme)
+        theme = (load_theme_tokens(theme_path, css) if theme_path.exists()
+                 else {})  # theme.ts 退役后 token 真源收敛到 globals.css
         design_num, design_str = load_design_scalars(Path(args.design))
         op_num, op_str = load_op_scalars(Path(args.op))
         css_num, css_str = load_css_scalars(Path(args.css))

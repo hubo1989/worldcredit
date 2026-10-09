@@ -1,14 +1,7 @@
-// app/(mobile)/holders/[id]/stats/page.tsx
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import {
-  Box, Typography, IconButton, Skeleton, Alert,
-  Card, CardContent, LinearProgress, Tooltip,
-} from '@mui/material'
-import ArrowBack from '@mui/icons-material/ArrowBack'
-import EditIcon from '@mui/icons-material/Edit'
 import { getHolder, getHolderStatsPageData } from '@/lib/api/holders'
 import type { StatsPageData } from '@/lib/api/holders'
 import { formatAmount } from '@/lib/utils'
@@ -49,330 +42,146 @@ export default function HolderStatsPage() {
 
   if (loading) {
     return (
-      <Box sx={{ p: 2 }}>
-        <Skeleton variant="rounded" height={60} sx={{ mb: 2 }} />
-        <Skeleton variant="rounded" height={160} sx={{ mb: 2 }} />
-        <Skeleton variant="rounded" height={120} />
-      </Box>
+      <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-4'>
+        <div className='wc-skeleton mb-3 h-[60px] w-full rounded-2xl' />
+        <div className='wc-skeleton mb-3 h-40 w-full rounded-2xl' />
+        <div className='wc-skeleton h-[120px] w-full rounded-2xl' />
+      </div>
     )
   }
 
   if (!holder) {
     return (
-      <Box sx={{ p: 3, textAlign: 'center' }}>
-        <Typography variant="h6">持卡人不存在</Typography>
-        <Typography
-          sx={{
-            fontSize: 'var(--type-body-size)',
-            lineHeight: 'var(--type-body-line)',
-            letterSpacing: 'var(--type-body-tracking)',
-            color: 'var(--muted)',
-            mt: 1,
-          }}
-        >
-          请返回重试
-        </Typography>
-      </Box>
+      <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-10 text-center text-d-text'>
+        <p className='text-[17px] font-semibold leading-6'>持卡人不存在</p>
+        <p className='mt-1 text-[13px] leading-5 text-d-muted'>请返回重试</p>
+      </div>
     )
   }
 
   const { summary, quickStats, monthlyTrend } = statsData!
   const maxTrendAmount = Math.max(...monthlyTrend.map(t => t.totalAmount), 1)
   const trendTotal = monthlyTrend.reduce((s, t) => s + t.totalAmount, 0)
+  const emptyTrend = monthlyTrend.every(t => t.totalAmount === 0)
+
+  const tiles = [
+    { label: '卡数', value: String(quickStats.cardCount) },
+    { label: '本月账单', value: formatAmount(quickStats.monthlyBills) },
+    { label: '待还款', value: formatAmount(quickStats.pendingPayment) },
+    {
+      label: '逾期数',
+      value: String(quickStats.overdueCount),
+      danger: quickStats.overdueCount > 0,
+    },
+  ]
 
   return (
-    <Box sx={{ p: 2, pb: 10 }}>
-      {/* 顶部栏 */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <IconButton
-            aria-label="返回"
+    <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-4 text-d-text'>
+      <div className='mb-4 flex items-center justify-between'>
+        <div className='flex min-w-0 items-center gap-2'>
+          <button
+            type='button'
+            aria-label='返回'
             onClick={() => router.back()}
-            sx={{
-              width: 'var(--button-size)',
-              height: 'var(--button-size)',
-              background: 'var(--button-face)',
-              color: 'var(--text-on-dark)',
-              boxShadow: 'var(--button-shadow)',
-              '&:hover': { background: 'var(--button-face)', boxShadow: 'var(--shadow-e2)' },
-              '&:active': { boxShadow: 'var(--button-shadow-press)' },
-            }}
+            className='flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-d-border bg-d-surface'
           >
-            <ArrowBack />
-          </IconButton>
-          <Typography
-            variant="h6"
-            sx={{
-              fontSize: 'var(--type-section-size)',
-              lineHeight: 'var(--type-section-line)',
-              fontWeight: 'var(--type-section-weight)',
-              letterSpacing: 'var(--type-section-tracking)',
-              color: 'var(--text)',
-              ml: 0.5,
-            }}
-          >
-            {holder.name}
-          </Typography>
-        </Box>
-        {/* 行内小图标按钮：保持 ≤32px 尺寸，只把描边换成柔和投影 */}
-        <IconButton
-          aria-label="编辑持卡人"
-          size="small"
-          sx={{ border: 0, bgcolor: 'var(--paper)', boxShadow: 'var(--shadow-e1)', color: 'var(--strong)' }}
+            <BackIcon />
+          </button>
+          <p className='truncate text-[17px] font-semibold leading-6'>{holder.name}</p>
+        </div>
+        {/* 原按钮没有点击行为，只保留入口外观，不补未定义的编辑流程 */}
+        <span
+          aria-label='编辑持卡人'
+          className='flex h-8 w-8 items-center justify-center rounded-full border border-d-border bg-d-surface text-d-muted'
         >
-          <EditIcon fontSize="small" />
-        </IconButton>
-      </Box>
+          <EditGlyph />
+        </span>
+      </div>
 
-      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {error && (
+        <p className='mb-3 rounded-xl border border-d-danger/30 bg-d-danger-soft px-3 py-2 text-[13px] leading-5 text-d-danger-ink'>
+          {error}
+        </p>
+      )}
 
-      {/* 总额度概览卡 */}
-      <Card sx={{
-        background: 'linear-gradient(135deg, #1976d2 0%, #1565c0 100%)',
-        color: 'white',
-        border: 0,
-        borderRadius: 'var(--radius-depth-3)',
-        mb: 3,
-        // 品牌色投影：hero 卡用品牌蓝光，不套中性分层阴影
-        boxShadow: '0 8px 16px rgba(25, 118, 210, 0.2)',
-      }}>
-        <CardContent sx={{ p: 3 }}>
-          <Typography
-            sx={{
-              fontSize: 'var(--type-body-size)',
-              lineHeight: 'var(--type-body-line)',
-              letterSpacing: 'var(--type-body-tracking)',
-              color: 'rgba(255,255,255,0.78)',
-              mb: 0.5,
-            }}
-          >
-            信用卡总额度
-          </Typography>
-            <Typography variant="h4" sx={{ fontWeight: 700, color: '#FFFFFF' }}>
-              {formatAmount(summary.totalLimit)}
-            </Typography>
-          <Box sx={{ mt: 3 }}>
-            {/* 两个语义单元（使用率 / 已用·可用）在 358px hero 卡内天然都需较宽空间：
-                允许换行让各自独占一行，避免双方同时被压成两行 */}
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', columnGap: 2, rowGap: 0.5, mb: 1 }}>
-              <Typography
-                sx={{
-                  fontSize: 'var(--type-body-size)',
-                  lineHeight: 'var(--type-body-line)',
-                  letterSpacing: 'var(--type-body-tracking)',
-                  color: 'rgba(255,255,255,0.78)',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                额度使用率 {summary.utilizationRate}%
-              </Typography>
-              <Typography
-                sx={{
-                  fontSize: 'var(--type-body-size)',
-                  lineHeight: 'var(--type-body-line)',
-                  letterSpacing: 'var(--type-body-tracking)',
-                  color: 'rgba(255,255,255,0.78)',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                已用 {formatAmount(summary.totalUsed)} / 可用 {formatAmount(summary.availableLimit)}
-              </Typography>
-            </Box>
-            <LinearProgress
-              variant="determinate"
-              value={summary.utilizationRate}
-              sx={{
-                height: 8,
-                borderRadius: 'var(--radius-pill)',
-                bgcolor: 'rgba(255,255,255,0.2)',
-                '& .MuiLinearProgress-bar': { bgcolor: 'white' },
-              }}
-            />
-          </Box>
-        </CardContent>
-      </Card>
+      <div className='mb-4 rounded-2xl bg-d-accent px-5 py-5 text-white'>
+        <p className='text-[13px] leading-5 text-white/80'>信用卡总额度</p>
+        <p className='mt-1 text-[28px] font-bold leading-9 num-tabular'>{formatAmount(summary.totalLimit)}</p>
+        <div className='mt-4 flex flex-wrap justify-between gap-x-4 gap-y-1 text-[13px] leading-5 text-white/80'>
+          <span className='whitespace-nowrap'>额度使用率 {summary.utilizationRate}%</span>
+          <span className='whitespace-nowrap'>
+            已用 {formatAmount(summary.totalUsed)} / 可用 {formatAmount(summary.availableLimit)}
+          </span>
+        </div>
+        <div className='mt-2 h-2 overflow-hidden rounded-full bg-white/20'>
+          <div className='h-full rounded-full bg-white' style={{ width: `${Math.min(summary.utilizationRate, 100)}%` }} />
+        </div>
+      </div>
 
-      {/* 四宫格快捷统计 */}
-      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5, mb: 3 }}>
-        <Card sx={{ border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
-          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-            <Typography
-              sx={{
-                fontSize: 'var(--type-body-size)',
-                lineHeight: 'var(--type-body-line)',
-                letterSpacing: 'var(--type-body-tracking)',
-                color: 'var(--muted)',
-              }}
-            >
-              卡数
-            </Typography>
-            <Typography variant="h5" sx={{ fontWeight: 700 }}>{quickStats.cardCount}</Typography>
-          </CardContent>
-        </Card>
-        <Card sx={{ border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
-          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-            <Typography
-              sx={{
-                fontSize: 'var(--type-body-size)',
-                lineHeight: 'var(--type-body-line)',
-                letterSpacing: 'var(--type-body-tracking)',
-                color: 'var(--muted)',
-              }}
-            >
-              本月账单
-            </Typography>
-            <Typography variant="h5" sx={{ fontWeight: 700 }}>{formatAmount(quickStats.monthlyBills)}</Typography>
-          </CardContent>
-        </Card>
-        <Card sx={{ border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
-          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-            <Typography
-              sx={{
-                fontSize: 'var(--type-body-size)',
-                lineHeight: 'var(--type-body-line)',
-                letterSpacing: 'var(--type-body-tracking)',
-                color: 'var(--muted)',
-              }}
-            >
-              待还款
-            </Typography>
-            <Typography variant="h5" sx={{ fontWeight: 700 }}>{formatAmount(quickStats.pendingPayment)}</Typography>
-          </CardContent>
-        </Card>
-        <Card sx={{ border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
-          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-            <Typography
-              sx={{
-                fontSize: 'var(--type-body-size)',
-                lineHeight: 'var(--type-body-line)',
-                letterSpacing: 'var(--type-body-tracking)',
-                color: 'var(--muted)',
-              }}
-            >
-              逾期数
-            </Typography>
-            <Typography
-              variant="h5"
-              fontWeight={700}
-              sx={{ color: quickStats.overdueCount > 0 ? 'var(--danger)' : 'var(--strong)' }}
-            >
-              {quickStats.overdueCount}
-            </Typography>
-          </CardContent>
-        </Card>
-      </Box>
+      <div className='mb-5 grid grid-cols-2 gap-3'>
+        {tiles.map(tile => (
+          <div key={tile.label} className='rounded-2xl border border-d-border bg-d-surface px-4 py-3'>
+            <p className='text-[13px] leading-5 text-d-muted'>{tile.label}</p>
+            <p className={'mt-1 text-[22px] font-bold leading-7 num-tabular ' + (tile.danger ? 'text-d-danger-ink' : '')}>
+              {tile.value}
+            </p>
+          </div>
+        ))}
+      </div>
 
-      {/* 6个月账单趋势 */}
-      <Typography
-        sx={{
-          fontSize: 'var(--type-section-size)',
-          lineHeight: 'var(--type-section-line)',
-          fontWeight: 'var(--type-section-weight)',
-          letterSpacing: 'var(--type-section-tracking)',
-          color: 'var(--text)',
-          mb: 1.5,
-        }}
-      >
-        账单趋势
-      </Typography>
-      <Card sx={{ border: 0, borderRadius: 'var(--radius-depth-2)', boxShadow: 'var(--shadow-e1)' }}>
-        <CardContent sx={{ p: 3 }}>
-          {monthlyTrend.every(t => t.totalAmount === 0) ? (
-            <Typography
-              textAlign="center"
-              sx={{
-                fontSize: 'var(--type-body-size)',
-                lineHeight: 'var(--type-body-line)',
-                letterSpacing: 'var(--type-body-tracking)',
-                color: 'var(--muted)',
-                py: 3,
-              }}
-            >
-              近6个月暂无账单数据
-            </Typography>
-          ) : (
-            <>
-              <Box sx={{
-                display: 'flex',
-                alignItems: 'flex-end',
-                justifyContent: 'space-around',
-                height: 120,
-                gap: 1,
-              }}>
-                {monthlyTrend.map(t => {
-                  const heightPct = t.totalAmount > 0
-                    ? Math.max((t.totalAmount / maxTrendAmount) * 100, 6)
-                    : 6
-                  return (
-                    <Tooltip
-                      key={t.month}
-                      title={`${formatMonth(t.month)}: ${formatAmount(t.totalAmount)}`}
-                      arrow
-                    >
-                      <Box sx={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        flex: 1,
-                        gap: 0.5,
-                        cursor: 'default',
-                      }}>
-                        {/* 柱状图刻度标注：图形标注字号，不套正文字阶 */}
-                        <Typography variant="caption" sx={{ fontSize: 10, color: 'var(--muted)' }}>
-                          {t.totalAmount > 0 ? `${(t.totalAmount / 1000).toFixed(1)}k` : '-'}
-                        </Typography>
-                        <Box sx={{
-                          width: '100%',
-                          maxWidth: 32,
-                          height: `${heightPct}%`,
-                          minHeight: 4,
-                          // 柱顶圆角是图表几何：用最小圆角令牌收口，不套卡片深度
-                          borderRadius: 'var(--radius-xs) var(--radius-xs) 0 0',
-                          background: t.totalAmount > 0
-                            ? 'linear-gradient(180deg, #1976d2, #42a5f5)'
-                            : '#e0e0e0',
-                        }} />
-                        <Typography variant="caption" sx={{ fontSize: 10, color: 'var(--muted)' }}>
-                          {formatMonth(t.month)}
-                        </Typography>
-                      </Box>
-                    </Tooltip>
-                  )
-                })}
-              </Box>
-              <Box sx={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                mt: 2,
-                pt: 2,
-                borderTop: '1px solid',
-                borderColor: 'var(--track)',
-              }}>
-                <Typography
-                  sx={{
-                    fontSize: 'var(--type-body-size)',
-                    lineHeight: 'var(--type-body-line)',
-                    letterSpacing: 'var(--type-body-tracking)',
-                    color: 'var(--muted)',
-                  }}
-                >
-                  总计 {formatAmount(trendTotal)}
-                </Typography>
-                <Typography
-                  sx={{
-                    fontSize: 'var(--type-body-size)',
-                    lineHeight: 'var(--type-body-line)',
-                    letterSpacing: 'var(--type-body-tracking)',
-                    color: 'var(--muted)',
-                  }}
-                >
-                  月均 {formatAmount(trendTotal / 6)}
-                </Typography>
-              </Box>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </Box>
+      <p className='mb-2 text-[17px] font-semibold leading-6'>账单趋势</p>
+      <div className='rounded-2xl border border-d-border bg-d-surface px-4 py-5'>
+        {emptyTrend ? (
+          <p className='py-6 text-center text-[13px] leading-5 text-d-muted'>近6个月暂无账单数据</p>
+        ) : (
+          <>
+            <div className='flex h-[120px] items-end justify-around gap-2'>
+              {monthlyTrend.map(t => {
+                const heightPct = t.totalAmount > 0
+                  ? Math.max((t.totalAmount / maxTrendAmount) * 100, 6)
+                  : 6
+                return (
+                  <div
+                    key={t.month}
+                    title={`${formatMonth(t.month)}: ${formatAmount(t.totalAmount)}`}
+                    className='flex h-full flex-1 flex-col items-center justify-end gap-1'
+                  >
+                    <span className='text-[10px] leading-3 text-d-muted'>
+                      {t.totalAmount > 0 ? `${(t.totalAmount / 1000).toFixed(1)}k` : '-'}
+                    </span>
+                    <div
+                      className={'w-full max-w-8 rounded-t ' + (t.totalAmount > 0 ? 'bg-d-accent' : 'bg-d-border')}
+                      style={{ height: `${heightPct}%`, minHeight: 4 }}
+                    />
+                    <span className='text-[10px] leading-3 text-d-muted'>{formatMonth(t.month)}</span>
+                  </div>
+                )
+              })}
+            </div>
+            <div className='mt-4 flex justify-between border-t border-d-border pt-3 text-[13px] leading-5 text-d-muted'>
+              <span>总计 {formatAmount(trendTotal)}</span>
+              <span>月均 {formatAmount(trendTotal / 6)}</span>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function BackIcon() {
+  return (
+    <svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' aria-hidden='true'>
+      <path d='M15 18 9 12l6-6' />
+    </svg>
+  )
+}
+
+function EditGlyph() {
+  return (
+    <svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' aria-hidden='true'>
+      <path d='M12 20h9' />
+      <path d='M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z' />
+    </svg>
   )
 }

@@ -1,10 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, Button,
-} from '@mui/material'
+import { Modal } from '@/components/obsidian/overlays'
+import { Button } from '@/components/obsidian/controls'
+import { TextField, TextArea } from '@/components/obsidian/fields'
 import { format } from 'date-fns'
 
 interface Props {
@@ -34,62 +33,32 @@ export function BenefitUsageDialog({ open, onClose, onSubmit }: Props) {
   }
 
   return (
-    <Dialog
+    <Modal
       open={open}
+      title='记录权益使用'
       onClose={onClose}
-      fullWidth
-      maxWidth="xs"
-      // 弹窗浮层：18px 圆角 + float 阴影 + 无边框
-      slotProps={{
-        paper: {
-          sx: {
-            border: 0,
-            borderRadius: 'var(--radius-depth-3)',
-            boxShadow: 'var(--shadow-float)',
-          },
-        },
-      }}
+      footer={
+        <>
+          <Button variant='ghost' onClick={onClose}>取消</Button>
+          <Button onClick={handleSubmit} disabled={!usedAt}>记录</Button>
+        </>
+      }
     >
-      {/* 弹窗标题：22/28 · 600 · -0.7px */}
-      <DialogTitle
-        sx={{
-          fontSize: 'var(--type-title-size)',
-          lineHeight: 'var(--type-title-line)',
-          fontWeight: 'var(--type-title-weight)',
-          letterSpacing: 'var(--type-title-tracking)',
-          color: 'var(--text)',
-        }}
-      >
-        记录权益使用
-      </DialogTitle>
-      <DialogContent>
+      <div className='flex flex-col gap-4'>
         <TextField
-          fullWidth label="使用日期" margin="normal"
-          type="date"
+          label='使用日期' required
+          type='date'
           value={usedAt}
           onChange={e => setUsedAt(e.target.value)}
-          InputLabelProps={{ shrink: true }}
-          required
         />
-        <TextField
-          fullWidth label="备注" margin="normal"
-          multiline rows={2}
+        <TextArea
+          label='备注'
+          rows={2}
           value={note}
           onChange={e => setNote(e.target.value)}
-          placeholder="如：用于北京首都机场T3"
+          placeholder='如：用于北京首都机场T3'
         />
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} sx={{ borderRadius: 'var(--radius-pill)' }}>取消</Button>
-        <Button
-          variant="contained"
-          onClick={handleSubmit}
-          disabled={!usedAt}
-          sx={{ borderRadius: 'var(--radius-pill)' }}
-        >
-          记录
-        </Button>
-      </DialogActions>
-    </Dialog>
+      </div>
+    </Modal>
   )
 }

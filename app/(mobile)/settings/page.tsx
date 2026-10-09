@@ -1,9 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { Snackbar, Alert } from '@mui/material'
-import CheckCircleIcon from '@mui/icons-material/CheckCircleOutline'
 import { useRouter } from 'next/navigation'
+import { Toast } from '@/components/obsidian/overlays'
 import { useAuth } from '@/lib/auth'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
 import { DisplayPreferencesCard } from '@/components/settings/DisplayPreferencesCard'
@@ -279,18 +278,13 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <Snackbar
+      <Toast
         open={notice.open}
-        autoHideDuration={2500}
+        message={notice.message}
+        severity={notice.severity}
+        autoHideMs={2500}
         onClose={() => setNotice(prev => ({ ...prev, open: false }))}
-      >
-        <Alert
-          severity={notice.severity}
-          icon={notice.severity === 'success' ? <CheckCircleIcon fontSize='small' /> : undefined}
-        >
-          {notice.message}
-        </Alert>
-      </Snackbar>
+      />
     </div>
   )
 }

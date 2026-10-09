@@ -76,9 +76,10 @@ describe('按真实内容补全：必须分批且说清剩余', () => {
   })
 
   it('第三方来源在界面上单独标注，不冒充官网', () => {
-    expect(page).toMatch(/label="第三方"/)
-    expect(page).toMatch(/label="官网"/)
-    expect(page).toMatch(/label="待确认"/)
+    // 迁移 ObsidianUI 后徽章是文本节点（原 MUI Chip 的 label prop）
+    expect(page).toMatch(/>第三方</)
+    expect(page).toMatch(/>官网</)
+    expect(page).toMatch(/>待确认</)
   })
 
   it('官网抓取失败时说明「改用第三方来源」', () => {
@@ -100,8 +101,9 @@ describe('卡产品：国家筛选与批量操作', () => {
   })
 
   it('提供全选/单选的复选框列', () => {
+    // 迁移 ObsidianUI 后用 AdminShell 的 AdminCheckbox（原 MUI Checkbox 的 indeterminate prop）
     expect(page).toMatch(/indeterminate=/)
-    expect(page).toMatch(/padding="checkbox"/)
+    expect(page).toMatch(/ariaLabel='全选本页'/)
   })
 
   it('批量动作覆盖 AI 补全 / 启用 / 禁用 / 删除', () => {

@@ -1,21 +1,9 @@
 'use client'
 
-import React, { useState } from 'react'
-import { 
-  Button, 
-  ButtonGroup, 
-  CircularProgress, 
-  Menu, 
-  MenuItem, 
-  ListItemText,
-  Box,
-  Snackbar,
-  Alert
-} from '@mui/material'
-import { 
-  AutoAwesome as AiIcon,
-  ArrowDropDown as ArrowDropDownIcon 
-} from '@mui/icons-material'
+import React, { useEffect, useRef, useState } from 'react'
+import { Button } from '@/components/obsidian/controls'
+import { Toast } from '@/components/obsidian/overlays'
+import { AiSparkleIcon, ChevronDownIcon } from '@/components/icons/WcIcon'
 import { aiComplete } from '@/lib/api/ai'
 
 interface AiCompleteButtonProps {
@@ -25,27 +13,32 @@ interface AiCompleteButtonProps {
   availableFields: { key: string; label: string }[]
 }
 
-export default function AiCompleteButton({ 
-  type, 
-  formData, 
-  onComplete, 
-  availableFields 
+export default function AiCompleteButton({
+  type,
+  formData,
+  onComplete,
+  availableFields,
 }: AiCompleteButtonProps) {
   const [loading, setLoading] = useState(false)
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  
-  const handleOpenMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
-    setAnchorEl(event.currentTarget)
-  }
+  const menuRef = useRef<HTMLDivElement>(null)
 
-  const handleCloseMenu = () => {
-    setAnchorEl(null)
-  }
+  // 点击外部关闭逐项菜单
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [menuOpen])
 
   const handleAllComplete = async () => {
     if (loading) return
-    
+
     // 基础校验：至少要有名称
     const nameField = type === 'bank' ? 'name' : 'card_name'
     if (!formData[nameField]) {
@@ -58,7 +51,7 @@ export default function AiCompleteButton({
     try {
       const result = await aiComplete({
         type,
-        data: formData
+        data: formData,
       })
       if (!result || Object.keys(result).length === 0) {
         setErrorMsg('AI 未能识别该信息，请尝试补充更多关键词')
@@ -74,14 +67,14 @@ export default function AiCompleteButton({
   }
 
   const handleFieldComplete = async (fieldKey: string) => {
-    handleCloseMenu()
+    setMenuOpen(false)
     setLoading(true)
     setErrorMsg(null)
     try {
       const result = await aiComplete({
         type,
         data: formData,
-        fields: [fieldKey]
+        fields: [fieldKey],
       })
       onComplete(result)
     } catch (err) {
@@ -92,60 +85,50 @@ export default function AiCompleteButton({
   }
 
   return (
-    <Box sx={{ display: 'inline-flex', alignItems: 'center' }}>
-      <ButtonGroup variant="contained" size="small" sx={{ 
-        bgcolor: '#7c4dff', 
-        '&:hover': { bgcolor: '#651fff' } 
-      }}>
+    <div className='inline-flex flex-col items-end'>
+      <div ref={menuRef} className='relative inline-flex overflow-hidden rounded-xl'>
         <Button
-          startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <AiIcon />}
           onClick={handleAllComplete}
-          disabled={loading}
+          loading={loading}
+          className='rounded-none'
         >
+          {!loading ? <AiSparkleIcon size={16} /> : null}
           {loading ? '补全中...' : 'AI 一键补全'}
         </Button>
-        <Button
-          size="small"
-          onClick={handleOpenMenu}
+        <button
+          type='button'
+          aria-label='逐项生成'
+          onClick={() => setMenuOpen((v) => !v)}
           disabled={loading}
+          className='border-l border-white/25 bg-d-accent px-2 text-white disabled:opacity-50'
         >
-          <ArrowDropDownIcon />
-        </Button>
-      </ButtonGroup>
+          <ChevronDownIcon size={16} />
+        </button>
 
-      <Menu
-        anchorEl={anchorEl}
-        open={Boolean(anchorEl)}
-        onClose={handleCloseMenu}
-        PaperProps={{
-          sx: { bgcolor: '#1e2028', color: '#e4e6eb' }
-        }}
-      >
-        <MenuItem disabled sx={{ opacity: 1, fontWeight: 'bold', fontSize: '12px' }}>
-          逐项生成
-        </MenuItem>
-        {availableFields.map((field) => (
-          <MenuItem key={field.key} onClick={() => handleFieldComplete(field.key)}>
-            <ListItemText primary={field.label} />
-          </MenuItem>
-        ))}
-      </Menu>
+        {menuOpen ? (
+          <div className='absolute right-0 top-full z-50 mt-1 min-w-[180px] overflow-hidden rounded-xl border border-d-border bg-d-surface py-1 text-left shadow-xl'>
+            <p className='px-3.5 py-1.5 text-[12px] font-bold text-d-muted'>逐项生成</p>
+            {availableFields.map((field) => (
+              <button
+                key={field.key}
+                type='button'
+                onClick={() => handleFieldComplete(field.key)}
+                className='block w-full px-3.5 py-2 text-left text-[13px] text-d-text hover:bg-d-subtle'
+              >
+                {field.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
 
-      <Snackbar
+      <Toast
         open={Boolean(errorMsg)}
-        autoHideDuration={6000}
+        message={errorMsg ?? ''}
+        severity='error'
+        autoHideMs={6000}
         onClose={() => setErrorMsg(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert 
-          onClose={() => setErrorMsg(null)} 
-          severity="error" 
-          variant="filled" 
-          sx={{ width: '100%', whiteSpace: 'pre-wrap' }}
-        >
-          {errorMsg}
-        </Alert>
-      </Snackbar>
-    </Box>
+      />
+    </div>
   )
 }

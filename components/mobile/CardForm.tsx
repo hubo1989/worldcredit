@@ -1,12 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, Button, MenuItem, Stack, Typography,
-  InputAdornment, Box, ToggleButton, ToggleButtonGroup,
-  FormControlLabel, Switch, Divider
-} from '@mui/material'
+import { Modal } from '@/components/obsidian/overlays'
+import { Button, Toggle } from '@/components/obsidian/controls'
+import { TextField, SelectField } from '@/components/obsidian/fields'
 import type { CreditCard, CardProduct } from '@/lib/types'
 import { getCardProducts } from '@/lib/api/cards'
 import { AiFillBox } from '@/components/mobile/AiFillBox'
@@ -27,13 +24,37 @@ const DUE_TYPE_LABELS: Record<DueType, string> = {
   fixed_before_billing: '每月固定还款日（账单日倒推）',
 }
 
-// MUI Typography 自带样式注入在 globals.css 之后，同特异性下角色 class 会被覆盖，
-// 因此排版令牌直接写进 sx。
-const BODY = {
-  fontSize: 'var(--type-body-size)',
-  lineHeight: 'var(--type-body-line)',
-  fontWeight: 'var(--type-body-weight)',
-  letterSpacing: 'var(--type-body-tracking)',
+/** 卡类型分段选择（对应 MUI ToggleButtonGroup exclusive 的暗色版）。 */
+function CardTypeSegment({
+  value, onChange,
+}: {
+  value: 'credit' | 'loan'
+  onChange: (next: 'credit' | 'loan') => void
+}) {
+  const items: { value: 'credit' | 'loan'; label: string }[] = [
+    { value: 'credit', label: '信用卡' },
+    { value: 'loan', label: '贷款类' },
+  ]
+  return (
+    <div role='group' aria-label='卡类型' className='grid grid-cols-2 gap-1 rounded-xl border border-d-border bg-d-subtle p-1'>
+      {items.map(item => (
+        <button
+          key={item.value}
+          type='button'
+          aria-pressed={value === item.value}
+          onClick={() => onChange(item.value)}
+          className={
+            'h-9 rounded-lg text-[13px] font-semibold transition-colors ' +
+            (value === item.value
+              ? 'bg-d-surface text-d-text shadow-sm'
+              : 'text-d-muted active:text-d-text')
+          }
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) {
@@ -73,7 +94,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
   const bankOptions = Array.from(new Set(products.map(p => p.bank_name))).filter(Boolean)
 
   // 当前银行下的卡产品列表
-  const availableProducts = selectedBank 
+  const availableProducts = selectedBank
     ? products.filter(p => p.bank_name === selectedBank)
     : products
 
@@ -158,268 +179,170 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
   }
 
   return (
-    <Dialog
+    <Modal
       open={open}
+      title={initial ? '编辑卡片' : '添加卡片'}
       onClose={onClose}
-      fullWidth
-      maxWidth="xs"
-      // 弹窗浮层：18px 圆角 + float 阴影 + 无边框
-      slotProps={{
-        paper: {
-          sx: {
-            border: 0,
-            borderRadius: 'var(--radius-depth-3)',
-            boxShadow: 'var(--shadow-float)',
-          },
-        },
-      }}
+      footer={
+        <>
+          <Button variant='ghost' onClick={onClose}>取消</Button>
+          <Button onClick={handleSubmit} loading={submitting} disabled={!canSubmit}>
+            {submitting ? '保存中...' : '保存'}
+          </Button>
+        </>
+      }
     >
-      {/* 弹窗标题：22/28 · 600 · -0.7px */}
-      <DialogTitle
-        sx={{
-          fontSize: 'var(--type-title-size)',
-          lineHeight: 'var(--type-title-line)',
-          fontWeight: 'var(--type-title-weight)',
-          letterSpacing: 'var(--type-title-tracking)',
-          color: 'var(--text)',
-        }}
-      >
-        {initial ? '编辑卡片' : '添加卡片'}
-      </DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ mt: 1 }}>
-          <AiFillBox mode="card" onFill={(data) => {
-            if (data.bank_name) setSelectedBank(String(data.bank_name))
-            if (data.card_number_last4) setLast4(String(data.card_number_last4))
-            if (data.billing_day) {
-              const d = String(data.billing_day).replace(/\D/g, '')
-              if (d) setBillingDay(d)
+      <div className='flex flex-col gap-4'>
+        <AiFillBox mode="card" onFill={(data) => {
+          if (data.bank_name) setSelectedBank(String(data.bank_name))
+          if (data.card_number_last4) setLast4(String(data.card_number_last4))
+          if (data.billing_day) {
+            const d = String(data.billing_day).replace(/\D/g, '')
+            if (d) setBillingDay(d)
+          }
+          if (data.card_name) {
+            const match = products.find(p => p.card_name === data.card_name || p.card_name.includes(String(data.card_name)))
+            if (match) {
+              setSelectedBank(match.bank_name)
+              setProductId(match.id)
             }
-            if (data.card_name) {
-              const match = products.find(p => p.card_name === data.card_name || p.card_name.includes(String(data.card_name)))
-              if (match) {
-                setSelectedBank(match.bank_name)
-                setProductId(match.id)
-              }
-            }
-          }} />
+          }
+        }} />
 
-          {/* 卡类型选择 */}
-          <Box>
-            {/* 分组小标题：19/24 · 600 · -0.6px，次要色 */}
-            <Typography
-              sx={{
-                fontSize: 'var(--type-section-size)',
-                lineHeight: 'var(--type-section-line)',
-                fontWeight: 'var(--type-section-weight)',
-                letterSpacing: 'var(--type-section-tracking)',
-                color: 'var(--muted)',
-                mb: 0.5,
-                display: 'block',
-              }}
-            >
-              卡类型
-            </Typography>
-            <ToggleButtonGroup
-              value={cardType}
-              exclusive
-              onChange={(_, val) => { if (val) setCardType(val) }}
-              size="small"
-              fullWidth
-            >
-              <ToggleButton value="credit">信用卡</ToggleButton>
-              <ToggleButton value="loan">贷款类</ToggleButton>
-            </ToggleButtonGroup>
-          </Box>
+        {/* 卡类型选择 */}
+        <div>
+          <p className='mb-1.5 text-[13px] font-semibold leading-5 text-d-muted'>卡类型</p>
+          <CardTypeSegment value={cardType} onChange={setCardType} />
+        </div>
 
-          {/* 发卡银行选择 */}
-          <TextField
-            select
-            fullWidth
-            label="发卡银行 *"
-            value={selectedBank}
-            onChange={e => handleBankChange(e.target.value)}
-            required
-          >
-            {bankOptions.map(bank => (
-              <MenuItem key={bank} value={bank}>
-                {bank}
-              </MenuItem>
-            ))}
-          </TextField>
+        {/* 发卡银行选择 */}
+        <SelectField
+          label="发卡银行"
+          required
+          value={selectedBank}
+          onChange={e => handleBankChange(e.target.value)}
+          options={bankOptions.map(bank => ({ value: bank, label: bank }))}
+        />
 
-          {/* 卡片名称选择 */}
-          <TextField
-            select
-            fullWidth
-            label="卡片名称 *"
-            value={productId}
-            onChange={e => setProductId(e.target.value)}
-            disabled={!selectedBank}
-            required
-            helperText={!selectedBank ? '请先选择发卡银行' : undefined}
-          >
-            {availableProducts.map(p => (
-              <MenuItem key={p.id} value={p.id}>
-                {p.card_name}
-              </MenuItem>
-            ))}
-          </TextField>
+        {/* 卡片名称选择 */}
+        <SelectField
+          label="卡片名称"
+          required
+          value={productId}
+          onChange={e => setProductId(e.target.value)}
+          disabled={!selectedBank}
+          helperText={!selectedBank ? '请先选择发卡银行' : undefined}
+          options={availableProducts.map(p => ({ value: p.id, label: p.card_name }))}
+        />
 
-          {/* ---- 信用卡模式 ---- */}
-          {isCredit && (
-            <>
-              <TextField
-                fullWidth
-                label="额度"
-                type="number"
-                placeholder="例如：50000"
-                value={limit}
-                onChange={e => setLimit(e.target.value)}
-                required
-                InputProps={{
-                  startAdornment: <InputAdornment position="start">¥</InputAdornment>,
-                }}
+        {/* ---- 信用卡模式 ---- */}
+        {isCredit && (
+          <>
+            <TextField
+              label="额度"
+              type="number"
+              placeholder="例如：50000"
+              value={limit}
+              onChange={e => setLimit(e.target.value)}
+              required
+              startAdornment={<span>¥</span>}
+            />
+
+            <TextField
+              label="账单日"
+              type="number"
+              placeholder="1-31 之间的数字"
+              value={billingDay}
+              onChange={e => setBillingDay(e.target.value)}
+              required
+              helperText="每个月生成账单的日期"
+              endAdornment={<span>日</span>}
+            />
+
+            {/* 还款规则覆盖 */}
+            <div className='flex items-center gap-2.5'>
+              <Toggle
+                checked={overrideEnabled}
+                onChange={setOverrideEnabled}
+                ariaLabel='覆盖卡产品默认还款规则'
               />
+              <span className='text-[14px] leading-5 text-d-text'>覆盖卡产品默认还款规则</span>
+            </div>
 
-              <TextField
-                fullWidth
-                label="账单日"
-                type="number"
-                placeholder="1-31 之间的数字"
-                value={billingDay}
-                onChange={e => setBillingDay(e.target.value)}
-                required
-                helperText="每个月生成账单的日期"
-                InputProps={{
-                  endAdornment: <InputAdornment position="end">日</InputAdornment>,
-                }}
-              />
-
-              {/* 还款规则覆盖 */}
-              <Box>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={overrideEnabled}
-                      onChange={e => setOverrideEnabled(e.target.checked)}
-                      size="small"
-                    />
-                  }
-                  label={
-                    <Typography sx={{ ...BODY, color: 'var(--text)' }}>
-                      覆盖卡产品默认还款规则
-                    </Typography>
-                  }
+            {overrideEnabled && (
+              // 分组缩进线：1px d-border
+              <div className='flex flex-col gap-4 border-l border-d-border pl-2'>
+                <TextField
+                  label="账单日（覆盖）"
+                  type="number"
+                  placeholder="留空则使用上方账单日"
+                  value={overrideBillingDay}
+                  onChange={e => setOverrideBillingDay(e.target.value)}
+                  helperText="可选，覆盖卡产品的默认账单日"
+                  endAdornment={<span>日</span>}
                 />
-              </Box>
 
-              {overrideEnabled && (
-                // 分组缩进线：1px var(--track)
-                <Stack spacing={2} className="track-left" sx={{ pl: 1 }}>
-                  <TextField
-                    fullWidth
-                    label="账单日（覆盖）"
-                    type="number"
-                    placeholder="留空则使用上方账单日"
-                    value={overrideBillingDay}
-                    onChange={e => setOverrideBillingDay(e.target.value)}
-                    helperText="可选，覆盖卡产品的默认账单日"
-                    InputProps={{
-                      endAdornment: <InputAdornment position="end">日</InputAdornment>,
-                    }}
-                  />
+                <SelectField
+                  label="还款规则"
+                  value={overrideDueType}
+                  onChange={e => setOverrideDueType(e.target.value as DueType)}
+                  options={(Object.keys(DUE_TYPE_LABELS) as DueType[]).map(t => ({
+                    value: t,
+                    label: DUE_TYPE_LABELS[t],
+                  }))}
+                />
 
-                  <TextField
-                    select
-                    fullWidth
-                    label="还款规则"
-                    value={overrideDueType}
-                    onChange={e => setOverrideDueType(e.target.value as DueType)}
-                  >
-                    {(Object.keys(DUE_TYPE_LABELS) as DueType[]).map(t => (
-                      <MenuItem key={t} value={t}>{DUE_TYPE_LABELS[t]}</MenuItem>
-                    ))}
-                  </TextField>
+                <TextField
+                  label={overrideDueType === 'after_billing' ? '天数' : '还款日'}
+                  type="number"
+                  placeholder={overrideDueType === 'after_billing' ? '例如：20' : '1-31'}
+                  value={overrideDueValue}
+                  onChange={e => setOverrideDueValue(e.target.value)}
+                  endAdornment={<span>{overrideDueType === 'after_billing' ? '天' : '日'}</span>}
+                />
+              </div>
+            )}
+          </>
+        )}
 
-                  <TextField
-                    fullWidth
-                    label={overrideDueType === 'after_billing' ? '天数' : '还款日'}
-                    type="number"
-                    placeholder={overrideDueType === 'after_billing' ? '例如：20' : '1-31'}
-                    value={overrideDueValue}
-                    onChange={e => setOverrideDueValue(e.target.value)}
-                    InputProps={{
-                      endAdornment: (
-                        <InputAdornment position="end">
-                          {overrideDueType === 'after_billing' ? '天' : '日'}
-                        </InputAdornment>
-                      ),
-                    }}
-                  />
-                </Stack>
-              )}
-            </>
-          )}
+        {/* ---- 贷款类模式 ---- */}
+        {isLoan && (
+          <>
+            <TextField
+              label="每月还款日"
+              type="number"
+              placeholder="1-31 之间的数字"
+              value={loanDueDay}
+              onChange={e => setLoanDueDay(e.target.value)}
+              required
+              helperText="每个月固定还款日期"
+              endAdornment={<span>日</span>}
+            />
 
-          {/* ---- 贷款类模式 ---- */}
-          {isLoan && (
-            <>
-              <TextField
-                fullWidth
-                label="每月还款日"
-                type="number"
-                placeholder="1-31 之间的数字"
-                value={loanDueDay}
-                onChange={e => setLoanDueDay(e.target.value)}
-                required
-                helperText="每个月固定还款日期"
-                InputProps={{
-                  endAdornment: <InputAdornment position="end">日</InputAdornment>,
-                }}
-              />
+            <TextField
+              label="贷款金额"
+              type="number"
+              placeholder="选填"
+              value={limit}
+              onChange={e => setLimit(e.target.value)}
+              startAdornment={<span>¥</span>}
+              helperText="选填，贷款总金额"
+            />
+          </>
+        )}
 
-              <TextField
-                fullWidth
-                label="贷款金额"
-                type="number"
-                placeholder="选填"
-                value={limit}
-                onChange={e => setLimit(e.target.value)}
-                InputProps={{
-                  startAdornment: <InputAdornment position="start">¥</InputAdornment>,
-                }}
-                helperText="选填，贷款总金额"
-              />
-            </>
-          )}
+        {/* 分隔线 */}
+        <div className='h-px bg-d-border' />
 
-          {/* 分隔线：1px var(--track) */}
-          <Divider sx={{ borderColor: 'var(--track)' }} />
-
-          {/* 卡号末4位（通用） */}
-          <TextField
-            fullWidth
-            label="卡号末4位"
-            placeholder="选填"
-            value={last4}
-            onChange={e => setLast4(e.target.value)}
-            inputProps={{ maxLength: 6 }}
-          />
-
-        </Stack>
-      </DialogContent>
-      <DialogActions sx={{ p: 2, pt: 0 }}>
-        <Button onClick={onClose} color="inherit" sx={{ borderRadius: 'var(--radius-pill)' }}>取消</Button>
-        <Button
-          variant="contained"
-          onClick={handleSubmit}
-          disabled={submitting || !canSubmit}
-          sx={{ borderRadius: 'var(--radius-pill)' }}
-        >
-          {submitting ? '保存中...' : '保存'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+        {/* 卡号末4位（通用） */}
+        <TextField
+          label="卡号末4位"
+          placeholder="选填"
+          value={last4}
+          onChange={e => setLast4(e.target.value)}
+          maxLength={6}
+        />
+      </div>
+    </Modal>
   )
 }

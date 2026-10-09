@@ -1,106 +1,78 @@
 'use client'
 
-import { Box, Typography, Paper, Chip, Stack } from '@mui/material'
-import {
-  LocalOffer as PromoIcon,
-  CheckCircle as ActiveIcon,
-  Cancel as ExpiredIcon
-} from '@mui/icons-material'
 import type { PromoItem } from '@/lib/api/dashboard'
+import { PromoIcon, CheckIcon, XCircleIcon } from '@/components/icons/WcIcon'
 
 interface PromoOverviewProps {
   data: PromoItem[]
 }
 
 const DISCOUNT_COLORS: Record<string, string> = {
-  '满减': '#fbbf24',
-  '折扣': '#34d399',
-  '积分': '#818cf8',
-  '返现': '#f472b6',
+  满减: '#fbbf24',
+  折扣: '#34d399',
+  积分: '#818cf8',
+  返现: '#f472b6',
 }
 
 export function PromoOverview({ data }: PromoOverviewProps) {
-  const activeCount = data.filter(p => p.is_active).length
+  const activeCount = data.filter((p) => p.is_active).length
 
   return (
-    <Paper sx={{
-      p: 3, borderRadius: 3,
-      bgcolor: '#181a24',
-      border: '1px solid rgba(255,255,255,0.06)',
-    }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2.5 }}>
-        <Box>
-          <Typography variant="subtitle2" sx={{ color: '#e4e6eb', fontWeight: 600 }}>
-            优惠活动
-          </Typography>
-          <Typography variant="caption" sx={{ color: '#9ca3af' }}>
-            进行中 {activeCount} · 共 {data.length}
-          </Typography>
-        </Box>
-      </Box>
+    <div className='rounded-2xl border border-d-border bg-d-surface p-6'>
+      <div className='mb-5'>
+        <p className='text-[15px] font-semibold'>优惠活动</p>
+        <p className='text-[12px] text-d-muted'>
+          进行中 {activeCount} · 共 {data.length}
+        </p>
+      </div>
 
       {data.length === 0 ? (
-        <Box sx={{ py: 4, textAlign: 'center' }}>
-          <PromoIcon sx={{ fontSize: 40, color: '#374151', mb: 1 }} />
-          <Typography variant="body2" sx={{ color: '#9ca3af' }}>暂无优惠活动</Typography>
-        </Box>
+        <div className='py-8 text-center'>
+          <PromoIcon size={40} className='mx-auto mb-2 text-d-border' />
+          <p className='text-[13px] text-d-muted'>暂无优惠活动</p>
+        </div>
       ) : (
-        <Stack spacing={1.5}>
-          {data.slice(0, 6).map(promo => (
-            <Box key={promo.id} sx={{
-              display: 'flex', alignItems: 'center', gap: 2,
-              p: 2, borderRadius: 2,
-              bgcolor: 'rgba(255,255,255,0.02)',
-              border: '1px solid rgba(255,255,255,0.03)',
-              transition: 'border-color 0.2s',
-              '&:hover': { borderColor: 'rgba(255,255,255,0.08)' },
-            }}>
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                  <Typography variant="body2" sx={{ color: '#e4e6eb', fontWeight: 500, fontSize: 13 }} noWrap>
-                    {promo.title}
-                  </Typography>
-                  {promo.is_active ? (
-                    <ActiveIcon sx={{ fontSize: 14, color: 'success.main' }} />
-                  ) : (
-                    <ExpiredIcon sx={{ fontSize: 14, color: '#9ca3af' }} />
-                  )}
-                </Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Typography variant="caption" sx={{ color: '#9ca3af', fontSize: 11 }}>
-                    {promo.bank_name}
-                  </Typography>
-                  {promo.discount_type && (
-                    <Chip
-                      label={promo.discount_type}
-                      size="small"
-                      sx={{
-                        height: 18, fontSize: 10,
-                        bgcolor: `${DISCOUNT_COLORS[promo.discount_type] || '#9ca3af'}18`,
-                        color: DISCOUNT_COLORS[promo.discount_type] || '#9ca3af',
-                        fontWeight: 600,
-                      }}
-                    />
-                  )}
-                  {promo.end_date && (
-                    <Typography variant="caption" sx={{ color: '#9ca3af', fontSize: 11 }}>
-                      截止 {promo.end_date}
-                    </Typography>
-                  )}
-                </Box>
-              </Box>
-              <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
-                <Typography variant="body2" sx={{ color: '#e4e6eb', fontWeight: 700, fontSize: 15 }}>
-                  {promo.usage_count}
-                </Typography>
-                <Typography variant="caption" sx={{ color: '#9ca3af', fontSize: 10 }}>
-                  已使用
-                </Typography>
-              </Box>
-            </Box>
-          ))}
-        </Stack>
+        <div className='flex flex-col gap-3'>
+          {data.slice(0, 6).map((promo) => {
+            const discountColor = DISCOUNT_COLORS[promo.discount_type ?? ''] || '#9aa6bc'
+            return (
+              <div
+                key={promo.id}
+                className='flex items-center gap-4 rounded-xl border border-d-border/60 bg-d-subtle/50 p-4 transition-colors hover:border-d-border'
+              >
+                <div className='min-w-0 flex-1'>
+                  <div className='mb-1 flex items-center gap-1.5'>
+                    <p className='truncate text-[13px] font-medium'>{promo.title}</p>
+                    {promo.is_active ? (
+                      <CheckIcon size={14} className='shrink-0 text-d-success-ink' />
+                    ) : (
+                      <XCircleIcon size={14} className='shrink-0 text-d-muted' />
+                    )}
+                  </div>
+                  <div className='flex flex-wrap items-center gap-2'>
+                    <span className='text-[11px] text-d-muted'>{promo.bank_name}</span>
+                    {promo.discount_type ? (
+                      <span
+                        className='rounded-md px-1.5 py-0.5 text-[10px] font-semibold'
+                        style={{ backgroundColor: `${discountColor}26`, color: discountColor }}
+                      >
+                        {promo.discount_type}
+                      </span>
+                    ) : null}
+                    {promo.end_date ? (
+                      <span className='text-[11px] text-d-muted'>截止 {promo.end_date}</span>
+                    ) : null}
+                  </div>
+                </div>
+                <div className='shrink-0 text-right'>
+                  <p className='text-[15px] font-bold tabular-nums'>{promo.usage_count}</p>
+                  <p className='text-[10px] text-d-muted'>已使用</p>
+                </div>
+              </div>
+            )
+          })}
+        </div>
       )}
-    </Paper>
+    </div>
   )
 }

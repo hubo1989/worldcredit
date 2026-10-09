@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, Button, MenuItem, Stack, Alert, InputAdornment, Typography,
-} from '@mui/material'
+import { Modal } from '@/components/obsidian/overlays'
+import { Button } from '@/components/obsidian/controls'
+import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
+import { Alert } from '@/components/obsidian/feedback'
 import { createRecurringPayable, updateRecurringPayable, PAYABLE_CATEGORIES, type PayableCategory, type PayableWithStatus } from '@/lib/api/payables'
 import { getHolders } from '@/lib/api/holders'
 import type { CardHolder } from '@/lib/types'
@@ -98,99 +98,86 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
   }
 
   return (
-    <Dialog open={open} onClose={() => !submitting && onClose()} maxWidth="xs" fullWidth>
-      <DialogTitle sx={{ fontWeight: 800, fontSize: 'var(--type-section-size)' }}>
-        {existing ? '编辑固定支出' : '添加固定支出'}
-      </DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ mt: 0.5 }}>
-          <TextField
-            autoFocus
-            fullWidth
-            label="名称"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="如：房租、房贷"
-          />
-          <TextField
-            select
-            fullWidth
-            label="类型"
-            value={category}
-            onChange={e => setCategory(e.target.value as PayableCategory)}
-          >
-            {PAYABLE_CATEGORIES.map(c => (
-              <MenuItem key={c.value} value={c.value}>{c.label}</MenuItem>
-            ))}
-          </TextField>
-          <Stack direction="row" spacing={1.5}>
+    <Modal
+      open={open}
+      onClose={() => !submitting && onClose()}
+      dismissible={!submitting}
+      title={existing ? '编辑固定支出' : '添加固定支出'}
+      footer={
+        <>
+          <Button variant='ghost' onClick={onClose} disabled={submitting}>取消</Button>
+          <Button onClick={handleSubmit} loading={submitting}>
+            {submitting ? '保存中...' : '保存'}
+          </Button>
+        </>
+      }
+    >
+      <div className='flex flex-col gap-4'>
+        <TextField
+          autoFocus
+          label="名称"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="如：房租、房贷"
+        />
+        <SelectField
+          label="类型"
+          value={category}
+          onChange={e => setCategory(e.target.value as PayableCategory)}
+          options={PAYABLE_CATEGORIES.map(c => ({ value: c.value, label: c.label }))}
+        />
+        <div className='flex items-start gap-3'>
+          <div className='min-w-0 flex-1'>
             <TextField
-              fullWidth
               type="number"
               label="每月金额"
               value={amount}
               onChange={e => setAmount(e.target.value)}
-              InputProps={{ startAdornment: <InputAdornment position="start">{currency === 'USD' ? 'US$' : currency === 'HKD' ? 'HK$' : '¥'}</InputAdornment> }}
-              inputProps={{ inputMode: 'decimal', min: 0, step: '0.01' }}
+              startAdornment={<span>{currency === 'USD' ? 'US$' : currency === 'HKD' ? 'HK$' : '¥'}</span>}
+              inputMode='decimal' min={0} step='0.01'
             />
-            <TextField
-              select
+          </div>
+          <div className='w-28 shrink-0'>
+            <SelectField
               label="币种"
               value={currency}
               onChange={e => setCurrency(e.target.value)}
-              sx={{ minWidth: 96 }}
-            >
-              {['CNY', 'USD', 'HKD'].map(c => <MenuItem key={c} value={c}>{c}</MenuItem>)}
-            </TextField>
-          </Stack>
-          <TextField
-            fullWidth
-            type="number"
-            label="每月应付日"
-            value={dueDay}
-            onChange={e => setDueDay(e.target.value)}
-            placeholder="1–31"
-            helperText="超过当月天数时按月最后一天计算"
-            inputProps={{ inputMode: 'numeric', min: 1, max: 31 }}
+              options={['CNY', 'USD', 'HKD'].map(c => ({ value: c, label: c }))}
+            />
+          </div>
+        </div>
+        <TextField
+          type="number"
+          label="每月应付日"
+          value={dueDay}
+          onChange={e => setDueDay(e.target.value)}
+          placeholder="1–31"
+          helperText="超过当月天数时按月最后一天计算"
+          inputMode='numeric' min={1} max={31}
+        />
+        {holders.length > 0 && (
+          <SelectField
+            label="归属（可选）"
+            value={holderId}
+            onChange={e => setHolderId(e.target.value)}
+            options={[
+              { value: '', label: '不指定' },
+              ...holders.map(h => ({ value: h.id, label: h.name })),
+            ]}
           />
-          {holders.length > 0 && (
-            <TextField
-              select
-              fullWidth
-              label="归属（可选）"
-              value={holderId}
-              onChange={e => setHolderId(e.target.value)}
-            >
-              <MenuItem value="">不指定</MenuItem>
-              {holders.map(h => <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>)}
-            </TextField>
-          )}
-          <TextField
-            fullWidth
-            label="备注（可选）"
-            value={note}
-            onChange={e => setNote(e.target.value)}
-            multiline
-            minRows={2}
-          />
-          {/* 与卡账分开是刻意的，说清楚避免用户以为「没进账单就是没生效」 */}
-          <Typography className="type-label">
-            固定支出不占用信用卡额度，单独计入每月应付；与卡账分开统计。
-          </Typography>
-          {error && <Alert severity="error" sx={{ borderRadius: 'var(--radius-depth-1)' }}>{error}</Alert>}
-        </Stack>
-      </DialogContent>
-      <DialogActions sx={{ p: 2 }}>
-        <Button onClick={onClose} disabled={submitting}>取消</Button>
-        <Button
-          variant="contained"
-          onClick={handleSubmit}
-          disabled={submitting}
-          sx={{ fontWeight: 700, borderRadius: 'var(--radius-pill)', textTransform: 'none' }}
-        >
-          {submitting ? '保存中...' : '保存'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+        )}
+        <TextArea
+          label="备注（可选）"
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          rows={2}
+        />
+        {/* 与卡账分开是刻意的，说清楚避免用户以为「没进账单就是没生效」 */}
+        <p className='text-[13px] leading-5 text-d-muted'>
+          固定支出不占用信用卡额度，单独计入每月应付；与卡账分开统计。
+        </p>
+        {error && <Alert severity="error">{error}</Alert>}
+      </div>
+    </Modal>
   )
 }

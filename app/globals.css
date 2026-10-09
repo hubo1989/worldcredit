@@ -171,83 +171,6 @@
   --button-face-accent: linear-gradient(180deg, #2F7FE0 0%, var(--info) 62%, #14509E 100%);
 }
 
-/* 排版角色：直接挂 class，页面无需再逐个写字号/字距。
-
-   选择器重复一次类名（.type-title.type-title）把特异性提到 0-2-0：
-   MUI 的 emotion 样式在 <head> 中注入在 globals.css 之后，
-   .MuiTypography-body2 / .MuiDialogTitle-root 这类根类同为 0-1-0，
-   同特异性下后注入者胜出，会让角色 class 失效。提高一档即可稳定胜出，
-   且不依赖祖先元素——MUI Dialog 挂在 document.body 的 portal 里，
-   不在 .phone 之内，用祖先选择器会漏掉弹窗标题。
-
-   颜色不在这里写死：主文本色由 .phone 继承下来，只有 .type-label 需要降档。 */
-.type-title.type-title {
-  font-family: var(--font-display);
-  font-size: var(--type-title-size);
-  line-height: var(--type-title-line);
-  font-weight: var(--type-title-weight);
-  letter-spacing: var(--type-title-tracking);
-}
-.type-section.type-section {
-  font-family: var(--font-display);
-  font-size: var(--type-section-size);
-  line-height: var(--type-section-line);
-  font-weight: var(--type-section-weight);
-  letter-spacing: var(--type-section-tracking);
-}
-.type-body.type-body {
-  font-family: var(--font-display);
-  font-size: var(--type-body-size);
-  line-height: var(--type-body-line);
-  font-weight: var(--type-body-weight);
-  letter-spacing: var(--type-body-tracking);
-}
-/* 日期与弱化的元信息标签：与正文同尺寸，只降颜色 */
-.type-label.type-label {
-  font-family: var(--font-display);
-  font-size: var(--type-body-size);
-  line-height: var(--type-body-line);
-  font-weight: var(--type-body-weight);
-  letter-spacing: var(--type-body-tracking);
-  color: var(--muted);
-}
-
-/* 分层阴影卡片：无边框，深度即层级 */
-.surface-1,
-.surface-2,
-.surface-3 {
-  background: var(--paper);
-  border: 0;
-}
-.surface-1 { border-radius: var(--radius-depth-1); box-shadow: var(--shadow-e1); }
-.surface-2 { border-radius: var(--radius-depth-2); box-shadow: var(--shadow-e2); }
-.surface-3 { border-radius: var(--radius-depth-3); box-shadow: var(--shadow-e3); }
-
-/* 分隔线：1px --track，永不使用可见边框色 */
-.track-top { border-top: 1px solid var(--track); }
-.track-bottom { border-bottom: 1px solid var(--track); }
-.track-left { border-left: 1px solid var(--track); }
-.track-divide > * + * { border-top: 1px solid var(--track); }
-
-/* 圆形按钮基座：内嵌高光 + 柔和投影，无平面填充 */
-.btn-round {
-  width: var(--button-size);
-  height: var(--button-size);
-  border-radius: var(--radius-button);
-  border: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--button-face);
-  color: var(--text-on-dark);
-  box-shadow: var(--button-shadow);
-  cursor: pointer;
-  transition: box-shadow var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
-}
-.btn-round--accent { background: var(--button-face-accent); }
-.btn-round:hover { box-shadow: var(--shadow-e2); }
-.btn-round:active { transform: translateY(1px); box-shadow: var(--button-shadow-press); }
-
 /* ── Phone 外壳作用域 ─────────────────────────────────────────────────────
    只有 app/(mobile) 的 MobileShell 携带 .phone，因此这套规范只作用于
    phone 版本，不影响落地页、登录注册与管理后台三个非 phone 表面。 */
@@ -272,23 +195,6 @@
   outline: 2px solid var(--navy-600);
   outline-offset: 2px;
   border-radius: var(--radius-xs);
-}
-
-/* MUI 各 root 自带 font-family，需要在 phone 作用域内显式接管 */
-.phone .MuiTypography-root,
-.phone .MuiButton-root,
-.phone .MuiButtonBase-root,
-.phone .MuiInputBase-root,
-.phone .MuiInputLabel-root,
-.phone .MuiFormHelperText-root,
-.phone .MuiChip-label,
-.phone .MuiMenuItem-root,
-.phone .MuiDialogTitle-root,
-.phone .MuiDialogContentText-root,
-.phone .MuiTab-root,
-.phone .MuiAlert-message,
-.phone .MuiSnackbarContent-message {
-  font-family: var(--font-display);
 }
 
 /* 每个标题都采用负向字间距：标题 22/28 · 章节 19/24 */
@@ -348,11 +254,21 @@ html, body {
   font-feature-settings: "tnum";
   letter-spacing: 0;
 }
-.privacy-blur { filter: blur(7px); transition: filter var(--dur-fast) ease; }
-.privacy-clear { filter: none; }
+.privacy-blur {
+  filter: blur(7px);
+  transition: filter var(--dur-fast) ease;
+  user-select: none;
+  pointer-events: none;
+}
+.privacy-clear { filter: none; user-select: auto; pointer-events: auto; }
 @keyframes wc-shimmer {
   0% { background-position: -468px 0; }
   100% { background-position: 468px 0; }
+}
+/* ObsidianUI ProgressBar 不确定进度的往返动画 */
+@keyframes wc-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
 }
 .wc-skeleton {
   background: linear-gradient(90deg,
@@ -364,7 +280,8 @@ html, body {
   border-radius: var(--radius-card);
 }
 [data-theme="dark"] .wc-skeleton,
-.theme-dark .wc-skeleton {
+.theme-dark .wc-skeleton,
+.obsidian-dashboard .wc-skeleton {
   background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 37%, rgba(255,255,255,0.04) 63%);
   background-size: 936px 100%;
 }

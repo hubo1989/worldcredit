@@ -1,89 +1,43 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { Box, Typography, Stack } from '@mui/material'
-import { CreditCard as CreditCardIcon } from '@mui/icons-material'
 import Link from 'next/link'
+import { CardIcon } from '@/components/icons/WcIcon'
 
 /**
- * 认证页分屏壳：桌面端左品牌面板（签名渐变 + 悬浮卡视觉）+ 右表单区；
- * 移动端收敛为表单优先的单列，品牌磁贴保留渐变签名。
+ * 认证页分屏壳（ObsidianUI 暗色）：桌面端左品牌面板（深蓝渐变 + 悬浮卡视觉）
+ * + 右表单区；移动端收敛为表单优先的单列，品牌磁贴保留渐变签名。
  */
 
 // 左侧面板的签名渐变卡（纯 CSS 视觉，即 DESIGN.md 的信用卡签名元素）
 function CardVisual() {
   return (
-    <Box sx={{
-      position: 'relative',
-      width: 'min(360px, 78%)',
-      aspectRatio: '1.6',
-      '@keyframes floatCard': {
-        from: { transform: 'translateY(-6px) rotate(-3deg)' },
-        to: { transform: 'translateY(8px) rotate(-3deg)' },
-      },
-      animation: 'floatCard 7s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate',
-    }}>
+    <div
+      className='relative aspect-[1.6] w-[min(360px,78%)] animate-[wc-float-card_7s_cubic-bezier(0.45,0,0.55,1)_infinite_alternate]'
+    >
+      {/* 关键帧就近声明，避免污染全局 token */}
+      <style>{`@keyframes wc-float-card { from { transform: translateY(-6px) rotate(-3deg); } to { transform: translateY(8px) rotate(-3deg); } }`}</style>
       {/* 底层卡边：增加纵深 */}
-      <Box sx={{
-        position: 'absolute',
-        inset: 0,
-        borderRadius: '22px',
-        transform: 'translate(14px, 14px) rotate(0deg)',
-        bgcolor: 'rgba(255, 255, 255, 0.07)',
-      }} />
+      <div className='absolute inset-0 translate-x-3.5 translate-y-3.5 rounded-[22px] bg-white/[0.07]' />
       {/* 主卡面 */}
-      <Box sx={{
-        position: 'absolute',
-        inset: 0,
-        borderRadius: '22px',
-        background: 'linear-gradient(135deg, #030059 0%, #004f78 100%)',
-        boxShadow: '0 24px 48px rgba(2, 0, 50, 0.45)',
-        overflow: 'hidden',
-        p: 3,
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
-      }}>
+      <div className='absolute inset-0 flex flex-col justify-between overflow-hidden rounded-[22px] bg-gradient-to-br from-[#0a1230] via-[#0d2a55] to-d-accent p-6 shadow-2xl'>
         {/* 高光 */}
-        <Box sx={{
-          position: 'absolute',
-          inset: 0,
-          background: 'radial-gradient(120% 90% at 85% -10%, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0) 55%)',
-        }} />
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <Typography sx={{ color: '#fff', fontWeight: 700, fontSize: 15, letterSpacing: '0.02em' }}>
-            WorldCredit
-          </Typography>
-          <Box sx={{
-            width: 34, height: 24, borderRadius: '5px',
-            bgcolor: 'rgba(255,255,255,0.22)',
-            border: '1px solid rgba(255,255,255,0.35)',
-          }} />
-        </Box>
-        <Typography sx={{
-          color: 'rgba(255,255,255,0.92)',
-          fontSize: 19,
-          fontWeight: 600,
-          fontVariantNumeric: 'tabular-nums',
-          letterSpacing: '0.12em',
-        }}>
+        <div className='absolute inset-0 bg-[radial-gradient(120%_90%_at_85%_-10%,rgba(255,255,255,0.16)_0%,rgba(255,255,255,0)_55%)]' />
+        <div className='relative flex items-start justify-between'>
+          <span className='text-[15px] font-bold tracking-[0.02em] text-white'>WorldCredit</span>
+          <span className='h-6 w-[34px] rounded-[5px] border border-white/35 bg-white/20' />
+        </div>
+        <span className='num-tabular text-[19px] font-semibold tracking-[0.12em] text-white/90'>
           •••• •••• •••• 0305
-        </Typography>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-          <Typography sx={{ color: 'rgba(255,255,255,0.65)', fontSize: 12 }}>
-            全家的卡 · 一处掌握
-          </Typography>
-          <Box sx={{
-            width: 30, height: 30, borderRadius: '50%',
-            bgcolor: 'rgba(255,255,255,0.16)',
-            border: '1px solid rgba(255,255,255,0.3)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <Typography sx={{ color: '#fff', fontSize: 13, fontWeight: 700 }}>W</Typography>
-          </Box>
-        </Box>
-      </Box>
-    </Box>
+        </span>
+        <div className='relative flex items-end justify-between'>
+          <span className='text-[12px] text-white/65'>全家的卡 · 一处掌握</span>
+          <span className='flex h-[30px] w-[30px] items-center justify-center rounded-full border border-white/30 bg-white/15 text-[13px] font-bold text-white'>
+            W
+          </span>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -101,99 +55,54 @@ export function AuthShell({
   children: ReactNode
 }) {
   return (
-    <Box sx={{ minHeight: '100vh', display: 'flex', bgcolor: 'background.paper' }}>
+    <div className='obsidian-dashboard flex min-h-dvh bg-d-bg text-d-text'>
       {/* 品牌面板（md 及以上显示） */}
-      <Box sx={{
-        display: { xs: 'none', md: 'flex' },
-        flexBasis: { md: '42%' },
-        flexDirection: 'column',
-        justifyContent: 'space-between',
-        p: { md: 6, lg: 8 },
-        background: 'linear-gradient(160deg, #030059 0%, #00224a 70%, #004f78 100%)',
-        position: 'relative',
-        overflow: 'hidden',
-      }}>
+      <div className='relative hidden w-[42%] flex-col justify-between overflow-hidden bg-gradient-to-br from-[#0a1230] via-[#0b1f42] to-[#123a6b] p-8 lg:p-10 md:flex'>
         {/* 背景辉光 */}
-        <Box sx={{
-          position: 'absolute',
-          width: 560,
-          height: 560,
-          borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(122,173,255,0.18) 0%, rgba(122,173,255,0) 70%)',
-          top: '12%',
-          left: '-10%',
-          pointerEvents: 'none',
-        }} />
-        <Stack direction="row" alignItems="center" spacing={1.5} sx={{ position: 'relative' }}>
-          <Box sx={{
-            width: 38, height: 38, borderRadius: '11px',
-            bgcolor: 'rgba(255,255,255,0.14)',
-            border: '1px solid rgba(255,255,255,0.2)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <CreditCardIcon sx={{ fontSize: 20, color: '#fff' }} />
-          </Box>
-          <Typography sx={{ color: '#fff', fontWeight: 700, fontSize: 16 }}>
-            WorldCredit
-          </Typography>
-        </Stack>
-        <Box sx={{ position: 'relative', display: 'flex', justifyContent: 'center', py: 4 }}>
+        <div className='pointer-events-none absolute -left-[10%] top-[12%] h-[560px] w-[560px] rounded-full bg-[radial-gradient(circle,rgba(122,173,255,0.18)_0%,rgba(122,173,255,0)_70%)]' />
+        <div className='relative flex items-center gap-2'>
+          <span className='flex h-[38px] w-[38px] items-center justify-center rounded-[11px] border border-white/20 bg-white/10 text-white'>
+            <CardIcon size={20} />
+          </span>
+          <span className='text-[16px] font-bold text-white'>WorldCredit</span>
+        </div>
+        <div className='relative flex justify-center py-8'>
           <CardVisual />
-        </Box>
-        <Stack spacing={1.5} sx={{ position: 'relative' }}>
-          <Typography sx={{ color: 'rgba(255,255,255,0.92)', fontSize: 20, fontWeight: 600, lineHeight: 1.5 }}>
+        </div>
+        <div className='relative flex flex-col gap-2.5'>
+          <p className='text-[20px] font-semibold leading-[1.5] text-white/90'>
             账单、权益、优惠，
             <br />
             全家的卡，一处掌握。
-          </Typography>
-          <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.5)' }}>
-            © 2026 WorldCredit
-          </Typography>
-        </Stack>
-      </Box>
+          </p>
+          <p className='text-[13px] text-white/50'>© 2026 WorldCredit</p>
+        </div>
+      </div>
 
       {/* 表单区 */}
-      <Box sx={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        px: { xs: 3, md: 8 },
-        py: { xs: 6, md: 8 },
-      }}>
-        <Box sx={{ width: '100%', maxWidth: 400 }}>
+      <div className='flex flex-1 flex-col items-center justify-center px-6 py-10 md:px-10'>
+        <div className='w-full max-w-[400px]'>
           {/* 移动端品牌行 */}
-          <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 5, display: { md: 'none' } }}>
-            <Box sx={{
-              width: 36, height: 36, borderRadius: '10px',
-              background: 'linear-gradient(135deg, #030059 0%, #004f78 100%)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <CreditCardIcon sx={{ fontSize: 19, color: '#fff' }} />
-            </Box>
-            <Typography sx={{ fontSize: 15, fontWeight: 700, color: '#030059' }}>
-              WorldCredit
-            </Typography>
-          </Stack>
+          <div className='mb-8 flex items-center gap-2 md:hidden'>
+            <span className='flex h-9 w-9 items-center justify-center rounded-[10px] bg-gradient-to-br from-[#0a1230] to-d-accent text-white'>
+              <CardIcon size={19} />
+            </span>
+            <span className='text-[15px] font-bold text-d-text'>WorldCredit</span>
+          </div>
 
-          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-            <Typography sx={{ fontSize: 30, fontWeight: 700, color: '#030059', letterSpacing: '-0.02em' }}>
-              {title}
-            </Typography>
+          <div className='mb-1 flex items-center justify-between'>
+            <h1 className='text-[28px] font-bold leading-9 tracking-[-0.02em]'>{title}</h1>
             <Link
               href={crossLinkHref}
-              style={{ fontSize: 14, color: '#1565c0', textDecoration: 'underline', fontWeight: 600 }}
+              className='text-[14px] font-semibold text-d-accent-light underline underline-offset-4'
             >
               {crossLinkLabel}
             </Link>
-          </Stack>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
-            {subtitle}
-          </Typography>
+          </div>
+          <p className='mb-8 text-[14px] leading-5 text-d-muted'>{subtitle}</p>
           {children}
-        </Box>
-      </Box>
-    </Box>
+        </div>
+      </div>
+    </div>
   )
 }

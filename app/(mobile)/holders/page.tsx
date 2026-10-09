@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Snackbar, Alert } from '@mui/material'
 import { getHolders, createHolder, updateHolder, getHolderCardCounts } from '@/lib/api/holders'
+import { Toast } from '@/components/obsidian/overlays'
 import { HolderCard } from '@/components/mobile/HolderCard'
 import { HolderForm } from '@/components/mobile/HolderForm'
 import { MergeHoldersDialog } from '@/components/mobile/MergeHoldersDialog'
@@ -129,15 +129,12 @@ export default function HoldersPage() {
         onSuccess={handleMergeSuccess}
       />
 
-      <Snackbar
+      <Toast
         open={toast.open}
-        autoHideDuration={3500}
+        message={toast.message}
+        autoHideMs={3500}
         onClose={() => setToast(prev => ({ ...prev, open: false }))}
-      >
-        <Alert severity='success' sx={{ fontWeight: 600 }}>
-          {toast.message}
-        </Alert>
-      </Snackbar>
+      />
     </div>
   )
 }

@@ -1,19 +1,16 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Box, Button, IconButton, InputAdornment, Link, Snackbar, Stack, TextField, Typography } from '@mui/material'
-import {
-  Google as GoogleIcon,
-  Email as EmailIcon,
-  Visibility,
-  VisibilityOff,
-  ErrorOutline as ErrorOutlineIcon,
-} from '@mui/icons-material'
 import { useAuth } from '@/lib/auth'
 import { AuthShell } from '@/components/auth/AuthShell'
 import { useRouter } from 'next/navigation'
 import { getFriendlyAuthErrorMessage } from '@/lib/utils/auth-error'
 import { useSearchParams } from 'next/navigation'
+import { Button } from '@/components/obsidian/controls'
+import { TextField } from '@/components/obsidian/fields'
+import { Alert } from '@/components/obsidian/feedback'
+import { Toast } from '@/components/obsidian/overlays'
+import { GoogleIcon, MailIcon, EyeIcon, EyeOffIcon } from '@/components/icons/WcIcon'
 
 /* ============ 类型与常量 ============ */
 
@@ -59,7 +56,7 @@ export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  // Toast 自动消失由 Snackbar autoHideDuration 处理；此处仅切换登录方式时清理错误
+  // Toast 自动消失由 Toast autoHideMs 处理；此处仅切换登录方式时清理错误
   useEffect(() => {
     setErrors({})
     setOtpSent(false)
@@ -234,456 +231,181 @@ export default function LoginPage() {
   return (
     <AuthShell title="欢迎回来" subtitle="登录你的 WorldCredit 账户" crossLinkHref="/register" crossLinkLabel="创建账户">
       {/* 登录卡片 */}
-      <Box
-        sx={{
-          position: 'relative',
-          zIndex: 1,
-          width: '100%',
-          maxWidth: 400,
-          borderRadius: { xs: '26px', sm: '32px' },
-          p: { xs: '36px 26px 32px', sm: '44px 36px 38px' },
-          background: 'linear-gradient(165deg, rgba(255,255,255,0.98) 0%, rgba(250,252,255,0.97) 50%, rgba(245,248,254,0.96) 100%)',
-          boxShadow: `
-            0 1px 2px rgba(0,0,0,0.04),
-            0 4px 12px rgba(0,0,0,0.06),
-            0 16px 48px rgba(27,94,154,0.14),
-            inset 0 0 0 1px rgba(255,255,255,0.6)
-          `,
-          overflow: 'hidden',
-        }}
-      >
-        {/* 顶部高光线 */}
-        <Box
-          sx={{
-            position: 'absolute',
-            top: 0, left: '16%', right: '16%', height: '1px',
-            background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.7), transparent)',
-          }}
-        />
-
+      <div className='w-full rounded-3xl border border-d-border bg-d-surface p-7 shadow-2xl md:p-9'>
         {/* ===== Google 登录按钮 ===== */}
         <Button
-          fullWidth
-          type="button"
+          variant='secondary'
+          type='button'
+          loading={googleLoading}
+          disabled={loading}
           onClick={handleGoogleLogin}
-          disabled={googleLoading || loading}
-          startIcon={googleLoading ? undefined : <GoogleIcon sx={{ fontSize: 22 }} />}
-          sx={{
-            height: 50,
-            borderRadius: '16px',
-            border: '1.5px solid #e2e8f0',
-            background: 'linear-gradient(to bottom, #ffffff 0%, #fafbfc 100%)',
-            color: '#334155',
-            fontSize: 15,
-            fontWeight: 600,
-            textTransform: 'none',
-            boxShadow: 'none',
-            '&:hover': {
-              borderColor: '#cbd5e1',
-              background: 'linear-gradient(to bottom, #f8fafb 0%, #f1f5f9 100%)',
-              boxShadow: '0 2px 10px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.04)',
-              transform: 'translateY(-0.5px)',
-            },
-            '&:active': { transform: 'translateY(0) scale(0.985)' },
-            '&.Mui-disabled': {
-              background: 'linear-gradient(to bottom, #ffffff 0%, #fafbfc 100%)',
-              color: '#334155',
-              opacity: 0.65,
-              border: '1.5px solid #e2e8f0',
-            },
-          }}
+          className='w-full'
         >
+          {googleLoading ? null : <GoogleIcon size={20} />}
           {googleLoading ? '正在唤起 Google 登录…' : '使用 Google 账号登录'}
         </Button>
 
         {/* ===== 分隔线 ===== */}
-        <Stack direction="row" alignItems="center" spacing={2} sx={{ my: 3.25 }}>
-          <Box sx={{ flex: 1, height: '1px', background: 'linear-gradient(90deg, transparent, #e2e8f0, transparent)' }} />
-          <Typography sx={{ fontSize: 12.5, color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-            或使用邮箱登录
-          </Typography>
-          <Box sx={{ flex: 1, height: '1px', background: 'linear-gradient(90deg, transparent, #e2e8f0, transparent)' }} />
-        </Stack>
+        <div className='my-6 flex items-center gap-4'>
+          <span className='h-px flex-1 bg-gradient-to-r from-transparent via-d-border to-transparent' />
+          <span className='text-[11px] font-semibold uppercase tracking-[0.08em] text-d-muted'>或使用邮箱登录</span>
+          <span className='h-px flex-1 bg-gradient-to-r from-transparent via-d-border to-transparent' />
+        </div>
 
         {/* ===== 登录方式切换 ===== */}
-        <Stack direction="row" spacing={1} sx={{ mb: 2.5 }}>
+        <div className='mb-4 flex gap-1.5 rounded-xl bg-d-subtle p-1'>
           {(['password', 'otp'] as LoginMethod[]).map(method => (
-            <Box
+            <button
               key={method}
+              type='button'
               onClick={() => setLoginMethod(method)}
-              sx={{
-                flex: 1,
-                textAlign: 'center',
-                py: 0.75,
-                borderRadius: '10px',
-                cursor: 'pointer',
-                fontSize: 13,
-                fontWeight: 600,
-                color: loginMethod === method ? '#2563EB' : '#94a3b8',
-                background: loginMethod === method ? 'rgba(37,99,235,0.06)' : 'transparent',
-                border: '1px solid',
-                borderColor: loginMethod === method ? 'rgba(37,99,235,0.2)' : 'transparent',
-                transition: 'all 0.2s ease',
-                userSelect: 'none',
-              }}
+              aria-pressed={loginMethod === method}
+              className={
+                'flex-1 select-none rounded-[10px] py-2 text-[13px] font-semibold transition-colors ' +
+                (loginMethod === method
+                  ? 'bg-d-surface text-d-accent-light shadow-sm'
+                  : 'text-d-muted active:text-d-text')
+              }
             >
               {method === 'password' ? '密码登录' : '验证码登录'}
-            </Box>
+            </button>
           ))}
-        </Stack>
+        </div>
 
         {/* ===== 全局错误提示 ===== */}
         {globalError && (
-          <Box
-            sx={{
-              mb: 2.25,
-              px: 1.75,
-              py: 1.25,
-              borderRadius: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 1.25,
-              color: '#b91c1c',
-              background: 'linear-gradient(135deg, #fef2f2 0%, #fff1f2 100%)',
-              border: '1px solid #fecaca',
-              boxShadow: '0 2px 6px rgba(239,68,68,0.06)',
-            }}
-          >
-            <ErrorOutlineIcon sx={{ fontSize: 20, color: '#ef4444', flexShrink: 0 }} />
-            <Typography sx={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4, color: '#b91c1c' }}>
-              {globalError}
-            </Typography>
-          </Box>
+          <div className='mb-4'>
+            <Alert severity='error'>{globalError}</Alert>
+          </div>
         )}
 
         {/* ===== 密码登录表单 ===== */}
         {loginMethod === 'password' ? (
-          <Box component="form" onSubmit={handlePasswordLogin} noValidate>
-            <Stack spacing={2.25}>
-              {/* 邮箱 */}
-              <FieldLabel label="邮箱地址" required />
-              <TextField
-                fullWidth
-                type="email"
-                placeholder="请输入邮箱地址"
-                autoComplete="email"
-                value={email}
-                onChange={e => handleEmailChange(e.target.value)}
-                error={!!errors.email}
-                helperText={errors.email}
-                inputMode="email"
-                sx={fieldSx(!!errors.email)}
-                InputProps={{
-                  disableUnderline: true,
-                  endAdornment: (
-                    <InputAdornment position="end" sx={{ pr: 1 }}>
-                      <EmailIcon sx={{ fontSize: 19, color: '#94a3b8' }} />
-                    </InputAdornment>
-                  ),
-                }}
-              />
+          <form onSubmit={handlePasswordLogin} noValidate className='flex flex-col gap-4'>
+            {/* 邮箱 */}
+            <TextField
+              label='邮箱地址' required
+              type='email'
+              placeholder='请输入邮箱地址'
+              autoComplete='email'
+              inputMode='email'
+              value={email}
+              onChange={e => handleEmailChange(e.target.value)}
+              error={!!errors.email}
+              helperText={errors.email}
+              endAdornment={<MailIcon size={18} />}
+            />
 
-              {/* 密码 */}
-              <FieldLabel label="输入密码" required />
-              <TextField
-                fullWidth
-                type={showPassword ? 'text' : 'password'}
-                placeholder="请输入密码"
-                autoComplete="current-password"
-                value={password}
-                onChange={e => handlePasswordChange(e.target.value)}
-                error={!!errors.password}
-                helperText={errors.password}
-                sx={fieldSx(!!errors.password)}
-                InputProps={{
-                  disableUnderline: true,
-                  endAdornment: (
-                    <InputAdornment position="end">
-                      <IconButton
-                        onClick={() => setShowPassword(v => !v)}
-                        edge="end"
-                        aria-label={showPassword ? '隐藏密码' : '显示密码'}
-                        sx={{ color: '#94a3b8', '&:hover': { color: '#475569', background: 'rgba(0,0,0,0.04)' } }}
-                      >
-                        {showPassword ? <VisibilityOff sx={{ fontSize: 20 }} /> : <Visibility sx={{ fontSize: 20 }} />}
-                      </IconButton>
-                    </InputAdornment>
-                  ),
-                }}
-              />
+            {/* 密码 */}
+            <TextField
+              label='输入密码' required
+              type={showPassword ? 'text' : 'password'}
+              placeholder='请输入密码'
+              autoComplete='current-password'
+              value={password}
+              onChange={e => handlePasswordChange(e.target.value)}
+              error={!!errors.password}
+              helperText={errors.password}
+              endAdornment={
+                <button
+                  type='button'
+                  onClick={() => setShowPassword(v => !v)}
+                  aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                  className='pointer-events-auto rounded-full p-1 text-d-muted transition-colors hover:text-d-text'
+                >
+                  {showPassword ? <EyeOffIcon size={20} /> : <EyeIcon size={20} />}
+                </button>
+              }
+            />
 
-              {/* 提交按钮 */}
-              <SubmitButton loading={loading} disabled={loading}>
-                登录系统
-              </SubmitButton>
-            </Stack>
-          </Box>
+            {/* 提交按钮 */}
+            <Button type='submit' loading={loading} disabled={loading} className='mt-2 w-full'>
+              登录系统
+            </Button>
+          </form>
         ) : (
           /* ===== 验证码登录表单 ===== */
-          <Box component="form" onSubmit={otpSent ? handleOtpLogin : (e) => { e.preventDefault(); handleSendOtp() }} noValidate>
-            <Stack spacing={2.25}>
-              {/* 邮箱 */}
-              <FieldLabel label="邮箱地址" required />
+          <form
+            onSubmit={otpSent ? handleOtpLogin : (e) => { e.preventDefault(); handleSendOtp() }}
+            noValidate
+            className='flex flex-col gap-4'
+          >
+            {/* 邮箱 */}
+            <TextField
+              label='邮箱地址' required
+              type='email'
+              placeholder='请输入邮箱地址'
+              autoComplete='email'
+              inputMode='email'
+              value={email}
+              onChange={e => { handleEmailChange(e.target.value); if (otpSent) setOtpSent(false) }}
+              error={!!errors.email}
+              helperText={errors.email}
+              disabled={otpSent}
+              endAdornment={<MailIcon size={18} />}
+            />
+
+            {/* 验证码（发送后显示） */}
+            {otpSent && (
               <TextField
-                fullWidth
-                type="email"
-                placeholder="请输入邮箱地址"
-                autoComplete="email"
-                value={email}
-                onChange={e => { handleEmailChange(e.target.value); if (otpSent) setOtpSent(false) }}
-                error={!!errors.email}
-                helperText={errors.email}
-                disabled={otpSent}
-                inputMode="email"
-                sx={fieldSx(!!errors.email)}
-                InputProps={{
-                  disableUnderline: true,
-                  endAdornment: (
-                    <InputAdornment position="end" sx={{ pr: 1 }}>
-                      <EmailIcon sx={{ fontSize: 19, color: '#94a3b8' }} />
-                    </InputAdornment>
-                  ),
-                }}
+                label='6 位验证码' required
+                placeholder='000000'
+                value={otp}
+                onChange={e => handleOtpChange(e.target.value)}
+                error={!!errors.otp}
+                helperText={errors.otp}
+                autoFocus
+                maxLength={6}
+                inputMode='numeric'
+                style={{ textAlign: 'center', fontSize: '1.25rem', fontWeight: 700, letterSpacing: '0.3rem' }}
               />
+            )}
 
-              {/* 验证码（发送后显示） */}
-              {otpSent && (
-                <>
-                  <FieldLabel label="6 位验证码" required />
-                  <TextField
-                    fullWidth
-                    placeholder="000000"
-                    value={otp}
-                    onChange={e => handleOtpChange(e.target.value)}
-                    error={!!errors.otp}
-                    helperText={errors.otp}
-                    autoFocus
-                    inputProps={{
-                      maxLength: 6,
-                      inputMode: 'numeric',
-                      style: { textAlign: 'center', fontSize: '1.25rem', fontWeight: 700, letterSpacing: '0.3rem' },
-                    }}
-                    sx={fieldSx(!!errors.otp)}
-                    InputProps={{ disableUnderline: true }}
-                  />
-                </>
-              )}
+            {/* 主按钮：发送 / 验证 */}
+            <Button
+              type='submit'
+              loading={loading}
+              disabled={loading}
+              variant={otpSent ? 'primary' : 'secondary'}
+              className='mt-2 w-full'
+            >
+              {otpSent ? '验证并登录' : '获取验证码'}
+            </Button>
 
-              {/* 主按钮：发送 / 验证 */}
-              <SubmitButton loading={loading} disabled={loading} variant={otpSent ? 'primary' : 'secondary'}>
-                {otpSent ? '验证并登录' : '获取验证码'}
-              </SubmitButton>
-
-              {/* 已发送：重新发送 */}
-              {otpSent && !loading && (
-                <Button
-                  variant="text"
-                  size="small"
-                  onClick={() => { setOtpSent(false); setOtp('') }}
-                  sx={{ color: '#2563EB', fontSize: 13, fontWeight: 600, textTransform: 'none' }}
-                >
-                  重新发送
-                </Button>
-              )}
-            </Stack>
-          </Box>
+            {/* 已发送：重新发送 */}
+            {otpSent && !loading && (
+              <Button
+                variant='ghost'
+                size='sm'
+                onClick={() => { setOtpSent(false); setOtp('') }}
+                className='mx-auto'
+              >
+                重新发送
+              </Button>
+            )}
+          </form>
         )}
 
         {/* ===== 忘记密码 ===== */}
-        <Box sx={{ textAlign: 'center', mt: 2.75 }}>
-          <Link
-            href="#"
+        <div className='mt-6 text-center'>
+          <a
+            href='#'
             onClick={handleForgotPassword}
-            sx={{
-              color: '#2563EB',
-              fontSize: 13,
-              fontWeight: 600,
-              textDecoration: 'none',
-              '&:hover': { color: '#1D4ED8', textDecoration: 'underline', textUnderlineOffset: '3px' },
-            }}
+            className='text-[13px] font-semibold text-d-accent-light underline-offset-4 hover:underline'
           >
             忘记密码？
-          </Link>
-        </Box>
-      </Box>
+          </a>
+        </div>
+      </div>
 
-      {/* ===== Toast（Snackbar）===== */}
-      <Snackbar
+      {/* ===== Toast ===== */}
+      <Toast
         open={toast.open}
-        autoHideDuration={3500}
-        onClose={closeToast}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-        sx={{
-          top: { xs: 16, sm: 24 },
-          '& .MuiSnackbarContent-root': {
-            minWidth: 'auto',
-            maxWidth: '90vw',
-            px: 2.5,
-            py: 1.25,
-            borderRadius: '14px',
-            fontSize: 14,
-            fontWeight: 600,
-            backdropFilter: 'blur(8px)',
-            ...(toast.severity === 'error'
-              ? {
-                  background: 'linear-gradient(135deg, #fef2f2 0%, #fff1f2 100%)',
-                  border: '1px solid #fecaca',
-                  color: '#dc2626',
-                  boxShadow: '0 4px 16px rgba(220,38,38,0.12), 0 1px 4px rgba(220,38,38,0.08)',
-                }
-              : {
-                  background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)',
-                  border: '1px solid #bbf7d0',
-                  color: '#15803d',
-                  boxShadow: '0 4px 16px rgba(22,163,74,0.12), 0 1px 4px rgba(22,163,74,0.08)',
-                }),
-          },
-        }}
         message={toast.message}
+        severity={toast.severity}
+        autoHideMs={3500}
+        onClose={closeToast}
       />
     </AuthShell>
   )
-}
-
-/* ============ 子组件 ============ */
-
-/** 字段标签（带必填星号） */
-function FieldLabel({ label, required }: { label: string; required?: boolean }) {
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.875 }}>
-      <Typography component="label" sx={{ fontSize: 13, fontWeight: 650, color: '#475569', letterSpacing: '0.01em' }}>
-        {label}
-      </Typography>
-      {required && (
-        <Box component="span" aria-hidden="true" sx={{ color: '#ef4444', fontWeight: 700 }}>
-          *
-        </Box>
-      )}
-    </Box>
-  )
-}
-
-/** 提交按钮：主色 / 次要（描边）双样式 */
-function SubmitButton({
-  children,
-  loading,
-  disabled,
-  variant = 'primary',
-}: {
-  children: React.ReactNode
-  loading?: boolean
-  disabled?: boolean
-  variant?: 'primary' | 'secondary'
-}) {
-  const isPrimary = variant === 'primary'
-  return (
-    <Button
-      fullWidth
-      type="submit"
-      disabled={disabled}
-      sx={{
-        mt: 1.25,
-        height: 50,
-        borderRadius: '16px',
-        fontSize: 16,
-        fontWeight: 700,
-        textTransform: 'none',
-        letterSpacing: '0.01em',
-        color: '#fff',
-        background: isPrimary
-          ? 'linear-gradient(145deg, #3B82F6 0%, #2563EB 40%, #1D4ED8 100%)'
-          : 'linear-gradient(145deg, #475569 0%, #334155 100%)',
-        boxShadow: isPrimary
-          ? '0 2px 6px rgba(37,99,235,0.25), 0 4px 16px rgba(37,99,235,0.18), inset 0 1px 0 rgba(255,255,255,0.12)'
-          : 'none',
-        '&:hover': {
-          background: isPrimary
-            ? 'linear-gradient(145deg, #2563EB 0%, #1D4ED8 50%, #1E40AF 100%)'
-            : 'linear-gradient(145deg, #334155 0%, #1e293b 100%)',
-          boxShadow: isPrimary
-            ? '0 4px 12px rgba(37,99,235,0.35), 0 8px 28px rgba(37,99,235,0.22), inset 0 1px 0 rgba(255,255,255,0.15)'
-            : 'none',
-          transform: 'translateY(-1.5px)',
-        },
-        '&:active': {
-          transform: 'translateY(0) scale(0.98)',
-          boxShadow: isPrimary ? '0 2px 8px rgba(37,99,235,0.25)' : 'none',
-          transitionDuration: '0.08s',
-        },
-        '&.Mui-disabled': {
-          background: 'linear-gradient(145deg, #94a3b8 0%, #64748b 100%)',
-          color: '#fff',
-          boxShadow: 'none',
-          transform: 'none',
-        },
-      }}
-    >
-      {loading ? (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Box
-            component="span"
-            sx={{
-              width: 18,
-              height: 18,
-              borderRadius: '50%',
-              border: '2.5px solid rgba(255,255,255,0.3)',
-              borderTopColor: '#fff',
-              animation: 'login-spin 0.7s linear infinite',
-            }}
-          />
-          <span style={{ visibility: 'hidden' }}>{children}</span>
-        </Box>
-      ) : (
-        children
-      )}
-      <Box component="style">{`@keyframes login-spin { to { transform: rotate(360deg); } }`}</Box>
-    </Button>
-  )
-}
-
-/* ============ 样式工厂 ============ */
-
-/** TextField 的统一样式（错误态变红） */
-function fieldSx(hasError: boolean) {
-  return {
-    '& .MuiOutlinedInput-root': {
-      padding: '0',
-      borderRadius: '14px',
-      background: hasError
-        ? 'linear-gradient(to bottom, #fef2f2 0%, #fff1f2 100%)'
-        : 'linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%)',
-      '& fieldset': {
-        border: '1.5px solid',
-        borderColor: hasError ? '#fca5a5' : '#e2e8f0',
-        borderRadius: '14px',
-      },
-      '&:hover fieldset': {
-        borderColor: hasError ? '#f87171' : '#cbd5e1',
-      },
-      '&.Mui-focused fieldset': {
-        borderColor: hasError ? '#f87171' : '#3B82F6',
-        boxShadow: hasError
-          ? '0 0 0 3.5px rgba(239,68,68,0.06)'
-          : '0 0 0 3.5px rgba(59,130,246,0.1), 0 1px 3px rgba(59,130,246,0.08)',
-      },
-      '&.Mui-disabled fieldset': {
-        borderColor: '#e2e8f0',
-        background: '#f8fafc',
-      },
-    },
-    '& input': {
-      padding: '13px 15px',
-      fontSize: 15,
-      color: '#0f172a',
-      '&::placeholder': { color: '#94a3b8', fontWeight: 400, opacity: 1 },
-    },
-    '& .MuiFormHelperText-root': {
-      color: '#dc2626',
-      fontSize: 12,
-      mt: 0.625,
-      ml: 0,
-      fontWeight: 500,
-      lineHeight: 1.4,
-    },
-  }
 }

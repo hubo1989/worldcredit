@@ -1,21 +1,15 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { Button } from '@/components/obsidian/controls'
+import { Alert } from '@/components/obsidian/feedback'
 import {
-  Alert,
-  Box,
-  Button,
-  CircularProgress,
-  IconButton,
-  Link,
-  Stack,
-  Typography,
-} from '@mui/material'
-import AttachFileIcon from '@mui/icons-material/AttachFile'
-import DeleteIcon from '@mui/icons-material/DeleteOutline'
-import FileIcon from '@mui/icons-material/InsertDriveFile'
-import OpenIcon from '@mui/icons-material/OpenInNew'
-import UploadIcon from '@mui/icons-material/UploadFile'
+  PaperclipIcon,
+  TrashIcon,
+  FileIcon,
+  OpenInNewIcon,
+  UploadIcon,
+} from '@/components/icons/WcIcon'
 import { useAuth } from '@/lib/auth'
 import {
   deleteRecordAttachment,
@@ -35,21 +29,6 @@ function formatFileSize(size?: number): string {
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${(size / 1024 / 1024).toFixed(1)} MB`
-}
-
-// MUI Typography/Link 自带样式注入在 globals.css 之后，同特异性下角色 class 会被覆盖，
-// 因此排版令牌直接写进 sx。
-const BODY = {
-  fontSize: 'var(--type-body-size)',
-  lineHeight: 'var(--type-body-line)',
-  fontWeight: 'var(--type-body-weight)',
-  letterSpacing: 'var(--type-body-tracking)',
-}
-const SECTION = {
-  fontSize: 'var(--type-section-size)',
-  lineHeight: 'var(--type-section-line)',
-  fontWeight: 'var(--type-section-weight)',
-  letterSpacing: 'var(--type-section-tracking)',
 }
 
 export function BillAttachments({ billId, onChanged }: Props) {
@@ -107,97 +86,78 @@ export function BillAttachments({ billId, onChanged }: Props) {
   }
 
   return (
-    <Box>
-      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
-        <Stack direction="row" spacing={0.75} alignItems="center">
-          <AttachFileIcon sx={{ fontSize: 20, color: 'var(--strong)' }} />
-          <Typography sx={{ ...SECTION, color: 'var(--text)' }}>
-            附件
-          </Typography>
-        </Stack>
+    <div>
+      <div className='mb-3 flex items-center justify-between'>
+        <div className='flex items-center gap-1.5'>
+          <PaperclipIcon size={20} className='text-d-text' />
+          <p className='text-[19px] font-semibold leading-6 text-d-text'>附件</p>
+        </div>
         <Button
-          size="small"
-          variant="outlined"
-          startIcon={uploading ? <CircularProgress size={14} /> : <UploadIcon />}
-          disabled={uploading}
+          variant='secondary'
+          size='sm'
           onClick={() => inputRef.current?.click()}
-          sx={{
-            // 无可见边框：层级由分层阴影表达
-            border: 0,
-            bgcolor: 'var(--paper)',
-            boxShadow: 'var(--shadow-e1)',
-            borderRadius: 'var(--radius-pill)',
-            '&:hover': { border: 0, boxShadow: 'var(--shadow-e2)' },
-          }}
+          disabled={uploading}
         >
-          {uploading ? '上传中' : '上传文件'}
+          {uploading ? '上传中' : <><UploadIcon size={16} /> 上传文件</>}
         </Button>
-      </Stack>
+      </div>
 
-      <input ref={inputRef} type="file" hidden onChange={handleFileChange} />
+      <input ref={inputRef} type='file' hidden onChange={handleFileChange} />
 
-      {/* 错误提示条：语义状态容器，保留 1px 语义色描边 */}
-      {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
+      {/* 错误提示条：语义状态容器，保留语义色描边 */}
+      {error && <div className='mb-3'><Alert severity='error'>{error}</Alert></div>}
 
       {loading ? (
-        <Typography sx={{ ...BODY, color: 'var(--muted)' }}>正在加载附件...</Typography>
+        <p className='text-[14px] leading-5 text-d-muted'>正在加载附件...</p>
       ) : attachments.length === 0 ? (
-        <Typography sx={{ ...BODY, color: 'var(--muted)' }}>
+        <p className='text-[14px] leading-5 text-d-muted'>
           暂无附件，可上传账单 PDF、截图或邮件原文。
-        </Typography>
+        </p>
       ) : (
-        <Stack spacing={1}>
+        <div className='flex flex-col gap-2'>
           {attachments.map(attachment => {
             const url = getAttachmentUrl(attachment)
             return (
-              <Box
+              <div
                 key={attachment.id}
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1,
-                  p: 1,
-                  // 列表行：无边框 + 分层阴影，圆角走 12px 档
-                  border: 0,
-                  borderRadius: 'var(--radius-depth-1)',
-                  bgcolor: 'var(--paper)',
-                  boxShadow: 'var(--shadow-e1)',
-                }}
+                className='flex items-center gap-2.5 rounded-xl border border-d-border bg-d-surface p-2.5'
               >
-                <FileIcon sx={{ fontSize: 20, color: 'var(--strong)' }} />
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Link
+                <FileIcon size={20} className='shrink-0 text-d-text' />
+                <div className='min-w-0 flex-1'>
+                  <a
                     href={url}
-                    target="_blank"
-                    rel="noreferrer"
-                    underline="hover"
-                    sx={{ ...BODY, fontWeight: 600, wordBreak: 'break-all' }}
+                    target='_blank'
+                    rel='noreferrer'
+                    className='block text-[14px] font-semibold leading-5 text-d-accent-light [overflow-wrap:anywhere] hover:underline'
                   >
                     {attachment.file_name}
-                  </Link>
-                  <Typography sx={{ ...BODY, color: 'var(--muted)', display: 'block' }}>
+                  </a>
+                  <p className='text-[13px] leading-4 text-d-muted'>
                     {[attachment.file_type, formatFileSize(attachment.file_size)].filter(Boolean).join(' · ')}
-                  </Typography>
-                </Box>
-                <IconButton
-                  size="small"
-                  component="a"
+                  </p>
+                </div>
+                <a
                   href={url}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label="打开附件"
-                  sx={{ color: 'var(--strong)' }}
+                  target='_blank'
+                  rel='noreferrer'
+                  aria-label='打开附件'
+                  className='shrink-0 rounded-full p-1.5 text-d-muted transition-colors hover:text-d-text'
                 >
-                  <OpenIcon fontSize="small" />
-                </IconButton>
-                <IconButton size="small" color="error" onClick={() => handleDelete(attachment)} aria-label="删除附件">
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
-              </Box>
+                  <OpenInNewIcon size={16} />
+                </a>
+                <button
+                  type='button'
+                  onClick={() => handleDelete(attachment)}
+                  aria-label='删除附件'
+                  className='shrink-0 rounded-full p-1.5 text-d-danger-ink transition-colors hover:text-d-danger'
+                >
+                  <TrashIcon size={16} />
+                </button>
+              </div>
             )
           })}
-        </Stack>
+        </div>
       )}
-    </Box>
+    </div>
   )
 }
