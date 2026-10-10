@@ -11,13 +11,18 @@ import {
 } from '@/lib/bills-view-model'
 import {
   canManuallySetBillAmount,
+  compareUnifiedBills,
   dueDistanceLabel,
   formatCardTail,
   getEffectiveCardName,
   hasManualBillAmount,
+  payableToSortCard,
   pickDueReference,
+  type BillsListCard,
   type BillsSortMode,
 } from '@/lib/utils'
+import { PayableRow } from '@/components/mobile/PayableList'
+import type { PayableWithStatus } from '@/lib/api/payables'
 import { currencySymbol } from '@/lib/fx'
 import {
   AlertIcon,
@@ -70,7 +75,9 @@ export interface BillsViewProps {
   loadError: string | null
   onRetry: () => void
   onEmptySync: () => void
-  payables: ReactNode
+  payables: PayableWithStatus[]
+  onEditPayable: (p: PayableWithStatus) => void
+  onPayPayable: (p: PayableWithStatus) => void
   cards: CardWithBillsSummary[]
   allCards: CardWithBillsSummary[]
   holderMap: Record<string, string>
@@ -329,6 +336,7 @@ export function BillsView(vm: BillsViewProps) {
     selectedTag, onSelectedTag, holderTags, bankTags, totalCount, unpaidCount, clearedCount,
     loading, loadError, onRetry, onEmptySync, payables, cards, allCards, holderMap,
     bankGroups, onOpenPayment, onManualAmount, onAddBill, sortMode, onSortMode,
+    onEditPayable, onPayPayable,
   } = vm
 
   const renderCards = () => {
@@ -366,9 +374,26 @@ export function BillsView(vm: BillsViewProps) {
         </div>
       )
     }
-    return (
-      <div className='flex flex-col gap-2.5'>
-        {cards.map(item => (
+    // 固定支出与信用卡混排：同一比较器（逾期→待还→已结清分组 + 所选组内轴）。
+    // 信用卡的排序字段在 CardWithBillsSummary 上同名（status/billingDay/
+    // historyBills），直接 as BillsListCard 复用，不复制数据。
+    const unified = [
+      ...payables.map(p => ({
+        key: `payable-${p.id}`,
+        sortCard: payableToSortCard(p),
+        node: (
+          <PayableRow
+            key={`payable-${p.id}`}
+            payable={p}
+            onEdit={onEditPayable}
+            onPay={onPayPayable}
+          />
+        ),
+      })),
+      ...cards.map(item => ({
+        key: item.card.id,
+        sortCard: item as unknown as BillsListCard,
+        node: (
           <BillCard
             key={item.card.id}
             item={item}
@@ -377,8 +402,12 @@ export function BillsView(vm: BillsViewProps) {
             onOpenPayment={onOpenPayment}
             onManualAmount={onManualAmount}
           />
-        ))}
-      </div>
+        ),
+      })),
+    ].sort((a, b) => compareUnifiedBills(a.sortCard, b.sortCard, sortMode))
+
+    return (
+      <div className='flex flex-col gap-2.5'>{unified.map(u => u.node)}</div>
     )
   }
 
@@ -567,16 +596,13 @@ export function BillsView(vm: BillsViewProps) {
           </div>
         )}
 
-        {/* 固定支出：没有卡片也应可见 */}
-        {!loading && payables}
-
         {loading ? (
           <div className='flex flex-col gap-3'>
             {Array.from({ length: 3 }, (_, i) => (
               <div key={i} className='wc-skeleton h-[140px] w-full rounded-2xl' />
             ))}
           </div>
-        ) : cards.length === 0 ? (
+        ) : cards.length === 0 && payables.length === 0 ? (
           <div className='rounded-2xl border border-d-border bg-d-surface px-6 py-10 text-center'>
             <p className='text-[15px] font-semibold text-d-text'>没有找到卡片记录</p>
             <p className='mt-1 text-[12px] text-d-muted'>可以手动录入卡片或导入邮箱账单</p>

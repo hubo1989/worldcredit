@@ -331,6 +331,8 @@ export interface BillsListCard {
     computed_status: string
     days_until_due?: number
   }>
+  /** 固定支出适配标记：true 表示这是房贷/贷款等按月应付，非信用卡。 */
+  payableSource?: boolean
 }
 
 /** 账单页三种排序模式（对应顶部三个快捷切换栏）。 */
@@ -382,6 +384,82 @@ export function compareBillsListCardsByMode(
   const ka = billsListSortKey(a, today)
   const kb = billsListSortKey(b, today)
   return ka.distance - kb.distance
+}
+
+/**
+ * 把固定支出（房贷/贷款/房租等）适配成排序卡片，让它和信用卡一起参与
+ * 「逾期 → 待还 → 已结清」的统一排序：
+ *   - paid → unissued 组（钱已付清，展示为下期）
+ *   - overdue / unpaid → 同名组，用距应付日做组内距离
+ *
+ * 适配成一个「只有一期账单」的卡片：固定支出按月滚动，本期就是全部。
+ */
+export function payableToSortCard(
+  payable: {
+    status: 'unpaid' | 'paid' | 'overdue'
+    due_date: string
+    days_until_due: number
+    due_day: number
+  },
+  _today: Date = new Date()
+): BillsListCard & { payableSource: true } {
+  const status: CardUrgencyStatus = payable.status === 'paid' ? 'unissued' : payable.status
+  const nextDue = new Date(payable.due_date)
+  nextDue.setMonth(nextDue.getMonth() + 1)
+  return {
+    status,
+    billingDay: payable.due_day,
+    graceDays: 0,
+    nextDueDate: nextDue,
+    historyBills: [
+      { due_date: payable.due_date, computed_status: payable.status, days_until_due: payable.days_until_due },
+    ],
+    payableSource: true,
+  }
+}
+
+/** 统一账单列表项：信用卡卡片的排序键已由 billsListSortKey 覆盖，固定支出用适配键。 */
+export function unifiedBillSortKey(
+  card: BillsListCard,
+  today: Date = new Date()
+): { tier: number; distance: number } {
+  // 固定支出：paid 落到第 2 组（和未出账单一起），组内按下期应付日距离排
+  if ('payableSource' in card && card.payableSource) {
+    const tier = cardUrgencyRank(card.status)
+    if (card.status === 'unissued') {
+      return { tier, distance: diffInCalendarDays(card.nextDueDate, today) }
+    }
+    return { tier, distance: card.historyBills[0]?.days_until_due ?? 0 }
+  }
+  return billsListSortKey(card, today)
+}
+
+/** 统一比较器：信用卡与固定支出混排，保留大分组，组内按所选模式换轴。 */
+export function compareUnifiedBills(
+  a: BillsListCard,
+  b: BillsListCard,
+  mode: BillsSortMode,
+  today: Date = new Date()
+): number {
+  const tierA = cardUrgencyRank(a.status)
+  const tierB = cardUrgencyRank(b.status)
+  if (tierA !== tierB) return tierA - tierB
+
+  // 最大免息期 / 最近账单日对固定支出没有意义（无免息、无账单日循环），
+  // 固定支出在这两种模式下保持「逾期→待还」的稳定位置，不参与组内换轴。
+  if (mode === 'nearest_due') {
+    return unifiedBillSortKey(a, today).distance - unifiedBillSortKey(b, today).distance
+  }
+  if (mode === 'max_interest_free') {
+    const ra = 'payableSource' in a && a.payableSource ? Number.MAX_SAFE_INTEGER - 1 : interestFreeRank(b, today) * -1
+    const rb = 'payableSource' in b && b.payableSource ? Number.MAX_SAFE_INTEGER - 1 : interestFreeRank(a, today) * -1
+    // 普通卡片按免息降序；固定支出排在普通卡片之后（免息概念不适用）
+    return ra - rb
+  }
+  // nearest_billing：固定支出同样排组内最后
+  const da = 'payableSource' in a && a.payableSource ? Number.MAX_SAFE_INTEGER : billingDistanceRank(a, today)
+  const db = 'payableSource' in b && b.payableSource ? Number.MAX_SAFE_INTEGER : billingDistanceRank(b, today)
+  return da - db
 }
 
 /**

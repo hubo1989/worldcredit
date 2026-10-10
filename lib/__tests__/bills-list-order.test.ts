@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   compareBillsListCards,
   compareBillsListCardsByMode,
+  compareUnifiedBills,
+  payableToSortCard,
   billsListSortKey,
   dueDistanceLabel,
   nextBillingDateOf,
@@ -198,5 +200,50 @@ describe('BILL-02 sort modes: compareBillsListCardsByMode', () => {
     const near = card('unpaid', 5, [{ due_date: '2026-09-16', computed_status: 'unpaid' }])
     const sorted = [far, near].sort((a, b) => compareBillsListCardsByMode(a, b, 'nearest_due', TODAY))
     expect(sorted[0].historyBills[0].due_date).toBe('2026-09-16')
+  })
+})
+
+
+describe('unified sorting: payables mixed with credit cards', () => {
+  it('maps payable statuses into the card urgency groups', () => {
+    const paid = payableToSortCard({ status: 'paid', due_date: '2026-09-02', days_until_due: -12, due_day: 2 })
+    const overdue = payableToSortCard({ status: 'overdue', due_date: '2026-09-02', days_until_due: -12, due_day: 2 })
+    const unpaid = payableToSortCard({ status: 'unpaid', due_date: '2026-09-20', days_until_due: 6, due_day: 20 })
+    expect(paid.status).toBe('unissued')
+    expect(overdue.status).toBe('overdue')
+    expect(unpaid.status).toBe('unpaid')
+  })
+
+  it('overdue payable sits above unpaid cards; paid payable sinks to the cleared group', () => {
+    const overdueLoan = payableToSortCard({ status: 'overdue', due_date: '2026-09-02', days_until_due: -12, due_day: 2 })
+    const unpaidCard = card('unpaid', 5, [{ due_date: '2026-09-20', computed_status: 'unpaid' }])
+    const paidLoan = payableToSortCard({ status: 'paid', due_date: '2026-09-02', days_until_due: -12, due_day: 2 })
+    const unissuedCard = card('unissued', 25, [])
+
+    const sorted = [unissuedCard, unpaidCard, paidLoan, overdueLoan].sort((a, b) =>
+      compareUnifiedBills(a, b, 'nearest_due', TODAY)
+    )
+    expect(sorted.map(c => c.status)).toEqual(['overdue', 'unpaid', 'unissued', 'unissued'])
+    // 逾期贷款第一，两个已结清的殿后
+    expect(sorted[0].payableSource).toBe(true)
+  })
+
+  it('nearest_due interleaves an unpaid payable between cards by days-until-due', () => {
+    const cardDueTomorrow = card('unpaid', 5, [{ due_date: '2026-09-15', computed_status: 'unpaid' }])
+    const cardDueNextWeek = card('unpaid', 5, [{ due_date: '2026-09-21', computed_status: 'unpaid' }])
+    const loanDueIn3d = payableToSortCard({ status: 'unpaid', due_date: '2026-09-17', days_until_due: 3, due_day: 17 })
+    const sorted = [cardDueNextWeek, loanDueIn3d, cardDueTomorrow].sort((a, b) =>
+      compareUnifiedBills(a, b, 'nearest_due', TODAY)
+    )
+    expect(sorted.map(c => (c.payableSource ? 'loan' : 'card'))).toEqual(['card', 'loan', 'card'])
+  })
+
+  it('max_interest_free keeps payables in their tier but after regular cards', () => {
+    const paidLoan = payableToSortCard({ status: 'paid', due_date: '2026-09-02', days_until_due: -12, due_day: 2 })
+    const longFreeCard = card('unissued', 25, [], { graceDays: 48, nextDueDate: '2026-11-01' })
+    const sorted = [paidLoan, longFreeCard].sort((a, b) =>
+      compareUnifiedBills(a, b, 'max_interest_free', TODAY)
+    )
+    expect(sorted[0].payableSource).toBeUndefined() // 普通卡在前
   })
 })

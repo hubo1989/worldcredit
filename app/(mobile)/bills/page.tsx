@@ -16,7 +16,6 @@ import { getHolders } from '@/lib/api/holders'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
 import { ManualBillAmountDialog } from '@/components/mobile/ManualBillAmountDialog'
-import { PayableList } from '@/components/mobile/PayableList'
 import { PayableForm } from '@/components/mobile/PayableForm'
 import {
   getRecurringPayables, payRecurringPayable,
@@ -423,14 +422,9 @@ export default function BillsPage() {
         loadError={loadError}
         onRetry={() => loadData()}
         onEmptySync={handleSync}
-        payables={
-          <PayableList
-            payables={payables}
-            onAdd={() => { setEditingPayable(null); setPayableFormOpen(true) }}
-            onEdit={p => { setEditingPayable(p); setPayableFormOpen(true) }}
-            onPay={handlePayPayable}
-          />
-        }
+        payables={payables}
+        onEditPayable={p => { setEditingPayable(p); setPayableFormOpen(true) }}
+        onPayPayable={handlePayPayable}
         cards={sortedCards}
         allCards={cardsSummary}
         holderMap={holderMap}
