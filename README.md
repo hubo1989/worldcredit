@@ -97,4 +97,4 @@ npx wrangler deploy --config dist/server/wrangler.json
 
 ## License
 
-MIT
+[PolyForm Noncommercial 1.0.0](./LICENSE) — 允许个人自托管、学习、修改和非商业使用，**不允许商用**。商业授权另谈。
