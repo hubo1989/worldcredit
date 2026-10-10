@@ -43,11 +43,22 @@ export function PayableList({ payables, onAdd, onEdit, onPay }: Props) {
           {payables.map(p => {
             const paid = p.status === 'paid'
             const overdue = p.status === 'overdue'
-            const label = overdue
-              ? '已逾期 ' + Math.abs(p.days_until_due) + ' 天'
-              : p.days_until_due === 0
-                ? '今天应付'
-                : '距离应付日 ' + p.days_until_due + ' 天'
+            // 已付清的不再显示「距离应付日 -N 天」这种负数——本期已经结清，
+            // 旧的 due_date 已无意义；展示下一期应付日（due_day 顺延一个月）。
+            const nextDueLabel = (() => {
+              const next = new Date(p.due_date)
+              next.setMonth(next.getMonth() + 1)
+              const mm = String(next.getMonth() + 1).padStart(2, '0')
+              const dd = String(next.getDate()).padStart(2, '0')
+              return `本期已付清 · 下期 ${mm}-${dd} 应付`
+            })()
+            const label = paid
+              ? nextDueLabel
+              : overdue
+                ? '已逾期 ' + Math.abs(p.days_until_due) + ' 天'
+                : p.days_until_due === 0
+                  ? '今天应付'
+                  : '距离应付日 ' + p.days_until_due + ' 天'
             return (
               <div key={p.id} className='rounded-2xl border border-d-border bg-d-surface p-4'>
                 <div className='flex items-start justify-between gap-2'>
@@ -105,7 +116,11 @@ export function PayableList({ payables, onAdd, onEdit, onPay }: Props) {
                 <div
                   className={
                     'mt-3 flex items-center gap-1.5 text-[11px] font-semibold leading-4 ' +
-                    (overdue ? 'text-d-danger-ink' : 'text-d-gold')
+                    (paid
+                      ? 'text-d-success-ink'
+                      : overdue
+                        ? 'text-d-danger-ink'
+                        : 'text-d-gold')
                   }
                 >
                   <ClockIcon size={14} />

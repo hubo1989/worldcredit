@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   compareBillsListCards,
+  compareBillsListCardsByMode,
   billsListSortKey,
   dueDistanceLabel,
   nextBillingDateOf,
@@ -22,7 +23,14 @@ const card = (
   status: BillsListCard['status'],
   billingDay: number,
   dues: { due_date: string; computed_status: string }[],
-): BillsListCard => ({ status, billingDay, historyBills: dues })
+  extra: { graceDays?: number; nextDueDate?: Date | string } = {},
+): BillsListCard => ({
+  status,
+  billingDay,
+  graceDays: extra.graceDays ?? 0,
+  nextDueDate: extra.nextDueDate ?? '2026-10-10',
+  historyBills: dues,
+})
 
 const order = (cards: BillsListCard[]) =>
   [...cards].sort((a, b) => compareBillsListCards(a, b, TODAY))
@@ -157,5 +165,38 @@ describe('the whole list', () => {
     const distances = order(cards).map(c => billsListSortKey(c, TODAY).distance)
     expect(distances).toEqual([2, 5, 11])
     expect(distances.every((d, i) => i === 0 || distances[i - 1] <= d)).toBe(true)
+  })
+})
+
+
+describe('BILL-02 sort modes: compareBillsListCardsByMode', () => {
+  it('max_interest_free puts the card with the longest interest-free days first (within tier)', () => {
+    const short = card('unissued', 5, [], { graceDays: 12, nextDueDate: '2026-09-20' })
+    const long = card('unissued', 25, [], { graceDays: 48, nextDueDate: '2026-11-01' })
+    const mid = card('unissued', 15, [], { graceDays: 30, nextDueDate: '2026-10-14' })
+    const sorted = [short, long, mid].sort((a, b) => compareBillsListCardsByMode(a, b, 'max_interest_free', TODAY))
+    expect(sorted.map(c => c.graceDays)).toEqual([48, 30, 12])
+  })
+
+  it('max_interest_free never lets unpaid cards jump above overdue ones (tier first)', () => {
+    const unpaidLong = card('unpaid', 5, [{ due_date: '2026-09-20', computed_status: 'unpaid' }], { graceDays: 50 })
+    const overdue = card('overdue', 10, [{ due_date: '2026-08-01', computed_status: 'overdue' }], { graceDays: 0 })
+    const sorted = [unpaidLong, overdue].sort((a, b) => compareBillsListCardsByMode(a, b, 'max_interest_free', TODAY))
+    expect(sorted[0].status).toBe('overdue')
+  })
+
+  it('nearest_billing orders by days until next billing date ascending', () => {
+    const far = card('unissued', 28, [])
+    const near = card('unissued', 16, []) // 2 天后出账
+    const mid = card('unissued', 20, [])
+    const sorted = [far, near, mid].sort((a, b) => compareBillsListCardsByMode(a, b, 'nearest_billing', TODAY))
+    expect(sorted.map(c => c.billingDay)).toEqual([16, 20, 28])
+  })
+
+  it('nearest_due keeps the original urgency ordering (default mode)', () => {
+    const far = card('unpaid', 5, [{ due_date: '2026-10-30', computed_status: 'unpaid' }])
+    const near = card('unpaid', 5, [{ due_date: '2026-09-16', computed_status: 'unpaid' }])
+    const sorted = [far, near].sort((a, b) => compareBillsListCardsByMode(a, b, 'nearest_due', TODAY))
+    expect(sorted[0].historyBills[0].due_date).toBe('2026-09-16')
   })
 })

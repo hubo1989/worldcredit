@@ -16,6 +16,7 @@ import {
   getEffectiveCardName,
   hasManualBillAmount,
   pickDueReference,
+  type BillsSortMode,
 } from '@/lib/utils'
 import { currencySymbol } from '@/lib/fx'
 import {
@@ -54,6 +55,8 @@ export interface BillsViewProps {
   onResetFilters: () => void
   viewFilter: BillViewFilter
   onViewFilter: (v: BillViewFilter) => void
+  sortMode: BillsSortMode
+  onSortMode: (m: BillsSortMode) => void
   dimension: BillDimension
   onDimension: (d: BillDimension) => void
   selectedTag: string
@@ -325,7 +328,7 @@ export function BillsView(vm: BillsViewProps) {
     hasActiveFilter, onResetFilters, viewFilter, onViewFilter, dimension, onDimension,
     selectedTag, onSelectedTag, holderTags, bankTags, totalCount, unpaidCount, clearedCount,
     loading, loadError, onRetry, onEmptySync, payables, cards, allCards, holderMap,
-    bankGroups, onOpenPayment, onManualAmount, onAddBill,
+    bankGroups, onOpenPayment, onManualAmount, onAddBill, sortMode, onSortMode,
   } = vm
 
   const renderCards = () => {
@@ -400,11 +403,28 @@ export function BillsView(vm: BillsViewProps) {
       </div>
 
       <div className='mt-4 flex flex-col gap-3 px-5'>
-        {/* 需求 BILL-02：顶部三个排序快捷切换栏 */}
+        {/* BILL-02：顶部三个排序快捷切换栏（受控） */}
         <div className='flex gap-2 rounded-xl border border-d-border bg-d-surface p-1 text-[13px] font-semibold'>
-          <button type='button' className='flex-1 rounded-lg py-1.5 text-center bg-d-accent text-white'>最近需还款</button>
-          <button type='button' className='flex-1 rounded-lg py-1.5 text-center text-d-muted hover:text-d-text'>最大免息期</button>
-          <button type='button' className='flex-1 rounded-lg py-1.5 text-center text-d-muted hover:text-d-text'>最近账单日</button>
+          {([
+            ['nearest_due', '最近需还款'],
+            ['max_interest_free', '最大免息期'],
+            ['nearest_billing', '最近账单日'],
+          ] as Array<[BillsSortMode, string]>).map(([mode, label]) => (
+            <button
+              key={mode}
+              type='button'
+              aria-pressed={sortMode === mode}
+              onClick={() => onSortMode(mode)}
+              className={
+                'flex-1 rounded-lg py-1.5 text-center transition-colors ' +
+                (sortMode === mode
+                  ? 'bg-d-accent text-white'
+                  : 'text-d-muted hover:text-d-text')
+              }
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         {/* 逾期警示横幅 */}

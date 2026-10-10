@@ -23,7 +23,8 @@ import {
   type PayableWithStatus,
 } from '@/lib/api/payables'
 import {
-  formatCardTail, compareBillsListCards, pickDueReference,
+  formatCardTail, compareBillsListCardsByMode, pickDueReference,
+  type BillsSortMode,
   getEffectiveCardName, hasManualBillAmount, effectiveBillAmount,
 } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
@@ -72,6 +73,8 @@ export default function BillsPage() {
   const [dimension, setDimension] = useState<Dimension>('holder')
   const [selectedTag, setSelectedTag] = useState<string>('all')
   const [viewFilter, setViewFilter] = useState<ViewFilter>('all')
+  // BILL-02：三个排序快捷栏。只影响卡片组内顺序，不碰筛选条件。
+  const [sortMode, setSortMode] = useState<BillsSortMode>('nearest_due')
   // 筛选器默认收成一行摘要，逐步展开完整维度/标签/排序
   const [filtersOpen, setFiltersOpen] = useState(false)
 
@@ -294,7 +297,10 @@ export default function BillsPage() {
   //   待还款    → 距还款日最近 → 最远
   //   未出账单  → 距账单日最近 → 最远
   // 三段顺序不随任何开关变化，所以页面上不再提供排序选项。
-  const sortedCards = useMemo(() => [...filteredCards].sort(compareBillsListCards), [filteredCards])
+  const sortedCards = useMemo(
+    () => [...filteredCards].sort((a, b) => compareBillsListCardsByMode(a, b, sortMode)),
+    [filteredCards, sortMode]
+  )
 
   // 按银行分组（保持 sortedCards 顺序）；组内待还合计按币种折算后汇总
   const bankGroups = useMemo<BankGroup[]>(() => {
@@ -402,6 +408,8 @@ export default function BillsPage() {
         onResetFilters={resetFilters}
         viewFilter={viewFilter}
         onViewFilter={setViewFilter}
+        sortMode={sortMode}
+        onSortMode={setSortMode}
         dimension={dimension}
         onDimension={setDimension}
         selectedTag={selectedTag}

@@ -322,7 +322,66 @@ export function daysUntilNextBilling(billingDay: number, today: Date = new Date(
 export interface BillsListCard {
   status: CardUrgencyStatus
   billingDay: number
-  historyBills: { due_date: string; computed_status: string }[]
+  /** 今日刷卡可享的免息天数（已结清口径），无数据时为 0。 */
+  graceDays: number
+  /** 下期还款日；服务端给 Date，测试里允许 string（YYYY-MM-DD）。 */
+  nextDueDate: Date | string
+  historyBills: Array<{
+    due_date: string
+    computed_status: string
+    days_until_due?: number
+  }>
+}
+
+/** 账单页三种排序模式（对应顶部三个快捷切换栏）。 */
+export type BillsSortMode = 'nearest_due' | 'max_interest_free' | 'nearest_billing'
+
+/**
+ * 卡片剩余免息天数：优先用「已结清卡」口径（今日刷卡 → 下期还款日）；
+ * 未结清时退化为距还款日的天数（免息已耗尽，还越早免息越少）。
+ */
+function interestFreeRank(card: BillsListCard, today: Date = new Date()): number {
+  if (card.status === 'unissued' && card.nextDueDate) {
+    const diff = diffInCalendarDays(new Date(card.nextDueDate), today)
+    if (diff >= 0) return diff
+  }
+  const unpaid = card.historyBills.filter(b => b.computed_status !== 'paid')
+  const ref = pickDueReference(unpaid, today)
+  return ref ? Math.max(0, ref.days) : 0
+}
+
+/** 最近账单日：距下一次账单日的天数（升序 = 越近越前）。 */
+function billingDistanceRank(card: BillsListCard, today: Date = new Date()): number {
+  return daysUntilNextBilling(card.billingDay, today)
+}
+
+/**
+ * 按模式比较两张卡片。三种模式都保留「逾期 → 待还款 → 未出账单」大分组
+ * （欠钱的永远排前面），只在组内换轴：
+ *   nearest_due      组内按距还款日升序（默认，最紧要在前）
+ *   max_interest_free 组内按剩余免息天数降序（免息最长的在前）
+ *   nearest_billing  组内按距下次账单日升序（最近要出账的在前）
+ */
+export function compareBillsListCardsByMode(
+  a: BillsListCard,
+  b: BillsListCard,
+  mode: BillsSortMode,
+  today: Date = new Date()
+): number {
+  const tierA = cardUrgencyRank(a.status)
+  const tierB = cardUrgencyRank(b.status)
+  if (tierA !== tierB) return tierA - tierB
+
+  if (mode === 'max_interest_free') {
+    return interestFreeRank(b, today) - interestFreeRank(a, today)
+  }
+  if (mode === 'nearest_billing') {
+    return billingDistanceRank(a, today) - billingDistanceRank(b, today)
+  }
+  // nearest_due（默认）
+  const ka = billsListSortKey(a, today)
+  const kb = billsListSortKey(b, today)
+  return ka.distance - kb.distance
 }
 
 /**
