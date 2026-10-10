@@ -2,12 +2,9 @@
 
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
-import { getCardDetail, updateCard, getCardHolders } from '@/lib/api/cards'
+import { getCardDetail, updateCard } from '@/lib/api/cards'
 import { CardForm } from '@/components/mobile/CardForm'
 import { ChevronLeftIcon, ClockIcon } from '@/components/icons/WcIcon'
-import { Modal } from '@/components/obsidian/overlays'
-import { TextField, SelectField } from '@/components/obsidian/fields'
-import { Alert } from '@/components/obsidian/feedback'
 import { getEffectiveBillingDay, getEffectiveDueConfig, formatCardTail, getEffectiveCardName, getEffectiveAnnualFee } from '@/lib/utils'
 import type { CreditCard, CardProduct, CardHolder, Bill, Benefit } from '@/lib/types'
 
@@ -77,18 +74,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
   const [error, setError] = useState<string | null>(null)
 
   // 编辑表单状态
-  const [editOpen, setEditOpen] = useState(false)
   const [cardFormOpen, setCardFormOpen] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [editError, setEditError] = useState<string | null>(null)
-  const [nameOverride, setNameOverride] = useState('')
-  const [limitInput, setLimitInput] = useState('')
-  const [billingDayInput, setBillingDayInput] = useState('')
-  const [dueType, setDueType] = useState<'default' | 'after_billing' | 'fixed' | 'fixed_before_billing'>('default')
-  const [dueValue, setDueValue] = useState('')
-  const [annualFeeInput, setAnnualFeeInput] = useState('')
-  const [holders, setHolders] = useState<Array<{ id: string; name: string }>>([])
-  const [holderId, setHolderId] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -112,90 +98,13 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
 
   useEffect(() => { load() }, [load])
 
-  // 持卡人列表：编辑弹窗里转移归属用（邮件自动建卡挂错人时在这里修）
-  useEffect(() => {
-    getCardHolders().then(list => setHolders(list.map(h => ({ id: h.id, name: h.name })))).catch(() => {})
-  }, [])
-
-  const openEdit = () => {
-    if (!card) return
-    const product = card.card_product
-    const due = getEffectiveDueConfig(card, product)
-    setNameOverride(card.name_override || '')
-    setLimitInput(String(Number(card.credit_limit) || 0))
-    setBillingDayInput(String(getEffectiveBillingDay(card)))
-    // 回填当前生效的还款规则（修改过后即是卡级覆盖，否则是产品默认）
-    setDueType(card.override_due_type && card.override_due_value != null
-      ? card.override_due_type
-      : 'default')
-    setDueValue(card.override_due_value != null
-      ? String(card.override_due_value)
-      : (card.override_due_type ? '' : String(due.value)))
-    setAnnualFeeInput(card.annual_fee_override != null ? String(Number(card.annual_fee_override)) : '')
-    setHolderId(card.holder_id || '')
-    setEditError(null)
-    setEditOpen(true)
-  }
-
-  const handleSave = async () => {
-    if (!card) return
-    const day = parseInt(billingDayInput, 10)
-    const limitNum = parseFloat(limitInput)
-    if (isNaN(limitNum) || limitNum < 0) {
-      setEditError('请输入有效的总额度')
-      return
-    }
-    if (isNaN(day) || day < 1 || day > 31) {
-      setEditError('账单日必须是 1-31 之间的数字')
-      return
-    }
-    if (dueType !== 'default') {
-      const val = parseInt(dueValue, 10)
-      if (isNaN(val) || val < 1 || (dueType !== 'after_billing' && val > 31)) {
-        setEditError('请输入有效的还款规则数值')
-        return
-      }
-    }
-    // 年费留空表示回退卡产品默认；填了就必须是非负数字（避免写入负数或 NaN）
-    const annualFeeTrimmed = annualFeeInput.trim()
-    const annualFeeValue = annualFeeTrimmed === '' ? null : parseFloat(annualFeeTrimmed)
-    if (annualFeeValue != null && (isNaN(annualFeeValue) || annualFeeValue < 0)) {
-      setEditError('请输入有效的年费金额')
-      return
-    }
-    setSaving(true)
-    setEditError(null)
-    try {
-      await updateCard(card.id, {
-        holder_id: holderId || undefined,
-        // 卡片名称：留空恢复使用卡产品默认
-        name_override: nameOverride.trim() || null,
-        credit_limit: limitNum,
-        // 账单日：以修改后的值为准，清除旧覆盖
-        billing_day: day,
-        override_billing_day: null,
-        // 还款日：选「跟随卡产品」时清除覆盖，否则写入卡级覆盖（优先生效）
-        override_due_type: dueType === 'default' ? null : dueType,
-        override_due_value: dueType === 'default' ? null : parseInt(dueValue, 10),
-        // 年费：留空恢复使用卡产品默认
-        annual_fee_override: annualFeeValue,
-      })
-      setEditOpen(false)
-      await load()
-    } catch (err) {
-      setEditError(err instanceof Error ? err.message : '保存失败')
-    } finally {
-      setSaving(false)
-    }
-  }
-
   if (loading) {
     return (
       <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-3 text-d-text'>
         <HeaderBack title='卡片详情' onBack={() => router.back()} />
-        <div className='wc-skeleton mb-3 h-[180px] w-full rounded-2xl' />
-        <div className='wc-skeleton mb-3 h-24 w-full rounded-2xl' />
-        <div className='wc-skeleton h-24 w-full rounded-2xl' />
+        <div className='wc-skeleton h-[150px] w-full rounded-2xl' />
+        <div className='wc-skeleton mt-3 h-24 w-full rounded-2xl' />
+        <div className='wc-skeleton mt-3 h-40 w-full rounded-2xl' />
       </div>
     )
   }
@@ -308,24 +217,14 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       <Section
         title='日期与费用'
         action={
-          <div className='flex items-center gap-1.5'>
-            <button
-              type='button'
-              onClick={() => { openEdit(); setEditOpen(true) }}
-              aria-label='编辑年费'
-              className='rounded-lg border border-d-border px-2.5 py-1 text-[12px] font-semibold text-d-muted active:opacity-70'
-            >
-              年费
-            </button>
-            <button
-              type='button'
-              onClick={() => setCardFormOpen(true)}
-              aria-label='编辑卡片'
-              className='rounded-lg bg-d-accent px-3 py-1 text-[12px] font-semibold text-white active:opacity-80'
-            >
-              编辑
-            </button>
-          </div>
+          <button
+            type='button'
+            onClick={() => setCardFormOpen(true)}
+            aria-label='编辑卡片'
+            className='rounded-lg bg-d-accent px-3 py-1 text-[12px] font-semibold text-white active:opacity-80'
+          >
+            编辑
+          </button>
         }
       >
         <div className='flex flex-col gap-1.5'>
@@ -363,110 +262,6 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       </Section>
 
       {/* 编辑卡片对话框：保存后卡级别内容优先于卡产品默认 */}
-      <Modal
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        dismissible={!saving}
-        title='编辑卡片'
-        footer={
-          <>
-            <button
-              type='button'
-              onClick={() => setEditOpen(false)}
-              disabled={saving}
-              className='h-10 rounded-xl px-5 text-sm font-semibold text-d-muted disabled:opacity-50'
-            >
-              取消
-            </button>
-            <button
-              type='button'
-              onClick={handleSave}
-              disabled={saving}
-              className='h-10 rounded-xl bg-d-accent px-5 text-sm font-semibold text-white disabled:opacity-50'
-            >
-              {saving ? '保存中…' : '保存'}
-            </button>
-          </>
-        }
-      >
-        {editError && <div className='mb-3'><Alert severity='error'>{editError}</Alert></div>}
-        <div className='flex flex-col gap-4'>
-          {holders.length > 0 && (
-            <SelectField
-              label='持卡人'
-              value={holderId}
-              onChange={e => setHolderId(e.target.value)}
-              helperText='邮件自动建卡挂错人时，在这里转移归属'
-              options={holders.map(h => ({ value: h.id, label: h.name }))}
-            />
-          )}
-          <TextField
-            label='卡片名称'
-            placeholder={product?.card_name || '输入卡片名称'}
-            value={nameOverride}
-            onChange={e => setNameOverride(e.target.value)}
-            helperText={product?.card_name ? '留空则使用卡产品默认名称「' + product.card_name + '」' : undefined}
-          />
-          <TextField
-            label='总额度'
-            type='number'
-            value={limitInput}
-            onChange={e => setLimitInput(e.target.value)}
-            required
-            startAdornment={<span className='text-[14px]'>¥</span>}
-          />
-          <TextField
-            label='账单日'
-            type='number'
-            value={billingDayInput}
-            onChange={e => setBillingDayInput(e.target.value)}
-            required
-            helperText='每月出账日期（1-31）'
-            min={1}
-            max={31}
-            endAdornment={<span className='text-[14px]'>日</span>}
-          />
-          <SelectField
-            label='还款日规则'
-            value={dueType}
-            onChange={e => setDueType(e.target.value as typeof dueType)}
-            helperText='修改后以此规则优先计算各期账单还款日'
-            options={[
-              {
-                value: 'default',
-                label: '跟随卡产品默认' + (product
-                  ? ('（' + (product.payment_due_type === 'after_billing' ? '账单日后 ' + product.payment_due_value + ' 天' : '每月 ' + product.payment_due_value + ' 日') + '）')
-                  : ''),
-                disabled: !product,
-              },
-              { value: 'after_billing', label: '账单日后 X 天' },
-              { value: 'fixed', label: '每月固定还款日' },
-              { value: 'fixed_before_billing', label: '每月固定还款日（账单日倒推）' },
-            ]}
-          />
-          {dueType !== 'default' && (
-            <TextField
-              label={dueType === 'after_billing' ? '账单日后天数' : '每月还款日'}
-              type='number'
-              value={dueValue}
-              onChange={e => setDueValue(e.target.value)}
-              required
-              min={1}
-              max={dueType === 'after_billing' ? undefined : 31}
-              endAdornment={<span className='text-[14px]'>{dueType === 'after_billing' ? '天' : '日'}</span>}
-            />
-          )}
-          <TextField
-            label='年费'
-            type='number'
-            value={annualFeeInput}
-            onChange={e => setAnnualFeeInput(e.target.value)}
-            helperText={product?.annual_fee != null && Number(product.annual_fee) > 0 ? '留空则使用卡产品默认年费 ¥' + Number(product.annual_fee).toLocaleString() : '留空表示无年费'}
-            startAdornment={<span className='text-[14px]'>¥</span>}
-          />
-        </div>
-      </Modal>
-
       {/* 完整卡片编辑：银行/产品/账户模式等基础信息（复用持卡人页的 CardForm） */}
       {card && (
         <CardForm
@@ -474,6 +269,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
           onClose={() => setCardFormOpen(false)}
           holderId={card.holder_id}
           initial={card}
+          lockProduct
           onSubmit={async data => {
             await updateCard(card.id, data)
             await load()

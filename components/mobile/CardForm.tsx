@@ -14,6 +14,12 @@ interface Props {
   onSubmit: (data: Omit<CreditCard, 'id' | 'created_at'>) => Promise<void>
   holderId: string
   initial?: CreditCard
+  /**
+   * 编辑已有卡时锁定归属：银行与卡产品（含卡名）是建档时就定下的身份，
+   * 录错了应删卡重建，而不是换产品——换产品会让历史账单挂到错误的
+   * 账单日/还款规则上。产品级信息（名称/描述/权益）在管理页维护。
+   */
+  lockProduct?: boolean
 }
 
 type DueType = 'after_billing' | 'fixed' | 'fixed_before_billing'
@@ -57,7 +63,7 @@ function CardTypeSegment({
   )
 }
 
-export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) {
+export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProduct = false }: Props) {
   const [products, setProducts] = useState<CardProduct[]>([])
   const [selectedBank, setSelectedBank] = useState('')
   const [productId, setProductId] = useState(initial?.card_product_id ?? '')
@@ -229,6 +235,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
           required
           value={selectedBank}
           onChange={e => handleBankChange(e.target.value)}
+          disabled={lockProduct}
+          helperText={lockProduct ? '银行与卡产品编辑时不可更换，如需更换请删卡重建' : undefined}
           options={bankOptions.map(bank => ({ value: bank, label: bank }))}
         />
 
@@ -238,8 +246,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
           required
           value={productId}
           onChange={e => setProductId(e.target.value)}
-          disabled={!selectedBank}
-          helperText={!selectedBank ? '请先选择发卡银行' : undefined}
+          disabled={!selectedBank || lockProduct}
+          helperText={lockProduct ? '卡片名称在管理页（卡产品）维护' : !selectedBank ? '请先选择发卡银行' : undefined}
           options={availableProducts.map(p => ({ value: p.id, label: p.card_name }))}
         />
 
