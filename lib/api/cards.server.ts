@@ -295,6 +295,7 @@ export async function updateCard(
     override_due_value: patch.override_due_value,
     name_override: patch.name_override,
     annual_fee_override: patch.annual_fee_override,
+    account_mode_override: patch.account_mode_override,
   }
   for (const [key, value] of Object.entries(fieldMap)) {
     if (value !== undefined) {

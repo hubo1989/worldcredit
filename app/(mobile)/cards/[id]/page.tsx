@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
 import { getCardDetail, updateCard, getCardHolders } from '@/lib/api/cards'
+import { CardForm } from '@/components/mobile/CardForm'
 import { ChevronLeftIcon, ClockIcon } from '@/components/icons/WcIcon'
 import { Modal } from '@/components/obsidian/overlays'
 import { TextField, SelectField } from '@/components/obsidian/fields'
@@ -77,6 +78,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
 
   // 编辑表单状态
   const [editOpen, setEditOpen] = useState(false)
+  const [cardFormOpen, setCardFormOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const [nameOverride, setNameOverride] = useState('')
@@ -306,14 +308,24 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       <Section
         title='日期与费用'
         action={
-          <button
-            type='button'
-            onClick={openEdit}
-            aria-label='编辑卡片'
-            className='rounded-lg bg-d-accent px-3 py-1 text-[12px] font-semibold text-white active:opacity-80'
-          >
-            编辑
-          </button>
+          <div className='flex items-center gap-1.5'>
+            <button
+              type='button'
+              onClick={() => { openEdit(); setEditOpen(true) }}
+              aria-label='编辑年费'
+              className='rounded-lg border border-d-border px-2.5 py-1 text-[12px] font-semibold text-d-muted active:opacity-70'
+            >
+              年费
+            </button>
+            <button
+              type='button'
+              onClick={() => setCardFormOpen(true)}
+              aria-label='编辑卡片'
+              className='rounded-lg bg-d-accent px-3 py-1 text-[12px] font-semibold text-white active:opacity-80'
+            >
+              编辑
+            </button>
+          </div>
         }
       >
         <div className='flex flex-col gap-1.5'>
@@ -454,6 +466,20 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
           />
         </div>
       </Modal>
+
+      {/* 完整卡片编辑：银行/产品/账户模式等基础信息（复用持卡人页的 CardForm） */}
+      {card && (
+        <CardForm
+          open={cardFormOpen}
+          onClose={() => setCardFormOpen(false)}
+          holderId={card.holder_id}
+          initial={card}
+          onSubmit={async data => {
+            await updateCard(card.id, data)
+            await load()
+          }}
+        />
+      )}
 
       {/* 近 6 期账单趋势：明细列表已外移到账单页，这里只看走势 */}
       <Section title='近 6 期账单趋势'>

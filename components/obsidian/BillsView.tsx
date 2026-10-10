@@ -153,7 +153,14 @@ function BillCard({
   const accountMode = deriveAccountMode(item.holder_id, bankName, allCards)
 
   return (
-    <div className='rounded-2xl border border-d-border bg-d-surface p-4'>
+    <div
+      role='button'
+      tabIndex={0}
+      aria-label={`查看 ${bankName} 卡片详情`}
+      onClick={() => router.push(`/cards/${item.card.id}`)}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/cards/${item.card.id}`) } }}
+      className='cursor-pointer rounded-2xl border border-d-border bg-d-surface p-4 transition-colors active:bg-d-subtle/60'
+    >
       {/* 主行：银行名 + 账户模式标签 + 状态徽章 */}
       <div className='flex items-start justify-between gap-2'>
         <div className='min-w-0 flex-1'>
@@ -212,7 +219,7 @@ function BillCard({
             {canManual && (
               <button
                 type='button'
-                onClick={() => onManualAmount(item)}
+                onClick={e => { e.stopPropagation(); onManualAmount(item) }}
                 className='text-[11px] font-semibold text-d-accent-light underline underline-offset-2'
               >
                 {manualPinned ? '修改金额' : '填写金额'}
@@ -232,7 +239,7 @@ function BillCard({
         {!isCleared && payTarget && (
           <button
             type='button'
-            onClick={() => onOpenPayment(payTarget)}
+            onClick={e => { e.stopPropagation(); onOpenPayment(payTarget) }}
             className='h-11 shrink-0 whitespace-nowrap rounded-xl bg-d-accent px-4 text-xs font-semibold text-white'
           >
             登记还款
@@ -263,13 +270,6 @@ function BillCard({
             {dueLabel}
           </p>
         ) : null}
-        <button
-          type='button'
-          onClick={() => router.push(`/cards/${item.card.id}`)}
-          className='mt-0.5 self-start text-[11px] font-semibold leading-4 text-d-accent-light active:opacity-70'
-        >
-          查看卡片详情 ›
-        </button>
       </div>
 
       {/* 历史账单明细 */}
@@ -277,7 +277,7 @@ function BillCard({
         <div className='mt-3 border-t border-d-border pt-2'>
           <button
             type='button'
-            onClick={() => setHistoryOpen(v => !v)}
+            onClick={e => { e.stopPropagation(); setHistoryOpen(v => !v) }}
             aria-expanded={historyOpen}
             className='flex w-full items-center justify-between py-1 text-left text-[12px] text-d-muted'
           >
@@ -298,7 +298,7 @@ function BillCard({
                   <button
                     key={b.id}
                     type='button'
-                    onClick={() => !bPaid && onOpenPayment(b)}
+                    onClick={e => { e.stopPropagation(); if (!bPaid) onOpenPayment(b) }}
                     className={
                       'flex items-center justify-between rounded-lg bg-d-subtle p-2.5 text-left' +
                       (bPaid ? ' cursor-default' : '')

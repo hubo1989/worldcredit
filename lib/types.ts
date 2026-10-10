@@ -129,6 +129,8 @@ export interface CreditCard {
   name_override?: string | null
   /** 年费覆盖（NULL = 使用卡产品默认年费） */
   annual_fee_override?: number | null
+  /** 账户模式覆盖：multi=多卡一账户 / single=单卡单账户（NULL = 自动推导） */
+  account_mode_override?: 'multi' | 'single' | null
   created_at: string
 }
 

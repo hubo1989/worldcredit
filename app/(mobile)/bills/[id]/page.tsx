@@ -6,7 +6,7 @@ import { format } from 'date-fns'
 import { createPayment, updateBillStatus, getBillDetail, getPaymentTotal } from '@/lib/api/bills'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { ChevronLeftIcon, ChevronRightIcon, BankIcon, UserIcon, ClockIcon } from '@/components/icons/WcIcon'
-import { getDueDate, getEffectiveBillingDay, getEffectiveDueConfig, getLoanNextDueDate, formatCardTail, getEffectiveCardName } from '@/lib/utils'
+import { formatCardTail, getEffectiveCardName } from '@/lib/utils'
 import type { Bill, Payment, CreditCard, CardProduct, CardHolder } from '@/lib/types'
 
 type BillDetail = Bill & {
@@ -153,19 +153,18 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const minPayment = bill.min_payment != null ? Number(bill.min_payment) : null
   const billAmount = Number(bill.bill_amount) || 0
 
-  // 账单日 / 还款日 / 免息期
-  const billingDay = card ? getEffectiveBillingDay(card) : 0
-  const dueConfig = card && product ? getEffectiveDueConfig(card, product) : null
-  const calculatedDueDate = card?.card_type === 'loan' && card.loan_due_day
-    ? getLoanNextDueDate(card.loan_due_day, new Date())
-    : card && product
-      ? getDueDate(card, product, new Date(bill.statement_end || bill.statement_date || bill.bill_month || bill.due_date))
-      : null
-  const dueDayOfMonth = calculatedDueDate?.getDate() ??
-    (dueConfig && dueConfig.type !== 'after_billing' ? dueConfig.value : 0)
-  const grace = calculatedDueDate && (bill.statement_end || bill.statement_date)
-    ? Math.max(0, Math.ceil((calculatedDueDate.getTime() - new Date(bill.statement_end || bill.statement_date || bill.due_date).getTime()) / (24 * 60 * 60 * 1000)))
-    : 0
+  // 免息还款期长度：这一期「出账日 → 还款日」的窗口，是卡产品属性，
+  // 与今天无关；剩余免息：今天距还款日还有几天（负数 = 已逾期）。
+  const graceWindow = (() => {
+    const start = bill.statement_date || bill.statement_end
+    const end = bill.due_date
+    if (!start || !end) return 0
+    return Math.max(0, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 86400000))
+  })()
+  const billPaid = status === 'paid'
+  const graceRemaining = bill.due_date
+    ? Math.round((new Date(bill.due_date).getTime() - Date.now()) / 86400000)
+    : null
 
   const periodStart = bill.statement_start ? format(new Date(bill.statement_start), 'M/d') : ''
   const periodEnd = bill.statement_end ? format(new Date(bill.statement_end), 'M/d') : ''
@@ -222,16 +221,36 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         </p>
       </Section>
 
-      {/* 日期信息 */}
+      {/* 日期信息：这一期账单自己的具体日期，不是循环规则 */}
       <Section title='日期信息'>
-        <div className='flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] leading-5 text-d-muted'>
-          <span>账单日 {billingDay ? '每月 ' + billingDay + ' 日' : '—'}</span>
-          <span className='text-d-border'>·</span>
-          <span>还款日 {dueDayOfMonth ? '每月 ' + dueDayOfMonth + ' 日' : format(new Date(bill.due_date), 'MM-dd')}</span>
-          <span className='text-d-border'>·</span>
-          <span className='inline-flex items-center gap-1 font-bold text-d-gold'>
-            <ClockIcon size={12} /> 免息 {grace || '—'} 天
-          </span>
+        <div className='flex flex-col gap-1.5'>
+          <Row label='出账日' value={bill.statement_date ? format(new Date(bill.statement_date), 'yyyy-MM-dd') : '—'} />
+          <Row label='账单周期' value={periodStart && periodEnd ? periodStart + ' – ' + periodEnd : '—'} />
+          <Row
+            label='还款日'
+            value={bill.due_date ? format(new Date(bill.due_date), 'yyyy-MM-dd') : '—'}
+          />
+          <Row
+            label='免息还款期'
+            value={
+              graceWindow > 0
+                ? graceWindow + ' 天（出账日 → 还款日）'
+                : '—'
+            }
+          />
+          {!billPaid && graceRemaining !== null && (
+            <p
+              className={
+                'mt-0.5 inline-flex items-center gap-1 text-[12px] font-semibold leading-4 ' +
+                (graceRemaining < 0 ? 'text-d-danger-ink' : 'text-d-gold')
+              }
+            >
+              <ClockIcon size={12} />
+              {graceRemaining >= 0
+                ? `剩 ${graceRemaining} 天免息（逾期未还将计息）`
+                : `已逾期 ${-graceRemaining} 天`}
+            </p>
+          )}
         </div>
       </Section>
 
@@ -317,6 +336,15 @@ function HeaderBack({ title, onBack }: { title: string; onBack: () => void }) {
         <ChevronLeftIcon size={20} />
       </button>
       <p className='text-[15px] font-semibold leading-5 text-d-text'>{title}</p>
+    </div>
+  )
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className='flex items-center justify-between gap-2 text-[13px] leading-5'>
+      <span className='shrink-0 text-d-muted'>{label}</span>
+      <span className='num-tabular min-w-0 text-right font-semibold text-d-text'>{value}</span>
     </div>
   )
 }

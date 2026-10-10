@@ -28,9 +28,10 @@ function item(opts: {
   status?: CardWithBillsSummary['status']
   unpaidAmount?: number
   historyCount?: number
+  accountModeOverride?: 'multi' | 'single'
 }): CardWithBillsSummary {
   return {
-    card: card(opts.bank),
+    card: { ...card(opts.bank), account_mode_override: opts.accountModeOverride ?? null },
     holder_id: opts.holderId ?? 'h1',
     status: opts.status ?? ('unpaid' as const),
     activeBill: null,
@@ -62,6 +63,19 @@ describe('deriveAccountMode', () => {
   it('银行名缺失时按空串匹配，不抛错', () => {
     const cards = [item({ bank: '' })]
     expect(deriveAccountMode('h1', '', cards)).toBe('single')
+  })
+
+  it('account_mode_override 钉住为 single 时，即使同银行两张卡也显示单卡', () => {
+    const cards = [
+      item({ bank: '招商银行', accountModeOverride: 'single' }),
+      item({ bank: '招商银行' }),
+    ]
+    expect(deriveAccountMode('h1', '招商银行', cards)).toBe('single')
+  })
+
+  it('account_mode_override 钉住为 multi 时，单卡也显示多卡一账户', () => {
+    const cards = [item({ bank: '招商银行', accountModeOverride: 'multi' })]
+    expect(deriveAccountMode('h1', '招商银行', cards)).toBe('multi')
   })
 })
 

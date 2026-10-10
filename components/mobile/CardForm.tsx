@@ -86,6 +86,11 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
     initial?.override_due_value?.toString() ?? ''
   )
 
+  // 账户模式覆盖：null = 自动推导
+  const [accountModeOverride, setAccountModeOverride] = useState<'auto' | 'multi' | 'single'>(
+    initial?.account_mode_override ?? 'auto'
+  )
+
   useEffect(() => {
     getCardProducts().then(setProducts)
   }, [])
@@ -114,6 +119,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
       setOverrideBillingDay(initial.override_billing_day?.toString() ?? '')
       setOverrideDueType((initial.override_due_type as DueType) ?? 'after_billing')
       setOverrideDueValue(initial.override_due_value?.toString() ?? '')
+      setAccountModeOverride(initial.account_mode_override ?? 'auto')
     } else if (!initial) {
       setSelectedBank('')
       setProductId('')
@@ -126,6 +132,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
       setOverrideBillingDay('')
       setOverrideDueType('after_billing')
       setOverrideDueValue('')
+      setAccountModeOverride('auto')
     }
   }, [initial, open, products])
 
@@ -165,6 +172,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
         override_billing_day: overrideEnabled && overrideBillingDay ? parseInt(overrideBillingDay) : undefined,
         override_due_type: overrideEnabled ? overrideDueType : null,
         override_due_value: overrideEnabled && overrideDueValue ? parseInt(overrideDueValue) : undefined,
+        account_mode_override: accountModeOverride === 'auto' ? null : accountModeOverride,
       }
 
       await onSubmit(base)
@@ -302,6 +310,18 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial }: Props) 
                 />
               </div>
             )}
+
+            <SelectField
+              label="账户模式"
+              value={accountModeOverride}
+              onChange={e => setAccountModeOverride(e.target.value as 'auto' | 'multi' | 'single')}
+              helperText="自动：按同银行同持卡人卡数推导；手工钉住可覆盖"
+              options={[
+                { value: 'auto', label: '自动推导' },
+                { value: 'multi', label: '多卡一账户' },
+                { value: 'single', label: '单卡单账户' },
+              ]}
+            />
           </>
         )}
 

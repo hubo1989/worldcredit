@@ -16,6 +16,11 @@ export function deriveAccountMode(
   bankName: string,
   cards: Pick<CardWithBillsSummary, 'holder_id' | 'card'>[]
 ): AccountMode {
+  // 用户手动钉住的账户模式优先（email 导入歧义 / 独立记账的同银行卡）
+  const self = cards.find(
+    c => c.holder_id === holderId && (c.card.card_product?.bank_name || '') === bankName
+  )
+  if (self?.card.account_mode_override) return self.card.account_mode_override
   const sameBankSameHolder = cards.filter(
     c => c.holder_id === holderId && (c.card.card_product?.bank_name || '') === bankName
   )
