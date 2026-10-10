@@ -54,7 +54,7 @@ export default function BanksPage() {
 
   /** 只补「缺字段」的银行；全部有值就没必要打外网。 */
   const banksMissingFields = (list: Bank[]) =>
-    list.filter(b => !b.full_name || !b.customer_service_phone || !b.website_url)
+    list.filter(b => !b.full_name || !b.customer_service_phone || !b.website_url || !b.short_name)
 
   // 单次「按真实内容补全」最多处理几家。
   //
@@ -87,9 +87,10 @@ export default function BanksPage() {
             full_name: null,
             customer_service_phone: null,
             website_url: null,
+            short_name: null,
             fetched: [],
             fetchErrors: [err instanceof Error ? err.message : '补全失败'],
-            provenance: { full_name: 'none', customer_service_phone: 'none', website_url: 'none' },
+            provenance: { full_name: 'none', customer_service_phone: 'none', website_url: 'none', short_name: 'none' },
             thirdPartySources: [],
             domainConsistent: false,
           })
@@ -122,6 +123,8 @@ export default function BanksPage() {
           patch.customer_service_phone = row.customer_service_phone
         }
         if (groundedProvenance(row.provenance.website_url) && row.website_url) patch.website_url = row.website_url
+        // 简称与全称同源（Wikidata zh label/别名），同样按来源判定写入
+        if (groundedProvenance(row.provenance.short_name) && row.short_name) patch.short_name = row.short_name
         if (Object.keys(patch).length === 0) continue
         await updateBank(row.id, patch)
         applied++
@@ -130,7 +133,8 @@ export default function BanksPage() {
       const skipped = enrichRows.filter(r =>
         !groundedProvenance(r.provenance.full_name) &&
         !groundedProvenance(r.provenance.customer_service_phone) &&
-        !groundedProvenance(r.provenance.website_url)).length
+        !groundedProvenance(r.provenance.website_url) &&
+        !groundedProvenance(r.provenance.short_name)).length
       setEnrichOpen(false)
       setEnrichRows([])
       // 用 fetchData 返回的新列表算「还剩多少」，不能读闭包里的 banks —— 那是写入前的旧值。
@@ -258,9 +262,12 @@ export default function BanksPage() {
       </div>
 
       <div className='mb-6 rounded-2xl border border-d-border bg-d-surface p-4'>
-        <div className='grid grid-cols-1 items-center gap-4 md:grid-cols-3'>
+        {/* items-end：三列控件都是 h-11，第二列 SelectField 带 label 会整体高出 26px，
+            按「底边对齐」才能让三个输入/按钮落在同一条水平线上。 */}
+        <div className='grid grid-cols-1 items-end gap-4 md:grid-cols-3'>
           <TextField
             placeholder="搜索银行名称..."
+            aria-label="搜索银行名称"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             startAdornment={<SearchIcon size={18} />}
@@ -308,6 +315,7 @@ export default function BanksPage() {
                 <th className='w-[60px]'>图标</th>
                 <th>银行名称</th>
                 <th className='w-[100px]'>简称</th>
+                <th className='w-[110px]'>额度/账单</th>
                 <th>国家</th>
                 <th>状态</th>
                 <th className='text-right'>操作</th>
@@ -316,13 +324,13 @@ export default function BanksPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className='px-3 py-10 text-center'>
+                  <td colSpan={7} className='px-3 py-10 text-center'>
                     <Spinner size={24} />
                   </td>
                 </tr>
               ) : filteredBanks.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className='px-3 py-10 text-center text-d-muted'>
+                  <td colSpan={7} className='px-3 py-10 text-center text-d-muted'>
                     {fetchError ? `加载失败: ${fetchError}` : '暂无银行数据'}
                   </td>
                 </tr>
@@ -335,6 +343,25 @@ export default function BanksPage() {
                     <td className='px-3 py-2 font-medium'>{bank.name}</td>
                     <td className={'px-3 py-2 ' + (bank.short_name ? '' : 'text-d-muted/60')}>
                       {bank.short_name || '—'}
+                    </td>
+                    <td className='px-3 py-2'>
+                      {/* 非默认形态用 accent 徽章点出，默认（独立/单独）保持低调 */}
+                      <span
+                        className={
+                          'rounded-md px-1.5 py-0.5 text-[9px] font-semibold ' +
+                          (bank.quota_mode === 'shared' ? 'bg-d-accent text-white' : 'bg-d-subtle text-d-muted')
+                        }
+                      >
+                        {bank.quota_mode === 'shared' ? '共享额度' : '独立额度'}
+                      </span>{' '}
+                      <span
+                        className={
+                          'rounded-md px-1.5 py-0.5 text-[9px] font-semibold ' +
+                          (bank.statement_mode === 'merged' ? 'bg-d-accent text-white' : 'bg-d-subtle text-d-muted')
+                        }
+                      >
+                        {bank.statement_mode === 'merged' ? '合并账单' : '单独账单'}
+                      </span>
                     </td>
                     <td className='px-3 py-2'>
                       {COUNTRIES.find(c => c.code === bank.country)?.label || bank.country}
@@ -399,6 +426,7 @@ export default function BanksPage() {
             onComplete={(data) => setCurrentBank({ ...currentBank, ...data })}
             availableFields={[
               { key: 'full_name', label: '银行全称' },
+              { key: 'short_name', label: '银行简称' },
               { key: 'customer_service_phone', label: '客服电话' },
               { key: 'website_url', label: '官方网站' }
             ]}
@@ -445,6 +473,28 @@ export default function BanksPage() {
             onChange={(e) => setCurrentBank({ ...currentBank, country: e.target.value })}
             options={COUNTRIES.map(c => ({ value: c.code, label: c.label }))}
           />
+          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+            <SelectField
+              label="额度模式"
+              value={currentBank?.quota_mode || 'independent'}
+              onChange={(e) => setCurrentBank({ ...currentBank, quota_mode: e.target.value as Bank['quota_mode'] })}
+              helperText="共享时额度是一个池，不随卡数叠加"
+              options={[
+                { value: 'independent', label: '每卡独立额度' },
+                { value: 'shared', label: '多卡共享额度' },
+              ]}
+            />
+            <SelectField
+              label="账单模式"
+              value={currentBank?.statement_mode || 'independent'}
+              onChange={(e) => setCurrentBank({ ...currentBank, statement_mode: e.target.value as Bank['statement_mode'] })}
+              helperText="合并时同银行多卡合一张账单一起还"
+              options={[
+                { value: 'independent', label: '每卡单独账单' },
+                { value: 'merged', label: '多卡合并账单' },
+              ]}
+            />
+          </div>
         </div>
       </Modal>
 
@@ -491,6 +541,7 @@ export default function BanksPage() {
                 <tr className='[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold [&>th]:text-d-muted'>
                   <th>银行</th>
                   <th>全称</th>
+                  <th>简称</th>
                   <th>客服电话</th>
                   <th>官网</th>
                   <th>依据</th>
@@ -511,6 +562,9 @@ export default function BanksPage() {
                       <td className='px-3 py-2'>{row.name}</td>
                       <td className='px-3 py-2'>
                         {row.full_name || '—'} {tag(row.provenance.full_name)}
+                      </td>
+                      <td className='px-3 py-2'>
+                        {row.short_name || '—'} {tag(row.provenance.short_name)}
                       </td>
                       <td className='px-3 py-2'>
                         {row.customer_service_phone || '—'} {tag(row.provenance.customer_service_phone)}

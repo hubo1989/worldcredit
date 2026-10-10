@@ -11,6 +11,10 @@ export interface Bank {
   country: string
   customer_service_phone?: string
   website_url?: string
+  /** 额度模式：independent=每卡独立额度 / shared=多卡共享额度（额度是一个池不叠加） */
+  quota_mode?: 'independent' | 'shared'
+  /** 账单模式：independent=每卡单独账单 / merged=多卡合并账单（同银行多卡合一张账单） */
+  statement_mode?: 'independent' | 'merged'
   is_active: boolean
   created_at: string
 }
@@ -33,6 +37,10 @@ export interface CardProduct {
   payment_due_value: number
   annual_fee?: number
   annual_fee_waiver?: string
+  /** 所属银行的额度模式（从 banks.quota_mode 联查带出，供用户侧分组展示） */
+  bank_quota_mode?: 'independent' | 'shared'
+  /** 所属银行的账单模式（从 banks.statement_mode 联查带出） */
+  bank_statement_mode?: 'independent' | 'merged'
   is_active: boolean
   created_at: string
 }

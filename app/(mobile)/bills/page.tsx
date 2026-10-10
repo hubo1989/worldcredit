@@ -310,7 +310,16 @@ export default function BillsPage() {
       const bankName = item.card.card_product?.bank_name || '未知银行'
       if (!idx.has(bankName)) {
         idx.set(bankName, groups.length)
-        groups.push({ bankName, cards: [], sumTotal: 0, sumUnconverted: [] })
+        // 银行维度额度/账单模式是银行级属性，取组内第一张卡联查带出的值即可
+        const first = item.card.card_product
+        groups.push({
+          bankName,
+          cards: [],
+          sumTotal: 0,
+          sumUnconverted: [],
+          sharedQuota: first?.bank_quota_mode === 'shared' || undefined,
+          mergedStatement: first?.bank_statement_mode === 'merged' || undefined,
+        })
       }
       groups[idx.get(bankName)!].cards.push(item)
     }

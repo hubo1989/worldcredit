@@ -367,8 +367,12 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
   const productIds = Array.from(new Set(cards.map(c => c.card_product_id).filter(Boolean)))
   let productMap: Record<string, CardProduct> = {}
   if (productIds.length > 0) {
+    // 联查 banks 带出银行维度的额度/账单模式，用户侧按银行分组时要区分
+    // 共享额度（额度是一个池不叠加）与合并账单（同银行多卡合一张账单）
     const { data: products } = await query<CardProduct>(
-      `SELECT * FROM card_products WHERE id IN (${productIds.map(() => '?').join(',')})`, productIds
+      `SELECT cp.*, b.quota_mode AS bank_quota_mode, b.statement_mode AS bank_statement_mode
+       FROM card_products cp LEFT JOIN banks b ON b.id = cp.bank_id
+       WHERE cp.id IN (${productIds.map(() => '?').join(',')})`, productIds
     )
     if (products) {
       productMap = products.reduce((acc, p) => ({ ...acc, [p.id]: p }), {})

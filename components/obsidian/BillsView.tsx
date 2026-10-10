@@ -44,6 +44,10 @@ export interface BankGroup {
   cards: CardWithBillsSummary[]
   sumTotal: number
   sumUnconverted: string[]
+  /** 银行维度额度模式：多卡共享额度（额度是一个池，不随卡数叠加） */
+  sharedQuota?: boolean
+  /** 银行维度账单模式：多卡合并账单（同银行多卡合一张账单一起还） */
+  mergedStatement?: boolean
 }
 
 export interface BillsViewProps {
@@ -366,6 +370,13 @@ export function BillsView(vm: BillsViewProps) {
                 <p className='flex-1 text-[15px] font-semibold text-d-text'>
                   {group.bankName} · {group.cards.length} 张卡
                 </p>
+                {/* 银行维度模式徽章：只有 shared/merged 才提示，默认形态不加噪 */}
+                {group.sharedQuota ? (
+                  <span className='rounded-md bg-d-accent px-1.5 py-0.5 text-[9px] font-semibold text-white'>共享额度</span>
+                ) : null}
+                {group.mergedStatement ? (
+                  <span className='rounded-md bg-d-accent px-1.5 py-0.5 text-[9px] font-semibold text-white'>合并账单</span>
+                ) : null}
                 <p className='text-[12px] font-semibold text-d-muted'>
                   待还 {currencySymbol(displayCurrency)}
                   {group.sumTotal.toLocaleString()}
