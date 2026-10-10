@@ -258,9 +258,12 @@ export default function BanksPage() {
       </div>
 
       <div className='mb-6 rounded-2xl border border-d-border bg-d-surface p-4'>
-        <div className='grid grid-cols-1 items-center gap-4 md:grid-cols-3'>
+        {/* items-end：三列控件都是 h-11，第二列 SelectField 带 label 会整体高出 26px，
+            按「底边对齐」才能让三个输入/按钮落在同一条水平线上。 */}
+        <div className='grid grid-cols-1 items-end gap-4 md:grid-cols-3'>
           <TextField
             placeholder="搜索银行名称..."
+            aria-label="搜索银行名称"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             startAdornment={<SearchIcon size={18} />}
