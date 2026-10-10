@@ -1,5 +1,6 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
 import { useState, type ReactNode } from 'react'
 import { format } from 'date-fns'
 import type { BillDashboardItem, CardWithBillsSummary } from '@/lib/api/bills'
@@ -117,14 +118,16 @@ function SectionLabel({ children }: { children: ReactNode }) {
 
 /** 单张卡聚合卡（新层级：银行名为主标题 + 账户模式标签；持卡人降为次要信息） */
 function BillCard({
-  item, allCards, holderName, onOpenPayment, onManualAmount,
+  item, allCards, holderName, onOpenPayment, onManualAmount, sortMode,
 }: {
   item: CardWithBillsSummary
   allCards: CardWithBillsSummary[]
   holderName?: string
   onOpenPayment: (bill: BillDashboardItem) => void
   onManualAmount: (item: CardWithBillsSummary) => void
+  sortMode: BillsSortMode
 }) {
+  const router = useRouter()
   const [historyOpen, setHistoryOpen] = useState(false)
   const product = item.card.card_product
   const bankName = product?.bank_name || '银行卡'
@@ -245,7 +248,7 @@ function BillCard({
             ? '下期还款约 ' + format(item.nextDueDate, 'MM-dd')
             : '本期还款日 ' + (dueRef ? format(new Date(dueRef.bill.due_date), 'MM-dd') : '—')}
         </p>
-        {isCleared ? (
+        {isCleared || sortMode === 'max_interest_free' ? (
           <p className='flex items-center gap-1.5 text-[11px] font-semibold leading-4 text-d-success-ink'>
             今日刷卡免息 {item.graceDays} 天
           </p>
@@ -259,6 +262,13 @@ function BillCard({
             {dueLabel}
           </p>
         ) : null}
+        <button
+          type='button'
+          onClick={() => router.push(`/cards/${item.card.id}`)}
+          className='mt-0.5 self-start text-[11px] font-semibold leading-4 text-d-accent-light active:opacity-70'
+        >
+          查看卡片详情 ›
+        </button>
       </div>
 
       {/* 历史账单明细 */}
@@ -366,6 +376,7 @@ export function BillsView(vm: BillsViewProps) {
                     holderName={holderMap[item.holder_id]}
                     onOpenPayment={onOpenPayment}
                     onManualAmount={onManualAmount}
+                    sortMode={sortMode}
                   />
                 ))}
               </div>
@@ -401,6 +412,7 @@ export function BillsView(vm: BillsViewProps) {
             holderName={holderMap[item.holder_id]}
             onOpenPayment={onOpenPayment}
             onManualAmount={onManualAmount}
+            sortMode={sortMode}
           />
         ),
       })),
