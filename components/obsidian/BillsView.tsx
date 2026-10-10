@@ -432,6 +432,8 @@ export function BillsView(vm: BillsViewProps) {
       </div>
 
       <div className='mt-4 flex flex-col gap-3 px-5'>
+        {/* 吸顶区：排序 tab + 筛选摘要栏随滚动固定，筛选展开面板不吸顶 */}
+        <div className='sticky top-0 z-20 -mx-5 flex flex-col gap-3 bg-d-bg px-5 pb-1 pt-1 shadow-[0_1px_0_0_var(--color-d-border)]'>
         {/* BILL-02：顶部三个排序快捷切换栏（受控） */}
         <div className='flex gap-2 rounded-xl border border-d-border bg-d-surface p-1 text-[13px] font-semibold'>
           {([
@@ -514,6 +516,7 @@ export function BillsView(vm: BillsViewProps) {
               <CloseIcon size={14} />
             </button>
           )}
+        </div>
         </div>
 
         {/* 筛选面板：展开态 */}

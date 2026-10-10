@@ -451,10 +451,10 @@ export function compareUnifiedBills(
     return unifiedBillSortKey(a, today).distance - unifiedBillSortKey(b, today).distance
   }
   if (mode === 'max_interest_free') {
-    const ra = 'payableSource' in a && a.payableSource ? Number.MAX_SAFE_INTEGER - 1 : interestFreeRank(b, today) * -1
-    const rb = 'payableSource' in b && b.payableSource ? Number.MAX_SAFE_INTEGER - 1 : interestFreeRank(a, today) * -1
-    // 普通卡片按免息降序；固定支出排在普通卡片之后（免息概念不适用）
-    return ra - rb
+    // 普通卡片按免息降序（免息最长的在前）；固定支出无免息概念，排组内最后。
+    const rankOf = (c: BillsListCard) =>
+      c.payableSource ? Number.MIN_SAFE_INTEGER : interestFreeRank(c, today)
+    return rankOf(b) - rankOf(a)
   }
   // nearest_billing：固定支出同样排组内最后
   const da = 'payableSource' in a && a.payableSource ? Number.MAX_SAFE_INTEGER : billingDistanceRank(a, today)

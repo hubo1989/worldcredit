@@ -247,3 +247,21 @@ describe('unified sorting: payables mixed with credit cards', () => {
     expect(sorted[0].payableSource).toBeUndefined() // 普通卡在前
   })
 })
+
+
+describe('regression: max_interest_free must differ from nearest_due', () => {
+  it('orders two unpaid cards differently under the two modes', () => {
+    // 一张还款日近但免息短，一张还款日远免息长
+    const dueSoon = card('unpaid', 5, [{ due_date: '2026-09-16', computed_status: 'unpaid' }])
+    const dueFar = card('unpaid', 5, [{ due_date: '2026-10-10', computed_status: 'unpaid' }])
+    const byDue = [dueFar, dueSoon].sort((a, b) =>
+      compareUnifiedBills(a, b, 'nearest_due', TODAY)
+    )
+    const byFree = [dueSoon, dueFar].sort((a, b) =>
+      compareUnifiedBills(a, b, 'max_interest_free', TODAY)
+    )
+    // nearest_due：近的在前；max_interest_free：免息长的在前（还款日远的）
+    expect(byDue[0]).toBe(dueSoon)
+    expect(byFree[0]).toBe(dueFar)
+  })
+})
