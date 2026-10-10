@@ -54,7 +54,7 @@ export default function BanksPage() {
 
   /** 只补「缺字段」的银行；全部有值就没必要打外网。 */
   const banksMissingFields = (list: Bank[]) =>
-    list.filter(b => !b.full_name || !b.customer_service_phone || !b.website_url)
+    list.filter(b => !b.full_name || !b.customer_service_phone || !b.website_url || !b.short_name)
 
   // 单次「按真实内容补全」最多处理几家。
   //
@@ -87,9 +87,10 @@ export default function BanksPage() {
             full_name: null,
             customer_service_phone: null,
             website_url: null,
+            short_name: null,
             fetched: [],
             fetchErrors: [err instanceof Error ? err.message : '补全失败'],
-            provenance: { full_name: 'none', customer_service_phone: 'none', website_url: 'none' },
+            provenance: { full_name: 'none', customer_service_phone: 'none', website_url: 'none', short_name: 'none' },
             thirdPartySources: [],
             domainConsistent: false,
           })
@@ -122,6 +123,8 @@ export default function BanksPage() {
           patch.customer_service_phone = row.customer_service_phone
         }
         if (groundedProvenance(row.provenance.website_url) && row.website_url) patch.website_url = row.website_url
+        // 简称与全称同源（Wikidata zh label/别名），同样按来源判定写入
+        if (groundedProvenance(row.provenance.short_name) && row.short_name) patch.short_name = row.short_name
         if (Object.keys(patch).length === 0) continue
         await updateBank(row.id, patch)
         applied++
@@ -130,7 +133,8 @@ export default function BanksPage() {
       const skipped = enrichRows.filter(r =>
         !groundedProvenance(r.provenance.full_name) &&
         !groundedProvenance(r.provenance.customer_service_phone) &&
-        !groundedProvenance(r.provenance.website_url)).length
+        !groundedProvenance(r.provenance.website_url) &&
+        !groundedProvenance(r.provenance.short_name)).length
       setEnrichOpen(false)
       setEnrichRows([])
       // 用 fetchData 返回的新列表算「还剩多少」，不能读闭包里的 banks —— 那是写入前的旧值。
@@ -258,12 +262,9 @@ export default function BanksPage() {
       </div>
 
       <div className='mb-6 rounded-2xl border border-d-border bg-d-surface p-4'>
-        {/* items-end：三列控件都是 h-11，第二列 SelectField 带 label 会整体高出 26px，
-            按「底边对齐」才能让三个输入/按钮落在同一条水平线上。 */}
-        <div className='grid grid-cols-1 items-end gap-4 md:grid-cols-3'>
+        <div className='grid grid-cols-1 items-center gap-4 md:grid-cols-3'>
           <TextField
             placeholder="搜索银行名称..."
-            aria-label="搜索银行名称"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             startAdornment={<SearchIcon size={18} />}
@@ -402,6 +403,7 @@ export default function BanksPage() {
             onComplete={(data) => setCurrentBank({ ...currentBank, ...data })}
             availableFields={[
               { key: 'full_name', label: '银行全称' },
+              { key: 'short_name', label: '银行简称' },
               { key: 'customer_service_phone', label: '客服电话' },
               { key: 'website_url', label: '官方网站' }
             ]}
@@ -494,6 +496,7 @@ export default function BanksPage() {
                 <tr className='[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold [&>th]:text-d-muted'>
                   <th>银行</th>
                   <th>全称</th>
+                  <th>简称</th>
                   <th>客服电话</th>
                   <th>官网</th>
                   <th>依据</th>
@@ -514,6 +517,9 @@ export default function BanksPage() {
                       <td className='px-3 py-2'>{row.name}</td>
                       <td className='px-3 py-2'>
                         {row.full_name || '—'} {tag(row.provenance.full_name)}
+                      </td>
+                      <td className='px-3 py-2'>
+                        {row.short_name || '—'} {tag(row.provenance.short_name)}
                       </td>
                       <td className='px-3 py-2'>
                         {row.customer_service_phone || '—'} {tag(row.provenance.customer_service_phone)}

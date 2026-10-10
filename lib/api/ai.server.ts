@@ -349,6 +349,8 @@ export interface BankEnrichment {
   full_name: string | null
   customer_service_phone: string | null
   website_url: string | null
+  /** 简称（如「招行」）。只来自 Wikidata 的中文 label/别名，模型提名不产简称。 */
+  short_name: string | null
   /** 实际抓过的 URL，按顺序。用于向用户交代依据。 */
   fetched: string[]
   /** 抓取失败/无内容的地址及原因。 */
@@ -364,7 +366,7 @@ export interface BankEnrichment {
    * （民泰 412、建行/交行返回空壳），把「官网」当成唯一证据会让这些行永远补不上。
    * 官网抓不到时改用权威第三方来源，并如实标出来源，由人工在复核弹窗里判断。
    */
-  provenance: Record<'full_name' | 'customer_service_phone' | 'website_url', 'site' | 'thirdparty' | 'model' | 'none'>
+  provenance: Record<'full_name' | 'customer_service_phone' | 'website_url' | 'short_name', 'site' | 'thirdparty' | 'model' | 'none'>
 
   /** 第三方来源 URL（Wikidata / 维基百科条目），用于交代依据。 */
   thirdPartySources: string[]
@@ -389,7 +391,7 @@ const CONTACT_PATHS = ['', '/contact', '/contactus', '/contact-us', '/gywm', '/l
 
 /** Wikidata 官网字段。实体先经 wbsearchentities 解析，避免猜 QID。 */
 async function lookupWikidataSite(name: string): Promise<{ site: string | null; source: string | null }> {
-  for (const lang of ['zh', 'en']) {
+  for (const lang of ['zh', 'zh-cn', 'en']) {
     for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const searchUrl =
@@ -425,6 +427,55 @@ async function lookupWikidataSite(name: string): Promise<{ site: string | null; 
     }
   }
   return { site: null, source: null }
+}
+
+/**
+ * 读 Wikidata 实体的中文 label 与 zh 别名（供 pickShortNameFromWikidata 挑简称）。
+ *
+ * 简称只在官网抓取/Wikipedia 全称兜底都拿不到时才需要查；wbsearchentities 用中文
+ * 银行名在 en 语言下基本必空，所以这里只用中文语言搜实体。
+ */
+async function lookupWikidataAliases(
+  name: string
+): Promise<{ zhCnLabel: string | null; zhAliases: string[]; source: string | null }> {
+  for (const lang of ['zh', 'zh-cn']) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const searchUrl =
+          'https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&limit=1' +
+          `&language=${lang}&search=${encodeURIComponent(name)}`
+        const res = await fetch(searchUrl, { headers: { Accept: 'application/json' } })
+        if (!res.ok) continue
+        const found = (await res.json()) as { search?: { id?: string }[] }
+        const qid = found.search?.[0]?.id
+        if (!qid) continue
+
+        const entityUrl = `https://www.wikidata.org/wiki/Special:EntityData/${qid}.json`
+        const entityRes = await fetch(entityUrl, { headers: { Accept: 'application/json' } })
+        if (!entityRes.ok) continue
+        const data = (await entityRes.json()) as {
+          entities?: Record<string, {
+            labels?: Record<string, { value?: string } | undefined>
+            aliases?: Record<string, { value?: string }[] | undefined>
+          }>
+        }
+        const entity = Object.values(data.entities || {})[0]
+        const zhCnLabel = entity?.labels?.['zh-cn']?.value ?? entity?.labels?.['zh']?.value ?? null
+        const zhAliases = [...(entity?.aliases?.['zh-cn'] ?? []), ...(entity?.aliases?.['zh'] ?? [])]
+          .map(a => a?.value)
+          .filter((v): v is string => typeof v === 'string')
+        if (zhCnLabel || zhAliases.length > 0) {
+          return { zhCnLabel, zhAliases: [...new Set(zhAliases)], source: `https://www.wikidata.org/wiki/${qid}` }
+        }
+        // 拿到实体但没有中文 label/别名：不必重试
+        break
+      } catch {
+        // 第三方接口偶发失败/限流，重试一次，避免静默丢字段
+        await new Promise(r => setTimeout(r, 800))
+      }
+    }
+  }
+  return { zhCnLabel: null, zhAliases: [], source: null }
 }
 
 /** 维基百科条目正文（用于提取官方全称）。 */
@@ -476,6 +527,35 @@ export function fullNameFromWikipedia(text: string, name: string): string | null
     if (hit) return hit[1].replace(/\s/g, '').slice(0, 40)
   }
   return null
+}
+
+/**
+ * 从 Wikidata 的中文 label/别名里挑银行简称。
+ *
+ * 实测 Wikidata 实体的 zh-cn label 常直接就是简称名（中国工商银行 → 工商银行），
+ * zh aliases 里还有两三字的简称（「工行」「工商银行」）。规则：
+ * 1. zh-cn label 比 name 短且不相等 → 取它；
+ * 2. 否则取 zh aliases 里 2–6 字且不等于 name 的候选，优先不以「银行/銀行」结尾的
+ *    （「工行」比「工商银行」更像简称），其次最短的；「工商银行」这类以银行结尾
+ *    的合法简称也允许入选，只作为次优；
+ * 3. 都不满足返回 null，绝不把 name 本身或模型猜的词当简称。
+ */
+export function pickShortNameFromWikidata(
+  zhCnLabel: string | null | undefined,
+  zhAliases: string[],
+  name: string
+): string | null {
+  const label = (zhCnLabel ?? '').trim()
+  if (label && label !== name && label.length < name.length) return label
+
+  const candidates = zhAliases
+    .map(a => (typeof a === 'string' ? a.trim() : ''))
+    .filter(a => a.length >= 2 && a.length <= 6 && a !== name)
+  if (candidates.length === 0) return null
+
+  const notBankSuffixed = candidates.filter(a => !/银行$|銀行$/.test(a))
+  const pool = notBankSuffixed.length > 0 ? notBankSuffixed : candidates
+  return pool.reduce((shortest, cur) => (cur.length < shortest.length ? cur : shortest))
 }
 
 /** 国内银行客服短号：95xxx / 96xxx。短号是**最稳定**的客服标识。 */
@@ -614,9 +694,10 @@ export async function enrichBankFromWeb(bank: {
     full_name: null,
     customer_service_phone: null,
     website_url: null,
+    short_name: null,
     fetched: [],
     fetchErrors: [],
-    provenance: { full_name: 'none', customer_service_phone: 'none', website_url: 'none' },
+    provenance: { full_name: 'none', customer_service_phone: 'none', website_url: 'none', short_name: 'none' },
     thirdPartySources: [],
     domainConsistent: false,
   }
@@ -695,6 +776,18 @@ export async function enrichBankFromWeb(bank: {
     if (full) {
       result.full_name = full
       result.provenance.full_name = 'thirdparty'
+    }
+  }
+
+  // 6b) 简称：只认 Wikidata 的中文 label/别名（zh-cn label 常直接是简称名，
+  //     zh aliases 含两三字简称）。官网正文与模型提名都不产 short_name。
+  {
+    const wikidata = await lookupWikidataAliases(bank.name)
+    if (wikidata.source) result.thirdPartySources.push(wikidata.source)
+    const short = pickShortNameFromWikidata(wikidata.zhCnLabel, wikidata.zhAliases, bank.name)
+    if (short) {
+      result.short_name = short
+      result.provenance.short_name = 'thirdparty'
     }
   }
 
