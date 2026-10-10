@@ -29,6 +29,7 @@ import {
   AlertIcon,
   BankIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
   CloseIcon,
   FilterIcon,
   PlusIcon,
@@ -326,6 +327,11 @@ function BillCard({
                       >
                         {bPaid ? '已结清' : '未结清'}
                       </span>
+                      <ChevronRightIcon
+                        size={14}
+                        className='text-d-muted'
+                        onClick={e => { e.stopPropagation(); router.push('/bills/' + b.id) }}
+                      />
                     </span>
                   </button>
                 )

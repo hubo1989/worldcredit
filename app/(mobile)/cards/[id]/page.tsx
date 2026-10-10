@@ -2,9 +2,8 @@
 
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
-import { format } from 'date-fns'
 import { getCardDetail, updateCard, getCardHolders } from '@/lib/api/cards'
-import { ChevronLeftIcon, ChevronRightIcon, ClockIcon } from '@/components/icons/WcIcon'
+import { ChevronLeftIcon, ClockIcon } from '@/components/icons/WcIcon'
 import { Modal } from '@/components/obsidian/overlays'
 import { TextField, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
@@ -19,18 +18,50 @@ type CardDetail = CreditCard & {
 type BillWithPaid = Bill & { paid_amount: number; computed_status: Bill['status'] }
 
 /** 账单状态徽章（暗色）：淡底 + ink，与 bills 暗色视图同一口径 */
-function StatusBadgeDark({ status }: { status: string }) {
-  const map: Record<string, { cls: string; label: string }> = {
-    paid: { cls: 'bg-d-success-soft text-d-success-ink', label: '已还' },
-    partial: { cls: 'bg-d-gold-soft text-d-warn-ink', label: '部分' },
-    overdue: { cls: 'bg-d-danger-soft text-d-danger-ink', label: '逾期' },
-    unpaid: { cls: 'bg-d-subtle text-d-accent-light', label: '待还' },
-  }
-  const cfg = map[status] ?? map.unpaid
+/**
+ * 近 6 期账单趋势：按账期从旧到新的纵向柱状图（横向在窄屏放不下月份标签）。
+ * 纯 SVG 实现，不引图表库；高度按最大账单金额归一化。
+ * 已结清的柱子用成功色、未结清用强调色，趋势一眼可辨。
+ */
+function BillTrendChart({ bills }: { bills: BillWithPaid[] }) {
+  // 从旧到新排：趋势图的横轴是时间
+  const ordered = [...bills].sort((a, b) => a.bill_month.localeCompare(b.bill_month))
+  const max = Math.max(...ordered.map(b => Number(b.bill_amount) || 0), 1)
+
   return (
-    <span className={'shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ' + cfg.cls}>
-      {cfg.label}
-    </span>
+    <div className='flex flex-col gap-2'>
+      <div className='flex items-end justify-between gap-2'>
+        {ordered.map(b => {
+          const amount = Number(b.bill_amount) || 0
+          const pct = Math.max(4, Math.round((amount / max) * 100))
+          const paid = b.computed_status === 'paid'
+          return (
+            <div key={b.id} className='flex min-w-0 flex-1 flex-col items-center gap-1'>
+              <span className='num-tabular text-[10px] font-semibold leading-3 text-d-muted'>
+                {amount >= 10000 ? (amount / 10000).toFixed(1) + 'w' : amount.toLocaleString()}
+              </span>
+              <div className='flex h-24 w-full items-end justify-center'>
+                <div
+                  className={
+                    'w-full max-w-[26px] rounded-t-[4px] ' + (paid ? 'bg-d-success' : 'bg-d-accent')
+                  }
+                  style={{ height: pct + '%' }}
+                />
+              </div>
+              <span className='text-[10px] leading-3 text-d-muted'>{b.bill_month.slice(2)}</span>
+            </div>
+          )
+        })}
+      </div>
+      <p className='text-[10px] leading-4 text-d-muted'>
+        <span className='mr-2 inline-flex items-center gap-1'>
+          <span className='inline-block h-2 w-2 rounded-sm bg-d-accent' />未结清
+        </span>
+        <span className='inline-flex items-center gap-1'>
+          <span className='inline-block h-2 w-2 rounded-sm bg-d-success' />已结清
+        </span>
+      </p>
+    </div>
   )
 }
 
@@ -275,7 +306,12 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       <Section
         title='日期与费用'
         action={
-          <button type='button' onClick={openEdit} aria-label='编辑卡片' className='text-[12px] font-semibold text-d-muted'>
+          <button
+            type='button'
+            onClick={openEdit}
+            aria-label='编辑卡片'
+            className='rounded-lg bg-d-accent px-3 py-1 text-[12px] font-semibold text-white active:opacity-80'
+          >
             编辑
           </button>
         }
@@ -419,41 +455,17 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
         </div>
       </Modal>
 
-      {/* 最近账单 */}
-      <Section title='最近账单'>
+      {/* 近 6 期账单趋势：明细列表已外移到账单页，这里只看走势 */}
+      <Section title='近 6 期账单趋势'>
         {bills.length === 0 ? (
           <div className='py-4 text-center'>
             <p className='text-[13px] font-semibold text-d-text'>暂无账单</p>
             <p className='mt-1 text-[12px] text-d-muted'>这张卡还没有录入账单</p>
           </div>
         ) : (
-          <div className='flex flex-col gap-2'>
-            {bills.map(b => (
-              <button
-                key={b.id}
-                type='button'
-                onClick={() => router.push('/bills/' + b.id)}
-                className='flex w-full items-center justify-between rounded-xl bg-d-subtle p-2.5 text-left transition-colors active:bg-d-border'
-              >
-                <span>
-                  <span className='block text-[12px] leading-4 text-d-muted'>{b.bill_month} 账单</span>
-                  <span className='num-tabular mt-0.5 block text-[16px] font-bold text-d-text'>
-                    ¥{Number(b.bill_amount).toLocaleString()}
-                  </span>
-                  <span className='mt-0.5 block text-[12px] leading-4 text-d-muted'>
-                    到期 {format(new Date(b.due_date), 'yyyy-MM-dd')}
-                  </span>
-                </span>
-                <span className='flex items-center gap-2'>
-                  <StatusBadgeDark status={b.computed_status} />
-                  <ChevronRightIcon size={16} className='text-d-muted' />
-                </span>
-              </button>
-            ))}
-          </div>
+          <BillTrendChart bills={bills.slice(0, 6)} />
         )}
       </Section>
-
       {/* 权益进度（如无数据则省略） */}
       {benefits.length > 0 && (
         <Section title='权益进度'>
