@@ -31,6 +31,36 @@ describe('银行简称', () => {
   })
 })
 
+describe('银行维度额度×账单模式', () => {
+  it('0012 迁移存在且含两列 ALTER', () => {
+    const sql = read('migrations/d1/0012_bank_quota_statement_modes.sql')
+    expect(sql).toMatch(/ALTER TABLE banks ADD COLUMN quota_mode TEXT NOT NULL DEFAULT 'independent'/)
+    expect(sql).toMatch(/ALTER TABLE banks ADD COLUMN statement_mode TEXT NOT NULL DEFAULT 'independent'/)
+    expect(sql).toMatch(/quota_mode IN \('independent', 'shared'\)/)
+    expect(sql).toMatch(/statement_mode IN \('independent', 'merged'\)/)
+  })
+
+  it('createBank 的 INSERT 带上 quota_mode（缺省会写成独立模式）', () => {
+    const admin = read('lib/api/admin.server.ts')
+    expect(admin).toMatch(/INSERT INTO banks \([^)]*quota_mode[^)]*\)/)
+    expect(admin).toMatch(/payload\.quota_mode \|\| 'independent'/)
+    // UPDATE 的允许字段清单同样要放行
+    const updateList = /for \(const key of \[([^\]]*)\]\)/.exec(admin)?.[1] ?? ''
+    expect(updateList).toContain("'quota_mode'")
+    expect(updateList).toContain("'statement_mode'")
+  })
+
+  it('银行编辑弹窗提供「额度模式」「账单模式」选项', () => {
+    const page = read('app/admin/banks/page.tsx')
+    expect(page).toMatch(/额度模式/)
+    expect(page).toMatch(/账单模式/)
+    expect(page).toMatch(/每卡独立额度/)
+    expect(page).toMatch(/多卡共享额度/)
+    expect(page).toMatch(/每卡单独账单/)
+    expect(page).toMatch(/多卡合并账单/)
+  })
+})
+
 describe('按真实内容补全：必须分批且说清剩余', () => {
   const page = read('app/admin/banks/page.tsx')
 

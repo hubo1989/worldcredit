@@ -262,9 +262,12 @@ export default function BanksPage() {
       </div>
 
       <div className='mb-6 rounded-2xl border border-d-border bg-d-surface p-4'>
-        <div className='grid grid-cols-1 items-center gap-4 md:grid-cols-3'>
+        {/* items-end：三列控件都是 h-11，第二列 SelectField 带 label 会整体高出 26px，
+            按「底边对齐」才能让三个输入/按钮落在同一条水平线上。 */}
+        <div className='grid grid-cols-1 items-end gap-4 md:grid-cols-3'>
           <TextField
             placeholder="搜索银行名称..."
+            aria-label="搜索银行名称"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             startAdornment={<SearchIcon size={18} />}
@@ -312,6 +315,7 @@ export default function BanksPage() {
                 <th className='w-[60px]'>图标</th>
                 <th>银行名称</th>
                 <th className='w-[100px]'>简称</th>
+                <th className='w-[110px]'>额度/账单</th>
                 <th>国家</th>
                 <th>状态</th>
                 <th className='text-right'>操作</th>
@@ -320,13 +324,13 @@ export default function BanksPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className='px-3 py-10 text-center'>
+                  <td colSpan={7} className='px-3 py-10 text-center'>
                     <Spinner size={24} />
                   </td>
                 </tr>
               ) : filteredBanks.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className='px-3 py-10 text-center text-d-muted'>
+                  <td colSpan={7} className='px-3 py-10 text-center text-d-muted'>
                     {fetchError ? `加载失败: ${fetchError}` : '暂无银行数据'}
                   </td>
                 </tr>
@@ -339,6 +343,25 @@ export default function BanksPage() {
                     <td className='px-3 py-2 font-medium'>{bank.name}</td>
                     <td className={'px-3 py-2 ' + (bank.short_name ? '' : 'text-d-muted/60')}>
                       {bank.short_name || '—'}
+                    </td>
+                    <td className='px-3 py-2'>
+                      {/* 非默认形态用 accent 徽章点出，默认（独立/单独）保持低调 */}
+                      <span
+                        className={
+                          'rounded-md px-1.5 py-0.5 text-[9px] font-semibold ' +
+                          (bank.quota_mode === 'shared' ? 'bg-d-accent text-white' : 'bg-d-subtle text-d-muted')
+                        }
+                      >
+                        {bank.quota_mode === 'shared' ? '共享额度' : '独立额度'}
+                      </span>{' '}
+                      <span
+                        className={
+                          'rounded-md px-1.5 py-0.5 text-[9px] font-semibold ' +
+                          (bank.statement_mode === 'merged' ? 'bg-d-accent text-white' : 'bg-d-subtle text-d-muted')
+                        }
+                      >
+                        {bank.statement_mode === 'merged' ? '合并账单' : '单独账单'}
+                      </span>
                     </td>
                     <td className='px-3 py-2'>
                       {COUNTRIES.find(c => c.code === bank.country)?.label || bank.country}
@@ -450,6 +473,28 @@ export default function BanksPage() {
             onChange={(e) => setCurrentBank({ ...currentBank, country: e.target.value })}
             options={COUNTRIES.map(c => ({ value: c.code, label: c.label }))}
           />
+          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+            <SelectField
+              label="额度模式"
+              value={currentBank?.quota_mode || 'independent'}
+              onChange={(e) => setCurrentBank({ ...currentBank, quota_mode: e.target.value as Bank['quota_mode'] })}
+              helperText="共享时额度是一个池，不随卡数叠加"
+              options={[
+                { value: 'independent', label: '每卡独立额度' },
+                { value: 'shared', label: '多卡共享额度' },
+              ]}
+            />
+            <SelectField
+              label="账单模式"
+              value={currentBank?.statement_mode || 'independent'}
+              onChange={(e) => setCurrentBank({ ...currentBank, statement_mode: e.target.value as Bank['statement_mode'] })}
+              helperText="合并时同银行多卡合一张账单一起还"
+              options={[
+                { value: 'independent', label: '每卡单独账单' },
+                { value: 'merged', label: '多卡合并账单' },
+              ]}
+            />
+          </div>
         </div>
       </Modal>
 

@@ -329,9 +329,11 @@ export async function getAdminBanks() {
 export async function createBank(payload: Partial<Bank>) {
   const id = uuid()
   const { error } = await execute(
-    'INSERT INTO banks (id, name, short_name, full_name, logo_url, country, customer_service_phone, website_url, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO banks (id, name, short_name, full_name, logo_url, country, customer_service_phone, website_url, quota_mode, statement_mode, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     [id, payload.name!, payload.short_name || null, payload.full_name || null, payload.logo_url || null, payload.country || 'CN',
-     payload.customer_service_phone || null, payload.website_url || null, payload.is_active !== false ? 1 : 0]
+     payload.customer_service_phone || null, payload.website_url || null,
+     payload.quota_mode || 'independent', payload.statement_mode || 'independent',
+     payload.is_active !== false ? 1 : 0]
   )
   if (error) throw new Error(error.message)
   const row = await queryOne<Bank>('SELECT * FROM banks WHERE id = ?', [id])
@@ -341,7 +343,7 @@ export async function createBank(payload: Partial<Bank>) {
 export async function updateBank(id: string, payload: Partial<Bank>) {
   const fields: string[] = []
   const params: unknown[] = []
-  for (const key of ['name', 'short_name', 'full_name', 'logo_url', 'country', 'customer_service_phone', 'website_url']) {
+  for (const key of ['name', 'short_name', 'full_name', 'logo_url', 'country', 'customer_service_phone', 'website_url', 'quota_mode', 'statement_mode']) {
     if (payload[key as keyof Bank] !== undefined) {
       fields.push(`${key} = ?`)
       params.push(payload[key as keyof Bank])
