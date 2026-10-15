@@ -8,77 +8,14 @@ import {
 import { getPromosWithBanks, createUserPromo } from '@/lib/api/promos'
 import type { Promo } from '@/lib/types'
 
-// 热门活动初始数据源 (若云端数据库活动较少时自动合并展现)
-const POPULAR_PROMOS: Array<Omit<Promo, 'id' | 'created_at' | 'updated_at'>> = [
-  {
-    bank_name: '招商银行',
-    title: '掌上生活 · 周三 5 折美食日',
-    discount_type: '5折立减',
-    description: '每周三上午 10:00 掌上生活 App 抢购大牌餐饮 5 折代金券（海底捞、西贝、星巴克等）。',
-    start_date: '2026-01-01',
-    end_date: '2026-12-31',
-    rules: { category: 'food', quota: '每周 1 次', channel: '掌上生活 App' }
-  },
-  {
-    bank_name: '工商银行',
-    title: '爱购周末 · 超市满 50 减 10 元',
-    discount_type: '满50减10',
-    description: '每周六、周日在指定商超（永辉、大润发、盒马）使用工行信用卡微信/银联支付立减 10 元。',
-    start_date: '2026-01-01',
-    end_date: '2026-12-31',
-    rules: { category: 'shopping', quota: '每日限 1 次', channel: '微信支付/云闪付' }
-  },
-  {
-    bank_name: '建设银行',
-    title: '龙卡加油惠 · 中石化中石油立减 20',
-    discount_type: '加油返现',
-    description: '建行龙卡信用卡持卡人通过建行手机银行或中石化钱包加油充值满 200 减 20 元。',
-    start_date: '2026-01-01',
-    end_date: '2026-12-31',
-    rules: { category: 'gas', quota: '每月 2 次', channel: '建行手机银行 App' }
-  },
-  {
-    bank_name: '广发银行',
-    title: '发现精彩 · 超级发发发买一送一',
-    discount_type: '买一送一',
-    description: '喜茶、奈雪、瑞幸等指定咖啡茶饮品牌使用广发信用卡买一送一，周五专属。',
-    start_date: '2026-01-01',
-    end_date: '2026-12-31',
-    rules: { category: 'drink', quota: '每周五限 1 次', channel: '发现精彩 App' }
-  },
-  {
-    bank_name: '交通银行',
-    title: '最红星期五 · 餐饮商超 5% 秒减',
-    discount_type: '5%返现',
-    description: '每周五在全国指定超市、加油站、外卖平台消费享 5% 秒减立减金。',
-    start_date: '2026-01-01',
-    end_date: '2026-12-31',
-    rules: { category: 'food', quota: '每月最高返 100 元', channel: '买单吧 App' }
-  },
-  {
-    bank_name: '中信银行',
-    title: '9 积分精彩兑 · 星巴克/电影票',
-    discount_type: '积分兑换',
-    description: '当月消费满 3 笔 399 元即可获得 1 个 9 分权益，可兑换大杯星巴克或淘票票电影代金券。',
-    start_date: '2026-01-01',
-    end_date: '2026-12-31',
-    rules: { category: 'entertainment', quota: '每月限兑 2 次', channel: '动卡空间 App' }
-  },
-  {
-    bank_name: '浦发银行',
-    title: '境外消费享最高 10% 返现',
-    discount_type: '境外返现',
-    description: '报名后使用浦发万事达/Visa 信用卡在境外线上及线下消费，笔笔返现高达 10%。',
-    start_date: '2026-01-01',
-    end_date: '2026-12-31',
-    rules: { category: 'travel', quota: '活动期间最高 1000 元', channel: '浦大喜奔 App' }
-  }
-]
+// P0（WC-BEN-12 spec）：不再合并硬编码的“热门活动”。列表只展示数据库中
+// 服务端初筛后的真实活动；没有真实活动时呈现空态，不用示例数据充数。
 
 export default function PromosPage() {
   const [promos, setPromos] = useState<Promo[]>([])
   const [userBanks, setUserBanks] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // 筛选状态
   const [categoryTab, setCategoryTab] = useState<string>('all')
@@ -97,32 +34,16 @@ export default function PromosPage() {
     open: false, message: '', severity: 'success'
   })
 
-  // 加载优惠与用户卡包所属银行
+  // 加载服务端初筛后的有效活动与用户本人持有的银行
   const loadData = useCallback(async () => {
     try {
       setLoading(true)
-      
-      // 1. 获取 DB 中的优惠列表与用户卡包银行
-      const { promos: dbPromos, userBanks: banks } = await getPromosWithBanks()
-
-      // 合并热门精选与 DB 优惠
-      const existingTitles = new Set((dbPromos || []).map(p => p.title))
-      const combined: Promo[] = [...(dbPromos || [])]
-      
-      POPULAR_PROMOS.forEach((p, idx) => {
-        if (!existingTitles.has(p.title)) {
-          combined.push({
-            id: `popular-${idx}`,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            ...p,
-          } as Promo)
-        }
-      })
-      setPromos(combined)
+      setLoadError(null)
+      const { promos: livePromos, userBanks: banks } = await getPromosWithBanks()
+      setPromos(livePromos || [])
       setUserBanks(banks)
     } catch (err) {
-      console.error(err)
+      setLoadError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
@@ -163,12 +84,13 @@ export default function PromosPage() {
     return Array.from(set)
   }, [promos])
 
-  const handleRegister = (promo: Promo) => {
-    const channel = promo.rules?.channel || `${promo.bank_name}手机银行 App`
+  // P0：本页不产生任何“关注/报名”状态。按钮只做参与方式说明，
+  // 真实的关注状态到 Task 11（setOpportunityFollowed）接入后才反馈成功。
+  const handleShowChannel = (promo: Promo) => {
     setToast({
       open: true,
-      message: `✨ 已为您记录关注！请在 ${channel} 报名或使用对应银行卡支付享优惠。`,
-      severity: 'success'
+      message: `请通过 ${promo.bank_name}官方渠道（手机银行 App / 微信公众号）参与「${promo.title}」，具体规则以银行页面为准。`,
+      severity: 'info'
     })
   }
 
@@ -187,7 +109,7 @@ export default function PromosPage() {
         start_date: new Date().toISOString().split('T')[0],
         end_date: newEndDate,
       })
-      
+
       setAddOpen(false)
       setNewTitle('')
       setNewDesc('')
@@ -210,7 +132,7 @@ export default function PromosPage() {
         <div className='min-w-0'>
           <p className='text-[20px] font-bold leading-7 text-d-text'>优惠活动</p>
           <p className='mt-0.5 text-[12px] leading-4 text-d-muted'>
-            精选各行当期热门活动与信用卡专属羊毛
+            当前进行中的银行活动（按持卡情况初筛）
           </p>
         </div>
         <button
@@ -226,7 +148,7 @@ export default function PromosPage() {
       {/* 分类筛选 pills */}
       <div className='mb-3 flex gap-2 overflow-x-auto pb-1'>
         {[
-          { v: 'all', label: '全部精选' },
+          { v: 'all', label: '全部活动' },
           { v: 'food', label: '餐饮美食' },
           { v: 'shopping', label: '超市便利' },
           { v: 'gas', label: '加油车主' },
@@ -305,10 +227,23 @@ export default function PromosPage() {
             <div key={i} className='wc-skeleton h-[140px] w-full rounded-2xl' />
           ))}
         </div>
+      ) : loadError ? (
+        <div className='rounded-2xl border border-dashed border-d-border bg-d-surface p-8 text-center'>
+          <PromoIcon size={48} className='mx-auto mb-4 text-d-muted' />
+          <p className='text-[13px] font-semibold leading-5 text-d-text'>活动加载失败</p>
+          <p className='mb-4 mt-1 block break-all text-[12px] leading-4 text-d-muted'>{loadError}</p>
+          <button
+            type='button'
+            onClick={loadData}
+            className='mx-auto flex h-10 items-center rounded-full border border-d-accent px-4 text-[12px] font-semibold text-d-accent-light'
+          >
+            重新加载
+          </button>
+        </div>
       ) : filteredPromos.length === 0 ? (
         <div className='rounded-2xl border border-dashed border-d-border bg-d-surface p-8 text-center'>
           <PromoIcon size={48} className='mx-auto mb-4 text-d-muted' />
-          <p className='text-[13px] font-semibold leading-5 text-d-text'>该分类下暂无活动</p>
+          <p className='text-[13px] font-semibold leading-5 text-d-text'>该分类下暂无进行中的活动</p>
           <p className='mb-4 mt-1 block text-[12px] leading-4 text-d-muted'>
             您可以切换银行分类或手动添加您关注的信用卡优惠
           </p>
@@ -322,73 +257,54 @@ export default function PromosPage() {
         </div>
       ) : (
         <div className='flex flex-col gap-3'>
-          {filteredPromos.map(p => {
-            const hasCard = userBanks.some(b => p.bank_name.includes(b))
+          {filteredPromos.map(p => (
+            <div
+              key={p.id}
+              className='rounded-2xl border border-d-border bg-d-surface'
+            >
+              <div className='p-4'>
+                <div className='flex gap-3'>
+                  <div className='flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-xl bg-d-subtle text-d-accent-light'>
+                    {getPromoIcon(p.title, p.description || '')}
+                  </div>
 
-            return (
-              <div
-                key={p.id}
-                className={
-                  'relative overflow-hidden rounded-2xl bg-d-surface transition-transform ' +
-                  (hasCard ? 'border border-d-accent' : 'border border-d-border')
-                }
-              >
-                {/* 我已持卡可享 顶部角标 */}
-                {hasCard && (
-                  <span className='absolute right-0 top-0 rounded-bl-xl bg-d-accent px-2 py-0.5 text-[11px] font-semibold leading-5 text-white'>
-                    💳 我已持卡可享
-                  </span>
-                )}
-
-                <div className={'p-4' + (hasCard ? ' pt-9' : '')}>
-                  <div className='flex gap-3'>
-                    <div className='flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-xl bg-d-subtle text-d-accent-light'>
-                      {getPromoIcon(p.title, p.description || '')}
+                  <div className='min-w-0 flex-1'>
+                    <div className='mb-0.5 flex items-center justify-between gap-2'>
+                      <p className='min-w-0 truncate text-[13px] font-semibold leading-4 text-d-accent-light'>
+                        {p.bank_name}
+                      </p>
+                      <span className='shrink-0 rounded-md bg-d-danger-soft px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-d-danger-ink'>
+                        {p.discount_type || '优惠'}
+                      </span>
                     </div>
 
-                    <div className='min-w-0 flex-1'>
-                      <div className='mb-0.5 flex items-center justify-between gap-2'>
-                        <p className='min-w-0 truncate text-[13px] font-semibold leading-4 text-d-accent-light'>
-                          {p.bank_name}
-                        </p>
-                        <span className='shrink-0 rounded-md bg-d-danger-soft px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-d-danger-ink'>
-                          {p.discount_type || '优惠'}
-                        </span>
-                      </div>
+                    <p className='mb-1.5 text-[15px] font-semibold leading-5 text-d-text'>{p.title}</p>
 
-                      <p className='mb-1.5 text-[15px] font-semibold leading-5 text-d-text'>{p.title}</p>
+                    {p.description && (
+                      <p className='mb-1.5 line-clamp-2 text-[12px] leading-4 text-d-muted'>
+                        {p.description}
+                      </p>
+                    )}
 
-                      {p.description && (
-                        <p className='mb-1.5 line-clamp-2 text-[12px] leading-4 text-d-muted'>
-                          {p.description}
-                        </p>
-                      )}
-
-                      {/* 截止日期与操作按钮都是不可拆语义单元：够宽并排，装不下按钮整颗换行 */}
-                      <div className='flex flex-wrap items-center justify-between gap-2 border-t border-dashed border-d-border pt-2'>
-                        <p className='flex items-center gap-1 whitespace-nowrap text-[12px] leading-4 text-d-muted'>
-                          <ClockIcon size={13} />
-                          截止至 {p.end_date || '长期有效'}
-                        </p>
-                        <button
-                          type='button'
-                          onClick={() => handleRegister(p)}
-                          className={
-                            'h-9 shrink-0 whitespace-nowrap rounded-full px-3.5 text-[12px] font-bold ' +
-                            (hasCard
-                              ? 'bg-d-accent text-white'
-                              : 'border border-d-accent text-d-accent-light')
-                          }
-                        >
-                          {hasCard ? '一键享用' : '关注活动'}
-                        </button>
-                      </div>
+                    {/* 截止日期与操作按钮都是不可拆语义单元：够宽并排，装不下按钮整颗换行 */}
+                    <div className='flex flex-wrap items-center justify-between gap-2 border-t border-dashed border-d-border pt-2'>
+                      <p className='flex items-center gap-1 whitespace-nowrap text-[12px] leading-4 text-d-muted'>
+                        <ClockIcon size={13} />
+                        截止至 {p.end_date || '长期有效'}
+                      </p>
+                      <button
+                        type='button'
+                        onClick={() => handleShowChannel(p)}
+                        className='h-9 shrink-0 whitespace-nowrap rounded-full border border-d-accent px-3.5 text-[12px] font-bold text-d-accent-light'
+                      >
+                        查看参与方式
+                      </button>
                     </div>
                   </div>
                 </div>
               </div>
-            )
-          })}
+            </div>
+          ))}
         </div>
       )}
 
@@ -430,7 +346,7 @@ export default function PromosPage() {
         open={toast.open}
         message={toast.message}
         severity={toast.severity}
-        autoHideMs={3000}
+        autoHideMs={3500}
         onClose={() => setToast(prev => ({ ...prev, open: false }))}
       />
     </div>

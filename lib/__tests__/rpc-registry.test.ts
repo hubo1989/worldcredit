@@ -141,7 +141,6 @@ describe('RPC registry contract', () => {
     const SANCTIONED_UNGUARDED = new Set([
       'ai.aiComplete',
       'cards.getCardProducts',
-      'promos.getPromosWithBanks',
     ]);
     for (const [moduleName, mod] of Object.entries(RPC_REGISTRY)) {
       for (const [fn, entry] of Object.entries(mod)) {
@@ -150,7 +149,10 @@ describe('RPC registry contract', () => {
           entry.memberGuard !== undefined ||
           entry.memberFilter !== undefined ||
           entry.bindUser !== undefined ||
-          entry.bindField !== undefined;
+          entry.bindField !== undefined ||
+          // opportunity-ledger entries: the route injects the session actor and
+          // the impl authorizes objects via scope.server for BOTH roles.
+          entry.prependActor !== undefined;
         if (!guarded) {
           const key = moduleName + '.' + fn;
           expect(
@@ -166,5 +168,25 @@ describe('RPC registry contract', () => {
     expect(RPC_REGISTRY.bills.createPayment.memberGuard).toBeDefined();
     expect(RPC_REGISTRY.bills.markBillAsPaid.memberGuard).toBeDefined();
     expect(RPC_REGISTRY.benefits.recordBenefitUsage.memberGuard).toBeDefined();
+  });
+
+  it('never lets an entry bind client args into the server-prepended actor slot', () => {
+    // With prependActor the impl's parameter 0 is the session actor; client
+    // argument positions shift by one. An entry that also binds position 0
+    // (bindUser or bindField.arg === 0) would let a client payload overwrite
+    // the actor, so it is structurally forbidden.
+    for (const [moduleName, mod] of Object.entries(RPC_REGISTRY)) {
+      for (const [fn, entry] of Object.entries(mod)) {
+        if (!entry.prependActor) continue;
+        expect(
+          entry.bindUser,
+          `${moduleName}.${fn} combines prependActor with bindUser at position 0`,
+        ).not.toBe(0);
+        expect(
+          entry.bindField?.arg,
+          `${moduleName}.${fn} combines prependActor with bindField at position 0`,
+        ).not.toBe(0);
+      }
+    }
   });
 })

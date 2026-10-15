@@ -3,11 +3,16 @@
 // Members reach data through guards in lib/api/member-scope.ts; every guard must
 // fail closed (throw MemberScopeError -> HTTP 403). These run against an
 // in-memory D1 stub so the guards' real queries are exercised, not re-stated.
+// assertBenefitAccess is additionally exercised against real SQLite: its SQL
+// must scope the product->card join to the member's holders (P0 fix — an
+// unqualified LIMIT 1 used to misfire when two holders share a product).
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { setDb } from '../db/client'
+import { createOpportunityDb, type SqliteD1 } from './helpers/sqlite-d1'
+import { seedOpportunityFixtures, FIXTURE_IDS } from './helpers/opportunity-fixtures'
 import {
   assertHolderAccess,
   assertHolderIdsAccess,
@@ -17,6 +22,7 @@ import {
   assertDraftAccess,
   assertRecordAccess,
   assertBillListAccess,
+  assertBenefitAccess,
   buildMemberContext,
   applyAnalyticsScope,
   filterCardsByHolder,
@@ -217,6 +223,41 @@ describe('response filters', () => {
   })
   it('drops rows with no holder id instead of treating them as shared', () => {
     expect(filterCardsByHolder([{ holder_id: undefined }], ctx)).toEqual([])
+  })
+})
+
+describe('benefit guard against real SQLite', () => {
+  let db: SqliteD1
+
+  beforeEach(async () => {
+    db = createOpportunityDb()
+    await seedOpportunityFixtures(db)
+    setDb(db as unknown as D1Database)
+  })
+
+  afterEach(() => {
+    setDb(null)
+    db.close()
+  })
+
+  it('allows a member whose holder genuinely holds the product (two holders share it)', async () => {
+    const ctx: MemberContext = { userId: 'u-x', role: 'member', holderIds: [FIXTURE_IDS.holders.family] }
+    await expect(assertBenefitAccess(FIXTURE_IDS.benefits.cmbClassicLounge, ctx)).resolves.toBeUndefined()
+  })
+
+  it('rejects a member without a card of that product, even though the product exists', async () => {
+    const ctx: MemberContext = { userId: 'u-x', role: 'member', holderIds: [FIXTURE_IDS.holders.memberSelf] }
+    await expect(assertBenefitAccess(FIXTURE_IDS.benefits.cmbClassicLounge, ctx)).rejects.toBeInstanceOf(MemberScopeError)
+  })
+
+  it('rejects a member with no holder bindings at all (fail closed)', async () => {
+    const ctx: MemberContext = { userId: 'u-x', role: 'member', holderIds: [] }
+    await expect(assertBenefitAccess(FIXTURE_IDS.benefits.cmbClassicLounge, ctx)).rejects.toBeInstanceOf(MemberScopeError)
+  })
+
+  it('rejects a non-string benefit id', async () => {
+    const ctx: MemberContext = { userId: 'u-x', role: 'member', holderIds: [FIXTURE_IDS.holders.family] }
+    await expect(assertBenefitAccess(undefined, ctx)).rejects.toBeInstanceOf(MemberScopeError)
   })
 })
 

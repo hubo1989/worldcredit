@@ -24,6 +24,7 @@ import * as holdersServer from './holders.server'
 import * as payablesServer from './payables.server'
 import * as preferencesServer from './preferences.server'
 import * as promosServer from './promos.server'
+import * as opportunitiesServer from './opportunities.server'
 import * as pushServer from './push.server'
 import * as remindersServer from './reminders.server'
 import * as syncGmailServer from './sync-gmail.server'
@@ -52,6 +53,14 @@ export interface RpcEntry {
   bindField?: { arg: number; field: string }
   memberGuard?: (args: unknown[], ctx: MemberContext) => Promise<void>
   memberFilter?: (data: unknown, ctx: MemberContext) => unknown
+  /**
+   * Entries for the opportunity ledger: the route prepends the session-derived
+   * OpportunityActor as impl argument 0. Client args shift by one; an entry
+   * must never bind client input at position 0 (contract-tested). Impl
+   * re-authorizes objects via lib/opportunities/scope.server.ts for both
+   * roles — the flag alone is not an authorization.
+   */
+  prependActor?: boolean
 }
 
 type Guard = NonNullable<RpcEntry['memberGuard']>
@@ -206,7 +215,7 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     updateUserPreferences: { impl: preferencesServer.updateUserPreferences, bindUser: 0 },
   },
   promos: {
-    getPromosWithBanks: { impl: promosServer.getPromosWithBanks },
+    getPromosWithBanks: { impl: promosServer.getPromosWithBanks, bindUser: 0 },
     createUserPromo: { impl: promosServer.createUserPromo, admin: true },
   },
   payables: {
@@ -222,6 +231,18 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     updateRecurringPayable: { impl: payablesServer.updateRecurringPayable, memberGuard: (args, ctx) => assertPayableAccess(args[0], ctx) },
     deleteRecurringPayable: { impl: payablesServer.deleteRecurringPayable, memberGuard: (args, ctx) => assertPayableAccess(args[0], ctx) },
     payRecurringPayable: { impl: payablesServer.payRecurringPayable, memberGuard: (args, ctx) => assertPayableAccess(args[0], ctx) },
+  },
+  opportunities: {
+    // Session actor is prepended by the route; each impl re-authorizes via
+    // lib/opportunities/scope.server.ts for both roles (tech spec §2.1/§2.2).
+    createOpportunityAccount: { impl: opportunitiesServer.createOpportunityAccount, prependActor: true },
+    confirmOpportunityEligibility: { impl: opportunitiesServer.confirmOpportunityEligibility, prependActor: true },
+    confirmOpeningBalance: { impl: opportunitiesServer.confirmOpeningBalance, prependActor: true },
+    updateOpportunityCycleWorkflow: { impl: opportunitiesServer.updateOpportunityCycleWorkflow, prependActor: true },
+    recordOpportunityUsage: { impl: opportunitiesServer.recordOpportunityUsage, prependActor: true },
+    correctOpportunityUsage: { impl: opportunitiesServer.correctOpportunityUsage, prependActor: true },
+    voidOpportunityUsage: { impl: opportunitiesServer.voidOpportunityUsage, prependActor: true },
+    getUsageHistory: { impl: opportunitiesServer.getUsageHistory, prependActor: true },
   },
   push: {
     subscribePush: { impl: pushServer.subscribePush, bindUser: 1 },
