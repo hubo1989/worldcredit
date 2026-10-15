@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-21",
+  "updatedAt": "2026-10-15",
   "surfaces": {
     "public": {
       "page": "20 · Auth & Public",
@@ -113,7 +113,8 @@
         "error",
         "no-statement",
         "source-email",
-        "source-ai"
+        "source-ai",
+        "opportunities"
       ]
     },
     {
@@ -181,6 +182,11 @@
         "loading",
         "empty",
         "error",
+        "needs-confirmation",
+        "shared-account",
+        "usage-history",
+        "correction",
+        "conflict",
         "usage-dialog",
         "edit-dialog"
       ]
@@ -196,7 +202,8 @@
         "loading",
         "empty",
         "error",
-        "expired"
+        "expired",
+        "needs-confirmation"
       ]
     },
     {
@@ -345,6 +352,36 @@
         "loading",
         "error",
         "save-success"
+      ]
+    },
+    {
+      "key": "screen.mobile.benefits-calendar",
+      "route": "/benefits/calendar",
+      "surface": "mobile",
+      "master": "catalog(benefits)",
+      "batch": "B5",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "pending-dates"
+      ]
+    },
+    {
+      "key": "screen.mobile.benefits-tasks",
+      "route": "/benefits/tasks",
+      "surface": "mobile",
+      "master": "catalog(benefits)",
+      "batch": "B5",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "claim",
+        "booking",
+        "pending-settlement"
       ]
     }
   ],

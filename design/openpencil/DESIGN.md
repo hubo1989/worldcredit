@@ -163,3 +163,34 @@ Dashboard 与 Bills 母版已按真实基线重画，依据
 1. **字段完整性**：脚本内文案与 `baseline/dom/*/default.json` 的关键字段清单比对。
 2. **视觉回归**：`baseline/verify.sh` 监控实现是否漂移；
    母版改动本身不进回归（回归对象是 `app/` 产物）。
+
+## 10. 权益台账与机会管理（B5 · 2026-10-15，WC-BEN-12）
+
+新增候选帧批次（`scripts/14-opportunity-candidates.js`，页 `13 · Candidates`）：
+
+- `candidate.opportunities.ledger`（390/430）：我的权益台账。
+- `candidate.opportunities.list`：我的可用机会。
+- `candidate.opportunities.calendar`：权益日历（按日列表优先）。
+- `candidate.opportunities.tasks`：消费达标任务（P2，手动进度）。
+- `candidate.opportunities.sheet.shared-account` / `.sheet.usage-correction`：共享账户、历史纠错弹层。
+- `candidate.opportunities.state.*` × 9：loading / empty / error / needs-confirmation /
+  usage-history / conflict / claim / booking / pending-settlement。
+
+### 行为契约（实现与文案必须遵守）
+
+语义红线——以下等式不得混淆，按钮与提示只描述真实效果：
+
+1. **普通领取 ≠ 新增额度**：动作文案用「记录已领取」，不写「领取成功即到账」。
+2. **预约 ≠ 已使用**：「记录预约」标注“已在银行或服务商预约后记录”，确认后占用额度。
+3. **关注 ≠ 已报名**：关注只影响收藏与个人提醒；禁止「一键享用」「已为您关注」类反馈。
+4. **手动达标 ≠ 银行确认**：任务进度标注“手动确认”，发放窗口用“预计”，到账必须显式记录。
+5. **未知余额 ≠ 0**：待核对余额显示「余额待核对」，不展示成 0 已用 / 全额可用；无限额显示「次数不限」，不写成 0。
+6. **共享账户不随卡数叠加**：按任一关联卡筛选时同一余额池，不复制累加。
+7. **跨周期更正原子**：目标周期不足整次失败并提示，原记录保持有效；预约产生的记录走「预约／履约纠正」。
+8. **缺日期不猜测**：领取／预约窗口缺具体日期进入「待补充」，不生成猜测事件。
+
+### 状态与文案红线（contract 测试强制）
+
+`tests/test_opportunities_contract.py` 在候选帧文本中扫描禁用词：
+「一键享用」「已关注」「我已持卡可享」「已报名」「立即到账」「领取成功」。
+新增此类文案会在评审前被测试拦下。
