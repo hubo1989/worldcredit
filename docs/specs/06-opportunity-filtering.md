@@ -1,5 +1,7 @@
 # Spec: 优惠与权益筛选优先级
 
+> **历史规格，已由 [WC-BEN-12](./12-credit-card-benefits-opportunities.md) 的“我的可用机会”和[技术附录](./12-credit-card-benefits-opportunities-technical.md)替代。** 新实现聚合个人账户、配额和资格；不使用全站目录条数或前端临时拼接判断今天可用。
+
 **状态**: 路线图规划  
 **日期**: 2026-04-29  
 **相关模块**: 优惠页、卡片详情、权益列表

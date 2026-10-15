@@ -1,5 +1,7 @@
 # Spec: 信用卡权益管理
 
+> **历史规格，优惠权益范围已由 [WC-BEN-12](./12-credit-card-benefits-opportunities.md) 和[技术附录](./12-credit-card-benefits-opportunities-technical.md)替代。** 本文保留早期背景，不作为实施依据；当前权益挂在 `card_product_id`，个人归属由新账户模型补齐，D1 权限由服务端 scope 执行。
+
 **状态**: 已建模，界面不完整  
 **日期**: 2026-04-29  
 **相关表**: `benefits`, `benefit_usages`, `credit_cards`  

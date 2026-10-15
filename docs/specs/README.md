@@ -1,8 +1,16 @@
 # WorldCredit Specs
 
-本目录收录当前已建模但界面未完整闭环的能力，以及路线图中待实现能力的产品规格。
+本目录收录已建模但尚未完整实现的能力，以及待实施的产品规格。文档中的“状态”是规划状态，当前实现须以代码和实际验证为准。
 
-## 已建模但界面不完整
+## 当前优惠权益实施规格（2026-10-15）
+
+- [信用卡优惠权益：产品 spec](./12-credit-card-benefits-opportunities.md) — 现有问题修复、个人权益台账、可用机会、日历提醒、手动达标任务、领取与预约；包含 24 项验收场景。
+- [数据、接口与一致性设计](./12-credit-card-benefits-opportunities-technical.md) — 个人归属、D1 表结构、配额流水、幂等与并发、RPC、迁移兼容、提醒投递。
+- [分阶段实施 plan](../plans/2026-10-15-credit-card-benefits-opportunities.md) — 24 项任务、明确文件、依赖顺序、测试、UI 验证和发布边界。
+
+本组文档替代旧 01／02／04／05／06 中与其冲突的优惠权益、提醒设计。旧文档保留历史链接，其中 InsForge/PostgreSQL/RLS、`benefits.card_id` 和“现有 recordPromoUsage API”等描述不适用于当前 Cloudflare D1 实现。
+
+## 历史规格与早期模型（以新规格为准）
 
 - [信用卡权益管理](./01-benefits-management.md)
 - [优惠使用记录](./02-promo-usage-recording.md)
