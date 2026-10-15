@@ -232,6 +232,13 @@ export function payableDueDate(dueDay: number, period: string): Date {
   return getActualBillingDate(dueDay, monthDate)
 }
 
+/** 当前账期的下一期（'YYYY-MM'）：本期已结清后用它指向下期应付日。 */
+export function nextPayablePeriodOf(period: string): string {
+  const [year, month] = period.split('-').map(Number)
+  const next = addMonths(new Date(year, month - 1, 1), 1)
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`
+}
+
 /**
  * 账单页卡片排序分组：逾期(0) → 待还款(1) → 其他(2)。
  *
@@ -404,8 +411,9 @@ export function payableToSortCard(
   _today: Date = new Date()
 ): BillsListCard & { payableSource: true } {
   const status: CardUrgencyStatus = payable.status === 'paid' ? 'unissued' : payable.status
-  const nextDue = new Date(payable.due_date)
-  nextDue.setMonth(nextDue.getMonth() + 1)
+  // 下期应付日按「due_day + 下期账期」重算，而不是 due_date 顺延一个月：
+  // setMonth 在 10-31 这类日期会溢出成 12-01，收拢口径要求落在 11-30。
+  const nextDue = payableDueDate(payable.due_day, nextPayablePeriodOf(payable.due_date.slice(0, 7)))
   return {
     status,
     billingDay: payable.due_day,

@@ -1,6 +1,7 @@
 'use client'
 
 import { categoryLabel, type PayableWithStatus } from '@/lib/api/payables'
+import { nextPayablePeriodOf, payableDueDate } from '@/lib/utils'
 import { currencySymbol } from '@/lib/fx'
 import { ClockIcon, PlusIcon } from '@/components/icons/WcIcon'
 
@@ -22,10 +23,11 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
   const paid = p.status === 'paid'
   const overdue = p.status === 'overdue'
   // 已付清的不再显示「距离应付日 -N 天」这种负数——本期已经结清，
-  // 旧的 due_date 已无意义；展示下一期应付日（due_day 顺延一个月）。
+  // 旧的 due_date 已无意义；展示下一期应付日。按「due_day + 下期账期」
+  // 重算而非 due_date 顺延一个月：setMonth 会把 10-31 溢出成 12-01，
+  // 收拢口径（31 日 → 下月只有 30 天时落在月末）要求落到 11-30。
   const nextDueLabel = (() => {
-    const next = new Date(p.due_date)
-    next.setMonth(next.getMonth() + 1)
+    const next = payableDueDate(p.due_day, nextPayablePeriodOf(p.period))
     const mm = String(next.getMonth() + 1).padStart(2, '0')
     const dd = String(next.getDate()).padStart(2, '0')
     return `本期已付清 · 下期 ${mm}-${dd} 应付`

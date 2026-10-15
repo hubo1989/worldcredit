@@ -7,7 +7,13 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { payablePeriodOf, payableDueDate } from '../utils'
+import {
+  payablePeriodOf,
+  payableDueDate,
+  nextPayablePeriodOf,
+  payableToSortCard,
+  compareUnifiedBills,
+} from '../utils'
 import { categoryLabel, PAYABLE_CATEGORIES } from '../api/payables.shared'
 
 const ROOT = join(__dirname, '../..')
@@ -49,6 +55,52 @@ describe('到期日', () => {
     // 9/20 的应付日在 9/25 看仍然是 2026-09 账期（只是已逾期），不是 10 月
     expect(payablePeriodOf(new Date(2026, 8, 25))).toBe('2026-09')
     expect(fmt(payableDueDate(20, payablePeriodOf(new Date(2026, 8, 25))))).toBe('2026-09-20')
+  })
+})
+
+describe('列表排序：登记付款后沉底（与信用卡混排口径）', () => {
+  const today = new Date(2026, 9, 15) // 本期账期 2026-10
+  const card = (status: 'unpaid' | 'paid' | 'overdue', days: number) =>
+    payableToSortCard({ status, days_until_due: days, due_day: 15, due_date: '2026-10-15' })
+  const cmp = (
+    a: ReturnType<typeof card>,
+    b: ReturnType<typeof card>
+  ) => compareUnifiedBills(a, b, 'nearest_due', today)
+
+  it('三段固定：逾期 → 待付 → 已付（已付沉底，与卡片区同口径）', () => {
+    expect(cmp(card('overdue', -5), card('unpaid', 10))).toBeLessThan(0)
+    expect(cmp(card('unpaid', 10), card('paid', -3))).toBeLessThan(0)
+    expect(cmp(card('overdue', -5), card('paid', -3))).toBeLessThan(0)
+  })
+
+  it('组内按距应付日升序：逾期最久在前 / 最近到期在前', () => {
+    expect(cmp(card('overdue', -9), card('overdue', -2))).toBeLessThan(0)
+    expect(cmp(card('unpaid', 3), card('unpaid', 20))).toBeLessThan(0)
+  })
+
+  it('已付项的天数（可能为负）不再影响其沉底位置', () => {
+    expect(cmp(card('paid', -20), card('unpaid', 25))).toBeGreaterThan(0)
+  })
+})
+
+describe('下期应付日（已付文案与排序键共用）', () => {
+  it('下一期账期跨年正确', () => {
+    expect(nextPayablePeriodOf('2026-09')).toBe('2026-10')
+    expect(nextPayablePeriodOf('2026-12')).toBe('2027-01')
+  })
+
+  it('应付日大于下月天数时落到月末（31 日 → 11-30）', () => {
+    expect(fmt(payableDueDate(31, nextPayablePeriodOf('2026-10')))).toBe('2026-11-30')
+  })
+
+  it('排序卡的下期应付日同样收拢：10-31 的已付项下期是 11-30，不是 12-01', () => {
+    const card = payableToSortCard({
+      status: 'paid',
+      days_until_due: -15,
+      due_day: 31,
+      due_date: '2026-10-31',
+    })
+    expect(fmt(new Date(card.nextDueDate))).toBe('2026-11-30')
   })
 })
 
