@@ -139,6 +139,10 @@ export interface CreditCard {
   annual_fee_override?: number | null
   /** 账户模式覆盖：multi=多卡一账户 / single=单卡单账户（NULL = 自动推导） */
   account_mode_override?: 'multi' | 'single' | null
+  /** 发卡日（civil date，未知为 null；周年权益锚点用，不映射 created_at） */
+  issued_on?: string | null
+  /** 激活日（civil date，未知为 null） */
+  activated_on?: string | null
   created_at: string
 }
 
@@ -340,3 +344,24 @@ export interface ScenarioGroup {
   /** 该分组下的快捷问题列表 */
   questions: string[]
 }
+
+// ---------------------------------------------------------------------------
+// 信用卡优惠权益台账（opportunities）— 增量导出，客户端安全。
+// 行类型在 lib/db/types.ts；这里只导出枚举与共享值类型。
+// ---------------------------------------------------------------------------
+
+export type {
+  OpportunityActor,
+  OpportunityDefinitionKind,
+  OpportunityVisibility,
+  OpportunityDefinitionStatus,
+  OpportunityRuleVerification,
+  OpportunityAccountScopeKind,
+  OpportunityAccountEligibility,
+  OpportunityAccountStatus,
+  OpportunityCycleAllocation,
+  OpportunityCycleActivationState,
+  OpportunityUsageStatus,
+  OpportunityEventEntityKind,
+  OpportunityEventDeltas,
+} from './opportunities/types'

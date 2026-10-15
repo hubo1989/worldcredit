@@ -94,6 +94,10 @@ export interface CreditCardRow {
   override_due_value: number | null
   name_override: string | null
   annual_fee_override: number | null
+  /** Civil date (YYYY-MM-DD), null when unknown. Never a timestamp. */
+  issued_on: string | null
+  /** Civil date (YYYY-MM-DD), null when unknown. Never a timestamp. */
+  activated_on: string | null
   created_at: string
 }
 
@@ -223,4 +227,168 @@ export interface BillImportDraftRow {
   draft_data: string // JSON string
   confirmed_bill_id: string | null
   created_at: string
+}
+
+// ---------------------------------------------------------------------------
+// Opportunity ledger rows (migrations/d1/0013). Amounts are integer minor
+// units; *_minor columns never hold REAL values. JSON columns hold strings
+// validated by json_valid at the database level.
+// ---------------------------------------------------------------------------
+
+export interface OpportunityDefinitionRow {
+  id: string
+  kind: 'benefit' | 'promo' | 'private_reward'
+  legacy_benefit_id: string | null
+  legacy_promo_id: string | null
+  visibility: 'shared' | 'private'
+  private_holder_id: string | null
+  status: 'active' | 'archived'
+  terminated_at: string | null
+  termination_reason: string | null
+  revision: number
+  created_by: string | null // null only for legacy-wrapped definitions
+  created_at: string
+}
+
+export interface OpportunityRuleVersionRow {
+  id: string
+  definition_id: string
+  version: number
+  effective_from: string
+  effective_until_before: string | null
+  rules_json: string
+  verification: 'unverified' | 'user_confirmed' | 'official_verified'
+  source_url: string | null
+  source_excerpt: string | null
+  checked_at: string | null
+  checked_by: string | null
+  published_at: string
+}
+
+export interface OpportunityAccountRow {
+  id: string
+  definition_id: string
+  holder_id: string
+  scope_kind: 'card' | 'holder'
+  scope_key: string
+  eligibility: 'unknown' | 'confirmed' | 'ineligible'
+  eligibility_note: string | null
+  eligibility_confirmed_by: string | null
+  eligibility_confirmed_at: string | null
+  eligible_from_on: string | null
+  status: 'active' | 'archived'
+  revision: number
+  created_by: string
+  created_at: string
+}
+
+export interface OpportunityAccountCardRow {
+  account_id: string
+  definition_id: string
+  holder_id: string
+  card_id: string
+  retired_at: string | null
+}
+
+export interface OpportunityCycleRow {
+  id: string
+  account_id: string
+  version_id: string
+  version_as_of_on: string
+  cycle_key: string
+  allocation_kind: 'regular' | 'grant'
+  activation_state: 'active' | 'pending_claim' | 'voided'
+  period_start_on: string
+  period_end_before: string | null
+  usable_start_on: string
+  usable_end_before: string | null
+  time_zone: string
+  count_limit: number | null
+  amount_limit_minor: number | null
+  currency: string | null
+  workflow_json: string
+  opening_used_count: number
+  opening_used_minor: number
+  used_count: number
+  used_minor: number
+  reserved_count: number
+  reserved_minor: number
+  balance_verified: 0 | 1
+  verified_by: string | null
+  verified_at: string | null
+  opening_as_of_on: string | null
+  revision: number
+  created_at: string
+}
+
+export interface OpportunityCommandRow {
+  id: string
+  actor_user_id: string
+  request_key: string
+  request_hash: string
+  command_type: string
+  result_json: string | null
+  created_at: string
+}
+
+export interface OpportunityWriteCheckRow {
+  command_id: string
+  ok: number // always 1; CHECK(ok=1)
+}
+
+export interface OpportunityUsageRow {
+  id: string
+  account_id: string
+  cycle_id: string
+  card_id: string
+  used_on: string
+  quantity: number
+  amount_minor: number
+  note: string | null
+  status: 'active' | 'voided'
+  revision: number
+  created_by: string
+  updated_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface OpportunityEventRow {
+  id: string
+  command_id: string
+  entity_kind: 'account' | 'usage' | 'cycle' | 'task' | 'fulfillment' | 'legacy'
+  entity_id: string
+  event_type: string
+  account_id: string | null
+  cycle_id: string | null
+  delta_opening_count: number
+  delta_opening_minor: number
+  delta_used_count: number
+  delta_used_minor: number
+  delta_reserved_count: number
+  delta_reserved_minor: number
+  before_json: string | null
+  after_json: string | null
+  reason: string | null
+  created_at: string
+}
+
+export interface OpportunityLegacyLinkRow {
+  source_table: 'benefit_usages' | 'promo_usages'
+  source_id: string
+  target_usage_id: string
+  included_in_opening: 0 | 1
+  offset_opening_count: number
+  offset_opening_minor: number
+  assigned_by: string
+  reason: string
+  assigned_at: string
+}
+
+export interface OpportunityUserStateRow {
+  user_id: string
+  account_id: string
+  followed: 0 | 1
+  revision: number
+  updated_at: string
 }
