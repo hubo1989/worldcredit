@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import { getBillDashboardItems, markBillAsPaid, markAllOverdueBillsAsPaid, type BillDashboardItem } from '@/lib/api/bills'
 import { getHolders } from '@/lib/api/holders'
 import { getCardsBasicByHolders } from '@/lib/api/cards'
-import { getPromosWithBanks } from '@/lib/api/promos'
 import {
   type HolderFilter,
   type FutureRange,
@@ -57,8 +56,9 @@ export default function DashboardPage() {
   const [futureRange, setFutureRange] = useState<FutureRange>(7)
   const [debtExpanded, setDebtExpanded] = useState(false)
   const [quickSheetOpen, setQuickSheetOpen] = useState(false)
-  // 今日优惠统计：拿不到就退回纯入口文案，不阻塞主数据加载
-  const [promoCount, setPromoCount] = useState<number | null>(null)
+  // 优惠入口：P0 起不再展示“可享数量”——当前接口只能给有效活动总数，
+  // 不能证明持卡资格，数字会误导。可信计数待 Task 11 统一查询接入后恢复。
+  const [promoCount] = useState<number | null>(null)
 
   // 一键还款与 Toast 状态
   const [payAllOpen, setPayAllOpen] = useState(false)
@@ -111,14 +111,7 @@ export default function DashboardPage() {
     return () => { cancelled = true }
   }, [])
 
-  // 优惠统计同样与主数据解耦：接口失败时保持 null，卡片继续展示「查看优惠」入口。
-  useEffect(() => {
-    let cancelled = false
-    getPromosWithBanks()
-      .then(({ promos }) => { if (!cancelled) setPromoCount(promos.length) })
-      .catch(() => { if (!cancelled) setPromoCount(null) })
-    return () => { cancelled = true }
-  }, [])
+  // 优惠统计与主数据解耦：见上方 promoCount 注释，Task 11 前保持纯入口。
 
   const handlePaySingle = async (e: React.MouseEvent, bill: BillDashboardItem) => {
     e.stopPropagation()

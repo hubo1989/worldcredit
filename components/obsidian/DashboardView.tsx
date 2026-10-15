@@ -237,16 +237,16 @@ export function DashboardView(vm: DashboardViewProps) {
         )
       })()}
 
-      {/* 今日可享优惠（B0-2 修订需求）：统计 + 入口 */}
+      {/* 优惠活动入口（P0 修订）：数量需待统一查询（Task 11）能证明持卡资格后再恢复 */}
       <button
         onClick={() => onNavPromos()}
         className="mx-5 mt-4 flex w-[calc(100%-40px)] items-center gap-3 rounded-2xl border border-d-border bg-d-surface p-3.5 text-left"
       >
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-d-subtle text-d-gold">%</div>
         <div className="flex-1">
-          <p className="text-[13px] font-bold">今日可享优惠</p>
+          <p className="text-[13px] font-bold">优惠活动</p>
           <p className="text-[11px] text-d-muted">
-            {promoCount !== null ? promoCount + ' 项有效期内优惠' : '查看名下卡片在有效期内的优惠'}
+            {promoCount !== null ? promoCount + ' 项可享优惠' : '查看进行中的银行优惠活动'}
           </p>
         </div>
         <span className="text-d-muted">›</span>

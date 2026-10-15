@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { ConfirmDialog } from '@/components/obsidian/overlays'
 import {
   BenefitIcon, AiSparkleIcon, PlusIcon,
@@ -13,7 +13,8 @@ import {
   updateBenefit,
   deleteBenefit
 } from '@/lib/api/benefits'
-import { BenefitEditDialog } from '@/components/mobile/BenefitEditDialog'
+import { getAllCardsWithProduct } from '@/lib/api/cards'
+import { BenefitEditDialog, type BenefitProductOption } from '@/components/mobile/BenefitEditDialog'
 import type { Benefit, CardProduct } from '@/lib/types'
 
 import { useAuth } from '@/lib/auth'
@@ -25,8 +26,13 @@ type BenefitWithStats = Benefit & {
 
 export default function BenefitsPage() {
   const { user } = useAuth()
+  // 权益目录维护（AI 搜集 / 手动添加 / 编辑 / 删除）是 admin-only RPC，
+  // 成员只读列表并登记自己的使用记录。
+  const isAdmin = user?.role === 'admin'
   const [benefits, setBenefits] = useState<BenefitWithStats[]>([])
+  const [products, setProducts] = useState<BenefitProductOption[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [collectingAi, setCollectingAi] = useState(false)
   const [selectedBenefit, setSelectedBenefit] = useState<BenefitWithStats | null>(null)
 
@@ -43,10 +49,24 @@ export default function BenefitsPage() {
     if (!user) return
     try {
       setLoading(true)
-      const data = await getAllMyBenefits(user.id)
+      setLoadError(null)
+      // 并行拉权益台账与真实持卡列表（产品选择只用真实卡，不从权益记录反猜）
+      const [data, cards] = await Promise.all([
+        getAllMyBenefits(user.id),
+        getAllCardsWithProduct(),
+      ])
       setBenefits(data as BenefitWithStats[])
+      const seen = new Set<string>()
+      const productOptions: BenefitProductOption[] = []
+      for (const card of cards || []) {
+        const p = card.card_product
+        if (!p || seen.has(p.id)) continue
+        seen.add(p.id)
+        productOptions.push({ id: p.id, bank_name: p.bank_name, card_name: p.card_name })
+      }
+      setProducts(productOptions)
     } catch (err) {
-      console.error(err)
+      setLoadError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
@@ -74,13 +94,15 @@ export default function BenefitsPage() {
   }
 
   const handleAutoCollectAi = async () => {
-    if (benefits.length === 0) {
+    if (benefits.length === 0 && products.length === 0) {
       alert('请先添加至少一张信用卡后再尝试 AI 自动搜集权益。')
       return
     }
 
     // 默认针对当前第一张卡产品的发卡行和卡名进行搜集
-    const sampleCard = benefits[0]?.card_product
+    const sampleCard = benefits[0]?.card_product || (products[0]
+      ? { id: products[0].id, bank_name: products[0].bank_name, card_name: products[0].card_name }
+      : null)
     if (!sampleCard) {
       alert('未检测到关联卡片产品')
       return
@@ -113,10 +135,10 @@ export default function BenefitsPage() {
   }
 
   // 计算到期/重置预警 (近 30 天内重置且尚有额度未享用)
-  const expiringBenefits = benefits.filter(b => {
+  const expiringBenefits = useMemo(() => benefits.filter(b => {
     const remaining = Number(b.quota) - b.usage_count
     return remaining > 0 && b.period === 'yearly' && b.reset_month
-  })
+  }), [benefits])
 
   return (
     <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-4 text-d-text'>
@@ -129,26 +151,30 @@ export default function BenefitsPage() {
           </p>
         </div>
         <div className='flex shrink-0 gap-2'>
-          <button
-            type='button'
-            disabled={collectingAi}
-            onClick={handleAutoCollectAi}
-            className='flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full bg-d-accent px-3.5 text-[12px] font-semibold text-white disabled:opacity-60'
-          >
-            <AiSparkleIcon size={14} />
-            {collectingAi ? 'AI 搜集中...' : 'AI 搜集权益'}
-          </button>
-          <button
-            type='button'
-            onClick={() => {
-              setEditingBenefit(null)
-              setEditOpen(true)
-            }}
-            className='flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full border border-d-accent px-3.5 text-[12px] font-semibold text-d-accent-light'
-          >
-            <PlusIcon size={14} />
-            手动添加
-          </button>
+          {isAdmin && (
+            <button
+              type='button'
+              disabled={collectingAi}
+              onClick={handleAutoCollectAi}
+              className='flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full bg-d-accent px-3.5 text-[12px] font-semibold text-white disabled:opacity-60'
+            >
+              <AiSparkleIcon size={14} />
+              {collectingAi ? 'AI 搜集中...' : 'AI 搜集权益'}
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              type='button'
+              onClick={() => {
+                setEditingBenefit(null)
+                setEditOpen(true)
+              }}
+              className='flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full border border-d-accent px-3.5 text-[12px] font-semibold text-d-accent-light'
+            >
+              <PlusIcon size={14} />
+              手动添加
+            </button>
+          )}
         </div>
       </div>
 
@@ -167,21 +193,36 @@ export default function BenefitsPage() {
             <div key={i} className='wc-skeleton h-[120px] w-full rounded-2xl' />
           ))}
         </div>
+      ) : loadError ? (
+        <div className='rounded-2xl border border-dashed border-d-border bg-d-surface p-8 text-center'>
+          <BenefitIcon size={48} className='mx-auto mb-4 text-d-muted' />
+          <p className='text-[13px] font-semibold leading-5 text-d-text'>权益加载失败</p>
+          <p className='mb-4 mt-1 block break-all text-[12px] leading-4 text-d-muted'>{loadError}</p>
+          <button
+            type='button'
+            onClick={loadData}
+            className='mx-auto flex h-10 items-center rounded-full border border-d-accent px-4 text-[12px] font-semibold text-d-accent-light'
+          >
+            重新加载
+          </button>
+        </div>
       ) : benefits.length === 0 ? (
         <div className='rounded-2xl border border-dashed border-d-border bg-d-surface p-8 text-center'>
           <BenefitIcon size={48} className='mx-auto mb-4 text-d-muted' />
           <p className='text-[13px] font-semibold leading-5 text-d-text'>暂无可用权益</p>
           <p className='mb-4 mt-1 block text-[12px] leading-4 text-d-muted'>
-            点击「AI 搜集权益」自动检索卡片权益或手动添加
+            {isAdmin ? '点击「AI 搜集权益」自动检索卡片权益或手动添加' : '名下卡片暂未登记权益，请联系管理员维护'}
           </p>
-          <button
-            type='button'
-            onClick={handleAutoCollectAi}
-            className='mx-auto flex h-11 items-center gap-1.5 rounded-full bg-d-accent px-5 text-[13px] font-semibold text-white'
-          >
-            <AiSparkleIcon size={15} />
-            一键 AI 自动搜集
-          </button>
+          {isAdmin && (
+            <button
+              type='button'
+              onClick={handleAutoCollectAi}
+              className='mx-auto flex h-11 items-center gap-1.5 rounded-full bg-d-accent px-5 text-[13px] font-semibold text-white'
+            >
+              <AiSparkleIcon size={15} />
+              一键 AI 自动搜集
+            </button>
+          )}
         </div>
       ) : (
         <div className='flex flex-col gap-3'>
@@ -205,25 +246,29 @@ export default function BenefitsPage() {
                     )}
                   </div>
                   <div className='flex shrink-0 gap-1.5'>
-                    <button
-                      type='button'
-                      aria-label='编辑权益'
-                      onClick={() => {
-                        setEditingBenefit(b)
-                        setEditOpen(true)
-                      }}
-                      className='text-[12px] font-semibold text-d-muted'
-                    >
-                      编辑
-                    </button>
-                    <button
-                      type='button'
-                      aria-label='删除权益'
-                      onClick={() => handleDeleteBenefit(b.id)}
-                      className='text-[12px] font-semibold text-d-danger-ink'
-                    >
-                      删除
-                    </button>
+                    {isAdmin && (
+                      <button
+                        type='button'
+                        aria-label='编辑权益'
+                        onClick={() => {
+                          setEditingBenefit(b)
+                          setEditOpen(true)
+                        }}
+                        className='text-[12px] font-semibold text-d-muted'
+                      >
+                        编辑
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button
+                        type='button'
+                        aria-label='删除权益'
+                        onClick={() => handleDeleteBenefit(b.id)}
+                        className='text-[12px] font-semibold text-d-danger-ink'
+                      >
+                        删除
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -311,21 +356,24 @@ export default function BenefitsPage() {
         </label>
       </ConfirmDialog>
 
-      {/* 手动新增/编辑 Dialog */}
-      <BenefitEditDialog
-        open={editOpen}
-        cardProductId={editingBenefit?.card_product_id || (benefits[0]?.card_product_id || '')}
-        benefit={editingBenefit}
-        onClose={() => setEditOpen(false)}
-        onSaved={loadData}
-        onSave={async (data) => {
-          if (editingBenefit) {
-            await updateBenefit(editingBenefit.id, data)
-          } else {
-            await createBenefit(data)
-          }
-        }}
-      />
+      {/* 手动新增/编辑 Dialog（admin-only 入口） */}
+      {isAdmin && (
+        <BenefitEditDialog
+          open={editOpen}
+          cardProductId={editingBenefit?.card_product_id || ''}
+          products={products}
+          benefit={editingBenefit}
+          onClose={() => setEditOpen(false)}
+          onSaved={loadData}
+          onSave={async (data) => {
+            if (editingBenefit) {
+              await updateBenefit(editingBenefit.id, data)
+            } else {
+              await createBenefit(data)
+            }
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -1,20 +1,35 @@
 import { query, queryOne, execute, uuid, now } from '../db'
-import { startOfMonth, format } from 'date-fns'
 import type { Benefit, BenefitUsage, CardProduct } from '../types'
+import { legacyBenefitToRules } from '../opportunities/rules'
+import { getCycleWindow, isValidCivilDate } from '../opportunities/dates'
 
 /**
- * 根据权益的周期类型计算当前周期的起始日期
+ * 兼容写路径的统一周期起点：旧 benefit 经 legacyBenefitToRules 适配后用
+ * getCycleWindow 计算，与卡详情等所有调用方共享同一口径（Task 10 整体转入
+ * 新账本前的过渡实现）。
  */
-function getPeriodStart(benefit: Benefit): string | null {
-  const now = new Date()
+export function legacyBenefitPeriodStart(benefit: Benefit, nowOn: string): string | null {
+  if (!isValidCivilDate(nowOn)) return null
   if (benefit.period === 'one_time') return null
-  if (benefit.period === 'monthly') return format(startOfMonth(now), 'yyyy-MM-dd')
-  if (benefit.period === 'yearly') {
-    const resetMonth = benefit.reset_month || 1
-    const year = now.getMonth() + 1 >= resetMonth ? now.getFullYear() : now.getFullYear() - 1
-    return `${year}-${String(resetMonth).padStart(2, '0')}-01`
-  }
-  return null
+  const rules = legacyBenefitToRules({
+    card_product_id: benefit.card_product_id,
+    name: benefit.name,
+    description: benefit.description ?? null,
+    // 旧表 quota 无非负约束、expiry_date 无格式约束，适配前先净化。
+    quota: Math.max(0, benefit.quota),
+    period: benefit.period,
+    reset_month: benefit.reset_month ?? null,
+    expiry_date: isValidCivilDate(benefit.expiry_date) ? benefit.expiry_date : null,
+  })
+  return getCycleWindow(rules, nowOn, { issued_on: null, activated_on: null }).period_start_on
+}
+
+/**
+ * 根据权益的周期类型计算当前周期的起始日期。
+ * nowOn 可注入固定日期（测试）；不传时使用服务器当日。
+ */
+function getPeriodStart(benefit: Benefit, nowOn: string): string | null {
+  return legacyBenefitPeriodStart(benefit, nowOn)
 }
 
 export async function getBenefitsByCard(cardProductId: string): Promise<Benefit[]> {
@@ -26,10 +41,11 @@ export async function getBenefitsByCard(cardProductId: string): Promise<Benefit[
   return data || []
 }
 
-export async function getAllMyBenefits(userId?: string): Promise<(Benefit & {
+export async function getAllMyBenefits(userId?: string, nowOn?: string): Promise<(Benefit & {
   card_product: CardProduct,
   usage_count: number
 })[]> {
+  const today = nowOn ?? new Date().toISOString().slice(0, 10)
   let cardIdsFilter: string[] | null = null
 
   if (userId) {
@@ -96,8 +112,11 @@ export async function getAllMyBenefits(userId?: string): Promise<(Benefit & {
 
   return benefitList.map(b => {
     const usages = usagesByBenefit[b.id] || []
-    const periodStart = getPeriodStart(b)
-    const filteredUsages = periodStart ? usages.filter(u => u.used_at >= periodStart) : usages
+    const periodStart = getPeriodStart(b, today)
+    // 半开区间上界：登记已拒绝未来日期，这里再挡一次旧数据，防止未来 usage 污染当期计数
+    const filteredUsages = periodStart
+      ? usages.filter(u => u.used_at >= periodStart && u.used_at <= today)
+      : usages.filter(u => u.used_at <= today)
     return {
       ...b,
       card_product: productMap[b.card_product_id] || {
@@ -110,7 +129,40 @@ export async function getAllMyBenefits(userId?: string): Promise<(Benefit & {
   })
 }
 
-export async function recordBenefitUsage(usage: Omit<BenefitUsage, 'id' | 'created_at'>): Promise<BenefitUsage> {
+/**
+ * 兼容写路径（Task 10 整体转入新账本）：登记一次权益使用。
+ *
+ * P0 止血保护：拒绝未来日期、已过期权益、超出当期额度的登记。
+ * nowOn 供测试注入固定日期；生产调用不传。
+ */
+export async function recordBenefitUsage(
+  usage: Omit<BenefitUsage, 'id' | 'created_at'>,
+  nowOn?: string,
+): Promise<BenefitUsage> {
+  const today = nowOn ?? new Date().toISOString().slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(usage.used_at) || usage.used_at > today) {
+    throw new Error('使用日期无效：不能登记未来日期')
+  }
+
+  const { data: benefit } = await queryOne<Benefit>('SELECT * FROM benefits WHERE id = ?', [
+    usage.benefit_id,
+  ])
+  if (!benefit) throw new Error('权益不存在')
+  if (benefit.expiry_date && benefit.expiry_date < today) {
+    throw new Error('该权益已过期，无法登记使用')
+  }
+
+  // 当期额度：超出的登记直接拒绝（旧表无周期维度，按周期起点过滤计数）
+  const periodStart = getPeriodStart(benefit, today)
+  const { data: countRow } = await queryOne<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM benefit_usages
+     WHERE benefit_id = ? ${periodStart ? 'AND used_at >= ? AND used_at <= ?' : 'AND used_at <= ?'}`,
+    periodStart ? [usage.benefit_id, periodStart, today] : [usage.benefit_id, today],
+  )
+  if ((countRow?.n ?? 0) >= Number(benefit.quota)) {
+    throw new Error(`当期额度已用完（${benefit.quota} 次），无法继续登记`)
+  }
+
   const id = uuid()
   const ts = now()
   const { error } = await execute(
