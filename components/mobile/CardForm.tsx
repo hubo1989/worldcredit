@@ -78,6 +78,10 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProdu
   // 贷款类
   const [loanDueDay, setLoanDueDay] = useState(initial?.loan_due_day?.toString() ?? '')
 
+  // 发卡/激活日：周年权益锚点，未知保持 null
+  const [issuedOn, setIssuedOn] = useState(initial?.issued_on ?? '')
+  const [activatedOn, setActivatedOn] = useState(initial?.activated_on ?? '')
+
   // 还款规则覆盖
   const [overrideEnabled, setOverrideEnabled] = useState(
     !!(initial?.override_due_type || initial?.override_billing_day)
@@ -121,6 +125,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProdu
       setBillingDay(initial.billing_day.toString())
       setCardType(initial.card_type ?? 'credit')
       setLoanDueDay(initial.loan_due_day?.toString() ?? '')
+      setIssuedOn(initial.issued_on ?? '')
+      setActivatedOn(initial.activated_on ?? '')
       setOverrideEnabled(!!(initial.override_due_type || initial.override_billing_day))
       setOverrideBillingDay(initial.override_billing_day?.toString() ?? '')
       setOverrideDueType((initial.override_due_type as DueType) ?? 'after_billing')
@@ -134,6 +140,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProdu
       setBillingDay('')
       setCardType('credit')
       setLoanDueDay('')
+      setIssuedOn('')
+      setActivatedOn('')
       setOverrideEnabled(false)
       setOverrideBillingDay('')
       setOverrideDueType('after_billing')
@@ -179,6 +187,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProdu
         override_due_type: overrideEnabled ? overrideDueType : null,
         override_due_value: overrideEnabled && overrideDueValue ? parseInt(overrideDueValue) : undefined,
         account_mode_override: accountModeOverride === 'auto' ? null : accountModeOverride,
+        issued_on: issuedOn || null,
+        activated_on: activatedOn || null,
       }
 
       await onSubmit(base)
@@ -274,6 +284,23 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProdu
               helperText="每个月生成账单的日期"
               endAdornment={<span>日</span>}
             />
+
+            <div className='grid grid-cols-2 gap-3'>
+              <TextField
+                label="发卡日"
+                type="date"
+                value={issuedOn}
+                onChange={e => setIssuedOn(e.target.value)}
+                helperText="周年类权益锚点"
+              />
+              <TextField
+                label="激活日"
+                type="date"
+                value={activatedOn}
+                onChange={e => setActivatedOn(e.target.value)}
+                helperText="可选"
+              />
+            </div>
 
             {/* 还款规则覆盖 */}
             <div className='flex items-center gap-2.5'>
