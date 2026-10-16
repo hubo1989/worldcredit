@@ -39,3 +39,8 @@ export {
 export {
   getPromoUsagesByHolder as getLegacyPromoUsages,
 } from './promoUsages'
+export {
+  getOpportunityCalendar,
+  getOpportunityReminders,
+  updateOpportunityReminderState,
+} from '../opportunities/notifications.server'

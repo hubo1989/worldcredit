@@ -279,6 +279,22 @@ export interface UserReminderConfig {
   quiet_hours_end?: string
   enabled_channels: ('web_push' | 'email' | 'webhook')[]
   custom_reminder_email?: string
+  /**
+   * 权益提醒子树（Task 14）：深合并 OpportunityReminderConfig 默认值；
+   * 旧字段保持原语义，读取时两者并列生效（旧 quiet hours 约束推送时段）。
+   */
+  opportunities?: Partial<{
+    enabled: boolean
+    web_push_enabled: boolean
+    time_zone: string
+    local_time: string
+    expiry_days_before: number[]
+    activity_days_before: number[]
+    claim_days_before: number[]
+    task_days_before: number[]
+    reset_enabled: boolean
+    booking_enabled: boolean
+  }>
 }
 
 /**

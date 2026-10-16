@@ -259,6 +259,9 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     exportOpportunityUsages: { impl: opportunitiesServer.exportOpportunityUsages, prependActor: true },
     getLegacyBenefitUsages: { impl: opportunitiesServer.getLegacyBenefitUsages, prependActor: true },
     getLegacyPromoUsages: { impl: opportunitiesServer.getLegacyPromoUsages, prependActor: true },
+    getOpportunityCalendar: { impl: opportunitiesServer.getOpportunityCalendar, prependActor: true },
+    getOpportunityReminders: { impl: opportunitiesServer.getOpportunityReminders, prependActor: true },
+    updateOpportunityReminderState: { impl: opportunitiesServer.updateOpportunityReminderState, prependActor: true },
   },
   push: {
     subscribePush: { impl: pushServer.subscribePush, bindUser: 1 },

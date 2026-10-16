@@ -488,3 +488,146 @@ export function reminderStateFromRow(row: {
     revision: row.revision,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Calendar events (§5/§10.1) — pure builders shared by the calendar query,
+// the reminder list and the P2 cron scanner. P1 emits STATIC dates only
+// (expiry/reset/claim windows); booking-service events arrive with P2
+// fulfillments and are never fabricated here.
+// ---------------------------------------------------------------------------
+
+export type CalendarEventKind = 'cycle_expiry' | 'cycle_reset' | 'claim_window_open' | 'claim_window_deadline'
+
+export interface OpportunityCalendarEvent {
+  event_key: string
+  kind: CalendarEventKind
+  account_id: string
+  cycle_id: string | null
+  title: string
+  /** Civil date the event falls on, in the rule's own timezone. */
+  local_date_on: string
+  time_zone: string
+  /** Half-open deadline driving the event's business hash (null = reset-style). */
+  deadline_before: string | null
+  action_hint: string
+  /** Unverified rule versions surface as review items, never as nudges. */
+  needs_review: boolean
+}
+
+export interface CycleEventInputs {
+  account_id: string
+  cycle_id: string | null
+  title: string
+  time_zone: string
+  usable_start_on: string
+  usable_end_before: string | null
+  /** Next period start (reset day); null for one_time allocations. */
+  next_reset_on: string | null
+  claim_window: { starts_at: string | null; ends_at: string | null } | null
+  version_id: string
+  verification: 'unverified' | 'user_confirmed' | 'official_verified'
+}
+
+/**
+ * Builds the static P1 events for one cycle: expiry on the last usable day,
+ * reset on the next period start, claim-window open/deadline. Every event
+ * carries a stable event_key whose business hash tracks the deadline and rule
+ * version only (§10.1) — notes and usage never respawn events.
+ */
+export async function buildCycleCalendarEvents(inputs: CycleEventInputs): Promise<OpportunityCalendarEvent[]> {
+  const events: OpportunityCalendarEvent[] = []
+  const needsReview = inputs.verification === 'unverified'
+
+  if (inputs.usable_end_before !== null) {
+    const lastUsableDay = addDays(inputs.usable_end_before, -1)
+    const eventKey = await reminderEventKey({
+      type: 'expiry',
+      object_id: inputs.account_id,
+      cycle_or_grant_key: inputs.cycle_id ?? 'nocycle',
+      deadline_before: inputs.usable_end_before,
+      version: inputs.version_id,
+    })
+    events.push({
+      event_key: eventKey,
+      kind: 'cycle_expiry',
+      account_id: inputs.account_id,
+      cycle_id: inputs.cycle_id,
+      title: inputs.title,
+      local_date_on: lastUsableDay,
+      time_zone: inputs.time_zone,
+      deadline_before: inputs.usable_end_before,
+      action_hint: '本期权益将于次日失效',
+      needs_review: needsReview,
+    })
+
+    if (inputs.next_reset_on !== null) {
+      const resetKey = await reminderEventKey({
+        type: 'reset',
+        object_id: inputs.account_id,
+        cycle_or_grant_key: inputs.cycle_id ?? 'nocycle',
+        deadline_before: inputs.usable_end_before,
+        version: inputs.version_id,
+      })
+      events.push({
+        event_key: resetKey,
+        kind: 'cycle_reset',
+        account_id: inputs.account_id,
+        cycle_id: inputs.cycle_id,
+        title: inputs.title,
+        local_date_on: inputs.next_reset_on,
+        time_zone: inputs.time_zone,
+        deadline_before: inputs.usable_end_before,
+        action_hint: '新周期开始，额度重置',
+        needs_review: needsReview,
+      })
+    }
+  }
+
+  const window = inputs.claim_window
+  if (window !== null) {
+    if (window.starts_at !== null && isValidCivilDate(window.starts_at.slice(0, 10))) {
+      const openKey = await reminderEventKey({
+        type: 'claim_open',
+        object_id: inputs.account_id,
+        cycle_or_grant_key: inputs.cycle_id ?? 'nocycle',
+        deadline_before: window.ends_at?.slice(0, 10) ?? null,
+        version: inputs.version_id,
+      })
+      events.push({
+        event_key: openKey,
+        kind: 'claim_window_open',
+        account_id: inputs.account_id,
+        cycle_id: inputs.cycle_id,
+        title: inputs.title,
+        local_date_on: window.starts_at.slice(0, 10),
+        time_zone: inputs.time_zone,
+        deadline_before: window.ends_at ? window.ends_at.slice(0, 10) : null,
+        action_hint: '领取窗口开启',
+        needs_review: needsReview,
+      })
+    }
+    if (window.ends_at !== null && isValidCivilDate(window.ends_at.slice(0, 10))) {
+      const deadlineKey = await reminderEventKey({
+        type: 'claim_deadline',
+        object_id: inputs.account_id,
+        cycle_or_grant_key: inputs.cycle_id ?? 'nocycle',
+        deadline_before: window.ends_at.slice(0, 10),
+        version: inputs.version_id,
+      })
+      events.push({
+        event_key: deadlineKey,
+        kind: 'claim_window_deadline',
+        account_id: inputs.account_id,
+        cycle_id: inputs.cycle_id,
+        title: inputs.title,
+        local_date_on: window.ends_at.slice(0, 10),
+        time_zone: inputs.time_zone,
+        deadline_before: window.ends_at.slice(0, 10),
+        action_hint: '领取窗口截止',
+        needs_review: needsReview,
+      })
+    }
+  }
+
+  return events
+}

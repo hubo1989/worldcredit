@@ -216,3 +216,33 @@ export function getLegacyPromoUsages(
     ...args,
   )
 }
+
+export function getOpportunityCalendar(
+  input: Parameters<Public<typeof Server.getOpportunityCalendar>>[0],
+) {
+  return callRpc<Public<typeof Server.getOpportunityCalendar>>(
+    'opportunities',
+    'getOpportunityCalendar',
+    input,
+  )
+}
+
+export function getOpportunityReminders(
+  input: Parameters<Public<typeof Server.getOpportunityReminders>>[0],
+) {
+  return callRpc<Public<typeof Server.getOpportunityReminders>>(
+    'opportunities',
+    'getOpportunityReminders',
+    input,
+  )
+}
+
+export function updateOpportunityReminderState(
+  input: Parameters<Public<typeof Server.updateOpportunityReminderState>>[0],
+) {
+  return callRpc<Public<typeof Server.updateOpportunityReminderState>>(
+    'opportunities',
+    'updateOpportunityReminderState',
+    input,
+  )
+}
