@@ -44,3 +44,8 @@ export {
   getOpportunityReminders,
   updateOpportunityReminderState,
 } from '../opportunities/notifications.server'
+export {
+  saveOpportunityTask,
+  updateManualTaskProgress,
+  getOpportunityTasks,
+} from '../opportunities/tasks.server'

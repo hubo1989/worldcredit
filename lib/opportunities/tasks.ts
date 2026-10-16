@@ -157,6 +157,12 @@ export function evaluateTask(rules: TaskConditionsV1, progress: ManualProgress):
       if (metric.kind === 'check') {
         return { id: metric.id, kind: metric.kind, satisfied: value === true, gap: null }
       }
+      // A fresh cycle has no entries: missing numeric metrics read as 0
+      // progress; explicit values must be finite non-negative numbers.
+      if (value === undefined) {
+        const target = metric.kind === 'amount' ? metric.target_minor : metric.target_count
+        return { id: metric.id, kind: metric.kind, satisfied: target === 0, gap: target }
+      }
       if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
         fail(`progress.metric_values.${metric.id}`, '进度值必须是非负数值')
       }

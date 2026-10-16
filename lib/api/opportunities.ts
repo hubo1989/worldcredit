@@ -246,3 +246,33 @@ export function updateOpportunityReminderState(
     input,
   )
 }
+
+export function getOpportunityTasks(
+  input: Parameters<Public<typeof Server.getOpportunityTasks>>[0],
+) {
+  return callRpc<Public<typeof Server.getOpportunityTasks>>(
+    'opportunities',
+    'getOpportunityTasks',
+    input,
+  )
+}
+
+export function saveOpportunityTask(
+  input: Parameters<Public<typeof Server.saveOpportunityTask>>[0],
+) {
+  return callRpc<Public<typeof Server.saveOpportunityTask>>(
+    'opportunities',
+    'saveOpportunityTask',
+    input,
+  )
+}
+
+export function updateManualTaskProgress(
+  input: Parameters<Public<typeof Server.updateManualTaskProgress>>[0],
+) {
+  return callRpc<Public<typeof Server.updateManualTaskProgress>>(
+    'opportunities',
+    'updateManualTaskProgress',
+    input,
+  )
+}
