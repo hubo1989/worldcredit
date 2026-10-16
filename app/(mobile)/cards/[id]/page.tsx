@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { getCardDetail, updateCard } from '@/lib/api/cards'
+import { getCardDetail, updateCard, updateCardHolder, getCardHolders } from '@/lib/api/cards'
 import { CardForm } from '@/components/mobile/CardForm'
 import { ChevronLeftIcon, ClockIcon } from '@/components/icons/WcIcon'
 import { getEffectiveBillingDay, getEffectiveDueConfig, formatCardTail, getEffectiveCardName, getEffectiveAnnualFee } from '@/lib/utils'
@@ -79,6 +79,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
 
   // 编辑表单状态
   const [cardFormOpen, setCardFormOpen] = useState(false)
+  const [holders, setHolders] = useState<Array<{ id: string; name: string }>>([])
 
   const load = useCallback(async () => {
     try {
@@ -273,10 +274,16 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
           open={cardFormOpen}
           onClose={() => setCardFormOpen(false)}
           holderId={card.holder_id}
+          holders={holders}
           initial={card}
           lockProduct
           onSubmit={async data => {
-            await updateCard(card.id, data)
+            // 归属变化走专用通道（双端 scope 校验 + 权益关联冲突提示），其余字段原路更新
+            if (data.holder_id !== card.holder_id) {
+              await updateCardHolder(card.id, data.holder_id)
+            }
+            const { holder_id: _moved, ...rest } = data
+            await updateCard(card.id, rest)
             await load()
           }}
         />

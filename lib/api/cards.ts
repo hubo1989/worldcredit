@@ -38,3 +38,7 @@ export function createCard(...args: Parameters<typeof Server.createCard>) {
 export function updateCard(...args: Parameters<typeof Server.updateCard>) {
   return callRpc<typeof Server.updateCard>('cards', 'updateCard', ...args)
 }
+// 第 0 参由服务端 bindUser 注入会话用户（客户端传占位值，服务端强制覆盖）
+export function updateCardHolder(cardId: string, newHolderId: string) {
+  return callRpc<typeof Server.updateCardHolder>('cards', 'updateCardHolder', '', cardId, newHolderId)
+}

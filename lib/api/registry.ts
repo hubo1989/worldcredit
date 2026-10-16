@@ -184,6 +184,7 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     getCardDetail: { impl: cardsServer.getCardDetail, prependActor: true, memberGuard: guardCard(0) },
     createCard: { impl: cardsServer.createCard, memberGuard: guardObjField(0, "holder_id", async (holderId, ctx) => assertHolderAccess(holderId, ctx)) },
     updateCard: { impl: cardsServer.updateCard, memberGuard: guardCard(0) },
+    updateCardHolder: { impl: cardsServer.updateCardHolder, bindUser: 0 },
   },
   dashboard: {
     getOpportunityTodayCount: { impl: getTodayAvailableCount, prependActor: true },
