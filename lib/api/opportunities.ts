@@ -276,3 +276,33 @@ export function updateManualTaskProgress(
     input,
   )
 }
+
+export function recordOpportunityClaim(
+  input: Parameters<Public<typeof Server.recordOpportunityClaim>>[0],
+) {
+  return callRpc<Public<typeof Server.recordOpportunityClaim>>(
+    'opportunities',
+    'recordOpportunityClaim',
+    input,
+  )
+}
+
+export function recordTaskRewardReceived(
+  input: Parameters<Public<typeof Server.recordTaskRewardReceived>>[0],
+) {
+  return callRpc<Public<typeof Server.recordTaskRewardReceived>>(
+    'opportunities',
+    'recordTaskRewardReceived',
+    input,
+  )
+}
+
+export function voidOpportunityClaim(
+  input: Parameters<Public<typeof Server.voidOpportunityClaim>>[0],
+) {
+  return callRpc<Public<typeof Server.voidOpportunityClaim>>(
+    'opportunities',
+    'voidOpportunityClaim',
+    input,
+  )
+}

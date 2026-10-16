@@ -71,6 +71,12 @@ export interface CommandSpec {
   payload: Record<string, unknown>
   assertions: readonly WriteAssertion[]
   events: readonly EventDraft[]
+  /**
+   * Statements executed after the checks but BEFORE the events — for rows the
+   * events themselves must reference (e.g. a grant cycle created and then
+   * cited by its grant.recorded event inside one batch).
+   */
+  preStatements?: readonly D1PreparedStatement[]
   /** Mutable-row statements executed after events, inside the same batch. */
   statements: readonly D1PreparedStatement[]
   /** Canonical success result, committed with the command for replays. */
@@ -258,6 +264,7 @@ export async function runOpportunityCommand<R extends object>(
             .bind(commandId, ...spec.assertions.flatMap((a) => a.binds)),
         ]
       : []),
+    ...(spec.preStatements ?? []),
     ...spec.events.map((e) => eventStatement(db, e, commandId, now)),
     ...spec.statements,
     db.prepare('DELETE FROM opportunity_write_checks WHERE command_id = ?').bind(commandId),

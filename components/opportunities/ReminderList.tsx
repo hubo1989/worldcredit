@@ -6,7 +6,6 @@
 // ignore/snooze (自动解除在 P2 领取数据落地后接入).
 
 import { useState } from 'react'
-import { ConfirmDialog } from '@/components/obsidian/overlays'
 import { updateOpportunityReminderState, getOpportunityReminders } from '@/lib/api/opportunities'
 import { ReminderStateDialog } from './ReminderStateDialog'
 

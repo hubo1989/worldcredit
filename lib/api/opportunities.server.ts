@@ -49,3 +49,8 @@ export {
   updateManualTaskProgress,
   getOpportunityTasks,
 } from '../opportunities/tasks.server'
+export {
+  recordOpportunityClaim,
+  recordTaskRewardReceived,
+  voidOpportunityClaim,
+} from '../opportunities/fulfillments.server'

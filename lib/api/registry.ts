@@ -265,6 +265,9 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     getOpportunityTasks: { impl: opportunitiesServer.getOpportunityTasks, prependActor: true },
     saveOpportunityTask: { impl: opportunitiesServer.saveOpportunityTask, prependActor: true },
     updateManualTaskProgress: { impl: opportunitiesServer.updateManualTaskProgress, prependActor: true },
+    recordOpportunityClaim: { impl: opportunitiesServer.recordOpportunityClaim, prependActor: true },
+    recordTaskRewardReceived: { impl: opportunitiesServer.recordTaskRewardReceived, prependActor: true },
+    voidOpportunityClaim: { impl: opportunitiesServer.voidOpportunityClaim, prependActor: true },
   },
   push: {
     subscribePush: { impl: pushServer.subscribePush, bindUser: 1 },

@@ -19,7 +19,7 @@ import {
   type ManualProgress,
   type TaskConditionsV1,
 } from './tasks'
-import { isValidCivilDate, localDateInZone } from './dates'
+import { localDateInZone } from './dates'
 
 // ---------------------------------------------------------------------------
 // Reward plan validation (reward_json)
@@ -370,7 +370,6 @@ async function ensureTaskCycle(
   now: string,
 ): Promise<TaskCycleRow> {
   const db = getDb()
-  const rules = parseTaskConditions(task.rules_json)
   const rewardBundle = JSON.parse(task.reward_json) as { window?: RewardWindowSpec }
   const windowSpec = validateWindowSpec(rewardBundle.window ?? { from_day: 1, until_day: null })
   // Monthly periods anchored at calendar months (simple, deterministic);

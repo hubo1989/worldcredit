@@ -4,7 +4,7 @@
 // amounts) and reward-window date math (month-end clamped, half-open).
 
 import { OpportunityError } from './errors'
-import { addMonthsClamped, isValidCivilDate } from './dates'
+import { isValidCivilDate } from './dates'
 
 export interface TaskConditionsV1 {
   schema_version: 1
