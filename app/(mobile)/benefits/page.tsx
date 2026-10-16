@@ -114,12 +114,17 @@ export default function BenefitsPage() {
     }
     setCollectingAi(true)
     try {
-      const added = await autoEnrichCardBenefits(sample.id, sample.bank_name, sample.card_name)
-      if (added.length > 0) {
-        alert(`✨ 已检索到 ${added.length} 项权益，待来源复核后进入目录。`)
-        await loadData()
+      // Task 13：AI 只产出候选，不写目录；人工复核 + 来源落库后经
+      // publishOpportunityVersion 正式发布。
+      const preview = await autoEnrichCardBenefits(sample.id, sample.bank_name, sample.card_name)
+      if (preview.candidates.length > 0) {
+        alert(
+          `已检索到 ${preview.candidates.length} 项候选（未写入目录）：
+${preview.candidates.map((c) => `· ${c.name}`).join('\n')}
+请在管理端逐项复核来源后发布。`,
+        )
       } else {
-        alert('未检索到更多新权益。')
+        alert('未检索到候选。')
       }
     } catch (err) {
       alert('AI 搜集失败: ' + (err instanceof Error ? err.message : String(err)))

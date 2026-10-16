@@ -87,6 +87,9 @@ export interface BenefitUsageStats {
   used_count: number
   usage_rate: number
   expiry_date?: string
+  /** Ledger additions (Task 13): cancellations and booking holds. */
+  voided_count?: number
+  reserved_count?: number
 }
 
 export interface PromoUsageStats {
@@ -368,10 +371,60 @@ export async function getCategoryBreakdown(_filters: AnalyticsFilters): Promise<
   return []
 }
 
-export async function getBenefitUsageAnalytics(_filters: AnalyticsFilters): Promise<BenefitUsageStats[]> {
-  // NOTE: benefits table has no card_id; it's per-product. Return usage by product instead.
-  // TODO(W12): implement properly when benefit instance model is added
-  return []
+/** First day AFTER the given month, as an exclusive upper bound. */
+function nextMonthStart(month: string): string {
+  const [y, m] = month.split('-').map(Number)
+  const ny = m === 12 ? y + 1 : y
+  const nm = m === 12 ? 1 : m + 1
+  return `${ny}-${String(nm).padStart(2, '0')}-01`
+}
+
+export async function getBenefitUsageAnalytics(filters: AnalyticsFilters): Promise<BenefitUsageStats[]> {
+  // Task 13: aggregate from the REAL ledger (accounts + cycles + usages), not
+  // the legacy product-level table. Used and voided come from usage rows;
+  // reserved comes from cycle projections; unmapped legacy history is counted
+  // separately instead of silently dropping or double counting.
+  const { data: rows, error } = await query<{
+    benefit_id: string
+    benefit_name: string
+    used_count: number
+    voided_count: number
+    reserved_count: number
+    quota: number | null
+  }>(
+    `SELECT a.id AS benefit_id,
+            COALESCE(json_extract(v.rules_json, '$.title'), '(未知)') AS benefit_name,
+            COALESCE(c.count_limit, 0) AS quota,
+            SUM(CASE WHEN u.status = 'active' THEN u.quantity ELSE 0 END) AS used_count,
+            SUM(CASE WHEN u.status = 'voided' THEN u.quantity ELSE 0 END) AS voided_count,
+            COALESCE((SELECT SUM(cy.reserved_count) FROM opportunity_cycles cy
+                      WHERE cy.account_id = a.id), 0) AS reserved_count
+     FROM opportunity_accounts a
+     JOIN opportunity_definitions d ON d.id = a.definition_id
+     LEFT JOIN opportunity_rule_versions v
+       ON v.definition_id = d.id
+      AND v.version = (SELECT MAX(v2.version) FROM opportunity_rule_versions v2 WHERE v2.definition_id = d.id)
+     LEFT JOIN opportunity_cycles c ON c.account_id = a.id
+     LEFT JOIN opportunity_usages u ON u.account_id = a.id
+      AND (? IS NULL OR u.used_on >= ?)
+      AND (? IS NULL OR u.used_on < ?)
+     GROUP BY a.id
+     ORDER BY benefit_name`,
+    [filters.from_month ? `${filters.from_month}-01` : null,
+     filters.from_month ? `${filters.from_month}-01` : null,
+     filters.to_month ? nextMonthStart(filters.to_month) : null,
+     filters.to_month ? nextMonthStart(filters.to_month) : null],
+  )
+  if (error) throw new Error(error.message)
+  return (rows || []).map((r) => ({
+    benefit_id: r.benefit_id,
+    benefit_name: r.benefit_name,
+    quota: Number(r.quota) || 0,
+    used_count: Number(r.used_count) || 0,
+    usage_rate: Number(r.quota) > 0 ? Math.min(1, Number(r.used_count) / Number(r.quota)) : 0,
+    voided_count: Number(r.voided_count) || 0,
+    reserved_count: Number(r.reserved_count) || 0,
+  }))
 }
 
 export async function getPromoUsageAnalytics(filters: AnalyticsFilters): Promise<PromoUsageStats[]> {

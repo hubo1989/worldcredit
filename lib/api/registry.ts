@@ -253,6 +253,12 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     getOpportunityDetail: { impl: opportunitiesServer.getOpportunityDetail, prependActor: true },
     setOpportunityFollowed: { impl: opportunitiesServer.setOpportunityFollowed, prependActor: true },
     getTodayAvailableCount: { impl: opportunitiesServer.getTodayAvailableCount, prependActor: true },
+    previewOpportunityCandidates: { impl: opportunitiesServer.previewOpportunityCandidates, prependActor: true, admin: true },
+    publishOpportunityVersion: { impl: opportunitiesServer.publishOpportunityVersion, prependActor: true },
+    archiveOpportunityDefinition: { impl: opportunitiesServer.archiveOpportunityDefinition, prependActor: true, admin: true },
+    exportOpportunityUsages: { impl: opportunitiesServer.exportOpportunityUsages, prependActor: true },
+    getLegacyBenefitUsages: { impl: opportunitiesServer.getLegacyBenefitUsages, prependActor: true },
+    getLegacyPromoUsages: { impl: opportunitiesServer.getLegacyPromoUsages, prependActor: true },
   },
   push: {
     subscribePush: { impl: pushServer.subscribePush, bindUser: 1 },

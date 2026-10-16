@@ -20,6 +20,11 @@ export {
   assignLegacyUsage,
 } from '../opportunities/legacy.server'
 export {
+  previewOpportunityCandidates,
+  publishOpportunityVersion,
+  archiveOpportunityDefinition,
+} from '../opportunities/catalog.server'
+export {
   getOpportunityPage,
   getBenefitLedger,
   getCardOpportunities,
@@ -27,3 +32,10 @@ export {
   setOpportunityFollowed,
   getTodayAvailableCount,
 } from '../opportunities/queries.server'
+export { exportOpportunityUsages } from '../opportunities/queries.server'
+export {
+  getBenefitUsagesByHolder as getLegacyBenefitUsages,
+} from './benefitUsages'
+export {
+  getPromoUsagesByHolder as getLegacyPromoUsages,
+} from './promoUsages'

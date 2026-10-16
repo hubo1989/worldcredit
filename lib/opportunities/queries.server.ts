@@ -742,3 +742,135 @@ export async function setOpportunityFollowed(
     .run()
   return { account_id: input.account_id, followed: input.followed, revision: 1 }
 }
+
+// ---------------------------------------------------------------------------
+// exportOpportunityUsages — flat, scoped, page-based (spec §9/§12)
+// ---------------------------------------------------------------------------
+
+export interface ExportUsageRow {
+  used_on: string
+  kind: string
+  title: string
+  holder_name: string
+  card_id: string
+  cycle_key: string | null
+  quantity: number
+  amount_minor: number
+  currency: string | null
+  status: string
+  note: string | null
+  source: 'ledger'
+}
+
+export interface ExportUsagePage {
+  items: ExportUsageRow[]
+  next_cursor: string | null
+}
+
+/**
+ * Flat export DTO over ledger usages. holder/card/date/kind filters all apply
+ * in SQL inside the actor's scope; nothing outside the scope is ever read.
+ */
+export async function exportOpportunityUsages(
+  actor: OpportunityActor,
+  input: {
+    holder_id?: string | null
+    card_id?: string | null
+    from_on?: string | null
+    to_before?: string | null
+    kind?: string | null
+    cursor?: string | null
+    limit?: number | null
+  } = {},
+): Promise<ExportUsagePage> {
+  const scope = holderScopePredicate(actor)
+  const conditions = [scope.sql]
+  const binds: unknown[] = [...scope.binds]
+  if (input.holder_id) {
+    conditions.push('a.holder_id = ?')
+    binds.push(input.holder_id)
+  }
+  if (input.card_id) {
+    conditions.push('u.card_id = ?')
+    binds.push(input.card_id)
+  }
+  if (input.from_on) {
+    conditions.push('u.used_on >= ?')
+    binds.push(input.from_on)
+  }
+  if (input.to_before) {
+    conditions.push('u.used_on < ?')
+    binds.push(input.to_before)
+  }
+  if (input.kind) {
+    conditions.push('d.kind = ?')
+    binds.push(input.kind)
+  }
+  const lastId = typeof input.cursor === 'string' && input.cursor.length > 0 ? input.cursor : null
+  if (lastId) {
+    conditions.push('u.id > ?')
+    binds.push(lastId)
+  }
+  const limit = Math.min(Math.max(Number.isInteger(input.limit) ? (input.limit as number) : 200, 1), 500)
+
+  const { results } = await getDb()
+    .prepare(
+      `SELECT u.used_on, d.kind, d.id AS definition_id, h.name AS holder_name,
+              u.card_id, c.cycle_key, u.quantity, u.amount_minor, c.currency,
+              u.status, u.note, u.id
+       FROM opportunity_usages u
+       JOIN opportunity_accounts a ON a.id = u.account_id
+       JOIN card_holders h ON h.id = a.holder_id
+       JOIN opportunity_definitions d ON d.id = a.definition_id
+       LEFT JOIN opportunity_cycles c ON c.id = u.cycle_id
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY u.id ASC
+       LIMIT ?`,
+    )
+    .bind(...binds, limit)
+    .all<{
+      used_on: string; kind: string; definition_id: string; holder_name: string
+      card_id: string; cycle_key: string | null; quantity: number; amount_minor: number
+      currency: string | null; status: string; note: string | null; id: string
+    }>()
+
+  // Titles resolve from each definition's newest version in one query.
+  const defIds = [...new Set(results.map((r) => r.definition_id))]
+  const titleByDef = new Map<string, string>()
+  if (defIds.length > 0) {
+    const ph = defIds.map(() => '?').join(',')
+    const { results: versionRows } = await getDb()
+      .prepare(
+        `SELECT definition_id, json_extract(rules_json, '$.title') AS title
+         FROM opportunity_rule_versions
+         WHERE definition_id IN (${ph}) AND version = (
+           SELECT MAX(v2.version) FROM opportunity_rule_versions v2
+           WHERE v2.definition_id = opportunity_rule_versions.definition_id)`,
+      )
+      .bind(...defIds)
+      .all<{ definition_id: string; title: string | null }>()
+    for (const row of versionRows) {
+      titleByDef.set(row.definition_id, row.title ?? '(未知)')
+    }
+  }
+
+  const items: ExportUsageRow[] = results.map((r) => ({
+    used_on: r.used_on,
+    kind: r.kind,
+    title: titleByDef.get(r.definition_id) ?? '(未知)',
+    holder_name: r.holder_name,
+    card_id: r.card_id,
+    cycle_key: r.cycle_key,
+    quantity: r.quantity,
+    amount_minor: r.amount_minor,
+    currency: r.currency,
+    status: r.status,
+    note: r.note,
+    source: 'ledger' as const,
+  }))
+
+  return {
+    items,
+    next_cursor: results.length === limit ? results[results.length - 1].id : null,
+  }
+}

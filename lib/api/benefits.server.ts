@@ -345,27 +345,27 @@ export async function deleteBenefit(id: string): Promise<void> {
   await archiveLegacyDefinition(id, 'benefit')
 }
 
-export async function autoEnrichCardBenefits(cardProductId: string, bankName: string, cardName: string): Promise<Benefit[]> {
+/**
+ * 兼容入口（Task 13）：AI 结果只产出候选，不写目录。返回固定
+ * review_required=true 与候选列表；正式入目录走 previewOpportunityCandidates
+ * → 人工复核 → publishOpportunityVersion（来源落库）。
+ */
+export async function autoEnrichCardBenefits(
+  cardProductId: string,
+  bankName: string,
+  cardName: string,
+): Promise<{ review_required: true; card_product_id: string; candidates: Array<{ name: string; description: string | null; quota: number; period: string; reset_month: number | null }> }> {
   const { aiCollectCardBenefits } = await import('./ai.server')
   const collected = await aiCollectCardBenefits(bankName, cardName)
-  if (!collected || collected.length === 0) return []
-
-  const results: Benefit[] = []
-  for (const item of collected) {
-    const id = uuid()
-    const ts = now()
-    const { error } = await execute(
-      'INSERT INTO benefits (id, card_product_id, name, description, quota, period, reset_month, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, cardProductId, item.name, item.description || '', Number(item.quota) || 1,
-       item.period || 'yearly', item.reset_month || 1, ts]
-    )
-    if (!error) {
-      results.push({
-        id, card_product_id: cardProductId, name: item.name, description: item.description || '',
-        quota: Number(item.quota) || 1, period: item.period || 'yearly',
-        reset_month: item.reset_month || 1, created_at: ts,
-      })
-    }
+  return {
+    review_required: true,
+    card_product_id: cardProductId,
+    candidates: (collected ?? []).map((item) => ({
+      name: item.name,
+      description: item.description ?? null,
+      quota: Math.max(0, Number(item.quota) || 0),
+      period: item.period ?? 'yearly',
+      reset_month: item.reset_month ?? null,
+    })),
   }
-  return results
 }

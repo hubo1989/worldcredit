@@ -156,3 +156,63 @@ export function setOpportunityFollowed(
     input,
   )
 }
+
+export function previewOpportunityCandidates(
+  input: Parameters<Public<typeof Server.previewOpportunityCandidates>>[0],
+) {
+  return callRpc<Public<typeof Server.previewOpportunityCandidates>>(
+    'opportunities',
+    'previewOpportunityCandidates',
+    input,
+  )
+}
+
+export function publishOpportunityVersion(
+  input: Parameters<Public<typeof Server.publishOpportunityVersion>>[0],
+) {
+  return callRpc<Public<typeof Server.publishOpportunityVersion>>(
+    'opportunities',
+    'publishOpportunityVersion',
+    input,
+  )
+}
+
+export function archiveOpportunityDefinition(
+  input: Parameters<Public<typeof Server.archiveOpportunityDefinition>>[0],
+) {
+  return callRpc<Public<typeof Server.archiveOpportunityDefinition>>(
+    'opportunities',
+    'archiveOpportunityDefinition',
+    input,
+  )
+}
+
+export function exportOpportunityUsages(
+  input: Parameters<Public<typeof Server.exportOpportunityUsages>>[0],
+) {
+  return callRpc<Public<typeof Server.exportOpportunityUsages>>(
+    'opportunities',
+    'exportOpportunityUsages',
+    input,
+  )
+}
+
+export function getLegacyBenefitUsages(
+  ...args: Parameters<Public<typeof Server.getLegacyBenefitUsages>>
+) {
+  return callRpc<Public<typeof Server.getLegacyBenefitUsages>>(
+    'opportunities',
+    'getLegacyBenefitUsages',
+    ...args,
+  )
+}
+
+export function getLegacyPromoUsages(
+  ...args: Parameters<Public<typeof Server.getLegacyPromoUsages>>
+) {
+  return callRpc<Public<typeof Server.getLegacyPromoUsages>>(
+    'opportunities',
+    'getLegacyPromoUsages',
+    ...args,
+  )
+}
