@@ -106,3 +106,53 @@ export function assignLegacyUsage(
     input,
   )
 }
+
+export function getOpportunityPage(
+  input: Parameters<Public<typeof Server.getOpportunityPage>>[0],
+) {
+  return callRpc<Public<typeof Server.getOpportunityPage>>(
+    'opportunities',
+    'getOpportunityPage',
+    input,
+  )
+}
+
+export function getBenefitLedger(
+  input: Parameters<Public<typeof Server.getBenefitLedger>>[0],
+) {
+  return callRpc<Public<typeof Server.getBenefitLedger>>(
+    'opportunities',
+    'getBenefitLedger',
+    input,
+  )
+}
+
+export function getCardOpportunities(
+  ...args: Parameters<Public<typeof Server.getCardOpportunities>>
+) {
+  return callRpc<Public<typeof Server.getCardOpportunities>>(
+    'opportunities',
+    'getCardOpportunities',
+    ...args,
+  )
+}
+
+export function getOpportunityDetail(
+  input: Parameters<Public<typeof Server.getOpportunityDetail>>[0],
+) {
+  return callRpc<Public<typeof Server.getOpportunityDetail>>(
+    'opportunities',
+    'getOpportunityDetail',
+    input,
+  )
+}
+
+export function setOpportunityFollowed(
+  input: Parameters<Public<typeof Server.setOpportunityFollowed>>[0],
+) {
+  return callRpc<Public<typeof Server.setOpportunityFollowed>>(
+    'opportunities',
+    'setOpportunityFollowed',
+    input,
+  )
+}

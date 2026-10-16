@@ -3,6 +3,9 @@ import type { CardProduct, CreditCard, CardHolder, Bill, Benefit, BenefitUsage }
 import { normalizeAliases } from '../utils'
 import { legacyBenefitPeriodStart } from './benefits.server'
 import { localDateInZone } from '../opportunities/dates'
+import type { OpportunityActor } from '../opportunities/types'
+import type { OpportunityDto } from '../opportunities/queries.server'
+import { getCardOpportunities } from '../opportunities/queries.server'
 
 export type CreditCardWithProduct = CreditCard & {
   card_product?: CardProduct
@@ -149,6 +152,8 @@ export interface CardDetail {
   }
   bills: CardDetailBill[]
   benefits: CardDetailBenefit[]
+  /** 统一机会 DTO（Task 11）：默认最多 3 条，完整列表走机会页。 */
+  opportunities: OpportunityDto[]
 }
 
 function computeBillStatus(billAmount: number, paid: number, dueDate: string): Bill['status'] {
@@ -164,7 +169,11 @@ function computeBillStatus(billAmount: number, paid: number, dueDate: string): B
 
 /** Card detail page aggregate: card + product + holder, recent bills with
  *  payment totals, and per-period benefit usage counts. */
-export async function getCardDetail(cardId: string, nowOnParam?: string): Promise<CardDetail> {
+export async function getCardDetail(
+  actor: OpportunityActor,
+  cardId: string,
+  nowOnParam?: string,
+): Promise<CardDetail> {
   const base = await getCardById(cardId)
   if (!base) throw new Error('卡片不存在')
 
@@ -244,7 +253,20 @@ export async function getCardDetail(cardId: string, nowOnParam?: string): Promis
     }
   }
 
-  return { card, bills: billList, benefits }
+  // 可用机会（Task 11）：同一 DTO/可用性服务，最多 3 条；失败不阻塞卡详情
+  let opportunities: OpportunityDto[]
+  try {
+    opportunities = await getCardOpportunities(
+      actor,
+      cardId,
+      3,
+      nowOnParam ? { now: `${nowOnParam}T12:00:00Z` } : {},
+    )
+  } catch {
+    opportunities = []
+  }
+
+  return { card, bills: billList, benefits, opportunities }
 }
 
 export async function getCardsByHolder(holderId: string): Promise<CreditCardWithProduct[]> {

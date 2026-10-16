@@ -19,3 +19,11 @@ export {
   getUnassignedLegacyUsages,
   assignLegacyUsage,
 } from '../opportunities/legacy.server'
+export {
+  getOpportunityPage,
+  getBenefitLedger,
+  getCardOpportunities,
+  getOpportunityDetail,
+  setOpportunityFollowed,
+  getTodayAvailableCount,
+} from '../opportunities/queries.server'

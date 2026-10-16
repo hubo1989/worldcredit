@@ -25,6 +25,7 @@ import * as payablesServer from './payables.server'
 import * as preferencesServer from './preferences.server'
 import * as promosServer from './promos.server'
 import * as opportunitiesServer from './opportunities.server'
+import { getTodayAvailableCount } from '../opportunities/queries.server'
 import * as pushServer from './push.server'
 import * as remindersServer from './reminders.server'
 import * as syncGmailServer from './sync-gmail.server'
@@ -180,11 +181,12 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     getCardProducts: { impl: cardsServer.getCardProducts },
     getAllCardsWithProduct: { impl: cardsServer.getAllCardsWithProduct, memberFilter: (data, ctx) => filterCardsByHolder(data as { holder_id?: string }[], ctx) },
     getCardsBasicByHolders: { impl: cardsServer.getCardsBasicByHolders, memberGuard: async (args, ctx) => assertHolderIdsAccess(args[0], ctx) },
-    getCardDetail: { impl: cardsServer.getCardDetail, memberGuard: guardCard(0) },
+    getCardDetail: { impl: cardsServer.getCardDetail, prependActor: true, memberGuard: guardCard(0) },
     createCard: { impl: cardsServer.createCard, memberGuard: guardObjField(0, "holder_id", async (holderId, ctx) => assertHolderAccess(holderId, ctx)) },
     updateCard: { impl: cardsServer.updateCard, memberGuard: guardCard(0) },
   },
   dashboard: {
+    getOpportunityTodayCount: { impl: getTodayAvailableCount, prependActor: true },
     getDashboardStats: { impl: dashboardServer.getDashboardStats, admin: true },
     getUserActivity: { impl: dashboardServer.getUserActivity, admin: true },
     getCardProductStats: { impl: dashboardServer.getCardProductStats, admin: true },
@@ -245,6 +247,12 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     getUsageHistory: { impl: opportunitiesServer.getUsageHistory, prependActor: true },
     getUnassignedLegacyUsages: { impl: opportunitiesServer.getUnassignedLegacyUsages, prependActor: true, admin: true },
     assignLegacyUsage: { impl: opportunitiesServer.assignLegacyUsage, prependActor: true, admin: true },
+    getOpportunityPage: { impl: opportunitiesServer.getOpportunityPage, prependActor: true },
+    getBenefitLedger: { impl: opportunitiesServer.getBenefitLedger, prependActor: true },
+    getCardOpportunities: { impl: opportunitiesServer.getCardOpportunities, prependActor: true },
+    getOpportunityDetail: { impl: opportunitiesServer.getOpportunityDetail, prependActor: true },
+    setOpportunityFollowed: { impl: opportunitiesServer.setOpportunityFollowed, prependActor: true },
+    getTodayAvailableCount: { impl: opportunitiesServer.getTodayAvailableCount, prependActor: true },
   },
   push: {
     subscribePush: { impl: pushServer.subscribePush, bindUser: 1 },

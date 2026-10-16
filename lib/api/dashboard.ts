@@ -13,6 +13,16 @@ export type {
 export function getDashboardStats() {
   return callRpc<typeof Server.getDashboardStats>('dashboard', 'getDashboardStats')
 }
+// Registered in the RPC registry against opportunities/queries.server.ts with
+// the session actor prepended; the client sends no arguments.
+import type { PublicScopedRpc } from '../opportunities/types'
+import type { getTodayAvailableCount } from '../opportunities/queries.server'
+export function getOpportunityTodayCount() {
+  return callRpc<PublicScopedRpc<typeof getTodayAvailableCount>>(
+    'dashboard',
+    'getOpportunityTodayCount',
+  )
+}
 export function getUserActivity() {
   return callRpc<typeof Server.getUserActivity>('dashboard', 'getUserActivity')
 }

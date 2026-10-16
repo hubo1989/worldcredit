@@ -15,6 +15,7 @@ import { setDb } from '../db/client'
 import { getPromosWithBanks } from '../api/promos.server'
 import { getAllMyBenefits, recordBenefitUsage } from '../api/benefits.server'
 import { getCardDetail } from '../api/cards.server'
+// actorAdminA is defined below; hoist usage via function call
 import { assertBenefitAccess, MemberScopeError } from '../api/member-scope'
 import type { OpportunityActor } from '../opportunities/types'
 
@@ -108,7 +109,7 @@ describe('getAllMyBenefits: period filtering', () => {
         .prepare('INSERT INTO benefit_usages (id, benefit_id, used_at) VALUES (?,?,?)')
         .bind('u-oct3', FIXTURE_IDS.benefits.cmbLifeMovie, '2026-10-10'),
     ])
-    const detail = await getCardDetail(FIXTURE_IDS.cards.selfSecond, FIXTURE_NOW_ON)
+    const detail = await getCardDetail(actorAdminA, FIXTURE_IDS.cards.selfSecond, FIXTURE_NOW_ON)
     const movie = detail.benefits.find((b) => b.id === FIXTURE_IDS.benefits.cmbLifeMovie)
     expect(movie?.used).toBe(2)
     // Same number as the list page computes for the same day:
