@@ -134,10 +134,13 @@ describe('getAllMyBenefits: period filtering', () => {
 
 describe('recordBenefitUsage: input protection', () => {
   it('rejects a future used_at date', async () => {
+    // Compare against the real clock the service uses — a hardcoded “future”
+    // date goes stale once the wall clock passes it.
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
     await expect(
       recordBenefitUsage({
         benefit_id: FIXTURE_IDS.benefits.cmbLifeMovie,
-        used_at: '2026-10-16',
+        used_at: tomorrow,
         note: undefined,
       }),
     ).rejects.toThrow(/未来|不能超过|invalid|日期/i)
