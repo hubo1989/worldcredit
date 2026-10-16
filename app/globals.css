@@ -239,6 +239,9 @@
 html, body {
   margin: 0;
   padding: 0;
+  /* cover 模式下内容会延伸进状态栏，这里把所有页面统一下移一个安全区，
+     否则顶部按钮被刘海/状态栏压住点不到。 */
+  padding-top: env(safe-area-inset-top);
   font-family: var(--font-sans);
   background: var(--bg);
   color: var(--text-primary);
