@@ -98,3 +98,9 @@ npx wrangler deploy --config dist/server/wrangler.json
 ## License
 
 [PolyForm Noncommercial 1.0.0](./LICENSE) — 允许个人自托管、学习、修改和非商业使用，**不允许商用**。商业授权另谈。
+
+## 机会台账（WC-BEN-12，2026-10）
+
+- `/benefits`：个人权益台账（账户、余额、使用历史/更正/撤销、期初核对）；`/promos`：我的可用机会（服务端筛选/排序/分页）；`/benefits/calendar`：日历与提醒；`/benefits/tasks`：手动达标任务、领取与预约。
+- 目录维护走候选 → 来源复核 → 发布（`previewOpportunityCandidates` → `publishOpportunityVersion`）；AI 结果不直接入库。
+- 迁移：`migrations/d1/0013`—`0017`（生产执行与回退见 `docs/runbooks/opportunities-release.md`）；本地演练 `node scripts/opportunities-local.mjs --persist-to <dir> --port 3051`。

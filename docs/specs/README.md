@@ -34,3 +34,4 @@
 - 新功能优先复用现有表结构、`lib/api/*` 封装和移动端页面模式。
 - 金额、日期、币种和跨月边界必须有明确校验。
 - 涉及识别、推荐、通知的功能必须保留可解释信息，避免黑盒结果直接污染正式数据。
+- 发布手册：[机会台账发布与迁移](../runbooks/opportunities-release.md)；验证记录：[2026-10-15 opportunities validation](../audits/2026-10-15-opportunities-validation.md)
