@@ -146,7 +146,7 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
   },
   benefits: {
     getAllMyBenefits: { impl: benefitsServer.getAllMyBenefits, bindUser: 0 },
-    recordBenefitUsage: { impl: benefitsServer.recordBenefitUsage, memberGuard: guardObjField(0, "benefit_id", assertBenefitAccess) },
+    recordBenefitUsage: { impl: benefitsServer.recordBenefitUsage, prependActor: true, memberGuard: guardObjField(0, "benefit_id", assertBenefitAccess) },
     autoEnrichCardBenefits: { impl: benefitsServer.autoEnrichCardBenefits, admin: true },
     createBenefit: { impl: benefitsServer.createBenefit, admin: true },
     updateBenefit: { impl: benefitsServer.updateBenefit, admin: true },
@@ -243,6 +243,8 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     correctOpportunityUsage: { impl: opportunitiesServer.correctOpportunityUsage, prependActor: true },
     voidOpportunityUsage: { impl: opportunitiesServer.voidOpportunityUsage, prependActor: true },
     getUsageHistory: { impl: opportunitiesServer.getUsageHistory, prependActor: true },
+    getUnassignedLegacyUsages: { impl: opportunitiesServer.getUnassignedLegacyUsages, prependActor: true, admin: true },
+    assignLegacyUsage: { impl: opportunitiesServer.assignLegacyUsage, prependActor: true, admin: true },
   },
   push: {
     subscribePush: { impl: pushServer.subscribePush, bindUser: 1 },

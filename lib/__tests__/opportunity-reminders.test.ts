@@ -339,7 +339,7 @@ describe('reminder state transitions', () => {
     expect(s.read_steps).toEqual(['d3'])
     s = applyReminderStateAction(s, 'read', { step: 'd3', now: NOW })
     expect(s.read_steps).toEqual(['d3'])
-    let filled = { ...base, read_steps: Array.from({ length: MAX_READ_STEPS }, (_, i) => `s${i}`) }
+    const filled = { ...base, read_steps: Array.from({ length: MAX_READ_STEPS }, (_, i) => `s${i}`) }
     expect(() =>
       applyReminderStateAction(filled, 'read', { step: 'new', now: NOW }),
     ).toThrow(OpportunityError)

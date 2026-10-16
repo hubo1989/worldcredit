@@ -160,6 +160,16 @@ export function createOpportunityDb(): SqliteD1 {
   return db
 }
 
+/**
+ * Re-executes the idempotent 0015 catalog wrap. Tests seed fixture benefits
+ * AFTER migrations ran (matching a live database where the catalog predates
+ * 0015), so the wrap must run again once rows exist — exactly what a real
+ * deployment gets from applying 0015 over populated tables.
+ */
+export function wrapLegacyCatalog(db: SqliteD1): void {
+  db.exec(readFileSync(join(SQLITE_D1_MIGRATIONS_DIR, '0015_opportunity_legacy_catalog.sql'), 'utf8'))
+}
+
 /** Bare harness without migrations, for harness-level contract tests. */
 export function createSqliteD1(): SqliteD1 {
   return new SqliteD1()

@@ -86,3 +86,23 @@ export function getUsageHistory(input: Parameters<Public<typeof Server.getUsageH
     input,
   )
 }
+
+export function getUnassignedLegacyUsages(
+  input: Parameters<Public<typeof Server.getUnassignedLegacyUsages>>[0],
+) {
+  return callRpc<Public<typeof Server.getUnassignedLegacyUsages>>(
+    'opportunities',
+    'getUnassignedLegacyUsages',
+    input,
+  )
+}
+
+export function assignLegacyUsage(
+  input: Parameters<Public<typeof Server.assignLegacyUsage>>[0],
+) {
+  return callRpc<Public<typeof Server.assignLegacyUsage>>(
+    'opportunities',
+    'assignLegacyUsage',
+    input,
+  )
+}

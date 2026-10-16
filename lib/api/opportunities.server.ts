@@ -15,3 +15,7 @@ export {
   voidOpportunityUsage,
   getUsageHistory,
 } from '../opportunities/usages.server'
+export {
+  getUnassignedLegacyUsages,
+  assignLegacyUsage,
+} from '../opportunities/legacy.server'

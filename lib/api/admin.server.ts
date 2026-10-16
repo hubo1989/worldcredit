@@ -1,5 +1,6 @@
 import { query, queryOne, execute, uuid, now } from '../db'
 import { CardProduct, Promo, Benefit, Bank, EmailParseLog } from '../types'
+import { archiveLegacyDefinition } from '../opportunities/legacy.server'
 
 /**
  * 管理后台通用 API 封装
@@ -467,9 +468,12 @@ export async function updatePromo(id: string, payload: Partial<Promo & { is_acti
   return row.data
 }
 
+/**
+ * 兼容删除适配器（Task 10）：改归档包装定义；旧活动行与其使用历史保留，
+ * 不再物理删除。
+ */
 export async function deletePromo(id: string) {
-  const { error } = await execute('DELETE FROM promos WHERE id = ?', [id])
-  if (error) throw new Error(error.message)
+  await archiveLegacyDefinition(id, 'promo')
 }
 
 // --- 权益管理 ---
@@ -514,9 +518,12 @@ export async function updateBenefit(id: string, payload: Partial<Benefit>) {
   return row.data
 }
 
+/**
+ * 兼容删除适配器（Task 10）：改归档包装定义；旧权益行与其使用历史保留，
+ * 不再物理删除（benefit_usages 对 benefits 是 ON DELETE CASCADE）。
+ */
 export async function deleteBenefit(id: string) {
-  const { error } = await execute('DELETE FROM benefits WHERE id = ?', [id])
-  if (error) throw new Error(error.message)
+  await archiveLegacyDefinition(id, 'benefit')
 }
 
 // --- 系统设置 ---

@@ -11,6 +11,8 @@ export type OpportunityErrorCode =
   // Unmet precondition on the object's current state (HTTP 422, §9.1)
   | 'NEEDS_CONFIRMATION'
   | 'INVALID_TRANSITION'
+  | 'EXPIRED'
+  | 'NOT_STARTED'
   // Write-path codes (tech spec §7.1 / §9.1)
   | 'REVISION_CONFLICT'
   | 'IDEMPOTENCY_CONFLICT'
@@ -25,6 +27,8 @@ const CODE_STATUS: Record<OpportunityErrorCode, number> = {
   AMBIGUOUS_ACCOUNT: 409,
   NEEDS_CONFIRMATION: 422,
   INVALID_TRANSITION: 422,
+  EXPIRED: 422,
+  NOT_STARTED: 422,
   REVISION_CONFLICT: 409,
   IDEMPOTENCY_CONFLICT: 409,
   QUOTA_EXCEEDED: 409,

@@ -1,12 +1,23 @@
 // lib/api/benefits.ts — client-side RPC wrappers (server: benefits.server.ts).
+// recordBenefitUsage takes the server-injected OpportunityActor first; the
+// client wrapper strips it (the route prepends it, client args never carry it).
 import type * as Server from './benefits.server'
 import { callRpc } from './rpc-client'
+import type { PublicScopedRpc } from '../opportunities/types'
+
+type Public<F> = PublicScopedRpc<F>
 
 export function getAllMyBenefits(...args: Parameters<typeof Server.getAllMyBenefits>) {
   return callRpc<typeof Server.getAllMyBenefits>('benefits', 'getAllMyBenefits', ...args)
 }
-export function recordBenefitUsage(...args: Parameters<typeof Server.recordBenefitUsage>) {
-  return callRpc<typeof Server.recordBenefitUsage>('benefits', 'recordBenefitUsage', ...args)
+export function recordBenefitUsage(
+  ...args: Parameters<Public<typeof Server.recordBenefitUsage>>
+) {
+  return callRpc<Public<typeof Server.recordBenefitUsage>>(
+    'benefits',
+    'recordBenefitUsage',
+    ...args,
+  )
 }
 export function autoEnrichCardBenefits(...args: Parameters<typeof Server.autoEnrichCardBenefits>) {
   return callRpc<typeof Server.autoEnrichCardBenefits>('benefits', 'autoEnrichCardBenefits', ...args)
