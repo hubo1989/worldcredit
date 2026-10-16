@@ -13,6 +13,11 @@ interface Props {
   onClose: () => void
   onSubmit: (data: Omit<CreditCard, 'id' | 'created_at'>) => Promise<void>
   holderId: string
+  /**
+   * 可选的归属持卡人列表：编辑卡片时传入即显示「归属持卡人」选择器，
+   * 允许在列表内转移归属（双端 scope 由服务端校验）。
+   */
+  holders?: Array<{ id: string; name: string }>
   initial?: CreditCard
   /**
    * 编辑已有卡时锁定归属：银行与卡产品（含卡名）是建档时就定下的身份，
@@ -63,7 +68,7 @@ function CardTypeSegment({
   )
 }
 
-export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProduct = false }: Props) {
+export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, lockProduct = false }: Props) {
   const [products, setProducts] = useState<CardProduct[]>([])
   const [selectedBank, setSelectedBank] = useState('')
   const [productId, setProductId] = useState(initial?.card_product_id ?? '')
@@ -71,12 +76,19 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProdu
   const [limit, setLimit] = useState(initial?.credit_limit.toString() ?? '')
   const [billingDay, setBillingDay] = useState(initial?.billing_day.toString() ?? '')
   const [submitting, setSubmitting] = useState(false)
+  // 编辑态下可改归属；新建仍固定为传入的 holderId
+  const [ownerId, setOwnerId] = useState<string>(initial?.holder_id ?? holderId)
+  useEffect(() => { setOwnerId(initial?.holder_id ?? holderId) }, [initial?.holder_id, holderId, open])
 
   // 卡类型
   const [cardType, setCardType] = useState<'credit' | 'loan'>(initial?.card_type ?? 'credit')
 
   // 贷款类
   const [loanDueDay, setLoanDueDay] = useState(initial?.loan_due_day?.toString() ?? '')
+
+  // 发卡/激活日：周年权益锚点，未知保持 null
+  const [issuedOn, setIssuedOn] = useState(initial?.issued_on ?? '')
+  const [activatedOn, setActivatedOn] = useState(initial?.activated_on ?? '')
 
   // 还款规则覆盖
   const [overrideEnabled, setOverrideEnabled] = useState(
@@ -121,6 +133,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProdu
       setBillingDay(initial.billing_day.toString())
       setCardType(initial.card_type ?? 'credit')
       setLoanDueDay(initial.loan_due_day?.toString() ?? '')
+      setIssuedOn(initial.issued_on ?? '')
+      setActivatedOn(initial.activated_on ?? '')
       setOverrideEnabled(!!(initial.override_due_type || initial.override_billing_day))
       setOverrideBillingDay(initial.override_billing_day?.toString() ?? '')
       setOverrideDueType((initial.override_due_type as DueType) ?? 'after_billing')
@@ -134,6 +148,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProdu
       setBillingDay('')
       setCardType('credit')
       setLoanDueDay('')
+      setIssuedOn('')
+      setActivatedOn('')
       setOverrideEnabled(false)
       setOverrideBillingDay('')
       setOverrideDueType('after_billing')
@@ -152,6 +168,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProdu
     }
   }
 
+  const showOwnerSelect = !!initial && !!holders && holders.length > 0
   const isCredit = cardType === 'credit'
   const isLoan = cardType === 'loan'
 
@@ -167,7 +184,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProdu
     setSubmitting(true)
     try {
       const base: Omit<CreditCard, 'id' | 'created_at'> = {
-        holder_id: holderId,
+        holder_id: ownerId,
         card_product_id: productId,
         card_number_last4: last4 || undefined,
         credit_limit: limit ? parseFloat(limit) : 0,
@@ -179,6 +196,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProdu
         override_due_type: overrideEnabled ? overrideDueType : null,
         override_due_value: overrideEnabled && overrideDueValue ? parseInt(overrideDueValue) : undefined,
         account_mode_override: accountModeOverride === 'auto' ? null : accountModeOverride,
+        issued_on: issuedOn || null,
+        activated_on: activatedOn || null,
       }
 
       await onSubmit(base)
@@ -222,6 +241,23 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProdu
             }
           }
         }} />
+
+        {/* 归属持卡人：仅编辑态且提供列表时显示；转移连同历史账单一起移动 */}
+        {showOwnerSelect && (
+          <div className='mb-3'>
+            <span className='mb-1 block text-[13px] font-semibold text-d-text'>归属持卡人</span>
+            <select
+              value={ownerId}
+              onChange={(e) => setOwnerId(e.target.value)}
+              className='h-12 w-full rounded-xl border border-d-border bg-d-bg px-3 text-[15px] text-d-text outline-none focus:border-d-accent'
+            >
+              {holders!.map((h) => (
+                <option key={h.id} value={h.id}>{h.name}</option>
+              ))}
+            </select>
+            <p className='mt-1 text-[11px] text-d-muted'>转移归属会连同该卡全部历史账单一起移动；已关联权益台账的卡需先解绑。</p>
+          </div>
+        )}
 
         {/* 卡类型选择 */}
         <div>
@@ -274,6 +310,23 @@ export function CardForm({ open, onClose, onSubmit, holderId, initial, lockProdu
               helperText="每个月生成账单的日期"
               endAdornment={<span>日</span>}
             />
+
+            <div className='grid grid-cols-2 gap-3'>
+              <TextField
+                label="发卡日"
+                type="date"
+                value={issuedOn}
+                onChange={e => setIssuedOn(e.target.value)}
+                helperText="周年类权益锚点"
+              />
+              <TextField
+                label="激活日"
+                type="date"
+                value={activatedOn}
+                onChange={e => setActivatedOn(e.target.value)}
+                helperText="可选"
+              />
+            </div>
 
             {/* 还款规则覆盖 */}
             <div className='flex items-center gap-2.5'>

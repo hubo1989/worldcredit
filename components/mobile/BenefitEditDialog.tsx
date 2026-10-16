@@ -6,9 +6,18 @@ import { Button } from '@/components/obsidian/controls'
 import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
 import type { Benefit } from '@/lib/types'
 
+export interface BenefitProductOption {
+  id: string
+  bank_name: string
+  card_name: string
+}
+
 interface BenefitEditDialogProps {
   open: boolean
+  /** 目标产品初始值；编辑既有权益时为其归属产品。 */
   cardProductId: string
+  /** 用户真实持有的卡对应的产品列表（P0：不再从权益记录反猜目标卡）。 */
+  products: BenefitProductOption[]
   benefit?: Benefit | null
   onClose: () => void
   onSaved: () => void
@@ -18,11 +27,13 @@ interface BenefitEditDialogProps {
 export function BenefitEditDialog({
   open,
   cardProductId,
+  products,
   benefit,
   onClose,
   onSaved,
   onSave
 }: BenefitEditDialogProps) {
+  const [productId, setProductId] = useState(cardProductId)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [quota, setQuota] = useState(1)
@@ -32,26 +43,29 @@ export function BenefitEditDialog({
 
   useEffect(() => {
     if (benefit) {
+      setProductId(benefit.card_product_id)
       setName(benefit.name || '')
       setDescription(benefit.description || '')
       setQuota(benefit.quota || 1)
       setPeriod(benefit.period || 'yearly')
       setResetMonth(benefit.reset_month || 1)
     } else {
+      setProductId(cardProductId || products[0]?.id || '')
       setName('')
       setDescription('')
       setQuota(1)
       setPeriod('yearly')
       setResetMonth(1)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [benefit, open])
 
   const handleSubmit = async () => {
-    if (!name.trim()) return
+    if (!name.trim() || !productId) return
     setSubmitting(true)
     try {
       await onSave({
-        card_product_id: cardProductId,
+        card_product_id: productId,
         name: name.trim(),
         description: description.trim() || undefined,
         quota: Number(quota) || 1,
@@ -67,6 +81,8 @@ export function BenefitEditDialog({
     }
   }
 
+  const canSubmit = !!name.trim() && !!productId
+
   return (
     <Modal
       open={open}
@@ -75,13 +91,23 @@ export function BenefitEditDialog({
       footer={
         <>
           <Button variant='ghost' onClick={onClose}>取消</Button>
-          <Button onClick={handleSubmit} loading={submitting} disabled={!name.trim()}>
+          <Button onClick={handleSubmit} loading={submitting} disabled={!canSubmit}>
             {submitting ? '保存中...' : '保存权益'}
           </Button>
         </>
       }
     >
       <div className='flex flex-col gap-4'>
+        <SelectField
+          label='适用卡片产品'
+          required
+          value={productId}
+          onChange={e => setProductId(e.target.value)}
+          options={products.map(p => ({
+            value: p.id,
+            label: `${p.bank_name} · ${p.card_name}`,
+          }))}
+        />
         <TextField
           label="权益名称"
           required

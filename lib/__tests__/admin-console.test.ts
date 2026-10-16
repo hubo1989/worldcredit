@@ -194,3 +194,25 @@ describe('AI 获取活动', () => {
     expect(ai).toMatch(/url\.protocol === 'http:' \|\| url\.protocol === 'https:' \? url\.origin : null/)
   })
 })
+
+describe('权益 AI 搜集兼容入口（Task 13 候选门面）', () => {
+  it('autoEnrichCardBenefits 只返回候选且标记 REVIEW_REQUIRED，不写 benefits', async () => {
+    const { createOpportunityDb } = await import('./helpers/sqlite-d1')
+    const { seedOpportunityFixtures } = await import('./helpers/opportunity-fixtures')
+    const { setDb } = await import('../db/client')
+    const db = createOpportunityDb()
+    await seedOpportunityFixtures(db)
+    setDb(db as unknown as D1Database)
+    try {
+      const { autoEnrichCardBenefits } = await import('../api/benefits.server')
+      await expect(
+        autoEnrichCardBenefits('p-any', '验证银行', '验证卡'),
+      ).rejects.toThrow(/AI|Key|配置/) // 无 AI 配置：显式失败，不生成假依据
+      const rows = db.raw.prepare('SELECT COUNT(*) AS n FROM benefits').get() as { n: number }
+      expect(rows.n).toBe(3) // fixture 原有 3 条，一条未新增
+    } finally {
+      setDb(null)
+      db.close()
+    }
+  })
+})

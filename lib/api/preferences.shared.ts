@@ -17,6 +17,18 @@ export const DEFAULT_REMINDER_CONFIG: UserReminderConfig = {
   quiet_hours_start: '22:00',
   quiet_hours_end: '08:00',
   enabled_channels: ['web_push'],
+  opportunities: {
+    enabled: true,
+    web_push_enabled: true,
+    time_zone: 'Asia/Shanghai',
+    local_time: '09:00',
+    expiry_days_before: [3, 1, 0],
+    activity_days_before: [7, 3, 1],
+    claim_days_before: [3, 1, 0],
+    task_days_before: [3, 1, 0],
+    reset_enabled: true,
+    booking_enabled: true,
+  },
 }
 
 /**

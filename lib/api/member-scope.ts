@@ -70,11 +70,19 @@ export async function assertPayableAccess(payableId: unknown, ctx: MemberContext
 
 export async function assertBenefitAccess(benefitId: unknown, ctx: MemberContext): Promise<void> {
   memberAssert(typeof benefitId === 'string', '参数必须是权益 ID')
+  if (ctx.holderIds.length === 0) throw new MemberScopeError('无权使用其他成员卡片的权益')
+  // Scope the join to the member's own holders before taking any row: an
+  // unqualified LIMIT 1 could pick another holder's card and wrongly deny a
+  // member who genuinely holds the same product (P0, WC-BEN-12 spec).
+  const placeholders = ctx.holderIds.map(() => '?').join(',')
   const { data } = await queryOne<{ holder_id: string }>(
-    "SELECT cc.holder_id FROM benefits bn JOIN credit_cards cc ON bn.card_product_id = cc.card_product_id WHERE bn.id = ? LIMIT 1",
-    [benefitId]
+    `SELECT cc.holder_id FROM benefits bn
+     JOIN credit_cards cc ON bn.card_product_id = cc.card_product_id
+     WHERE bn.id = ? AND cc.holder_id IN (${placeholders})
+     LIMIT 1`,
+    [benefitId, ...ctx.holderIds]
   )
-  memberAssert(!!data && ctx.holderIds.includes(data.holder_id), '无权使用其他成员卡片的权益')
+  memberAssert(!!data, '无权使用其他成员卡片的权益')
 }
 
 export async function assertDraftAccess(draftId: unknown, ctx: MemberContext): Promise<void> {

@@ -7,6 +7,8 @@
 import { RPC_REGISTRY, type RpcEntry } from '@/lib/api/registry'
 import { readSession } from '@/lib/session'
 import { buildMemberContext, MemberScopeError, type MemberContext } from '@/lib/api/member-scope'
+import { OpportunityError } from '@/lib/opportunities/errors'
+import type { OpportunityActor } from '@/lib/opportunities/types'
 
 export async function POST(
   request: Request,
@@ -62,12 +64,33 @@ export async function POST(
   }
 
   try {
-    let data = await impl(...finalArgs)
+    // Fixed order (tech spec §2.1): session → legacy bindUser/bindField →
+    // memberGuard → prependActor. The actor is composed server-side only;
+    // client args never influence it.
+    const actor: OpportunityActor | null = entry.prependActor
+      ? { user_id: session.id, role: session.role }
+      : null
+    const implArgs = actor ? [actor, ...finalArgs] : finalArgs
+    let data = await impl(...implArgs)
     if (memberCtx && entry.memberFilter) data = await entry.memberFilter(data, memberCtx)
     return Response.json({ data, error: null })
   } catch (err) {
     if (err instanceof MemberScopeError) {
       return Response.json({ data: null, error: err.message }, { status: 403 })
+    }
+    if (err instanceof OpportunityError) {
+      // Structured payload {code, details, request_id}; `error` stays the
+      // human message so legacy client catch sites keep working.
+      return Response.json(
+        {
+          data: null,
+          error: err.message,
+          code: err.code,
+          details: err.details,
+          request_id: crypto.randomUUID(),
+        },
+        { status: err.status },
+      )
     }
     const message = err instanceof Error ? err.message : String(err)
     return Response.json({ data: null, error: message }, { status: 500 })

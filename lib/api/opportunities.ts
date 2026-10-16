@@ -1,0 +1,338 @@
+// lib/api/opportunities.ts — client-side RPC wrappers for the opportunity
+// ledger. Components import these typed helpers (never raw fetch/SQL); the
+// session actor is injected server-side, so client args start at position 0
+// of the public signature (PublicScopedRpc strips the actor).
+
+import { callRpc } from './rpc-client'
+import type { PublicScopedRpc } from '../opportunities/types'
+import type * as Server from './opportunities.server'
+
+type Public<F> = PublicScopedRpc<F>
+
+export function createOpportunityAccount(
+  input: Parameters<Public<typeof Server.createOpportunityAccount>>[0],
+) {
+  return callRpc<Public<typeof Server.createOpportunityAccount>>(
+    'opportunities',
+    'createOpportunityAccount',
+    input,
+  )
+}
+
+export function confirmOpportunityEligibility(
+  input: Parameters<Public<typeof Server.confirmOpportunityEligibility>>[0],
+) {
+  return callRpc<Public<typeof Server.confirmOpportunityEligibility>>(
+    'opportunities',
+    'confirmOpportunityEligibility',
+    input,
+  )
+}
+
+export function confirmOpeningBalance(
+  input: Parameters<Public<typeof Server.confirmOpeningBalance>>[0],
+) {
+  return callRpc<Public<typeof Server.confirmOpeningBalance>>(
+    'opportunities',
+    'confirmOpeningBalance',
+    input,
+  )
+}
+
+export function updateOpportunityCycleWorkflow(
+  input: Parameters<Public<typeof Server.updateOpportunityCycleWorkflow>>[0],
+) {
+  return callRpc<Public<typeof Server.updateOpportunityCycleWorkflow>>(
+    'opportunities',
+    'updateOpportunityCycleWorkflow',
+    input,
+  )
+}
+
+export function recordOpportunityUsage(
+  input: Parameters<Public<typeof Server.recordOpportunityUsage>>[0],
+) {
+  return callRpc<Public<typeof Server.recordOpportunityUsage>>(
+    'opportunities',
+    'recordOpportunityUsage',
+    input,
+  )
+}
+
+export function correctOpportunityUsage(
+  input: Parameters<Public<typeof Server.correctOpportunityUsage>>[0],
+) {
+  return callRpc<Public<typeof Server.correctOpportunityUsage>>(
+    'opportunities',
+    'correctOpportunityUsage',
+    input,
+  )
+}
+
+export function voidOpportunityUsage(
+  input: Parameters<Public<typeof Server.voidOpportunityUsage>>[0],
+) {
+  return callRpc<Public<typeof Server.voidOpportunityUsage>>(
+    'opportunities',
+    'voidOpportunityUsage',
+    input,
+  )
+}
+
+export function getUsageHistory(input: Parameters<Public<typeof Server.getUsageHistory>>[0]) {
+  return callRpc<Public<typeof Server.getUsageHistory>>(
+    'opportunities',
+    'getUsageHistory',
+    input,
+  )
+}
+
+export function getUnassignedLegacyUsages(
+  input: Parameters<Public<typeof Server.getUnassignedLegacyUsages>>[0],
+) {
+  return callRpc<Public<typeof Server.getUnassignedLegacyUsages>>(
+    'opportunities',
+    'getUnassignedLegacyUsages',
+    input,
+  )
+}
+
+export function assignLegacyUsage(
+  input: Parameters<Public<typeof Server.assignLegacyUsage>>[0],
+) {
+  return callRpc<Public<typeof Server.assignLegacyUsage>>(
+    'opportunities',
+    'assignLegacyUsage',
+    input,
+  )
+}
+
+export function getOpportunityPage(
+  input: Parameters<Public<typeof Server.getOpportunityPage>>[0],
+) {
+  return callRpc<Public<typeof Server.getOpportunityPage>>(
+    'opportunities',
+    'getOpportunityPage',
+    input,
+  )
+}
+
+export function getBenefitLedger(
+  input: Parameters<Public<typeof Server.getBenefitLedger>>[0],
+) {
+  return callRpc<Public<typeof Server.getBenefitLedger>>(
+    'opportunities',
+    'getBenefitLedger',
+    input,
+  )
+}
+
+export function getCardOpportunities(
+  ...args: Parameters<Public<typeof Server.getCardOpportunities>>
+) {
+  return callRpc<Public<typeof Server.getCardOpportunities>>(
+    'opportunities',
+    'getCardOpportunities',
+    ...args,
+  )
+}
+
+export function getOpportunityDetail(
+  input: Parameters<Public<typeof Server.getOpportunityDetail>>[0],
+) {
+  return callRpc<Public<typeof Server.getOpportunityDetail>>(
+    'opportunities',
+    'getOpportunityDetail',
+    input,
+  )
+}
+
+export function setOpportunityFollowed(
+  input: Parameters<Public<typeof Server.setOpportunityFollowed>>[0],
+) {
+  return callRpc<Public<typeof Server.setOpportunityFollowed>>(
+    'opportunities',
+    'setOpportunityFollowed',
+    input,
+  )
+}
+
+export function previewOpportunityCandidates(
+  input: Parameters<Public<typeof Server.previewOpportunityCandidates>>[0],
+) {
+  return callRpc<Public<typeof Server.previewOpportunityCandidates>>(
+    'opportunities',
+    'previewOpportunityCandidates',
+    input,
+  )
+}
+
+export function publishOpportunityVersion(
+  input: Parameters<Public<typeof Server.publishOpportunityVersion>>[0],
+) {
+  return callRpc<Public<typeof Server.publishOpportunityVersion>>(
+    'opportunities',
+    'publishOpportunityVersion',
+    input,
+  )
+}
+
+export function archiveOpportunityDefinition(
+  input: Parameters<Public<typeof Server.archiveOpportunityDefinition>>[0],
+) {
+  return callRpc<Public<typeof Server.archiveOpportunityDefinition>>(
+    'opportunities',
+    'archiveOpportunityDefinition',
+    input,
+  )
+}
+
+export function exportOpportunityUsages(
+  input: Parameters<Public<typeof Server.exportOpportunityUsages>>[0],
+) {
+  return callRpc<Public<typeof Server.exportOpportunityUsages>>(
+    'opportunities',
+    'exportOpportunityUsages',
+    input,
+  )
+}
+
+export function getLegacyBenefitUsages(
+  ...args: Parameters<Public<typeof Server.getLegacyBenefitUsages>>
+) {
+  return callRpc<Public<typeof Server.getLegacyBenefitUsages>>(
+    'opportunities',
+    'getLegacyBenefitUsages',
+    ...args,
+  )
+}
+
+export function getLegacyPromoUsages(
+  ...args: Parameters<Public<typeof Server.getLegacyPromoUsages>>
+) {
+  return callRpc<Public<typeof Server.getLegacyPromoUsages>>(
+    'opportunities',
+    'getLegacyPromoUsages',
+    ...args,
+  )
+}
+
+export function getOpportunityCalendar(
+  input: Parameters<Public<typeof Server.getOpportunityCalendar>>[0],
+) {
+  return callRpc<Public<typeof Server.getOpportunityCalendar>>(
+    'opportunities',
+    'getOpportunityCalendar',
+    input,
+  )
+}
+
+export function getOpportunityReminders(
+  input: Parameters<Public<typeof Server.getOpportunityReminders>>[0],
+) {
+  return callRpc<Public<typeof Server.getOpportunityReminders>>(
+    'opportunities',
+    'getOpportunityReminders',
+    input,
+  )
+}
+
+export function updateOpportunityReminderState(
+  input: Parameters<Public<typeof Server.updateOpportunityReminderState>>[0],
+) {
+  return callRpc<Public<typeof Server.updateOpportunityReminderState>>(
+    'opportunities',
+    'updateOpportunityReminderState',
+    input,
+  )
+}
+
+export function getOpportunityTasks(
+  input: Parameters<Public<typeof Server.getOpportunityTasks>>[0],
+) {
+  return callRpc<Public<typeof Server.getOpportunityTasks>>(
+    'opportunities',
+    'getOpportunityTasks',
+    input,
+  )
+}
+
+export function saveOpportunityTask(
+  input: Parameters<Public<typeof Server.saveOpportunityTask>>[0],
+) {
+  return callRpc<Public<typeof Server.saveOpportunityTask>>(
+    'opportunities',
+    'saveOpportunityTask',
+    input,
+  )
+}
+
+export function updateManualTaskProgress(
+  input: Parameters<Public<typeof Server.updateManualTaskProgress>>[0],
+) {
+  return callRpc<Public<typeof Server.updateManualTaskProgress>>(
+    'opportunities',
+    'updateManualTaskProgress',
+    input,
+  )
+}
+
+export function recordOpportunityClaim(
+  input: Parameters<Public<typeof Server.recordOpportunityClaim>>[0],
+) {
+  return callRpc<Public<typeof Server.recordOpportunityClaim>>(
+    'opportunities',
+    'recordOpportunityClaim',
+    input,
+  )
+}
+
+export function recordTaskRewardReceived(
+  input: Parameters<Public<typeof Server.recordTaskRewardReceived>>[0],
+) {
+  return callRpc<Public<typeof Server.recordTaskRewardReceived>>(
+    'opportunities',
+    'recordTaskRewardReceived',
+    input,
+  )
+}
+
+export function voidOpportunityClaim(
+  input: Parameters<Public<typeof Server.voidOpportunityClaim>>[0],
+) {
+  return callRpc<Public<typeof Server.voidOpportunityClaim>>(
+    'opportunities',
+    'voidOpportunityClaim',
+    input,
+  )
+}
+
+export function recordOpportunityBooking(
+  input: Parameters<Public<typeof Server.recordOpportunityBooking>>[0],
+) {
+  return callRpc<Public<typeof Server.recordOpportunityBooking>>(
+    'opportunities',
+    'recordOpportunityBooking',
+    input,
+  )
+}
+
+export function completeOpportunityBooking(
+  input: Parameters<Public<typeof Server.completeOpportunityBooking>>[0],
+) {
+  return callRpc<Public<typeof Server.completeOpportunityBooking>>(
+    'opportunities',
+    'completeOpportunityBooking',
+    input,
+  )
+}
+
+export function cancelOpportunityBooking(
+  input: Parameters<Public<typeof Server.cancelOpportunityBooking>>[0],
+) {
+  return callRpc<Public<typeof Server.cancelOpportunityBooking>>(
+    'opportunities',
+    'cancelOpportunityBooking',
+    input,
+  )
+}

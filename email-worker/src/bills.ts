@@ -44,6 +44,8 @@ export interface HolderScope {
   holders: HolderRecord[]
   /** 该用户的兜底持卡人：最早创建的那个，识别不出具体人时用它。 */
   defaultHolderId: string | null
+  /** 邮件归属的用户：待确认草稿的 created_by。 */
+  userId?: string
 }
 
 /**
@@ -61,7 +63,7 @@ export async function loadHolderScope(db: D1Database, userId: string): Promise<H
     aliases: normalizeAliases(row.aliases),
   }))
 
-  return { holders, defaultHolderId: holders[0]?.id ?? null }
+  return { holders, defaultHolderId: holders[0]?.id ?? null, userId }
 }
 
 /** 卡片尾号统一成纯数字；保留前导零（Amex 有 0 开头的账户）。 */
@@ -134,11 +136,17 @@ export interface FindOrCreateCardParams {
   bankName: string | null
   /** AI 解出的币种，用于在同银行多产品里排除币种不符的候选。 */
   currency: string | null
+  /**
+   * false 时只查找不创建：归属不可信（回落默认持卡人）绝不能凭猜测
+   * 给某个人名下新建卡——2026-10-16 民生 0872 就这样被挂错了人。
+   * 此时返回 needsDraft=true，由调用方落待确认草稿。
+   */
+  allowCreate?: boolean
 }
 
 export type FindOrCreateCardOutcome =
   | { ok: true; cardId: string; created: boolean }
-  | { ok: false; reason: string }
+  | { ok: false; reason: string; needsDraft?: boolean }
 
 export async function findOrCreateCardForHolder(
   db: D1Database,
@@ -151,6 +159,14 @@ export async function findOrCreateCardForHolder(
     'SELECT id FROM credit_cards WHERE holder_id = ? AND card_number_last4 = ? LIMIT 1'
   ).bind(params.holderId, tail).first<{ id: string }>()
   if (existing) return { ok: true, cardId: existing.id, created: false }
+
+  if (params.allowCreate === false) {
+    return {
+      ok: false,
+      reason: '归属未确认且该持卡人名下无此卡，已存入待确认草稿（请在界面选卡确认）',
+      needsDraft: true,
+    }
+  }
 
   // credit_cards.card_product_id 是 NOT NULL 且外键 RESTRICT，必须挂在真实卡产品上。
   // 这里刻意不新建卡产品：缺少银行/卡种上下文时硬造会污染产品目录。
@@ -176,6 +192,31 @@ export async function findOrCreateCardForHolder(
   ).bind(cardId, params.holderId, product.id, tail, pickStatementDay(params.statementDate), 'active', 'credit').run()
 
   return { ok: true, cardId, created: true }
+}
+
+/**
+ * 归属无法确认时的安全出口：把 AI 解析结果原样存成待确认草稿
+ * （bill_import_drafts，status=draft，card_id=NULL），
+ * 用户在界面选择正确持卡人的卡片并确认后才真正入库。
+ */
+export async function parkBillAsDraft(
+  db: D1Database,
+  userId: string,
+  parsed: Record<string, unknown>
+): Promise<string> {
+  const id = crypto.randomUUID()
+  const confidence =
+    typeof parsed.confidence === 'number' && Number.isFinite(parsed.confidence)
+      ? parsed.confidence
+      : null
+  await db
+    .prepare(
+      `INSERT INTO bill_import_drafts (id, created_by, card_id, source_type, parsed_payload, confidence)
+       VALUES (?, ?, NULL, 'email', ?, ?)`
+    )
+    .bind(id, userId, JSON.stringify(parsed), confidence)
+    .run()
+  return id
 }
 
 export interface UpsertBillOptions {
@@ -358,8 +399,15 @@ export async function persistNestedBills(
       statementDate: parsed.statement_date ?? null,
       bankName: parsed.bank_name ?? null,
       currency: parsed.currency ?? null,
+      // 归属不可信时绝不自动建卡（会挂到默认持卡人头上）；落草稿等人工确认。
+      allowCreate: trusted,
     })
     if (!card.ok) {
+      if (card.needsDraft && scope.userId) {
+        await parkBillAsDraft(db, scope.userId, parsed as unknown as Record<string, unknown>)
+        skipped.push({ label: message.label, reason: `${card.reason}｜草稿已保存` })
+        continue
+      }
       // 尾号缺失、或按银行名匹配不到卡产品时都不建卡，也不能随便挂到已有卡上，
       // 记录后跳过，等人工在界面补
       skipped.push({ label: message.label, reason: card.reason })

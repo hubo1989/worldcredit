@@ -131,6 +131,13 @@ ROUTES: dict[str, dict] = {
         "surface": "mobile",
         "master": "detail",
     },
+    # ---- 2026-10-16 追加：权益日历（Task 16，mobile 日历母版）----
+    "benefits-calendar": {
+        "path": "/benefits/calendar",
+        "viewport": {"width": 390, "height": 844},
+        "surface": "mobile",
+        "master": "calendar",
+    },
     "benefits": {
         "path": "/benefits",
         "viewport": {"width": 390, "height": 844},

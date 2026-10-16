@@ -1,6 +1,7 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { handleScheduled } from "./cron";
+import { routeOpportunityCron, scanOpportunityNotifications, webPushSender } from "./opportunity-cron";
 import { setDb, setWorkerEnv } from "../lib/db/client";
 
 interface WorkerEnv {
@@ -41,6 +42,23 @@ export default {
   async scheduled(event: ScheduledEvent, env: WorkerEnv, ctx: ExecutionContext) {
     setDb(env.DB);
     setWorkerEnv(env as unknown as Record<string, unknown>);
-    ctx.waitUntil(handleScheduled(event, env, ctx));
+    // Task 15（spec §10.3）：两条 cron 各管各的——*/15 只扫权益投递，0 9 只做
+    // 既有账单日扫；两个触发同时到达时互不重复（作业唯一键兜底）。
+    const route = routeOpportunityCron(event.cron);
+    if (route === "opportunities") {
+      ctx.waitUntil(
+        scanOpportunityNotifications({
+          db: env.DB,
+          now: new Date(event.scheduledTime),
+          sender: webPushSender(env),
+        }),
+      );
+      return;
+    }
+    if (route === "bills") {
+      ctx.waitUntil(handleScheduled(event, env, ctx));
+      return;
+    }
+    console.log(`[scheduled] unhandled cron ${event.cron}`);
   },
 };

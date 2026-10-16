@@ -240,6 +240,17 @@ export async function mergeHolders(
     return { mergedCardsCount: 0, updatedAliases: [] }
   }
 
+  // Task 10 保护：权益账户/使用/任务按 holder 关联，合并会改写归属并触发
+  // 数据库 RESTRICT/触发器。先给出可读的业务冲突，而不是中途失败。
+  const sourcePh = uniqueSourceIds.map(() => '?').join(',')
+  const { data: opportunityDeps } = await query<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM opportunity_accounts WHERE holder_id IN (${sourcePh})`,
+    uniqueSourceIds
+  )
+  if ((opportunityDeps?.[0]?.n ?? 0) > 0) {
+    throw new Error('该持卡人名下存在权益台账账户，合并前需先按发布手册迁移权益数据')
+  }
+
   // 1. Move all cards from source holders to primary holder
   const sourcePlaceholders = uniqueSourceIds.map(() => '?').join(',')
   const { data: cards } = await query<{ id: string }>(

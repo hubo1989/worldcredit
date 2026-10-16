@@ -6,6 +6,24 @@
 
 type AnyFn = (...args: never[]) => unknown
 
+/**
+ * Structured RPC failure. Extends Error so legacy `catch (e) { e.message }`
+ * sites keep working; new code reads code/details/request_id when present.
+ */
+export class RpcError extends Error {
+  readonly code?: string
+  readonly details?: unknown
+  readonly request_id?: string
+
+  constructor(message: string, code?: string, details?: unknown, requestId?: string) {
+    super(message)
+    this.name = 'RpcError'
+    this.code = code
+    this.details = details
+    this.request_id = requestId
+  }
+}
+
 export async function callRpc<F extends AnyFn>(
   module: string,
   fn: string,
@@ -19,10 +37,19 @@ export async function callRpc<F extends AnyFn>(
   })
 
   // Invalid JSON bodies resolve to null and are treated as transport failures.
-  const payload = (await res.json().catch(() => null)) as { data?: unknown; error?: string } | null
+  const payload = (await res.json().catch(() => null)) as {
+    data?: unknown
+    error?: string
+    code?: string
+    details?: unknown
+    request_id?: string
+  } | null
 
   if (!res.ok || !payload || payload.error) {
     const message = payload?.error || `RPC ${module}.${fn} failed (${res.status})`
+    if (payload?.code || payload?.details || payload?.request_id) {
+      throw new RpcError(message, payload?.code, payload?.details, payload?.request_id)
+    }
     throw new Error(message)
   }
   return payload.data as Awaited<ReturnType<F>>
