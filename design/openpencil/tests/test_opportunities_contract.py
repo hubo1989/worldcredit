@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import pathlib
 import unittest
 from pathlib import Path
 
@@ -213,6 +214,19 @@ class SemanticRedLines(unittest.TestCase):
         self.assertIn("手动达标", joined)
         # 发放窗口是预计，不承诺到账
         self.assertIn("预计", joined)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class BenefitsCalendarRouteTest(unittest.TestCase):
+    """Task 23：日历路由纳入基线登记（capture.py 路由）。"""
+
+    def test_capture_registers_benefits_calendar(self):
+        base = pathlib.Path(__file__).resolve().parents[1]
+        src = (base / 'baseline' / 'capture.py').read_text(encoding='utf-8')
+        self.assertIn('"/benefits/calendar"', src)
 
 
 if __name__ == "__main__":
