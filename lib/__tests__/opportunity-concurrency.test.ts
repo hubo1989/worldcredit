@@ -23,6 +23,10 @@ import {
   correctOpportunityUsage,
   voidOpportunityUsage,
 } from '../opportunities/usages.server'
+import {
+  recordOpportunityBooking,
+  completeOpportunityBooking,
+} from '../opportunities/fulfillments.server'
 import { reconcileOpportunityCycle } from '../opportunities/writes.server'
 import { OpportunityError } from '../opportunities/errors'
 import type { RuleSnapshotV1, OpportunityActor } from '../opportunities/types'
@@ -328,6 +332,82 @@ describe('并发竞争（barrier 后同状态入批）', () => {
       .prepare('SELECT status, revision FROM opportunity_usages WHERE id = ?')
       .get(base.usage_id) as { status: string; revision: number }
     expect(usage).toEqual({ status: 'voided', revision: 2 })
+    expect((await reconcileOpportunityCycle(actorAdminA, w.cycleId)).ok).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Task 20 races: bookings vs usages and double completion
+// ---------------------------------------------------------------------------
+
+describe('预约并发（Task 20）', () => {
+  it('最后额度：直接使用与预约并发，只成功一个，无漂移', async () => {
+    const w = await setupWorld(makeRules({ count_limit: 1 }))
+    installBatchBarrier(2)
+
+    const [use, book] = await Promise.all([
+      settle(recordUsage(w.accountId, w.cycleId, { request_key: rk('use') })),
+      settle(
+        recordOpportunityBooking(
+          actorAdminA,
+          {
+            account_id: w.accountId, cycle_id: w.cycleId, card_id: f.cards.selfMain,
+            service_at: '2026-10-20T10:00:00+08:00', service_time_zone: 'Asia/Shanghai',
+            quantity: 1, amount_minor: 0, request_key: rk('book'),
+          },
+          { now: NOW },
+        ),
+      ),
+    ])
+    const codes = [errorCode(use), errorCode(book)]
+    expect(codes.filter((c) => c === null)).toHaveLength(1)
+    expect(codes).toContain('QUOTA_EXCEEDED')
+
+    const cycle = db.raw
+      .prepare('SELECT used_count, reserved_count FROM opportunity_cycles WHERE id = ?')
+      .get(w.cycleId) as { used_count: number; reserved_count: number }
+    expect(cycle.used_count + cycle.reserved_count).toBe(1)
+    expect((await reconcileOpportunityCycle(actorAdminA, w.cycleId)).ok).toBe(true)
+  })
+
+  it('两次 complete 同 revision：只成功一次，另一报告冲突', async () => {
+    const w = await setupWorld(makeRules({ count_limit: 2 }))
+    const booking = await recordOpportunityBooking(
+      actorAdminA,
+      {
+        account_id: w.accountId, cycle_id: w.cycleId, card_id: f.cards.selfMain,
+        service_at: '2026-10-20T10:00:00+08:00', service_time_zone: 'Asia/Shanghai',
+        quantity: 1, amount_minor: 0, request_key: rk('book'),
+      },
+      { now: NOW },
+    )
+    installBatchBarrier(2)
+    const [a, b] = await Promise.all([
+      settle(
+        completeOpportunityBooking(actorAdminA, {
+          fulfillment_id: booking.fulfillment_id, used_on: '2026-10-20',
+          expected_revision: 1, request_key: rk('c1'),
+        }, { now: NOW }),
+      ),
+      settle(
+        completeOpportunityBooking(actorAdminA, {
+          fulfillment_id: booking.fulfillment_id, used_on: '2026-10-20',
+          expected_revision: 1, request_key: rk('c2'),
+        }, { now: NOW }),
+      ),
+    ])
+    const codes = [errorCode(a), errorCode(b)]
+    expect(codes.filter((c) => c === null)).toHaveLength(1)
+    // 输者命中批内 CAS 断言或状态前读
+    expect(codes.some((c) => c === 'INVALID_TRANSITION' || c === 'REVISION_CONFLICT')).toBe(true)
+
+    const cycle = db.raw
+      .prepare('SELECT used_count, reserved_count FROM opportunity_cycles WHERE id = ?')
+      .get(w.cycleId) as { used_count: number; reserved_count: number }
+    expect(cycle).toEqual({ used_count: 1, reserved_count: 0 })
+    expect(
+      (db.raw.prepare("SELECT COUNT(*) AS n FROM opportunity_usages").get() as { n: number }).n,
+    ).toBe(1)
     expect((await reconcileOpportunityCycle(actorAdminA, w.cycleId)).ok).toBe(true)
   })
 })

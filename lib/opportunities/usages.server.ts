@@ -203,6 +203,21 @@ function assertCycleWritable(cycle: CycleState): void {
   }
 }
 
+/** Usages produced by a booking completion refuse generic correct/void (§8.2). */
+async function assertUsageNotFulfillmentLinked(usageId: string): Promise<void> {
+  const linked = await getDb()
+    .prepare("SELECT 1 AS ok FROM opportunity_fulfillments WHERE usage_id = ? AND status != 'cancelled'")
+    .bind(usageId)
+    .first<{ ok: number }>()
+  if (linked) {
+    throw new OpportunityError(
+      'INVALID_TRANSITION',
+      '该使用记录来自预约完成，请使用履约纠正进行调整',
+      { usage_id: usageId, hint: 'USE_FULFILLMENT_CORRECTION' },
+    )
+  }
+}
+
 async function cardLinkedToAccount(accountId: string, cardId: string): Promise<boolean> {
   const row = await getDb()
     .prepare(
@@ -497,6 +512,7 @@ export async function correctOpportunityUsage(
 
   const usage = await db.prepare(USAGE_SQL).bind(input.usage_id).first<UsageRow>()
   if (!usage) throw forbiddenOrNotFound('usage')
+  await assertUsageNotFulfillmentLinked(input.usage_id)
 
   const targetCycleId = input.cycle_id ?? usage.cycle_id
   const targetCycle = await loadCycle(targetCycleId, usage.account_id)
@@ -741,6 +757,7 @@ export async function voidOpportunityUsage(
 
   const usage = await db.prepare(USAGE_SQL).bind(input.usage_id).first<UsageRow>()
   if (!usage) throw forbiddenOrNotFound('usage')
+  await assertUsageNotFulfillmentLinked(input.usage_id)
 
   // The reversal lands on the usage's OWN cycle only — voiding a closed
   // period's usage never adds headroom to the current one (A09).

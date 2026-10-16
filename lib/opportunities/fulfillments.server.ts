@@ -607,3 +607,449 @@ export async function voidOpportunityClaim(
     )
   ).result
 }
+
+// ---------------------------------------------------------------------------
+// Bookings: reserve → use / cancel with explicit settlement (§7.2/§8.2)
+// ---------------------------------------------------------------------------
+
+export interface RecordBookingInput {
+  account_id: string
+  cycle_id: string
+  card_id: string
+  service_at: string
+  service_time_zone: string
+  quantity: number
+  amount_minor: number
+  note?: string | null
+  request_key: string
+}
+
+export interface RecordBookingResult {
+  fulfillment_id: string
+  cycle_id: string
+  reserved_count: number
+  reserved_minor: number
+}
+
+const BOOKING_PAYLOAD_FIELDS = [
+  'account_id', 'cycle_id', 'card_id', 'service_at', 'service_time_zone',
+  'quantity', 'amount_minor', 'note',
+] as const
+
+/**
+ * Records a CONFIRMED booking (already made with the bank/provider) and
+ * reserves quota on the cycle: one reserved+q/a event + the booking
+ * fulfillment in one batch. Draft bookings are NOT written here — drafts
+ * produce no quota events (§7.2).
+ */
+export async function recordOpportunityBooking(
+  actor: OpportunityActor,
+  input: RecordBookingInput,
+  opts: { now?: string } = {},
+): Promise<RecordBookingResult> {
+  const now = opts.now ?? new Date().toISOString()
+  const db = getDb()
+
+  if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
+    throw new OpportunityError('VALIDATION_FAILED', 'quantity 必须是正整数', { field: 'quantity' })
+  }
+  if (!Number.isInteger(input.amount_minor) || input.amount_minor < 0) {
+    throw new OpportunityError('VALIDATION_FAILED', 'amount_minor 必须是非负整数', { field: 'amount_minor' })
+  }
+  if (Number.isNaN(Date.parse(input.service_at))) {
+    throw new OpportunityError('VALIDATION_FAILED', 'service_at 不是合法时间', { field: 'service_at' })
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: input.service_time_zone })
+  } catch {
+    throw new OpportunityError('VALIDATION_FAILED', 'service_time_zone 不是合法时区', {
+      field: 'service_time_zone',
+    })
+  }
+
+  const payload = { ...input, note: input.note ?? null }
+  const replayed = await replayCommittedResult<RecordBookingResult>(
+    actor, input.request_key, BOOKING_PAYLOAD_FIELDS, payload)
+  if (replayed) return replayed
+
+  const account = await assertAccountAccess(input.account_id, actor)
+  const cycle = await db
+    .prepare(
+      `SELECT id, account_id, activation_state, reserved_count, reserved_minor,
+              used_count, used_minor, count_limit, amount_limit_minor, currency
+       FROM opportunity_cycles WHERE id = ?`,
+    )
+    .bind(input.cycle_id)
+    .first<{
+      id: string; account_id: string; activation_state: string; reserved_count: number
+      reserved_minor: number; used_count: number; used_minor: number
+      count_limit: number | null; amount_limit_minor: number | null; currency: string | null
+    }>()
+  if (!cycle || cycle.account_id !== input.account_id) throw forbiddenOrNotFound('cycle')
+  if (cycle.activation_state !== 'active') {
+    throw new OpportunityError('INVALID_TRANSITION', '该周期不可预约', { cycle_id: cycle.id })
+  }
+  if (input.amount_minor > 0 && cycle.currency === null) {
+    throw new OpportunityError('VALIDATION_FAILED', '该权益按次数计量，不能预约金额', { field: 'amount_minor' })
+  }
+  if (
+    (cycle.count_limit !== null && cycle.used_count + cycle.reserved_count + input.quantity > cycle.count_limit) ||
+    (cycle.amount_limit_minor !== null && cycle.used_minor + cycle.reserved_minor + input.amount_minor > cycle.amount_limit_minor)
+  ) {
+    throw new OpportunityError('QUOTA_EXCEEDED', '本期额度不足以预约', { cycle_id: cycle.id })
+  }
+
+  const linked = await db
+    .prepare('SELECT 1 AS ok FROM opportunity_account_cards WHERE account_id = ? AND card_id = ? AND retired_at IS NULL')
+    .bind(input.account_id, input.card_id)
+    .first<{ ok: number }>()
+  if (!linked) throw new OpportunityError('VALIDATION_FAILED', '卡未绑定到该账户', { card_id: input.card_id })
+
+  const fulfillmentId = `ofl_${crypto.randomUUID()}`
+  const sourceKey = `booking:${crypto.randomUUID()}`
+  const result: RecordBookingResult = {
+    fulfillment_id: fulfillmentId,
+    cycle_id: cycle.id,
+    reserved_count: cycle.reserved_count + input.quantity,
+    reserved_minor: cycle.reserved_minor + input.amount_minor,
+  }
+  const scope = holderScopePredicate(actor)
+  const recordedOn = now.slice(0, 10)
+
+  return (
+    await runOpportunityCommand<RecordBookingResult>(
+      actor,
+      {
+        command_type: 'recordOpportunityBooking',
+        request_key: input.request_key,
+        payload_fields: BOOKING_PAYLOAD_FIELDS,
+        payload,
+        assertions: [
+          {
+            name: 'booking-scope-cycle',
+            sql: `EXISTS (SELECT 1 FROM opportunity_accounts a JOIN card_holders h ON h.id = a.holder_id
+                    WHERE a.id = ? AND a.status = 'active' AND ${scope.sql})
+              AND EXISTS (SELECT 1 FROM opportunity_cycles c
+                          WHERE c.id = ? AND c.account_id = ? AND c.activation_state = 'active')`,
+            binds: [input.account_id, ...scope.binds, input.cycle_id, input.account_id],
+            violation: () => forbiddenOrNotFound('cycle'),
+          },
+          {
+            name: 'booking-quota',
+            sql: `EXISTS (SELECT 1 FROM opportunity_cycles c WHERE c.id = ? AND
+                    (c.count_limit IS NULL OR c.used_count + c.reserved_count + ? <= c.count_limit) AND
+                    (c.amount_limit_minor IS NULL OR c.used_minor + c.reserved_minor + ? <= c.amount_limit_minor))`,
+            binds: [input.cycle_id, input.quantity, input.amount_minor],
+            violation: () => new OpportunityError('QUOTA_EXCEEDED', '本期额度不足以预约', { cycle_id: input.cycle_id }),
+          },
+          {
+            name: 'booking-card-linked',
+            sql: 'EXISTS (SELECT 1 FROM opportunity_account_cards ac WHERE ac.account_id = ? AND ac.card_id = ? AND ac.retired_at IS NULL)',
+            binds: [input.account_id, input.card_id],
+            violation: () => new OpportunityError('VALIDATION_FAILED', '卡未绑定到该账户', { card_id: input.card_id }),
+          },
+        ],
+        events: [
+          {
+            entity_kind: 'fulfillment',
+            entity_id: fulfillmentId,
+            event_type: 'booking.recorded',
+            account_id: input.account_id,
+            cycle_id: input.cycle_id,
+            deltas: {
+              delta_opening_count: 0, delta_opening_minor: 0,
+              delta_used_count: 0, delta_used_minor: 0,
+              delta_reserved_count: input.quantity, delta_reserved_minor: input.amount_minor,
+            },
+            after_json: {
+              service_at: input.service_at, service_time_zone: input.service_time_zone,
+              quantity: input.quantity, amount_minor: input.amount_minor,
+            },
+            reason: input.note ?? null,
+          },
+        ],
+        statements: [
+          db
+            .prepare(
+              `INSERT INTO opportunity_fulfillments
+                 (id, holder_id, kind, account_id, cycle_id, source_key, card_id, status,
+                  quantity, amount_minor, recorded_on, service_at, service_time_zone, note,
+                  created_by, updated_by, created_at, updated_at)
+               VALUES (?,?,'booking',?,?,?,?,'recorded',?,?,?,?,?,?,?,?,?,?)`,
+            )
+            .bind(
+              fulfillmentId, account.holder_id, input.account_id, input.cycle_id, sourceKey,
+              input.card_id, input.quantity, input.amount_minor, recordedOn,
+              input.service_at, input.service_time_zone, input.note ?? null,
+              actor.user_id, actor.user_id, now, now,
+            ),
+        ],
+        result,
+      },
+      { now },
+    )
+  ).result
+}
+
+interface BookingRow {
+  id: string
+  holder_id: string
+  kind: string
+  account_id: string
+  cycle_id: string
+  card_id: string
+  status: string
+  quantity: number
+  amount_minor: number
+  revision: number
+}
+
+async function loadScopedBooking(actor: OpportunityActor, fulfillmentId: string): Promise<BookingRow> {
+  const scope = holderScopePredicate(actor)
+  const row = await getDb()
+    .prepare(
+      `SELECT f.id, f.holder_id, f.kind, f.account_id, f.cycle_id, f.card_id, f.status,
+              f.quantity, f.amount_minor, f.revision
+       FROM opportunity_fulfillments f
+       JOIN card_holders h ON h.id = f.holder_id
+       WHERE f.id = ? AND f.kind = 'booking' AND ${scope.sql}`,
+    )
+    .bind(fulfillmentId, ...scope.binds)
+    .first<BookingRow>()
+  if (!row) throw forbiddenOrNotFound('fulfillment')
+  return row
+}
+
+// ---------------------------------------------------------------------------
+// completeOpportunityBooking — reserved −q/a, used +q/a, linked usage
+// ---------------------------------------------------------------------------
+
+export interface CompleteBookingResult {
+  fulfillment_id: string
+  usage_id: string
+  status: 'used'
+}
+
+export async function completeOpportunityBooking(
+  actor: OpportunityActor,
+  input: {
+    fulfillment_id: string
+    used_on: string
+    expected_revision: number
+    request_key: string
+  },
+  opts: { now?: string } = {},
+): Promise<CompleteBookingResult> {
+  const now = opts.now ?? new Date().toISOString()
+  const db = getDb()
+
+  const payload = {
+    fulfillment_id: input.fulfillment_id,
+    used_on: input.used_on,
+    expected_revision: input.expected_revision,
+  }
+  const replayed = await replayCommittedResult<CompleteBookingResult>(
+    actor, input.request_key, ['fulfillment_id', 'used_on', 'expected_revision'], payload)
+  if (replayed) return replayed
+
+  const booking = await loadScopedBooking(actor, input.fulfillment_id)
+  if (booking.status !== 'recorded') {
+    throw new OpportunityError('INVALID_TRANSITION', '该预约不在可完成状态', { status: booking.status })
+  }
+  if (input.expected_revision !== booking.revision) {
+    throw revisionConflict({ expected_revision: input.expected_revision, actual_revision: booking.revision })
+  }
+  if (!isValidCivilDate(input.used_on)) {
+    throw new OpportunityError('VALIDATION_FAILED', 'used_on 不是合法日期', { field: 'used_on' })
+  }
+
+  const usageId = `ousg_${crypto.randomUUID()}`
+  const result: CompleteBookingResult = {
+    fulfillment_id: booking.id,
+    usage_id: usageId,
+    status: 'used',
+  }
+
+  return (
+    await runOpportunityCommand<CompleteBookingResult>(
+      actor,
+      {
+        command_type: 'completeOpportunityBooking',
+        request_key: input.request_key,
+        payload_fields: ['fulfillment_id', 'used_on', 'expected_revision'],
+        payload,
+        assertions: [
+          {
+            name: 'complete-cas',
+            sql: `EXISTS (SELECT 1 FROM opportunity_fulfillments f
+                    WHERE f.id = ? AND f.status = 'recorded' AND f.revision = ?)`,
+            binds: [booking.id, booking.revision],
+            violation: () =>
+              revisionConflict({ fulfillment_id: booking.id, expected_revision: booking.revision }),
+          },
+        ],
+        events: [
+          {
+            entity_kind: 'fulfillment',
+            entity_id: booking.id,
+            event_type: 'booking.completed',
+            account_id: booking.account_id,
+            cycle_id: booking.cycle_id,
+            deltas: {
+              delta_opening_count: 0, delta_opening_minor: 0,
+              delta_used_count: booking.quantity, delta_used_minor: booking.amount_minor,
+              delta_reserved_count: -booking.quantity, delta_reserved_minor: -booking.amount_minor,
+            },
+            after_json: { usage_id: usageId, used_on: input.used_on },
+          },
+        ],
+        statements: [
+          db
+            .prepare(
+              `INSERT INTO opportunity_usages
+                 (id, account_id, cycle_id, card_id, used_on, quantity, amount_minor, note,
+                  created_by, updated_by, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+            )
+            .bind(
+              usageId, booking.account_id, booking.cycle_id, booking.card_id, input.used_on,
+              booking.quantity, booking.amount_minor, `booking:${booking.id}`,
+              actor.user_id, actor.user_id, now, now,
+            ),
+          db
+            .prepare(
+              `UPDATE opportunity_fulfillments
+               SET status = 'used', usage_id = ?, revision = revision + 1, updated_by = ?, updated_at = ?
+               WHERE id = ? AND revision = ? AND status = 'recorded'`,
+            )
+            .bind(usageId, actor.user_id, now, booking.id, booking.revision),
+        ],
+        result,
+      },
+      { now },
+    )
+  ).result
+}
+
+// ---------------------------------------------------------------------------
+// cancelOpportunityBooking — settlement: returned / charged / unknown
+// ---------------------------------------------------------------------------
+
+export interface CancelBookingResult {
+  fulfillment_id: string
+  status: 'cancelled' | 'pending_settlement'
+  settlement: 'returned' | 'charged' | 'unknown'
+}
+
+export async function cancelOpportunityBooking(
+  actor: OpportunityActor,
+  input: {
+    fulfillment_id: string
+    settlement: 'returned' | 'charged' | 'unknown'
+    reason: string
+    expected_revision: number
+    request_key: string
+  },
+  opts: { now?: string } = {},
+): Promise<CancelBookingResult> {
+  const now = opts.now ?? new Date().toISOString()
+  const db = getDb()
+
+  if (!['returned', 'charged', 'unknown'].includes(input.settlement)) {
+    throw new OpportunityError('VALIDATION_FAILED', 'settlement 必须显式三选一', { field: 'settlement' })
+  }
+  if (typeof input.reason !== 'string' || input.reason.trim().length === 0 || input.reason.length > 500) {
+    throw new OpportunityError('VALIDATION_FAILED', 'reason 必须是 1–500 字', { field: 'reason' })
+  }
+
+  const payload = {
+    fulfillment_id: input.fulfillment_id,
+    settlement: input.settlement,
+    reason: input.reason.trim(),
+    expected_revision: input.expected_revision,
+  }
+  const replayed = await replayCommittedResult<CancelBookingResult>(
+    actor, input.request_key, ['fulfillment_id', 'settlement', 'reason', 'expected_revision'], payload)
+  if (replayed) return replayed
+
+  const booking = await loadScopedBooking(actor, input.fulfillment_id)
+  if (booking.status !== 'recorded' && booking.status !== 'pending_settlement') {
+    throw new OpportunityError('INVALID_TRANSITION', '该预约不在可取消状态', { status: booking.status })
+  }
+  if (input.expected_revision !== booking.revision) {
+    throw revisionConflict({ expected_revision: input.expected_revision, actual_revision: booking.revision })
+  }
+
+  const finalStatus: CancelBookingResult['status'] =
+    input.settlement === 'unknown' ? 'pending_settlement' : 'cancelled'
+  const result: CancelBookingResult = {
+    fulfillment_id: booking.id,
+    status: finalStatus,
+    settlement: input.settlement,
+  }
+
+  // 六维（§7.2）：returned 只释放 reserved；charged 把占用转为已消耗；
+  // unknown 保留 reserved 并标 pending_settlement（无 delta）。
+  const deltas =
+    input.settlement === 'returned'
+      ? {
+          delta_opening_count: 0, delta_opening_minor: 0,
+          delta_used_count: 0, delta_used_minor: 0,
+          delta_reserved_count: -booking.quantity, delta_reserved_minor: -booking.amount_minor,
+        }
+      : input.settlement === 'charged'
+        ? {
+            delta_opening_count: 0, delta_opening_minor: 0,
+            delta_used_count: booking.quantity, delta_used_minor: booking.amount_minor,
+            delta_reserved_count: -booking.quantity, delta_reserved_minor: -booking.amount_minor,
+          }
+        : {
+            delta_opening_count: 0, delta_opening_minor: 0,
+            delta_used_count: 0, delta_used_minor: 0,
+            delta_reserved_count: 0, delta_reserved_minor: 0,
+          }
+
+  return (
+    await runOpportunityCommand<CancelBookingResult>(
+      actor,
+      {
+        command_type: 'cancelOpportunityBooking',
+        request_key: input.request_key,
+        payload_fields: ['fulfillment_id', 'settlement', 'reason', 'expected_revision'],
+        payload,
+        assertions: [
+          {
+            name: 'cancel-cas',
+            sql: `EXISTS (SELECT 1 FROM opportunity_fulfillments f
+                    WHERE f.id = ? AND f.status IN ('recorded','pending_settlement') AND f.revision = ?)`,
+            binds: [booking.id, booking.revision],
+            violation: () =>
+              revisionConflict({ fulfillment_id: booking.id, expected_revision: booking.revision }),
+          },
+        ],
+        events: [
+          {
+            entity_kind: 'fulfillment',
+            entity_id: booking.id,
+            event_type: `booking.cancelled.${input.settlement}`,
+            account_id: booking.account_id,
+            cycle_id: booking.cycle_id,
+            deltas,
+            reason: payload.reason,
+          },
+        ],
+        statements: [
+          db
+            .prepare(
+              `UPDATE opportunity_fulfillments
+               SET status = ?, settlement = ?, revision = revision + 1, updated_by = ?, updated_at = ?
+               WHERE id = ? AND revision = ?`,
+            )
+            .bind(finalStatus, input.settlement, actor.user_id, now, booking.id, booking.revision),
+        ],
+        result,
+      },
+      { now },
+    )
+  ).result
+}

@@ -53,4 +53,7 @@ export {
   recordOpportunityClaim,
   recordTaskRewardReceived,
   voidOpportunityClaim,
+  recordOpportunityBooking,
+  completeOpportunityBooking,
+  cancelOpportunityBooking,
 } from '../opportunities/fulfillments.server'

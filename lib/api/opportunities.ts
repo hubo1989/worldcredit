@@ -306,3 +306,33 @@ export function voidOpportunityClaim(
     input,
   )
 }
+
+export function recordOpportunityBooking(
+  input: Parameters<Public<typeof Server.recordOpportunityBooking>>[0],
+) {
+  return callRpc<Public<typeof Server.recordOpportunityBooking>>(
+    'opportunities',
+    'recordOpportunityBooking',
+    input,
+  )
+}
+
+export function completeOpportunityBooking(
+  input: Parameters<Public<typeof Server.completeOpportunityBooking>>[0],
+) {
+  return callRpc<Public<typeof Server.completeOpportunityBooking>>(
+    'opportunities',
+    'completeOpportunityBooking',
+    input,
+  )
+}
+
+export function cancelOpportunityBooking(
+  input: Parameters<Public<typeof Server.cancelOpportunityBooking>>[0],
+) {
+  return callRpc<Public<typeof Server.cancelOpportunityBooking>>(
+    'opportunities',
+    'cancelOpportunityBooking',
+    input,
+  )
+}
