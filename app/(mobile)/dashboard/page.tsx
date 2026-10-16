@@ -18,6 +18,7 @@ import { fetchRates, type FxRates } from '@/lib/fx'
 import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
 import { useAuth } from '@/lib/auth'
 import { getOpportunityTodayCount } from '@/lib/api/dashboard'
+import { loadReminders } from '@/components/opportunities/ReminderList'
 import { QuickActionSheet } from '@/components/mobile/QuickActionSheet'
 import { DashboardView } from '@/components/obsidian/DashboardView'
 import { DashboardOverlays } from '@/components/obsidian/DashboardOverlays'
@@ -60,6 +61,7 @@ export default function DashboardPage() {
   // 优惠入口：P0 起不再展示“可享数量”——当前接口只能给有效活动总数，
   // 不能证明持卡资格，数字会误导。可信计数待 Task 11 统一查询接入后恢复。
   const [promoCount, setPromoCount] = useState<number | null>(null)
+  const [urgentReminders, setUrgentReminders] = useState<Array<{ event: { event_key: string; kind: string; title: string; local_date_on: string; action_hint: string } }>>([])
 
   // 一键还款与 Toast 状态
   const [payAllOpen, setPayAllOpen] = useState(false)
@@ -120,6 +122,9 @@ export default function DashboardPage() {
     void getOpportunityTodayCount()
       .then((n) => { if (!cancelled) setPromoCount(n) })
       .catch(() => { if (!cancelled) setPromoCount(null) })
+    void loadReminders()
+      .then((items) => { if (!cancelled) setUrgentReminders(items.slice(0, 3)) })
+      .catch(() => { if (!cancelled) setUrgentReminders([]) })
     return () => { cancelled = true }
   }, [user])
 
@@ -290,6 +295,7 @@ export default function DashboardPage() {
         cardsByHolder={cardsByHolder}
         quickActions={quickActions}
         promoCount={promoCount}
+        urgentReminders={urgentReminders}
         userName={user?.name ?? null}
         userEmail={user?.email ?? null}
       />

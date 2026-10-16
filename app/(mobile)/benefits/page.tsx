@@ -152,6 +152,14 @@ ${preview.candidates.map((c) => `· ${c.name}`).join('\n')}
             个人台账：余额、使用历史与核对状态
           </p>
         </div>
+        <div className='flex shrink-0 gap-2'>
+          <a
+            href='/benefits/calendar'
+            className='flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full border border-d-border px-3.5 text-[12px] font-semibold text-d-muted'
+          >
+            日历 / 提醒
+          </a>
+        </div>
         {isAdmin && (
           <div className='flex shrink-0 gap-2'>
             <button

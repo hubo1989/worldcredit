@@ -139,14 +139,22 @@ export default function PromosPage() {
             下一步可做的动作：使用、领取或核对（{user?.name ?? ''}）
           </p>
         </div>
-        <button
-          type='button'
-          onClick={() => setAddOpen(true)}
-          className='flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-d-accent px-3.5 text-[12px] font-semibold text-d-accent-light'
-        >
-          <PlusIcon size={14} />
-          登记活动
-        </button>
+        <div className='flex shrink-0 gap-2'>
+          <a
+            href='/benefits/calendar'
+            className='flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full border border-d-border px-3.5 text-[12px] font-semibold text-d-muted'
+          >
+            日历 / 提醒
+          </a>
+          <button
+            type='button'
+            onClick={() => setAddOpen(true)}
+            className='flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full border border-d-accent px-3.5 text-[12px] font-semibold text-d-accent-light'
+          >
+            <PlusIcon size={14} />
+            登记活动
+          </button>
+        </div>
       </div>
 
       <div className='mb-4'>

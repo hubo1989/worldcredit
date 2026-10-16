@@ -39,6 +39,8 @@ export interface DashboardViewProps {
   cardsByHolder: Record<string, number>
   quickActions: Array<{ key: string; label: string; icon: ReactNode; onClick: () => void }>
   promoCount: number | null
+  /** 最紧急的权益待办（≤3 条，Task 16）；账单风险排序不受影响。 */
+  urgentReminders: Array<{ event: { event_key: string; kind: string; title: string; local_date_on: string; action_hint: string } }>
   /** 已登录用户展示口径：姓名缺失时回落到邮箱前缀，避免把所有人显示成同一个人。 */
   userName: string | null
   userEmail: string | null
@@ -50,7 +52,7 @@ export function DashboardView(vm: DashboardViewProps) {
     debtExpanded, onDebtExpanded, privacyOn, privacyIcon, onTogglePrivacy,
     amountClass, displayCurrency, visibleBills, onPaySingle, onPayAllOpen,
     onNavBills, onNavPromos, totalCardCount, holders, cardsByHolder,
-    quickActions, promoCount, userName, userEmail,
+    quickActions, promoCount, userName, userEmail, urgentReminders,
   } = vm
 
   // 头像/称呼都来自当前登录用户；邮箱前缀只是兜底，不能再写死成某一个人的名字。
@@ -251,6 +253,37 @@ export function DashboardView(vm: DashboardViewProps) {
         </div>
         <span className="text-d-muted">›</span>
       </button>
+
+      {/* 最紧急权益待办（≤3）：完整内容进入日历/提醒列表 */}
+      {urgentReminders.length > 0 && (
+        <div className='mt-3 px-5'>
+          <div className='rounded-2xl border border-d-border bg-d-surface p-4'>
+            <div className='flex items-center justify-between'>
+              <p className='text-[13px] font-bold'>权益待办</p>
+              <a href='/benefits/calendar' className='text-[12px] font-semibold text-d-accent-light'>
+                全部 ›
+              </a>
+            </div>
+            <div className='mt-2 flex flex-col gap-1.5'>
+              {urgentReminders.map((r) => (
+                <a
+                  key={r.event.event_key}
+                  href='/benefits/calendar'
+                  className='flex items-center justify-between rounded-xl bg-d-subtle px-3 py-2'
+                >
+                  <span className='min-w-0 flex-1'>
+                    <span className='block truncate text-[13px] font-semibold'>{r.event.title}</span>
+                    <span className='block truncate text-[11px] text-d-muted'>
+                      {r.event.local_date_on} · {r.event.action_hint}
+                    </span>
+                  </span>
+                  <span className='shrink-0 text-[12px] text-d-muted'>›</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 账户 chips */}
       <div className="mt-5 px-5">
