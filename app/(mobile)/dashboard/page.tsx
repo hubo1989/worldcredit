@@ -17,6 +17,7 @@ import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
 import { fetchRates, type FxRates } from '@/lib/fx'
 import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
 import { useAuth } from '@/lib/auth'
+import { getOpportunityTodayCount } from '@/lib/api/dashboard'
 import { QuickActionSheet } from '@/components/mobile/QuickActionSheet'
 import { DashboardView } from '@/components/obsidian/DashboardView'
 import { DashboardOverlays } from '@/components/obsidian/DashboardOverlays'
@@ -58,7 +59,7 @@ export default function DashboardPage() {
   const [quickSheetOpen, setQuickSheetOpen] = useState(false)
   // 优惠入口：P0 起不再展示“可享数量”——当前接口只能给有效活动总数，
   // 不能证明持卡资格，数字会误导。可信计数待 Task 11 统一查询接入后恢复。
-  const [promoCount] = useState<number | null>(null)
+  const [promoCount, setPromoCount] = useState<number | null>(null)
 
   // 一键还款与 Toast 状态
   const [payAllOpen, setPayAllOpen] = useState(false)
@@ -111,7 +112,16 @@ export default function DashboardPage() {
     return () => { cancelled = true }
   }, [])
 
-  // 优惠统计与主数据解耦：见上方 promoCount 注释，Task 11 前保持纯入口。
+  // 今天可用机会数（Task 11/12）：与 /promos 同一服务端口径；失败显示入口
+  // 文案而不是假数字，绝不回退目录总数。
+  useEffect(() => {
+    if (!user) return
+    let cancelled = false
+    void getOpportunityTodayCount()
+      .then((n) => { if (!cancelled) setPromoCount(n) })
+      .catch(() => { if (!cancelled) setPromoCount(null) })
+    return () => { cancelled = true }
+  }, [user])
 
   const handlePaySingle = async (e: React.MouseEvent, bill: BillDashboardItem) => {
     e.stopPropagation()

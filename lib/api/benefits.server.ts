@@ -57,6 +57,8 @@ export interface MyBenefitRow extends Benefit {
   card_product: CardProduct
   usage_count: number
   accounts: BenefitAccountSummary[]
+  /** Wrapped opportunity definition id (account setup entry; null if unwrapped). */
+  definition_id: string | null
 }
 
 /**
@@ -141,7 +143,17 @@ export async function getAllMyBenefits(userId?: string, nowOn?: string): Promise
   // the per-benefit window filter happens below with each benefit's own
   // current period start, exactly like the legacy rows.
   const accountsByBenefit: Record<string, BenefitAccountSummary[]> = {}
+  const definitionIdByBenefit: Record<string, string> = {}
   const ledgerUsages: { benefit_id: string; used_on: string }[] = []
+  {
+    // Wrapped definition id for every listed benefit (account setup entry).
+    const { data: defRows, error: defError } = await query<{ legacy_benefit_id: string; id: string }>(
+      `SELECT legacy_benefit_id, id FROM opportunity_definitions WHERE legacy_benefit_id IN (${bPlaceholders})`,
+      benefitIds,
+    )
+    if (defError) throw new Error(defError.message)
+    for (const d of defRows || []) definitionIdByBenefit[d.legacy_benefit_id] = d.id
+  }
   if (userId && scopedHolderIds.length > 0) {
     const holderPh = scopedHolderIds.map(() => '?').join(',')
     const { data: accountRows, error: accountsError } = await query<{
@@ -196,7 +208,8 @@ export async function getAllMyBenefits(userId?: string, nowOn?: string): Promise
         is_active: true, created_at: new Date().toISOString()
       },
       usage_count: unmappedInWindow + ledgerInWindow,
-      accounts: accountsByBenefit[b.id] ?? []
+      accounts: accountsByBenefit[b.id] ?? [],
+      definition_id: definitionIdByBenefit[b.id] ?? null,
     }
   })
 }

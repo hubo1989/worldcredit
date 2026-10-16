@@ -246,7 +246,7 @@ export function DashboardView(vm: DashboardViewProps) {
         <div className="flex-1">
           <p className="text-[13px] font-bold">优惠活动</p>
           <p className="text-[11px] text-d-muted">
-            {promoCount !== null ? promoCount + ' 项可享优惠' : '查看进行中的银行优惠活动'}
+            {promoCount !== null ? '今天可用 ' + promoCount + ' 项' : '查看可用机会（暂无法获取数量）'}
           </p>
         </div>
         <span className="text-d-muted">›</span>
