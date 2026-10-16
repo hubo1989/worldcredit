@@ -118,3 +118,6 @@ export interface CycleAnchor {
   issued_on: string | null
   activated_on: string | null
 }
+
+// P2 manual-task value types (implementations in ./tasks.ts, §8.1)
+export type { TaskConditionsV1, ManualProgress } from './tasks'

@@ -392,3 +392,36 @@ export interface OpportunityUserStateRow {
   revision: number
   updated_at: string
 }
+
+export interface OpportunityTaskRow {
+  id: string
+  holder_id: string
+  task_type: 'annual_fee' | 'welcome' | 'monthly_spend' | 'custom'
+  title: string
+  card_ids_json: string
+  rules_json: string
+  reward_json: string
+  status: 'active' | 'archived'
+  revision: number
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface OpportunityTaskCycleRow {
+  id: string
+  task_id: string
+  cycle_key: string
+  rules_snapshot_json: string
+  reward_snapshot_json: string
+  period_start_on: string
+  period_end_before: string
+  deadline_at: string
+  expected_from_on: string | null
+  expected_until_before: string | null
+  progress_json: string
+  as_of_on: string | null
+  revision: number
+  updated_by: string | null
+  updated_at: string
+}
