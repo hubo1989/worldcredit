@@ -14,6 +14,9 @@ const KIND_LABELS: Record<string, string> = {
   cycle_reset: '额度重置',
   claim_window_open: '领取开启',
   claim_window_deadline: '领取截止',
+  task_deadline: '任务截止',
+  reward_window: '奖励发放窗口',
+  booking_service: '预约服务',
 }
 
 function weekdayLabel(dateOn: string): string {

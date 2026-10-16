@@ -17,6 +17,8 @@ import {
 } from './dates'
 import {
   buildCycleCalendarEvents,
+  buildTaskCalendarEvents,
+  buildBookingCalendarEvents,
   applyReminderStateAction,
   reminderStateFromRow,
   type OpportunityCalendarEvent,
@@ -48,6 +50,77 @@ function requireCivilDate(value: unknown, field: string): string {
     throw new OpportunityError('VALIDATION_FAILED', `参数 ${field} 不合法`, { field })
   }
   return value as string
+}
+
+
+/** Task + booking events for the actor's holder universe (plan Task 22). */
+async function loadP2Events(actor: OpportunityActor): Promise<OpportunityCalendarEvent[]> {
+  const db = getDb()
+  const scope = holderScopePredicate(actor)
+  const events: OpportunityCalendarEvent[] = []
+
+  const { results: taskCycles } = await db
+    .prepare(
+      `SELECT tc.id, tc.deadline_at, tc.expected_from_on, tc.expected_until_before,
+              tc.rules_snapshot_json, tc.progress_json, t.title
+       FROM opportunity_task_cycles tc
+       JOIN opportunity_tasks t ON t.id = tc.task_id
+       JOIN card_holders h ON h.id = t.holder_id
+       WHERE t.status = 'active' AND ${scope.sql}`,
+    )
+    .bind(...scope.binds)
+    .all<{
+      id: string; deadline_at: string; expected_from_on: string | null
+      expected_until_before: string | null; rules_snapshot_json: string
+      progress_json: string; title: string
+    }>()
+  for (const tc of taskCycles) {
+    let satisfied = false
+    try {
+      const { evaluateTask, parseTaskConditions } = await import('./tasks')
+      const rules = parseTaskConditions(tc.rules_snapshot_json)
+      const todayOn = localDateInZone(new Date(), 'Asia/Shanghai')
+      const progress =
+        tc.progress_json && tc.progress_json !== '{}'
+          ? (JSON.parse(tc.progress_json) as { as_of_on: string; metric_values: Record<string, number | boolean>; note: string | null })
+          : { as_of_on: todayOn, metric_values: {}, note: null }
+      satisfied = evaluateTask(rules, progress).satisfied
+    } catch {
+      satisfied = false
+    }
+    events.push(
+      ...(await buildTaskCalendarEvents({
+        task_cycle_id: tc.id,
+        title: tc.title,
+        deadline_at: tc.deadline_at,
+        expected_from_on: tc.expected_from_on,
+        expected_until_before: tc.expected_until_before,
+        satisfied,
+        version: 'task',
+      })),
+    )
+  }
+
+  const { results: bookings } = await db
+    .prepare(
+      `SELECT f.id, f.service_at, f.service_time_zone
+       FROM opportunity_fulfillments f
+       JOIN card_holders h ON h.id = f.holder_id
+       WHERE f.kind = 'booking' AND f.status = 'recorded' AND ${scope.sql}`,
+    )
+    .bind(...scope.binds)
+    .all<{ id: string; service_at: string; service_time_zone: string }>()
+  for (const booking of bookings) {
+    events.push(
+      ...(await buildBookingCalendarEvents({
+        fulfillment_id: booking.id,
+        title: '预约服务',
+        service_at: booking.service_at,
+        service_time_zone: booking.service_time_zone,
+      })),
+    )
+  }
+  return events
 }
 
 async function loadScopedEvents(
@@ -152,7 +225,7 @@ export async function getOpportunityCalendar(
     })
   }
 
-  const events = await loadScopedEvents(actor, input)
+  const events = [...(await loadScopedEvents(actor, input)), ...(await loadP2Events(actor))]
   const inRange = events
     .filter((e) => e.local_date_on >= fromOn && e.local_date_on < toBefore)
     .sort((a, b) => a.local_date_on.localeCompare(b.local_date_on) || a.event_key.localeCompare(b.event_key))
@@ -195,7 +268,7 @@ export async function getOpportunityReminders(
   const todayOn = localDateInZone(new Date(nowIso), 'Asia/Shanghai')
   const horizonEnd = addDays(todayOn, REMINDER_HORIZON_DAYS)
 
-  const events = await loadScopedEvents(actor, input)
+  const events = [...(await loadScopedEvents(actor, input)), ...(await loadP2Events(actor))]
   const states = await loadStates(actor, events.map((e) => e.event_key))
 
   const pending = events
@@ -283,19 +356,46 @@ export async function updateOpportunityReminderState(
   if (typeof input.event_key !== 'string' || !input.event_key.startsWith('op:')) {
     throw new OpportunityError('VALIDATION_FAILED', 'event_key 不合法', { field: 'event_key' })
   }
-  // event_key = op:<type>:<account_id>:<cycle_or_grant_key>:<hash>
+  // event_key = op:<type>:<object_id>:<cycle_or_grant_key>:<hash> — the object
+  // is an account (P1), a task cycle or a fulfillment (P2); authorize each by
+  // its own holder association.
   const parts = input.event_key.split(':')
-  const accountId = parts[2]
-  if (!accountId) throw new OpportunityError('VALIDATION_FAILED', 'event_key 不合法', { field: 'event_key' })
+  const eventType = parts[1]
+  const objectId = parts[2]
+  if (!eventType || !objectId) {
+    throw new OpportunityError('VALIDATION_FAILED', 'event_key 不合法', { field: 'event_key' })
+  }
   const db = getDb()
   const scope = holderScopePredicate(actor)
-  const owned = await db
-    .prepare(
-      `SELECT 1 AS ok FROM opportunity_accounts a JOIN card_holders h ON h.id = a.holder_id
-       WHERE a.id = ? AND ${scope.sql}`,
-    )
-    .bind(accountId, ...scope.binds)
-    .first<{ ok: number }>()
+  let owned: { ok: number } | null = null
+  if (eventType === 'task_deadline' || eventType === 'reward_window') {
+    owned = await db
+      .prepare(
+        `SELECT 1 AS ok FROM opportunity_task_cycles tc
+         JOIN opportunity_tasks t ON t.id = tc.task_id
+         JOIN card_holders h ON h.id = t.holder_id
+         WHERE tc.id = ? AND ${scope.sql}`,
+      )
+      .bind(objectId, ...scope.binds)
+      .first<{ ok: number }>()
+  } else if (eventType === 'booking_service') {
+    owned = await db
+      .prepare(
+        `SELECT 1 AS ok FROM opportunity_fulfillments f
+         JOIN card_holders h ON h.id = f.holder_id
+         WHERE f.id = ? AND ${scope.sql}`,
+      )
+      .bind(objectId, ...scope.binds)
+      .first<{ ok: number }>()
+  } else {
+    owned = await db
+      .prepare(
+        `SELECT 1 AS ok FROM opportunity_accounts a JOIN card_holders h ON h.id = a.holder_id
+         WHERE a.id = ? AND ${scope.sql}`,
+      )
+      .bind(objectId, ...scope.binds)
+      .first<{ ok: number }>()
+  }
   if (!owned) throw forbiddenOrNotFound('reminder_event')
 
   const existing = await db

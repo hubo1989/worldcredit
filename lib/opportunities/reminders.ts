@@ -496,12 +496,20 @@ export function reminderStateFromRow(row: {
 // fulfillments and are never fabricated here.
 // ---------------------------------------------------------------------------
 
-export type CalendarEventKind = 'cycle_expiry' | 'cycle_reset' | 'claim_window_open' | 'claim_window_deadline'
+export type CalendarEventKind =
+  | 'cycle_expiry'
+  | 'cycle_reset'
+  | 'claim_window_open'
+  | 'claim_window_deadline'
+  | 'task_deadline'
+  | 'reward_window'
+  | 'booking_service'
 
 export interface OpportunityCalendarEvent {
   event_key: string
   kind: CalendarEventKind
-  account_id: string
+  /** null for P2 task/booking events (they key on their own objects). */
+  account_id: string | null
   cycle_id: string | null
   title: string
   /** Civil date the event falls on, in the rule's own timezone. */
@@ -630,4 +638,111 @@ export async function buildCycleCalendarEvents(inputs: CycleEventInputs): Promis
   }
 
   return events
+}
+
+// ---------------------------------------------------------------------------
+// P2 events: task deadlines, reward windows and booking service times
+// (plan Task 22). Dates come from committed rows only — missing data yields
+// 待补充 flags instead of guessed events.
+// ---------------------------------------------------------------------------
+
+export type TaskCalendarEvent = OpportunityCalendarEvent & {
+  kind: 'task_deadline' | 'reward_window'
+  task_cycle_id: string
+}
+
+export type BookingCalendarEvent = OpportunityCalendarEvent & {
+  kind: 'booking_service'
+  fulfillment_id: string
+}
+
+/** Task deadline + expected reward window events (window only when satisfied). */
+export async function buildTaskCalendarEvents(params: {
+  task_cycle_id: string
+  title: string
+  deadline_at: string
+  expected_from_on: string | null
+  expected_until_before: string | null
+  satisfied: boolean
+  version: string
+}): Promise<TaskCalendarEvent[]> {
+  const events: TaskCalendarEvent[] = []
+  const deadlineDate = params.deadline_at.slice(0, 10)
+  if (deadlineDate) {
+    events.push({
+      event_key: await reminderEventKey({
+        type: 'task_deadline',
+        object_id: params.task_cycle_id,
+        cycle_or_grant_key: params.task_cycle_id,
+        deadline_before: deadlineDate,
+        version: params.version,
+      }),
+      kind: 'task_deadline',
+      account_id: null,
+      cycle_id: null,
+      task_cycle_id: params.task_cycle_id,
+      title: params.title,
+      local_date_on: deadlineDate,
+      time_zone: 'Asia/Shanghai',
+      deadline_before: deadlineDate,
+      action_hint: '任务统计截止',
+      needs_review: false,
+    })
+  }
+  // Reward window events only after manual satisfaction — a not-yet-reached
+  // task has no delivery to expect, so no guessed window event.
+  if (params.satisfied && params.expected_from_on) {
+    events.push({
+      event_key: await reminderEventKey({
+        type: 'reward_window',
+        object_id: params.task_cycle_id,
+        cycle_or_grant_key: params.task_cycle_id,
+        deadline_before: params.expected_until_before ?? null,
+        version: params.version,
+      }),
+      kind: 'reward_window',
+      account_id: null,
+      cycle_id: null,
+      task_cycle_id: params.task_cycle_id,
+      title: params.title,
+      local_date_on: params.expected_from_on,
+      time_zone: 'Asia/Shanghai',
+      deadline_before: params.expected_until_before ?? null,
+      action_hint: '奖励预计发放窗口（实际到账需手动记录）',
+      needs_review: false,
+    })
+  }
+  return events
+}
+
+/** Booking service-time events; only confirmed bookings generate reminders. */
+export async function buildBookingCalendarEvents(params: {
+  fulfillment_id: string
+  title: string
+  service_at: string
+  service_time_zone: string
+}): Promise<BookingCalendarEvent[]> {
+  const serviceDate = params.service_at.slice(0, 10)
+  if (!serviceDate) return []
+  return [
+    {
+      event_key: await reminderEventKey({
+        type: 'booking_service',
+        object_id: params.fulfillment_id,
+        cycle_or_grant_key: params.fulfillment_id,
+        deadline_before: serviceDate,
+        version: params.service_at,
+      }),
+      kind: 'booking_service',
+      account_id: null,
+      cycle_id: null,
+      fulfillment_id: params.fulfillment_id,
+      title: params.title,
+      local_date_on: serviceDate,
+      time_zone: params.service_time_zone,
+      deadline_before: serviceDate,
+      action_hint: '预约服务时间（完成或取消后在此记录结算）',
+      needs_review: false,
+    },
+  ]
 }

@@ -90,6 +90,10 @@ export interface BenefitUsageStats {
   /** Ledger additions (Task 13): cancellations and booking holds. */
   voided_count?: number
   reserved_count?: number
+  /** Fulfillment facts (Task 22): delivery states are NOT usage counts. */
+  claimed_count?: number
+  cancelled_bookings?: number
+  pending_settlements?: number
 }
 
 export interface PromoUsageStats {
@@ -416,15 +420,36 @@ export async function getBenefitUsageAnalytics(filters: AnalyticsFilters): Promi
      filters.to_month ? nextMonthStart(filters.to_month) : null],
   )
   if (error) throw new Error(error.message)
-  return (rows || []).map((r) => ({
-    benefit_id: r.benefit_id,
-    benefit_name: r.benefit_name,
-    quota: Number(r.quota) || 0,
-    used_count: Number(r.used_count) || 0,
-    usage_rate: Number(r.quota) > 0 ? Math.min(1, Number(r.used_count) / Number(r.quota)) : 0,
-    voided_count: Number(r.voided_count) || 0,
-    reserved_count: Number(r.reserved_count) || 0,
-  }))
+  const { data: fulfillments, error: fError } = await query<{
+    account_id: string; claimed: number; cancelled_bookings: number; pending_settlements: number
+  }>(
+    `SELECT f.account_id,
+            SUM(CASE WHEN f.kind = 'claim' THEN 1 ELSE 0 END) AS claimed,
+            SUM(CASE WHEN f.kind = 'booking' AND f.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_bookings,
+            SUM(CASE WHEN f.status = 'pending_settlement' THEN 1 ELSE 0 END) AS pending_settlements
+     FROM opportunity_fulfillments f
+     GROUP BY f.account_id`,
+  )
+  if (fError) throw new Error(fError.message)
+  const fulfillmentByAccount = new Map(
+    (fulfillments || []).map((r) => [r.account_id, r] as const),
+  )
+
+  return (rows || []).map((r) => {
+    const facts = fulfillmentByAccount.get(r.benefit_id)
+    return {
+      benefit_id: r.benefit_id,
+      benefit_name: r.benefit_name,
+      quota: Number(r.quota) || 0,
+      used_count: Number(r.used_count) || 0,
+      usage_rate: Number(r.quota) > 0 ? Math.min(1, Number(r.used_count) / Number(r.quota)) : 0,
+      voided_count: Number(r.voided_count) || 0,
+      reserved_count: Number(r.reserved_count) || 0,
+      claimed_count: Number(facts?.claimed ?? 0) || 0,
+      cancelled_bookings: Number(facts?.cancelled_bookings ?? 0) || 0,
+      pending_settlements: Number(facts?.pending_settlements ?? 0) || 0,
+    }
+  })
 }
 
 export async function getPromoUsageAnalytics(filters: AnalyticsFilters): Promise<PromoUsageStats[]> {
