@@ -13,6 +13,7 @@ export interface FakeDbTables {
   credit_cards: Row[]
   card_products: Row[]
   bills: Row[]
+  bill_import_drafts: Row[]
 }
 
 function compareRows(a: Row, b: Row, columns: string[]): number {
@@ -107,6 +108,22 @@ class FakeStatement {
       return { success: true }
     }
 
+    if (/^INSERT INTO bill_import_drafts/i.test(norm)) {
+      // INSERT INTO bill_import_drafts (id, created_by, card_id, source_type, parsed_payload, confidence)
+      // VALUES (?, ?, NULL, 'email', ?, ?) —— card_id 是字面量 NULL
+      tables.bill_import_drafts.push({
+        id: args[0],
+        created_by: args[1],
+        card_id: null,
+        source_type: args[2] === undefined ? 'email' : undefined,
+        parsed_payload: args[2],
+        confidence: args[3],
+      })
+      const row = tables.bill_import_drafts[tables.bill_import_drafts.length - 1]
+      row.source_type = 'email'
+      return { success: true }
+    }
+
     if (/^UPDATE bills/i.test(norm)) {
       const [bill_amount, min_payment, due_date, statement_date, status, id] = args
       const row = tables.bills.find(r => r.id === id)
@@ -130,6 +147,7 @@ export function createFakeD1(seed: Partial<FakeDbTables> = {}): FakeDb {
     credit_cards: [],
     card_products: [],
     bills: [],
+    bill_import_drafts: [],
     ...seed,
   }
   const db = {

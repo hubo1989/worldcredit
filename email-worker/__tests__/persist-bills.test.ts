@@ -319,3 +319,44 @@ describe('persistNestedBills', () => {
     expect(tables.credit_cards).toHaveLength(2)
   })
 })
+
+describe('归属不可信时绝不自动建卡（2026-10-16 民生 0872 回归）', () => {
+  it('回落默认持卡人 + 未知尾号：不建卡不写账单，落待确认草稿', async () => {
+    const { db, tables } = seed()
+    const scope = await loadHolderScope(db, 'u1')
+    expect(scope.userId).toBe('u1')
+
+    const result = await persistNestedBills(
+      db, scope,
+      [message({ label: 'minsheng.eml', headerName: null, bodyName: null })],
+      async () => parsedBill({ card_last4: '0872', bank_name: '中国民生银行' }),
+    )
+
+    expect(result.written).toHaveLength(0)
+    expect(result.skipped).toHaveLength(1)
+    expect(result.skipped[0].reason).toContain('待确认草稿')
+    // 不建卡、不写账单
+    expect(tables.credit_cards.filter((c: any) => c.card_number_last4 === '0872')).toHaveLength(0)
+    expect(tables.bills).toHaveLength(0)
+    // 草稿已保存（card_id 为空，等界面选卡确认）
+    const drafts = tables.bill_import_drafts ?? []
+    expect(drafts).toHaveLength(1)
+    expect(drafts[0].card_id).toBeNull()
+    expect(drafts[0].created_by).toBe('u1')
+  })
+
+  it('归属可信 + 未知尾号：仍然自动建卡（既有行为不回退）', async () => {
+    const { db, tables } = seed()
+    const scope = await loadHolderScope(db, 'u1')
+
+    const result = await persistNestedBills(
+      db, scope,
+      [message({ label: 'gm.eml', headerName: '高敏' })],
+      async () => parsedBill({ card_last4: '5678', bank_name: '招商银行' }),
+    )
+
+    expect(result.written).toHaveLength(1)
+    expect(tables.credit_cards.filter((c: any) => c.card_number_last4 === '5678')).toHaveLength(1)
+    expect(tables.bills).toHaveLength(1)
+  })
+})

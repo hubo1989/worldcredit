@@ -14,7 +14,7 @@
 import type { Env, AiConfig, BillParseResult, EmailParseLogRow } from './types'
 import { parseRawMessage, streamToBytes } from './mime'
 import { buildBundleLogPayload, processForwardedBundle } from './forwarded'
-import { findOrCreateCardForHolder, keepPaidStatus, loadHolderScope } from './bills'
+import { findOrCreateCardForHolder, keepPaidStatus, loadHolderScope, parkBillAsDraft } from './bills'
 import { extractHeaderDisplayName } from './mime'
 import { extractNameFromBody, resolveHolder } from './holders'
 
@@ -138,16 +138,26 @@ export default {
           return
       }
       let cardId: string | null = null
+      // 归属不可信（回落默认持卡人）时绝不自动建卡：凭猜测把新卡挂到某个人
+      // 名下就是 2026-10-16 民生 0872 挂错人的根因。落待确认草稿等人工选卡。
+      const trusted = resolution.source === 'header_name' || resolution.source === 'body_honorific'
       const created = await findOrCreateCardForHolder(db, {
         holderId: resolution.holderId,
         cardTail: aiResult.card_last4 ?? null,
         bankName: aiResult.bank_name ?? null,
         currency: aiResult.currency ?? null,
         statementDate: aiResult.statement_date ?? null,
+        allowCreate: trusted,
       })
       if (!created.ok) {
-          log.status = 'failed'
-          log.error_msg = created.reason
+          if (created.needsDraft) {
+            await parkBillAsDraft(db, userId, aiResult as unknown as Record<string, unknown>)
+            log.status = 'skipped'
+            log.error_msg = `${created.reason}｜草稿已保存`
+          } else {
+            log.status = 'failed'
+            log.error_msg = created.reason
+          }
           await writeLog(db, log)
           return
       }
