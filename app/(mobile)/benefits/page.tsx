@@ -159,6 +159,12 @@ ${preview.candidates.map((c) => `· ${c.name}`).join('\n')}
           >
             日历 / 提醒
           </a>
+          <a
+            href='/benefits/tasks'
+            className='flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full border border-d-border px-3.5 text-[12px] font-semibold text-d-muted'
+          >
+            任务 / 到账
+          </a>
         </div>
         {isAdmin && (
           <div className='flex shrink-0 gap-2'>
