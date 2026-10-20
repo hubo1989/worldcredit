@@ -1,9 +1,12 @@
-const js = require("@eslint/js");
-const tseslint = require("typescript-eslint");
-const reactHooks = require("eslint-plugin-react-hooks");
-const prettierConfig = require("eslint-config-prettier");
+// ESM flat config。项目根 package.json 的 "type" 会被 `npx vinext deploy`
+// 每次强制翻转成 "module"（工具副作用，见 docs/ 与会话记录），所以这里
+// 必须用 ESM 语法，不能依赖 require。
+import js from "@eslint/js";
+import tseslint from "typescript-eslint";
+import reactHooks from "eslint-plugin-react-hooks";
+import prettierConfig from "eslint-config-prettier";
 
-module.exports = tseslint.config(
+export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   prettierConfig,
