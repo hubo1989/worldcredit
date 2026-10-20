@@ -34,6 +34,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
   const [dueDay, setDueDay] = useState('')
   const [holderId, setHolderId] = useState('')
   const [note, setNote] = useState('')
+  const [bankAccount, setBankAccount] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -53,6 +54,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       setDueDay(String(existing.due_day))
       setHolderId(existing.holder_id || '')
       setNote(existing.note || '')
+      setBankAccount(existing.bank_account || '')
     } else {
       setName('')
       setCategory('rent')
@@ -61,6 +63,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       setDueDay('')
       setHolderId('')
       setNote('')
+      setBankAccount('')
     }
   }, [open, existing])
 
@@ -84,6 +87,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
         due_day: parsedDay,
         holder_id: holderId || null,
         note: note.trim() || null,
+        bank_account: bankAccount.trim() || null,
       }
       if (existing) await updateRecurringPayable(existing.id, payload)
       // created_by 会在服务端按会话 cookie 覆盖，这里带上只是满足入参形状
@@ -166,6 +170,13 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
             ]}
           />
         )}
+        <TextField
+          label="银行账号（可选）"
+          value={bankAccount}
+          onChange={e => setBankAccount(e.target.value)}
+          placeholder="还款/转账的收款账号"
+          helperText="保存后显示在固定支出卡片上，点击可复制"
+        />
         <TextArea
           label="备注（可选）"
           value={note}

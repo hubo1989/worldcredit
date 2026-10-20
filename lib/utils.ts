@@ -383,8 +383,40 @@ export interface BillsListCard {
   payableSource?: boolean
 }
 
-/** 账单页三种排序模式（对应顶部三个快捷切换栏）。 */
-export type BillsSortMode = 'nearest_due' | 'max_interest_free' | 'nearest_billing'
+/**
+ * 固定支出（房租/贷款等）还款后的下期状态（2026-10-21 规则）。
+ *
+ * 本期付清后周期滚动到下一期，按距下期还款日的远近分两态：
+ *   - ≥30 天：待出账——账单还没生成，出账日 = 还款日 − 30 天；
+ *   - <30 天：待还款——进入应付窗口，还款日 = 设置的每月应付日。
+ *
+ * 与信用卡「出账→还款」节奏对齐：出账前金额未定、不需要行动，
+ * 待出账态让用户不会把一个月后的应付误当成眼前要还的钱。
+ */
+export function payableNextCycleStatus(
+  dueDay: number,
+  period: string,
+  today: Date = new Date(),
+  statementLeadDays = 30
+): {
+  phase: 'awaiting_statement' | 'awaiting_payment'
+  /** awaiting_statement → 出账日；awaiting_payment → 还款日 */
+  date: Date
+  /** 距该日期的天数 */
+  days: number
+} {
+  // 下期还款日按「due_day + 下期账期」算（月末收拢：31 日 → 下月最后一天）
+  const due = payableDueDate(dueDay, nextPayablePeriodOf(period))
+  const days = diffInCalendarDays(due, today)
+  if (days >= statementLeadDays) {
+    const statementDate = addDays(due, -statementLeadDays)
+    return { phase: 'awaiting_statement', date: statementDate, days }
+  }
+  return { phase: 'awaiting_payment', date: due, days }
+}
+
+/** 账单页排序模式（对应顶部快捷切换栏）。最近账单日模式已移除——免息期排序已覆盖选卡场景。 */
+export type BillsSortMode = 'nearest_due' | 'max_interest_free'
 
 /**
  * 卡片剩余免息天数：今天刷卡 → 这笔交易落在下一期账单 → 到该期还款日的天数。
@@ -399,11 +431,6 @@ function interestFreeRank(card: BillsListCard, today: Date = new Date()): number
   return Math.max(0, diffInCalendarDays(new Date(card.nextDueDate), today))
 }
 
-/** 最近账单日：距下一次账单日的天数（升序 = 越近越前）。 */
-function billingDistanceRank(card: BillsListCard, today: Date = new Date()): number {
-  return daysUntilNextBilling(card.billingDay, today)
-}
-
 /**
  * 按模式比较两张卡片。
  *
@@ -411,8 +438,8 @@ function billingDistanceRank(card: BillsListCard, today: Date = new Date()): num
  *   分组**——这个模式回答的是「现在刷哪张卡最划算」，免息最长的排最前；
  *   逾期/待还卡当前欠款的压力和今天的新交易无关，分组会让 51 天的卡
  *   排到 41 天的卡后面。
- * - nearest_due / nearest_billing：保留「逾期 → 待还款 → 未出账单」大分组
- *   （欠钱的永远排前面），组内各自换轴（距还款日 / 距下次账单日升序）。
+ * - nearest_due：保留「逾期 → 待还款 → 未出账单」大分组（欠钱的永远排前面），
+ *   组内按距还款日升序。
  */
 export function compareBillsListCardsByMode(
   a: BillsListCard,
@@ -428,9 +455,6 @@ export function compareBillsListCardsByMode(
   const tierB = cardUrgencyRank(b.status)
   if (tierA !== tierB) return tierA - tierB
 
-  if (mode === 'nearest_billing') {
-    return billingDistanceRank(a, today) - billingDistanceRank(b, today)
-  }
   // nearest_due（默认）
   const ka = billsListSortKey(a, today)
   const kb = billsListSortKey(b, today)
@@ -491,8 +515,7 @@ export function unifiedBillSortKey(
  *
  * - max_interest_free：纯按今日刷卡免息天数降序，不分组（与
  *   compareBillsListCardsByMode 同口径）；固定支出无免息概念，恒排最后。
- * - nearest_due / nearest_billing：保留「逾期 → 待还 → 未出账单」大分组，
- *   组内换轴；固定支出在 nearest_billing 下也排最后（无账单日循环）。
+ * - nearest_due：保留「逾期 → 待还 → 未出账单」大分组，组内按距还款日升序。
  */
 export function compareUnifiedBills(
   a: BillsListCard,
@@ -511,13 +534,8 @@ export function compareUnifiedBills(
   const tierB = cardUrgencyRank(b.status)
   if (tierA !== tierB) return tierA - tierB
 
-  if (mode === 'nearest_due') {
-    return unifiedBillSortKey(a, today).distance - unifiedBillSortKey(b, today).distance
-  }
-  // nearest_billing：固定支出排组内最后
-  const da = 'payableSource' in a && a.payableSource ? Number.MAX_SAFE_INTEGER : billingDistanceRank(a, today)
-  const db = 'payableSource' in b && b.payableSource ? Number.MAX_SAFE_INTEGER : billingDistanceRank(b, today)
-  return da - db
+  // nearest_due（默认）
+  return unifiedBillSortKey(a, today).distance - unifiedBillSortKey(b, today).distance
 }
 
 /**

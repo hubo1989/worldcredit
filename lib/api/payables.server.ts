@@ -19,6 +19,8 @@ export interface RecurringPayable {
   due_day: number
   holder_id: string | null
   note: string | null
+  /** 还款/转账目标银行账号（选填，展示层一键复制） */
+  bank_account?: string | null
   is_active: number
   created_at: string
 }
@@ -31,6 +33,7 @@ export interface RecurringPayableInput {
   due_day: number
   holder_id?: string | null
   note?: string | null
+  bank_account?: string | null
 }
 
 /** 创建入参：created_by 由客户端带上、服务端按会话覆盖（与 createHolder 同约定）。 */
@@ -116,10 +119,11 @@ export async function createRecurringPayable(
   }
   const id = uuid()
   const { error } = await execute(
-    `INSERT INTO recurring_payables (id, created_by, name, category, amount, currency, due_day, holder_id, note, is_active, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+    `INSERT INTO recurring_payables (id, created_by, name, category, amount, currency, due_day, holder_id, note, bank_account, is_active, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     [id, input.created_by, input.name.trim(), input.category, input.amount,
-     input.currency || 'CNY', input.due_day, input.holder_id || null, input.note || null, now()]
+     input.currency || 'CNY', input.due_day, input.holder_id || null, input.note || null,
+     input.bank_account?.trim() || null, now()]
   )
   if (error) throw new Error(error.message)
   const created = await queryOne<RecurringPayable>('SELECT * FROM recurring_payables WHERE id = ?', [id])
@@ -133,7 +137,7 @@ export async function updateRecurringPayable(
 ): Promise<PayableWithStatus> {
   const fields: string[] = []
   const params: unknown[] = []
-  for (const key of ['name', 'category', 'amount', 'currency', 'due_day', 'holder_id', 'note', 'is_active'] as const) {
+  for (const key of ['name', 'category', 'amount', 'currency', 'due_day', 'holder_id', 'note', 'bank_account', 'is_active'] as const) {
     const value = (patch as Record<string, unknown>)[key]
     if (value !== undefined) {
       fields.push(`${key} = ?`)

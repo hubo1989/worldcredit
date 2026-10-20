@@ -482,7 +482,6 @@ export function BillsView(vm: BillsViewProps) {
           {([
             ['nearest_due', '最近需还款'],
             ['max_interest_free', '最大免息期'],
-            ['nearest_billing', '最近账单日'],
           ] as Array<[BillsSortMode, string]>).map(([mode, label]) => (
             <button
               key={mode}

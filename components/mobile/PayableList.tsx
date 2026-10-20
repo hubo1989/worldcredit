@@ -1,7 +1,7 @@
 'use client'
 
 import { categoryLabel, type PayableWithStatus } from '@/lib/api/payables'
-import { nextPayablePeriodOf, payableDueDate } from '@/lib/utils'
+import { payableNextCycleStatus } from '@/lib/utils'
 import { currencySymbol } from '@/lib/fx'
 import { ClockIcon, PlusIcon } from '@/components/icons/WcIcon'
 
@@ -22,18 +22,19 @@ export interface PayableRowProps {
 export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
   const paid = p.status === 'paid'
   const overdue = p.status === 'overdue'
-  // 已付清的不再显示「距离应付日 -N 天」这种负数——本期已经结清，
-  // 旧的 due_date 已无意义；展示下一期应付日。按「due_day + 下期账期」
-  // 重算而非 due_date 顺延一个月：setMonth 会把 10-31 溢出成 12-01，
-  // 收拢口径（31 日 → 下月只有 30 天时落在月末）要求落到 11-30。
-  const nextDueLabel = (() => {
-    const next = payableDueDate(p.due_day, nextPayablePeriodOf(p.period))
-    const mm = String(next.getMonth() + 1).padStart(2, '0')
-    const dd = String(next.getDate()).padStart(2, '0')
-    return `本期已付清 · 下期 ${mm}-${dd} 应付`
+  // 已付清后的下期状态（2026-10-21 规则）：距下期还款日 ≥30 天为「待出账」
+  //（出账日 = 还款日 − 30），不足 30 天为「待还款」。日期口径统一走
+  // payableNextCycleStatus（月末收拢：31 日 → 下月最后一天）。
+  const nextCycleLabel = (() => {
+    const next = payableNextCycleStatus(p.due_day, p.period)
+    const mm = String(next.date.getMonth() + 1).padStart(2, '0')
+    const dd = String(next.date.getDate()).padStart(2, '0')
+    return next.phase === 'awaiting_statement'
+      ? `本期已付清 · 待出账（出账日 ${mm}-${dd}）`
+      : `待还款 · 还款日 ${mm}-${dd}`
   })()
   const label = paid
-    ? nextDueLabel
+    ? nextCycleLabel
     : overdue
       ? '已逾期 ' + Math.abs(p.days_until_due) + ' 天'
       : p.days_until_due === 0
@@ -54,6 +55,16 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
           <p className='mt-1 block text-[11px] leading-4 text-d-muted'>
             每月 {p.due_day} 日 · 本期应付日 {p.due_date.slice(5)}
           </p>
+          {p.bank_account && (
+            <button
+              type='button'
+              onClick={() => { void navigator.clipboard?.writeText(p.bank_account!) }}
+              title='点击复制账号'
+              className='mt-0.5 block max-w-full truncate text-left text-[11px] leading-4 text-d-muted underline underline-offset-2'
+            >
+              账号 {p.bank_account}
+            </button>
+          )}
         </div>
         <button
           type='button'

@@ -197,7 +197,7 @@ describe('BILL-02 sort modes: compareBillsListCardsByMode', () => {
   it('[口径] max_interest_free 不分组：免息长的未结清卡排在免息短的待还款卡前面', () => {
     // 2026-10-20 用户回归：51 天的未出账单卡曾被「逾期→待还→未出账单」
     // 分组压到第 5 位，前面是 41/39 天的待还款卡。该模式回答「现在刷哪张卡」，
-    // 免息最长必须排最前，分组只在 nearest_due / nearest_billing 生效。
+    // 免息最长必须排最前，分组只在 nearest_due 生效。
     const longest = card('unissued', 27, [], { graceDays: 51, nextDueDate: '2026-12-04' })
     const unpaid41 = card('unpaid', 22, [{ due_date: '2026-10-14', computed_status: 'unpaid' }], {
       graceDays: 41, nextDueDate: '2026-10-25',
@@ -209,14 +209,6 @@ describe('BILL-02 sort modes: compareBillsListCardsByMode', () => {
       compareBillsListCardsByMode(a, b, 'max_interest_free', TODAY)
     )
     expect(sorted).toEqual([longest, unpaid41, unpaid39])
-  })
-
-  it('nearest_billing orders by days until next billing date ascending', () => {
-    const far = card('unissued', 28, [])
-    const near = card('unissued', 16, []) // 2 天后出账
-    const mid = card('unissued', 20, [])
-    const sorted = [far, near, mid].sort((a, b) => compareBillsListCardsByMode(a, b, 'nearest_billing', TODAY))
-    expect(sorted.map(c => c.billingDay)).toEqual([16, 20, 28])
   })
 
   it('nearest_due keeps the original urgency ordering (default mode)', () => {
