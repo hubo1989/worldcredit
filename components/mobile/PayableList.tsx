@@ -25,11 +25,11 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
   // 已付清后的下期状态（2026-10-21 规则）：距下期还款日 ≥30 天为「待出账」
   //（出账日 = 还款日 − 30），不足 30 天为「待还款」。日期口径统一走
   // payableNextCycleStatus（月末收拢：31 日 → 下月最后一天）。
+  const nextCycle = payableNextCycleStatus(p.due_day, p.period)
   const nextCycleLabel = (() => {
-    const next = payableNextCycleStatus(p.due_day, p.period)
-    const mm = String(next.date.getMonth() + 1).padStart(2, '0')
-    const dd = String(next.date.getDate()).padStart(2, '0')
-    return next.phase === 'awaiting_statement'
+    const mm = String(nextCycle.date.getMonth() + 1).padStart(2, '0')
+    const dd = String(nextCycle.date.getDate()).padStart(2, '0')
+    return nextCycle.phase === 'awaiting_statement'
       ? `本期已付清 · 待出账（出账日 ${mm}-${dd}）`
       : `待还款 · 还款日 ${mm}-${dd}`
   })()
@@ -107,7 +107,11 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
       <div
         className={
           'mt-3 flex items-center gap-1.5 text-[11px] font-semibold leading-4 ' +
-          (paid ? 'text-d-success-ink' : overdue ? 'text-d-danger-ink' : 'text-d-gold')
+          // 待还款（含已付清后进入下期应付窗口的）与信用卡待还款同为金黄色；
+          // 只有「待出账」才算安好状态用绿色。
+          (paid
+            ? nextCycle.phase === 'awaiting_statement' ? 'text-d-success-ink' : 'text-d-gold'
+            : overdue ? 'text-d-danger-ink' : 'text-d-gold')
         }
       >
         <ClockIcon size={14} />
