@@ -71,10 +71,45 @@ function normalizeCardTail(value: string | null | undefined): string {
   return (value ?? '').replace(/\D/g, '')
 }
 
-function pickStatementDay(statementDate: string | null | undefined): number {
-  if (!statementDate) return 10
-  const day = new Date(statementDate).getDate()
-  return Number.isFinite(day) && day >= 1 && day <= 31 ? day : 10
+/** 50 天启发式的基准：账单日到还款日的最长间隔（最长免息期）。 */
+export const BILLING_DAY_REFERENCE_GAP = 50
+/** 50 天启发式的容差：偏差在这个范围内才用收件日期当账单日。 */
+export const BILLING_DAY_GAP_TOLERANCE = 15
+
+/**
+ * 从一封账单邮件推卡账单日（1-31），推不出返回 null。
+ *
+ * 证据强度从高到低：
+ *   1. 正文明确写出的「账单日 X」——只认白纸黑字，不从账期/还款日推算
+ *      （邮储 3293 曾把周期首日 22 当账单日，就是推算的锅）；
+ *   2. 本期出账日（Statement Date）的「日」——出账日就是账单日本身；
+ *   3. 50 天启发式（仅当 1、2 都缺）：还款日 − 50 天 ≈ 最早可能出账日，
+ *      收件日期与它偏差 ≤15 天说明收件日确实落在出账窗口，用收件日的「日」
+ *      当账单日；偏差 >15 天说明假设不成立，宁可返回 null 让用户手填——
+ *      默认值污染（邮储 0726/2891 被填成默认 10）就是这么来的。
+ */
+export function deriveBillingDayFromEmail(params: {
+  statementDay?: number | null
+  statementDate?: string | null
+  dueDate?: string | null
+  receivedDate?: string | null
+}): number | null {
+  const { statementDay, statementDate, dueDate, receivedDate } = params
+  if (typeof statementDay === 'number' && statementDay >= 1 && statementDay <= 31) {
+    return Math.trunc(statementDay)
+  }
+  if (statementDate) {
+    const day = new Date(statementDate).getDate()
+    if (day >= 1 && day <= 31) return day
+  }
+  if (!dueDate || !receivedDate) return null
+  const due = new Date(dueDate)
+  const received = new Date(receivedDate)
+  if (Number.isNaN(due.getTime()) || Number.isNaN(received.getTime())) return null
+  const gapDays = Math.round((due.getTime() - received.getTime()) / 86_400_000)
+  if (Math.abs(gapDays - BILLING_DAY_REFERENCE_GAP) > BILLING_DAY_GAP_TOLERANCE) return null
+  const day = received.getDate()
+  return day >= 1 && day <= 31 ? day : null
 }
 
 /**
@@ -132,6 +167,11 @@ export interface FindOrCreateCardParams {
   holderId: string
   cardTail: string | null
   statementDate: string | null
+  /** 正文明确写出的「账单日」数值（1-31），最强证据。 */
+  statementDay?: number | null
+  /** 本期还款日 + 邮件收件日期，合成 50 天启发式的输入。 */
+  dueDate?: string | null
+  receivedDate?: string | null
   /** AI 解出的银行名，用于匹配卡产品；缺失则不建卡。 */
   bankName: string | null
   /** AI 解出的币种，用于在同银行多产品里排除币种不符的候选。 */
@@ -184,12 +224,29 @@ export async function findOrCreateCardForHolder(
     }
   }
 
+  // 账单日必须有依据才建卡：正文明示的账单日 > 本期出账日 > 50 天启发式。
+  // 三者都缺时宁可落待确认草稿让用户手填，也不写默认值——邮储 0726/2891 的
+  // 卡档账单日 10 就是旧逻辑「无依据默认 10」的污染。
+  const billingDay = deriveBillingDayFromEmail({
+    statementDay: params.statementDay ?? null,
+    statementDate: params.statementDate,
+    dueDate: params.dueDate ?? null,
+    receivedDate: params.receivedDate ?? null,
+  })
+  if (!billingDay) {
+    return {
+      ok: false,
+      reason: '邮件未给出账单日，也无法按「还款日−50 天±15 天」用收件日期推定，已存入待确认草稿（请在界面确认时填写账单日）',
+      needsDraft: true,
+    }
+  }
+
   const cardId = crypto.randomUUID()
   // 额度暂记 0：AI 结果里没有额度字段，宁可留空等用户补，也不猜一个数。
   // 币种不落库在这里——它由 card_product 决定，所以上面必须挑对产品。
   await db.prepare(
     'INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type) VALUES (?, ?, ?, ?, 0, ?, ?, ?)'
-  ).bind(cardId, params.holderId, product.id, tail, pickStatementDay(params.statementDate), 'active', 'credit').run()
+  ).bind(cardId, params.holderId, product.id, tail, billingDay, 'active', 'credit').run()
 
   return { ok: true, cardId, created: true }
 }
@@ -296,6 +353,64 @@ export async function upsertBillForCard(
 }
 
 /**
+ * 用本期账单证据同步卡档账单日（直发与附件路径共用）。
+ *
+ * 卡档账单日残留旧值（民生 9765 的 4 月旧账期值、邮储的默认 10）的根因之一
+ * 是账单日只在「建卡」时写一次，之后每期账单再准也不回写。这里在每期账单
+ * 落库后回写，但要求至少一个客观日期证据与候选值互相印证：
+ *   - 本期出账日（statement_date）的「日」== 候选值；或
+ *   - 历史账单里有一期出账日的「日」== 候选值（连续 2 期相同）。
+ * 只有正文明示的「账单日 X」而没有出账日佐证时不更新——AI 幻觉单证据不配
+ * 改卡档（Chase 通知邮件的 "as of Oct 16" 就是这类污染源）。
+ *
+ * @returns 是否更新了卡档（供日志记录）。
+ */
+export async function syncBillingDayFromBill(
+  db: D1Database,
+  cardId: string,
+  parsed: BillParseResult
+): Promise<boolean> {
+  const statementDateDay = parsed.statement_date
+    ? new Date(parsed.statement_date).getDate()
+    : null
+  const explicit = parsed.statement_day
+  const candidate =
+    typeof explicit === 'number' && explicit >= 1 && explicit <= 31
+      ? Math.trunc(explicit)
+      : statementDateDay
+  if (!candidate || candidate < 1 || candidate > 31) return false
+
+  const card = await db
+    .prepare('SELECT billing_day FROM credit_cards WHERE id = ?')
+    .bind(cardId)
+    .first<{ billing_day: number }>()
+  if (!card || card.billing_day === candidate) return false
+
+  const currentConfirms = statementDateDay === candidate
+  let previousConfirms = false
+  if (parsed.bill_month) {
+    const prev = await db
+      .prepare(
+        `SELECT statement_date FROM bills
+         WHERE card_id = ? AND bill_month < ? AND statement_date IS NOT NULL
+         ORDER BY bill_month DESC LIMIT 6`
+      )
+      .bind(cardId, parsed.bill_month)
+      .all<{ statement_date: string }>()
+    previousConfirms = (prev.results || []).some(
+      row => new Date(row.statement_date).getDate() === candidate
+    )
+  }
+  if (!currentConfirms && !previousConfirms) return false
+
+  await db
+    .prepare('UPDATE credit_cards SET billing_day = ? WHERE id = ? AND billing_day != ?')
+    .bind(candidate, cardId, candidate)
+    .run()
+  return true
+}
+
+/**
  * 把顶层转发包里的 .eml 附件逐个拆成独立的嵌套账单邮件。
  *
  * 每个嵌套 .eml 都当成一封完整邮件重新走 parseRawMessage：它自己可能还是 multipart，
@@ -317,6 +432,7 @@ export function extractNestedBillMessages(attachments: RawAttachment[]): NestedB
         subject: decodeMimeHeaderValue(parsed.headers.subject) || null,
         from: decodeMimeHeaderValue(parsed.headers.from) || null,
         to: parsed.headers.to,
+        date: parsed.headers.date ?? null,
         text: parsed.text,
         headerName: extractHeaderDisplayName(parsed.headers.to),
         // 部分银行（如农行）只在正文写「尊敬的X先生/女士」，To 头里没有姓名
@@ -325,7 +441,7 @@ export function extractNestedBillMessages(attachments: RawAttachment[]): NestedB
     } catch {
       // 单封坏件不该拖垮整个包，记一条空结果由上层按「无正文」跳过
       messages.push({
-        label, subject: null, from: null, to: null, text: '', headerName: null, bodyName: null,
+        label, subject: null, from: null, to: null, date: null, text: '', headerName: null, bodyName: null,
       })
     }
   }
@@ -397,6 +513,9 @@ export async function persistNestedBills(
       holderId: resolution.holderId,
       cardTail: parsed.card_last4 ?? null,
       statementDate: parsed.statement_date ?? null,
+      statementDay: parsed.statement_day ?? null,
+      dueDate: parsed.due_date ?? null,
+      receivedDate: message.date,
       bankName: parsed.bank_name ?? null,
       currency: parsed.currency ?? null,
       // 归属不可信时绝不自动建卡（会挂到默认持卡人头上）；落草稿等人工确认。
@@ -420,6 +539,8 @@ export async function persistNestedBills(
       skipped.push({ label: message.label, reason: outcome.reason ?? '归属无法确认，保留原值' })
       continue
     }
+    // 每期账单落库后回写卡档账单日（有出账日证据互相印证才动，见函数注释）
+    const billingDayUpdated = await syncBillingDayFromBill(db, card.cardId, parsed)
     written.push({
       holderId: resolution.holderId,
       holderName: scope.holders.find(h => h.id === resolution.holderId)?.name ?? '',
@@ -427,6 +548,7 @@ export async function persistNestedBills(
       billId: outcome.billId,
       aiResult: parsed,
       matchSource: resolution.source,
+      billingDayUpdated,
     })
   }
 

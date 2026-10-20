@@ -325,6 +325,42 @@ export function daysUntilNextBilling(billingDay: number, today: Date = new Date(
   return diffInCalendarDays(nextBillingDateOf(billingDay, today), today)
 }
 
+/**
+ * 「已过账单日但没收到新账单」提醒（2026-10-20 规则）。
+ *
+ * 判定：最新一期账单（latestBillMonth）的下一期出账日 = 账单日落在
+ * latestBillMonth+1 的那个月；该日期已过 graceDays 天（默认 3 天，容忍账单
+ * 邮件晚到）而系统里还没有那一期账单，说明账单至今没进系统——可能是邮件
+ * 没转发、解析失败或银行没发。返回已过出账日的天数（>0），不满足返回 null。
+ *
+ * 基准取「下一期」而不是「本月」：账单落后两个月以上时（连续几期没收到），
+ * 「本月账单日过了没」会漏报——10 月的账单日还没到，但 9 月那期早就该到了。
+ *
+ * 从未收过账单的卡（latestBillMonth 为空）不提醒：没有基线，出账时间
+ * 本来就不确定，提醒只会是噪音。
+ */
+export function missingStatementDays(
+  billingDay: number,
+  latestBillMonth: string | null,
+  today: Date = new Date(),
+  graceDays = 3
+): number | null {
+  if (!latestBillMonth) return null
+  const [year, month] = latestBillMonth.split('-').map(Number)
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null
+  // 下一期出账月：latestBillMonth + 1 个月
+  const nextMonth = month === 12 ? new Date(year + 1, 0, 1) : new Date(year, month, 1)
+  // 账单日大于当月天数时按当月最后一天算（与 nextBillingDateOf 同口径）
+  const day = Math.min(
+    Number.isFinite(billingDay) && billingDay >= 1 ? Math.min(billingDay, 31) : 1,
+    lastDayOfMonth(nextMonth).getDate()
+  )
+  const expected = new Date(nextMonth.getFullYear(), nextMonth.getMonth(), day)
+  // diffInCalendarDays(expected, today) 是 expected 距今天的差，取负数 = 已过天数
+  const daysPast = -diffInCalendarDays(expected, today)
+  return daysPast > graceDays ? daysPast : null
+}
+
 /** 账单页排序所需的最小卡片形状（便于单测，不依赖完整 RPC 类型）。 */
 export interface BillsListCard {
   status: CardUrgencyStatus

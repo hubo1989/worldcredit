@@ -396,9 +396,28 @@ export function extractHeaderDisplayName(value: string | null | undefined): stri
 
 // ─── HTML 去标签 ──────────────────────────────────────────────────────────────
 
-/** Very naive HTML tag stripper */
+/** 匹配「带 display:none / visibility:hidden 的元素及其内容」的单层正则。 */
+const HIDDEN_ELEMENT_RE = /<(\w+)[^>]*style\s*=\s*["'][^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^"']*["'][^>]*>[\s\S]*?<\/\1\s*>/gi
+
+/**
+ * Very naive HTML tag stripper.
+ *
+ * 解析用的是「浏览器可见内容」口径，两类不可见内容必须先剔除，否则会污染解析：
+ *   1. HTML 注释——邮储 0726 把整段 2025-04 旧模板（含 ¥106.25、2025年04月27日）
+ *      包在 <!-- --> 里，浏览器不渲染，但去标签后旧日期会混进正文，AI 从混合
+ *      文本里抽日期必然抽错；
+ *   2. display:none / visibility:hidden 的元素——同属不可见，尽力按标签配对删块
+ *      （单层；嵌套同标签的隐藏块多删一轮，循环到长度稳定为止）。
+ */
 function stripHtml(html: string): string {
-  return html
+  let cleaned = html
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+  for (let i = 0; i < 5; i++) {
+    const next = cleaned.replace(HIDDEN_ELEMENT_RE, ' ')
+    if (next.length === cleaned.length) break
+    cleaned = next
+  }
+  return cleaned
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')

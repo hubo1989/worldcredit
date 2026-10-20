@@ -14,7 +14,13 @@
 import type { Env, AiConfig, BillParseResult, EmailParseLogRow } from './types'
 import { parseRawMessage, streamToBytes } from './mime'
 import { buildBundleLogPayload, processForwardedBundle } from './forwarded'
-import { findOrCreateCardForHolder, keepPaidStatus, loadHolderScope, parkBillAsDraft } from './bills'
+import {
+  findOrCreateCardForHolder,
+  loadHolderScope,
+  parkBillAsDraft,
+  syncBillingDayFromBill,
+  upsertBillForCard,
+} from './bills'
 import { extractHeaderDisplayName } from './mime'
 import { extractNameFromBody, resolveHolder } from './holders'
 
@@ -100,6 +106,16 @@ export default {
       const aiResult = await parseBillWithAI(aiConfig, emailBody)
       log.raw_ai_response = JSON.stringify(aiResult)
 
+      // 邮件类型门禁：自动扣款通知 / 还款提醒不是新一期账单。Chase 7491 的
+      // 2026-10 重复账单就是 "automatic payment scheduled" 通知被当账单建出来的
+      //（金额、到期日与 9 月那行完全相同）。AI 没给 email_kind 时退回 is_bill 判定。
+      if (aiResult.email_kind && aiResult.email_kind !== 'statement') {
+        log.status = 'skipped'
+        log.error_msg = `非账单邮件（email_kind=${aiResult.email_kind}），不建账单`
+        await writeLog(db, log)
+        return
+      }
+
       // 0 元账单（本期已还清）是合法数据：bill_amount 用 == null 判空而不是 falsy，
       // 否则 !0 会把应还 0 元的账单误判成缺字段跳过。due_date 同理——无需还款
       // 就没有还款截止日，金额为 0 时放宽。
@@ -147,6 +163,9 @@ export default {
         bankName: aiResult.bank_name ?? null,
         currency: aiResult.currency ?? null,
         statementDate: aiResult.statement_date ?? null,
+        statementDay: aiResult.statement_day ?? null,
+        dueDate: aiResult.due_date ?? null,
+        receivedDate: parsedTop.headers.date ?? null,
         allowCreate: trusted,
       })
       if (!created.ok) {
@@ -171,37 +190,17 @@ export default {
      cardNote += `归属依据：${sourceLabel[resolution.source] ?? resolution.source}；`
 
       // 7. Upsert bill (idempotent: unique on card_id + bill_month)
-      // 必须连 status 一起读：重发邮件不能把已还清的账单打回未还款
-      // 0 元账单的 due_date 兜底：无需还款就没有截止日，但 bills.due_date 是
-      // NOT NULL，缺省时用账单日（或月末）兜底；status 直接置 paid（应还 0 元 = 已还清）。
-      const effectiveDueDate = aiResult.due_date ?? aiResult.statement_date ?? (aiResult.bill_month + '-28')
-      const existing = await db.prepare(
-        'SELECT id, status FROM bills WHERE card_id = ? AND bill_month = ?'
-      ).bind(cardId, aiResult.bill_month).first<{ id: string; status: string | null }>()
+      // 与附件路径共用 upsertBillForCard：0 元账单的 due_date 兜底、重发邮件不把
+      // 已还清账单打回未还款（keepPaidStatus）这些口径必须两条路径一致，直发路径
+      // 曾经自带一份内联 SQL，非 0 元重发时会把 paid 覆盖回 unpaid。
+      const outcome = await upsertBillForCard(db, cardId, aiResult, { trusted })
+      const billId = outcome.billId
 
-      // 应还 0 元的账单天然是已还清状态，不能标 unpaid 进待还款统计
-      const initialStatus = zeroBill ? 'paid' : 'unpaid'
-
-      let billId: string
-      if (existing) {
-        billId = existing.id
-        await db.prepare(
-          'UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?, status = ? WHERE id = ?'
-        ).bind(
-          Number(aiResult.bill_amount),
-          aiResult.min_payment != null ? Number(aiResult.min_payment) : null,
-          effectiveDueDate, aiResult.statement_date ?? null,
-          zeroBill ? keepPaidStatus(existing.status) : initialStatus, billId
-        ).run()
-      } else {
-        billId = crypto.randomUUID()
-        await db.prepare(
-          'INSERT INTO bills (id, card_id, bill_month, bill_amount, min_payment, due_date, statement_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(
-          billId, cardId, aiResult.bill_month, Number(aiResult.bill_amount),
-          aiResult.min_payment != null ? Number(aiResult.min_payment) : null,
-          effectiveDueDate, aiResult.statement_date ?? null, initialStatus
-        ).run()
+      // 每期账单落库后回写卡档账单日（有出账日证据互相印证才动），
+      // 解决「账单日只在建卡时写一次、之后永远残留旧值」的问题。
+      const billingDayUpdated = await syncBillingDayFromBill(db, cardId, aiResult)
+      if (billingDayUpdated) {
+        cardNote += '已按本期出账日修正卡档账单日；'
       }
 
       // 8. Write success log
@@ -285,12 +284,20 @@ async function loadAiConfig(db: D1Database): Promise<AiConfig> {
 // ─── OpenAI bill parser ───────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `你是银行账单解析助手。从邮件内容中提取信用卡账单信息，以 JSON 格式返回：
-{"is_bill":true,"bank_name":"","card_last4":"","bill_amount":0,"min_payment":null,"due_date":"YYYY-MM-DD","bill_month":"YYYY-MM","statement_date":null,"currency":"CNY","confidence":0.9}
+{"is_bill":true,"email_kind":"statement","bank_name":"","card_last4":"","bill_amount":0,"min_payment":null,"due_date":"YYYY-MM-DD","bill_month":"YYYY-MM","statement_date":null,"statement_day":null,"currency":"CNY","confidence":0.9}
 字段 card_last4 请填邮件中出现的"卡号/账户结尾"完整数字，不要截断：
 - 大陆/香港卡通常是末 4 位，如 "1234"
 - American Express 的账户结尾是 5 位，如 "93001"，请原样填 5 位
 - 如邮件明确给出更长结尾（如 6 位 "671006"），也请原样填写
 不要把它补零或改写。若邮件中没有出现任何卡号/账户结尾，填 null。
+email_kind 是邮件类型，按实际内容选：
+- "statement"：本期账单/电子对账单（含本期应还金额和还款日）
+- "autopay_scheduled"：自动还款/扣款计划通知（如 "automatic payment scheduled"）
+- "payment_reminder"：还款提醒/催缴通知
+- "other"：营销或其他
+只有 email_kind 是 "statement" 时 is_bill 才为 true；自动扣款通知、还款提醒即使提到金额和还款日，也不是新一期账单，is_bill 必须为 false（它们对应的那期账单已由真正的账单邮件建过，再解析会造出重复账单）。
+statement_date 只在邮件明确给出本期出账日/Statement Date（完整日期）时填写。注意：自动扣款通知里的 "Statement balance as of Oct 16" 不是出账日，不要填进 statement_date。
+statement_day 只在邮件正文明确写出「账单日」及其数值（如「账单日 09」「账单日：每月21日」「Statement day: 22」）时填 1-31 的整数。不要从账期起止日期、还款日或 statement_date 推算；没有就填 null。
 如果不是账单邮件，返回 {"is_bill": false}
 只返回 JSON。`
 

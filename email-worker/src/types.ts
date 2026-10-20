@@ -18,6 +18,18 @@ export interface BillParseResult {
   due_date?: string
   bill_month?: string
   statement_date?: string | null
+  /**
+   * 邮件正文明确写出的「账单日」数值（1-31，如「账单日 09」「账单日：每月21日」）。
+   * 只认白纸黑字的数值，禁止从账期起止日或还款日推算——邮储 3293 曾把周期首日
+   * 22 当账单日写进卡档，就是推算出来的错值。
+   */
+  statement_day?: number | null
+  /**
+   * 邮件类型：statement=本期账单/电子对账单；autopay_scheduled=自动还款/扣款
+   * 计划通知；payment_reminder=还款提醒；other=其他。非 statement 不建账单
+   * （Chase 7491 的 2026-10 重复账单就是 autopay 通知被当成了账单）。
+   */
+  email_kind?: 'statement' | 'autopay_scheduled' | 'payment_reminder' | 'other' | null
   currency?: string
   confidence?: number
 }
@@ -86,6 +98,8 @@ export interface NestedBillMessage {
   from: string | null
   /** 嵌套邮件的 To 头原文。 */
   to: string | null
+  /** 嵌套邮件的 Date 头原文（RFC 2822），50 天启发式用它当收件日期。 */
+  date: string | null
   text: string
   /** 从 To 头里解出的显示名（如「张改菊 女士」），取不到为 null。 */
   headerName: string | null
@@ -102,6 +116,8 @@ export interface HolderScopedBill {
   aiResult: BillParseResult
   /** 记录这条账单的归属依据，便于排查「为什么算到他头上」。 */
   matchSource: HolderMatchSource
+  /** 本期账单的证据是否触发了卡档账单日回写。 */
+  billingDayUpdated?: boolean
 }
 
 export interface ForwardedBundleOutcome {

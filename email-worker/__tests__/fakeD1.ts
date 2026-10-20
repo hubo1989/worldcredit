@@ -61,6 +61,11 @@ class FakeStatement {
     }
 
     if (/FROM credit_cards/i.test(norm)) {
+      // syncBillingDayFromBill 按主键读卡；建卡路径按 持卡人+尾号 找卡
+      if (/WHERE id = \?/i.test(norm)) {
+        const results = tables.credit_cards.filter(r => r.id === args[0])
+        return { results: results.slice(0, 1) as T[], success: true }
+      }
       const results = tables.credit_cards.filter(
         r => r.holder_id === args[0] && r.card_number_last4 === args[1]
       )
@@ -68,6 +73,17 @@ class FakeStatement {
     }
 
     if (/FROM bills/i.test(norm)) {
+      // syncBillingDayFromBill 找「本期之前、有出账日」的历史账单
+      if (/bill_month < \?/i.test(norm)) {
+        const results = tables.bills
+          .filter(
+            r => r.card_id === args[0] &&
+              String(r.bill_month) < String(args[1]) &&
+              r.statement_date != null
+          )
+          .sort((a, b) => compareRows(b, a, ['bill_month']))
+        return { results: results.slice(0, 6) as T[], success: true }
+      }
       const results = tables.bills.filter(r => r.card_id === args[0] && r.bill_month === args[1])
       return { results: results.slice(0, 1) as T[], success: true }
     }
@@ -129,6 +145,16 @@ class FakeStatement {
       const row = tables.bills.find(r => r.id === id)
       if (!row) throw new Error('FakeD1 UPDATE 未命中账单: ' + String(id))
       Object.assign(row, { bill_amount, min_payment, due_date, statement_date, status })
+      return { success: true }
+    }
+
+    if (/^UPDATE credit_cards SET billing_day/i.test(norm)) {
+      // syncBillingDayFromBill 的回写：SET billing_day = ? WHERE id = ? AND billing_day != ?
+      const [billingDay, id, notDay] = args
+      const row = tables.credit_cards.find(r => r.id === id)
+      if (!row) throw new Error('FakeD1 UPDATE credit_cards 未命中: ' + String(id))
+      if (row.billing_day === notDay) return { success: true }
+      row.billing_day = billingDay
       return { success: true }
     }
 

@@ -226,3 +226,44 @@ describe('parseRawMessage: multipart 切分', () => {
     expect(atts[0].contentType).toBe('application/octet-stream')
   })
 })
+
+describe('parseRawMessage: HTML 不可见内容剔除（邮储 0726 回归）', () => {
+  // 只有 text/html 部件时正文才走 stripHtml
+  const htmlMail = (html: string) =>
+    parseRawMessage(
+      raw([
+        'From: a@b.com',
+        'To: c@d.com',
+        'Content-Type: multipart/alternative; boundary="BND"',
+        '',
+        '--BND',
+        'Content-Type: text/html; charset="utf-8"',
+        '',
+        html,
+        '--BND--',
+        '',
+      ])
+    )
+
+  it('<!-- --> 注释里的旧模板不混进正文（2025-04 旧金额/旧日期必须消失）', () => {
+    const parsed = htmlMail(
+      '<!-- 旧模板：尊敬的客户，您的账单已出，应还金额 ¥106.25，到期还款日 2025年04月27日 -->' +
+      '<p>尊敬的客户，您的账单日 09，本期应还金额 ¥85.40，到期还款日 2026-09-29</p>'
+    )
+    expect(parsed.text).toContain('账单日 09')
+    expect(parsed.text).toContain('2026-09-29')
+    // 注释内容在浏览器不可见，正文必须与用户看到的一致
+    expect(parsed.text).not.toContain('106.25')
+    expect(parsed.text).not.toContain('2025')
+  })
+
+  it('display:none / visibility:hidden 的元素同样被剔除', () => {
+    const parsed = htmlMail(
+      '<div style="display:none">隐藏的旧账期 2025-04-27</div>' +
+      '<div><span style="visibility: hidden">invisible 99.99</span>本期应还 ¥12.34</div>'
+    )
+    expect(parsed.text).toContain('本期应还 ¥12.34')
+    expect(parsed.text).not.toContain('2025-04-27')
+    expect(parsed.text).not.toContain('99.99')
+  })
+})
