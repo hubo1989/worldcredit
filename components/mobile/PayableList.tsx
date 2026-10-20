@@ -2,6 +2,7 @@
 
 import { categoryLabel, type PayableWithStatus } from '@/lib/api/payables'
 import { payableNextCycleStatus } from '@/lib/utils'
+import { badgeToneClass, type BillBadgeTone } from '@/lib/bills-view-model'
 import { currencySymbol } from '@/lib/fx'
 import { ClockIcon, PlusIcon } from '@/components/icons/WcIcon'
 
@@ -18,28 +19,47 @@ export interface PayableRowProps {
   onPay: (payable: PayableWithStatus) => void
 }
 
-/** 单条固定支出卡。从 PayableList 拆出：账单页现在把固定支出混进主列表统一排序。 */
+/**
+ * 单条固定支出卡。从 PayableList 拆出：账单页现在把固定支出混进主列表统一排序。
+ *
+ * 状态徽章与信用卡卡片同构（右上角、soft 底 + ink 文字）：
+ *   已逾期(danger) / 待还款·今天应付(warn) / 待出账(success)。
+ * 滚动模型（服务端 resolveDisplayPeriod）保证任一时刻卡片只呈现一期：
+ * 「已登记」只可能出现在待出账态，待还款态一定是可登记付款的未付期。
+ */
 export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
   const paid = p.status === 'paid'
   const overdue = p.status === 'overdue'
-  // 已付清后的下期状态（2026-10-21 规则）：距下期还款日 ≥30 天为「待出账」
-  //（出账日 = 还款日 − 30），不足 30 天为「待还款」。日期口径统一走
-  // payableNextCycleStatus（月末收拢：31 日 → 下月最后一天）。
-  const nextCycle = payableNextCycleStatus(p.due_day, p.period)
-  const nextCycleLabel = (() => {
-    const mm = String(nextCycle.date.getMonth() + 1).padStart(2, '0')
-    const dd = String(nextCycle.date.getDate()).padStart(2, '0')
-    return nextCycle.phase === 'awaiting_statement'
-      ? `本期已付清 · 待出账（出账日 ${mm}-${dd}）`
-      : `待还款 · 还款日 ${mm}-${dd}`
-  })()
-  const label = paid
-    ? nextCycleLabel
-    : overdue
-      ? '已逾期 ' + Math.abs(p.days_until_due) + ' 天'
+
+  // 右上角状态徽章（与信用卡账单的待还款/已结清徽章同位置同色系）
+  const badge: { text: string; tone: BillBadgeTone } = overdue
+    ? { text: `已逾期 ${Math.abs(p.days_until_due)} 天`, tone: 'danger' }
+    : paid
+      ? { text: '待出账', tone: 'success' }
       : p.days_until_due === 0
-        ? '今天应付'
-        : '距离应付日 ' + p.days_until_due + ' 天'
+        ? { text: '今天应付', tone: 'warn' }
+        : { text: '待还款', tone: 'warn' }
+
+  // 底部细节行：待出账给出下期出账日（还款日 − 30），其余给本期应付日
+  const detail = (() => {
+    const due = p.due_date.slice(5)
+    if (paid) {
+      const next = payableNextCycleStatus(p.due_day, p.period)
+      const mm = String(next.date.getMonth() + 1).padStart(2, '0')
+      const dd = String(next.date.getDate()).padStart(2, '0')
+      return `本期已付清 · 下期出账日 ${mm}-${dd}`
+    }
+    if (overdue) return `应付日 ${due}，已逾期 ${Math.abs(p.days_until_due)} 天`
+    if (p.days_until_due === 0) return `今天应付（${due}）`
+    return `距离应付日 ${p.days_until_due} 天（${due}）`
+  })()
+
+  const detailTone = paid
+    ? 'text-d-success-ink'
+    : overdue
+      ? 'text-d-danger-ink'
+      : 'text-d-gold'
+
   return (
     <div className='rounded-2xl border border-d-border bg-d-surface p-4'>
       <div className='flex items-start justify-between gap-2'>
@@ -53,7 +73,7 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
             </span>
           </div>
           <p className='mt-1 block text-[11px] leading-4 text-d-muted'>
-            每月 {p.due_day} 日 · 本期应付日 {p.due_date.slice(5)}
+            每月 {p.due_day} 日
           </p>
           {p.bank_account && (
             <button
@@ -66,14 +86,24 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
             </button>
           )}
         </div>
-        <button
-          type='button'
-          aria-label='编辑固定支出'
-          onClick={() => onEdit(p)}
-          className='shrink-0 text-[11px] font-semibold text-d-muted'
-        >
-          编辑
-        </button>
+        <div className='flex shrink-0 items-center gap-2'>
+          <button
+            type='button'
+            aria-label='编辑固定支出'
+            onClick={() => onEdit(p)}
+            className='text-[11px] font-semibold text-d-muted'
+          >
+            编辑
+          </button>
+          <span
+            className={
+              'whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-bold leading-5 ' +
+              badgeToneClass(badge.tone)
+            }
+          >
+            {badge.text}
+          </span>
+        </div>
       </div>
 
       <div className='mt-2.5 flex items-end justify-between gap-3'>
@@ -106,16 +136,11 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
 
       <div
         className={
-          'mt-3 flex items-center gap-1.5 text-[11px] font-semibold leading-4 ' +
-          // 待还款（含已付清后进入下期应付窗口的）与信用卡待还款同为金黄色；
-          // 只有「待出账」才算安好状态用绿色。
-          (paid
-            ? nextCycle.phase === 'awaiting_statement' ? 'text-d-success-ink' : 'text-d-gold'
-            : overdue ? 'text-d-danger-ink' : 'text-d-gold')
+          'mt-3 flex items-center gap-1.5 text-[11px] font-semibold leading-4 ' + detailTone
         }
       >
         <ClockIcon size={14} />
-        {label}
+        {detail}
       </div>
     </div>
   )

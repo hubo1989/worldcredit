@@ -15,6 +15,8 @@ import {
   compareUnifiedBills,
 } from '../utils'
 import { categoryLabel, PAYABLE_CATEGORIES } from '../api/payables.shared'
+import { setDb } from '../db/client'
+import { resolveDisplayPeriod } from '../api/payables.server'
 
 const ROOT = join(__dirname, '../..')
 const read = (rel: string) => readFileSync(join(ROOT, rel), 'utf8')
@@ -147,7 +149,78 @@ describe('边界：房租不进信用卡模型', () => {
   it('账期由服务端决定，客户端不得传入 period', () => {
     const server = read('lib/api/payables.server.ts')
     // payRecurringPayable 的账期来自 payablePeriodOf，而不是入参
-    expect(server).toMatch(/const period = payablePeriodOf\(today\)/)
+    // 账期来自展示期滚动解析（与列表展示同源），而不是入参
+    expect(server).toMatch(/const \{ period \} = await resolveDisplayPeriod\(payable\.data, today\)/)
     expect(server).not.toMatch(/payRecurringPayable\([^)]*period\s*:/)
+  })
+})
+
+describe('展示期滚动（2026-10-21 规则：本期付清且距下期 <30 天 → 展示下期）', () => {
+  // 最小 fake D1：只支持 resolveDisplayPeriod 用到的付款汇总查询
+  function fakeDb(payments: Record<string, number>) {
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind(...args: unknown[]) {
+            return {
+              async all<T>(): Promise<{ results: T[] }> {
+                if (/recurring_payable_payments/.test(sql)) {
+                  const key = `${args[0]}|${args[1]}`
+                  return { results: [{ total: payments[key] ?? 0 }] as T[] }
+                }
+                return { results: [] }
+              },
+            }
+          },
+        }
+      },
+    }
+    return db
+  }
+
+  const row = {
+    id: 'p1', created_by: 'u1', name: '房贷', category: 'loan' as const,
+    amount: 5000, currency: 'CNY', due_day: 5, holder_id: null,
+    note: null, is_active: 1, created_at: '2026-01-01',
+  }
+
+  it('本期未付清 + 下期临近：不滚动（逾期不被下期掩盖）', async () => {
+    // 应付日 5 号，今天 10-10：下期（11-05）只剩 26 天，但本期没付 → 保持本期
+    setDb(fakeDb({}) as never)
+    const r = await resolveDisplayPeriod(row, new Date(2026, 9, 10))
+    expect(r.period).toBe('2026-10')
+    expect(r.paidAmount).toBe(0)
+  })
+
+  it('本期已付清 + 下期还有 35 天：不滚动（待出账展示本期已付）', async () => {
+    // 应付日 25 号，今天 10-20：下期（11-25）还有 36 天
+    const row25 = { ...row, due_day: 25 }
+    setDb(fakeDb({ 'p1|2026-10': 5000 }) as never)
+    const r = await resolveDisplayPeriod(row25, new Date(2026, 9, 20))
+    expect(r.period).toBe('2026-10')
+    expect(r.paidAmount).toBe(5000)
+  })
+
+  it('本期已付清 + 下期只剩 29 天：滚动到下期，已付归零（待还款、可登记下期）', async () => {
+    // 应付日 25 号，今天 10-27：下期（11-25）只剩 29 天
+    const row25 = { ...row, due_day: 25 }
+    setDb(fakeDb({ 'p1|2026-10': 5000 }) as never)
+    const r = await resolveDisplayPeriod(row25, new Date(2026, 9, 27))
+    expect(r.period).toBe('2026-11')
+    expect(r.paidAmount).toBe(0)
+  })
+
+  it('滚动恰好 30 天为界：距下期 30 天不滚动，29 天滚动', async () => {
+    const row25 = { ...row, due_day: 25 }
+    setDb(fakeDb({ 'p1|2026-10': 5000 }) as never)
+    expect((await resolveDisplayPeriod(row25, new Date(2026, 9, 26))).period).toBe('2026-10') // 30 天
+    expect((await resolveDisplayPeriod(row25, new Date(2026, 9, 27))).period).toBe('2026-11') // 29 天
+  })
+
+  it('0 元应付事项永不滚动（没有「付清」语义）', async () => {
+    const zero = { ...row, amount: 0, due_day: 25 }
+    setDb(fakeDb({}) as never)
+    const r = await resolveDisplayPeriod(zero, new Date(2026, 9, 27))
+    expect(r.period).toBe('2026-10')
   })
 })
