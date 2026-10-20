@@ -365,7 +365,10 @@ export function missingStatementDays(
 export interface BillsListCard {
   status: CardUrgencyStatus
   billingDay: number
-  /** 今日刷卡可享的免息天数（已结清口径），无数据时为 0。 */
+  /**
+   * 今日刷卡可享的免息天数：今天交易 → 进下一期账单 → 到该期还款日的天数
+   * （服务端 calculateCardGracePeriod 同口径），无数据时为 0。
+   */
   graceDays: number
   /** 下期还款日；服务端给 Date，测试里允许 string（YYYY-MM-DD）。 */
   nextDueDate: Date | string
@@ -382,17 +385,16 @@ export interface BillsListCard {
 export type BillsSortMode = 'nearest_due' | 'max_interest_free' | 'nearest_billing'
 
 /**
- * 卡片剩余免息天数：优先用「已结清卡」口径（今日刷卡 → 下期还款日）；
- * 未结清时退化为距还款日的天数（免息已耗尽，还越早免息越少）。
+ * 卡片剩余免息天数：今天刷卡 → 这笔交易落在下一期账单 → 到该期还款日的天数。
+ *
+ * 口径与卡档账单日/还款规则同源（服务端 nextDueDate），与账单是否已还清无关：
+ * 今天的新交易永远进下一期账单，当前未还账单的还款日只约束过去的消费，
+ * 不是今天刷卡的免息期。未结清卡曾退化为「距当前还款日」，会把免息期
+ * 少算一个账期并让排序失真。
  */
 function interestFreeRank(card: BillsListCard, today: Date = new Date()): number {
-  if (card.status === 'unissued' && card.nextDueDate) {
-    const diff = diffInCalendarDays(new Date(card.nextDueDate), today)
-    if (diff >= 0) return diff
-  }
-  const unpaid = card.historyBills.filter(b => b.computed_status !== 'paid')
-  const ref = pickDueReference(unpaid, today)
-  return ref ? Math.max(0, ref.days) : 0
+  if (!card.nextDueDate) return 0
+  return Math.max(0, diffInCalendarDays(new Date(card.nextDueDate), today))
 }
 
 /** 最近账单日：距下一次账单日的天数（升序 = 越近越前）。 */

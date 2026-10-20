@@ -180,6 +180,20 @@ describe('BILL-02 sort modes: compareBillsListCardsByMode', () => {
     expect(sorted.map(c => c.graceDays)).toEqual([48, 30, 12])
   })
 
+  it('[口径] 未结清卡按「今天交易→下一期还款日」排，不按当前未还账单的还款日', () => {
+    // 今天 09-14：unpaid 卡当前账单 09-20 到期（只剩 6 天），但今天刷卡进的是
+    // 下一期（11-01 还款，48 天）；unissued 卡下一期 10-14 还款（30 天）。
+    // 旧口径把 unpaid 按 6 天排最后——今天的新交易与那张已出账的账单无关。
+    const unpaid = card('unpaid', 5, [{ due_date: '2026-09-20', computed_status: 'unpaid' }], {
+      graceDays: 48,
+      nextDueDate: '2026-11-01',
+    })
+    const unissued = card('unissued', 15, [], { graceDays: 30, nextDueDate: '2026-10-14' })
+    const sorted = [unissued, unpaid].sort((a, b) => compareBillsListCardsByMode(a, b, 'max_interest_free', TODAY))
+    expect(sorted[0].status).toBe('unpaid')
+    expect(sorted[1].status).toBe('unissued')
+  })
+
   it('max_interest_free never lets unpaid cards jump above overdue ones (tier first)', () => {
     const unpaidLong = card('unpaid', 5, [{ due_date: '2026-09-20', computed_status: 'unpaid' }], { graceDays: 50 })
     const overdue = card('overdue', 10, [{ due_date: '2026-08-01', computed_status: 'overdue' }], { graceDays: 0 })
@@ -251,16 +265,22 @@ describe('unified sorting: payables mixed with credit cards', () => {
 
 describe('regression: max_interest_free must differ from nearest_due', () => {
   it('orders two unpaid cards differently under the two modes', () => {
-    // 一张还款日近但免息短，一张还款日远免息长
-    const dueSoon = card('unpaid', 5, [{ due_date: '2026-09-16', computed_status: 'unpaid' }])
-    const dueFar = card('unpaid', 5, [{ due_date: '2026-10-10', computed_status: 'unpaid' }])
+    // 两张未结清卡：当前未还账单 dueSoon 更近，但下一期还款日 dueFar 更远。
+    // nearest_due 看当前欠款压力（近的在前）；max_interest_free 看今天刷卡
+    // 的理论免息期（下一期还款日远的在前）——两个轴本来就不同。
+    const dueSoon = card('unpaid', 5, [{ due_date: '2026-09-16', computed_status: 'unpaid' }], {
+      nextDueDate: '2026-10-20',
+    })
+    const dueFar = card('unpaid', 5, [{ due_date: '2026-10-10', computed_status: 'unpaid' }], {
+      nextDueDate: '2026-11-20',
+    })
     const byDue = [dueFar, dueSoon].sort((a, b) =>
       compareUnifiedBills(a, b, 'nearest_due', TODAY)
     )
     const byFree = [dueSoon, dueFar].sort((a, b) =>
       compareUnifiedBills(a, b, 'max_interest_free', TODAY)
     )
-    // nearest_due：近的在前；max_interest_free：免息长的在前（还款日远的）
+    // nearest_due：当前还款日近的在前；max_interest_free：下一期还款日远的在前
     expect(byDue[0]).toBe(dueSoon)
     expect(byFree[0]).toBe(dueFar)
   })
