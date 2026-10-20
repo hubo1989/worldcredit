@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { getCardDetail, updateCard, updateCardHolder, getCardHolders } from '@/lib/api/cards'
+import { getCardDetail, updateCard, updateCardHolder } from '@/lib/api/cards'
 import { CardForm } from '@/components/mobile/CardForm'
 import { ChevronLeftIcon, ClockIcon } from '@/components/icons/WcIcon'
 import { getEffectiveBillingDay, getEffectiveDueConfig, formatCardTail, getEffectiveCardName, getEffectiveAnnualFee } from '@/lib/utils'
@@ -79,7 +79,8 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
 
   // 编辑表单状态
   const [cardFormOpen, setCardFormOpen] = useState(false)
-  const [holders, setHolders] = useState<Array<{ id: string; name: string }>>([])
+  // 持卡人选项已改由 updateCardHolder 专用通道处理，这里只剩展示名
+  const [holders] = useState<Array<{ id: string; name: string }>>([])
 
   const load = useCallback(async () => {
     try {
@@ -282,7 +283,8 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
             if (data.holder_id !== card.holder_id) {
               await updateCardHolder(card.id, data.holder_id)
             }
-            const { holder_id: _moved, ...rest } = data
+            const { holder_id: _holderId, ...rest } = data
+            void _holderId
             await updateCard(card.id, rest)
             await load()
           }}

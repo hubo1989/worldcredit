@@ -75,7 +75,7 @@ async function loadP2Events(actor: OpportunityActor): Promise<OpportunityCalenda
       progress_json: string; title: string
     }>()
   for (const tc of taskCycles) {
-    let satisfied = false
+    let satisfied: boolean
     try {
       const { evaluateTask, parseTaskConditions } = await import('./tasks')
       const rules = parseTaskConditions(tc.rules_snapshot_json)
@@ -367,7 +367,7 @@ export async function updateOpportunityReminderState(
   }
   const db = getDb()
   const scope = holderScopePredicate(actor)
-  let owned: { ok: number } | null = null
+  let owned: { ok: number } | null
   if (eventType === 'task_deadline' || eventType === 'reward_window') {
     owned = await db
       .prepare(
