@@ -370,6 +370,8 @@ export interface BillsListCard {
    * （服务端 calculateCardGracePeriod 同口径），无数据时为 0。
    */
   graceDays: number
+  /** 下期账单日（今天交易落在下一期，到这天出账）；无数据时省略。 */
+  nextBillingDate?: Date | string
   /** 下期还款日；服务端给 Date，测试里允许 string（YYYY-MM-DD）。 */
   nextDueDate: Date | string
   historyBills: Array<{
@@ -403,11 +405,14 @@ function billingDistanceRank(card: BillsListCard, today: Date = new Date()): num
 }
 
 /**
- * 按模式比较两张卡片。三种模式都保留「逾期 → 待还款 → 未出账单」大分组
- * （欠钱的永远排前面），只在组内换轴：
- *   nearest_due      组内按距还款日升序（默认，最紧要在前）
- *   max_interest_free 组内按剩余免息天数降序（免息最长的在前）
- *   nearest_billing  组内按距下次账单日升序（最近要出账的在前）
+ * 按模式比较两张卡片。
+ *
+ * - max_interest_free：纯按今日刷卡免息天数降序，**不参与「逾期→待还→未出账单」
+ *   分组**——这个模式回答的是「现在刷哪张卡最划算」，免息最长的排最前；
+ *   逾期/待还卡当前欠款的压力和今天的新交易无关，分组会让 51 天的卡
+ *   排到 41 天的卡后面。
+ * - nearest_due / nearest_billing：保留「逾期 → 待还款 → 未出账单」大分组
+ *   （欠钱的永远排前面），组内各自换轴（距还款日 / 距下次账单日升序）。
  */
 export function compareBillsListCardsByMode(
   a: BillsListCard,
@@ -415,13 +420,14 @@ export function compareBillsListCardsByMode(
   mode: BillsSortMode,
   today: Date = new Date()
 ): number {
+  if (mode === 'max_interest_free') {
+    return interestFreeRank(b, today) - interestFreeRank(a, today)
+  }
+
   const tierA = cardUrgencyRank(a.status)
   const tierB = cardUrgencyRank(b.status)
   if (tierA !== tierB) return tierA - tierB
 
-  if (mode === 'max_interest_free') {
-    return interestFreeRank(b, today) - interestFreeRank(a, today)
-  }
   if (mode === 'nearest_billing') {
     return billingDistanceRank(a, today) - billingDistanceRank(b, today)
   }
@@ -480,29 +486,35 @@ export function unifiedBillSortKey(
   return billsListSortKey(card, today)
 }
 
-/** 统一比较器：信用卡与固定支出混排，保留大分组，组内按所选模式换轴。 */
+/**
+ * 统一比较器：信用卡与固定支出混排。
+ *
+ * - max_interest_free：纯按今日刷卡免息天数降序，不分组（与
+ *   compareBillsListCardsByMode 同口径）；固定支出无免息概念，恒排最后。
+ * - nearest_due / nearest_billing：保留「逾期 → 待还 → 未出账单」大分组，
+ *   组内换轴；固定支出在 nearest_billing 下也排最后（无账单日循环）。
+ */
 export function compareUnifiedBills(
   a: BillsListCard,
   b: BillsListCard,
   mode: BillsSortMode,
   today: Date = new Date()
 ): number {
-  const tierA = cardUrgencyRank(a.status)
-  const tierB = cardUrgencyRank(b.status)
-  if (tierA !== tierB) return tierA - tierB
-
-  // 最大免息期 / 最近账单日对固定支出没有意义（无免息、无账单日循环），
-  // 固定支出在这两种模式下保持「逾期→待还」的稳定位置，不参与组内换轴。
-  if (mode === 'nearest_due') {
-    return unifiedBillSortKey(a, today).distance - unifiedBillSortKey(b, today).distance
-  }
   if (mode === 'max_interest_free') {
-    // 普通卡片按免息降序（免息最长的在前）；固定支出无免息概念，排组内最后。
+    // 普通卡片按免息降序（免息最长的在前）；固定支出无免息概念，排最后。
     const rankOf = (c: BillsListCard) =>
       c.payableSource ? Number.MIN_SAFE_INTEGER : interestFreeRank(c, today)
     return rankOf(b) - rankOf(a)
   }
-  // nearest_billing：固定支出同样排组内最后
+
+  const tierA = cardUrgencyRank(a.status)
+  const tierB = cardUrgencyRank(b.status)
+  if (tierA !== tierB) return tierA - tierB
+
+  if (mode === 'nearest_due') {
+    return unifiedBillSortKey(a, today).distance - unifiedBillSortKey(b, today).distance
+  }
+  // nearest_billing：固定支出排组内最后
   const da = 'payableSource' in a && a.payableSource ? Number.MAX_SAFE_INTEGER : billingDistanceRank(a, today)
   const db = 'payableSource' in b && b.payableSource ? Number.MAX_SAFE_INTEGER : billingDistanceRank(b, today)
   return da - db

@@ -346,6 +346,8 @@ export interface CardWithBillsSummary {
   unpaidAmount: number
   graceDays: number
   billingDay: number
+  /** 下期账单日（今天交易落在下一期，到这天出账） */
+  nextBillingDate: Date
   nextDueDate: Date
   historyBills: BillDashboardItem[]
 }
@@ -415,7 +417,7 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
     } else if (unpaidBills.length > 0) {
       status = 'unpaid'
     }
-    return { card: cardWithProduct, holder_id: card.holder_id, status, activeBill, unpaidAmount, graceDays: graceInfo.graceDays, billingDay: graceInfo.billingDay, nextDueDate: graceInfo.nextDueDate, historyBills }
+    return { card: cardWithProduct, holder_id: card.holder_id, status, activeBill, unpaidAmount, graceDays: graceInfo.graceDays, billingDay: graceInfo.billingDay, nextBillingDate: graceInfo.nextBillingDate, nextDueDate: graceInfo.nextDueDate, historyBills }
   })
 }
 

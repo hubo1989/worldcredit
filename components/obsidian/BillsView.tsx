@@ -18,6 +18,7 @@ import {
   getEffectiveCardName,
   hasManualBillAmount,
   missingStatementDays,
+  nextBillingDateOf,
   payableToSortCard,
   pickDueReference,
   type BillsListCard,
@@ -147,6 +148,10 @@ function BillCard({
   const isCleared = item.status === 'unissued' || item.unpaidAmount <= 0
   const isOverdue = item.status === 'overdue'
   const billingDay = item.card.override_billing_day ?? item.card.billing_day
+  // 下期账单日：服务端算好带回（今天交易所在期的出账日）；兜底用账单日规则推
+  const nextBillingDate = item.nextBillingDate
+    ? new Date(item.nextBillingDate)
+    : nextBillingDateOf(billingDay)
   const manualPinned = item.historyBills.some(hasManualBillAmount)
   const canManual = manualPinned || canManuallySetBillAmount(billingDay)
   // 已过账单日但本期账单还没进系统：非首次账单的卡才提醒（首次出账时间不可预期）
@@ -260,11 +265,9 @@ function BillCard({
       {/* 周期与免息期 */}
       <div className='mt-3 flex flex-col gap-1 rounded-[10px] bg-d-subtle p-3'>
         <p className='text-[11px] leading-4 text-d-text'>
-          账单日 每月 <span className='font-bold'>{billingDay}</span> 日
+          下期账单日 <span className='font-bold'>{format(nextBillingDate, 'MM-dd')}</span>
           <span className='text-d-muted'> · </span>
-          {isCleared
-            ? '下期还款约 ' + format(item.nextDueDate, 'MM-dd')
-            : '本期还款日 ' + (dueRef ? format(new Date(dueRef.bill.due_date), 'MM-dd') : '—')}
+          下期还款日 <span className='font-bold'>{format(new Date(item.nextDueDate), 'MM-dd')}</span>
         </p>
         {missingStatement && (
           <p className='flex items-center gap-1.5 text-[11px] font-semibold leading-4 text-[color:var(--warning)]'>

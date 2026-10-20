@@ -194,11 +194,21 @@ describe('BILL-02 sort modes: compareBillsListCardsByMode', () => {
     expect(sorted[1].status).toBe('unissued')
   })
 
-  it('max_interest_free never lets unpaid cards jump above overdue ones (tier first)', () => {
-    const unpaidLong = card('unpaid', 5, [{ due_date: '2026-09-20', computed_status: 'unpaid' }], { graceDays: 50 })
-    const overdue = card('overdue', 10, [{ due_date: '2026-08-01', computed_status: 'overdue' }], { graceDays: 0 })
-    const sorted = [unpaidLong, overdue].sort((a, b) => compareBillsListCardsByMode(a, b, 'max_interest_free', TODAY))
-    expect(sorted[0].status).toBe('overdue')
+  it('[口径] max_interest_free 不分组：免息长的未结清卡排在免息短的待还款卡前面', () => {
+    // 2026-10-20 用户回归：51 天的未出账单卡曾被「逾期→待还→未出账单」
+    // 分组压到第 5 位，前面是 41/39 天的待还款卡。该模式回答「现在刷哪张卡」，
+    // 免息最长必须排最前，分组只在 nearest_due / nearest_billing 生效。
+    const longest = card('unissued', 27, [], { graceDays: 51, nextDueDate: '2026-12-04' })
+    const unpaid41 = card('unpaid', 22, [{ due_date: '2026-10-14', computed_status: 'unpaid' }], {
+      graceDays: 41, nextDueDate: '2026-10-25',
+    })
+    const unpaid39 = card('unpaid', 9, [{ due_date: '2026-10-12', computed_status: 'unpaid' }], {
+      graceDays: 39, nextDueDate: '2026-10-23',
+    })
+    const sorted = [unpaid41, unpaid39, longest].sort((a, b) =>
+      compareBillsListCardsByMode(a, b, 'max_interest_free', TODAY)
+    )
+    expect(sorted).toEqual([longest, unpaid41, unpaid39])
   })
 
   it('nearest_billing orders by days until next billing date ascending', () => {
