@@ -1,0 +1,84 @@
+name: WorldCredit
+options:
+  bundleIdPrefix: com.worldcredit
+  deploymentTarget:
+    iOS: "27.0"
+    watchOS: "27.0"
+  xcodeVersion: "27.1"
+  generateEmptyDirectories: true
+
+packages:
+  WorldCreditCore:
+    path: Packages/WorldCreditCore
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    TARGETED_DEVICE_FAMILY: "1,2" # iPhone, iPad
+
+targets:
+  WorldCredit:
+    type: application
+    platform: iOS
+    sources:
+      - path: WorldCredit
+    dependencies:
+      - package: WorldCreditCore
+      - target: WorldCreditWidgets
+      - target: WorldCreditWatch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.worldcredit.app
+        INFOPLIST_GENERATION: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: YES
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "1.0.0"
+
+  WorldCreditWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: WorldCreditWidgets
+    dependencies:
+      - package: WorldCreditCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.worldcredit.app.widgets
+        INFOPLIST_GENERATION: YES
+        GENERATE_INFOPLIST_FILE: YES
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "1.0.0"
+
+  WorldCreditWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: WorldCreditWatch
+    dependencies:
+      - package: WorldCreditCore
+      - target: WorldCreditWatchWidgets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.worldcredit.app.watch
+        TARGETED_DEVICE_FAMILY: "4" # Apple Watch
+        INFOPLIST_GENERATION: YES
+        GENERATE_INFOPLIST_FILE: YES
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "1.0.0"
+
+  WorldCreditWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    sources:
+      - path: WorldCreditWatchWidgets
+    dependencies:
+      - package: WorldCreditCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.worldcredit.app.watch.widgets
+        TARGETED_DEVICE_FAMILY: "4" # Apple Watch
+        INFOPLIST_GENERATION: YES
+        GENERATE_INFOPLIST_FILE: YES
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "1.0.0"

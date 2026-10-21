@@ -38,6 +38,13 @@
 __pycache__/
 *.py[cod]
 
+# Swift & Xcode
+.build/
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+.swiftpm/
+
 # Node.js
 node_modules
 .env
