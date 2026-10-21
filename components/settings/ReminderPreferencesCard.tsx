@@ -11,6 +11,15 @@ interface ReminderPreferencesCardProps {
   disabled?: boolean
 }
 
+const OPPORTUNITY_DAY_CHOICES = [0, 1, 3, 7]
+
+function toggleDayList(list: number[] | undefined, day: number): number[] {
+  const current = list ?? []
+  return current.includes(day)
+    ? current.filter((d) => d !== day)
+    : [...current, day].sort((a, b) => b - a)
+}
+
 /** 还款适时提醒规则（暗色）。props 契约与亮色版一致。 */
 export function ReminderPreferencesCard({ config, onChange, disabled }: ReminderPreferencesCardProps) {
   const [testing, setTesting] = useState(false)
@@ -188,6 +197,104 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
         autoHideMs={4000}
         onClose={() => setTestNotice(prev => ({ ...prev, open: false }))}
       />
+
+      {/* 权益提醒（Task 16）：独立子开关/时区/时间/节点；不改上面账单提醒语义 */}
+      <OpportunityReminderSection config={config} onChange={onChange} disabled={disabled} />
+    </div>
+  )
+}
+
+function OpportunityReminderSection({
+  config,
+  onChange,
+  disabled,
+}: ReminderPreferencesCardProps) {
+  const opp = config.opportunities
+  const update = (patch: Partial<NonNullable<UserReminderConfig['opportunities']>>) =>
+    onChange({ opportunities: { ...(opp ?? {}), ...patch } })
+  const dayChips = (
+    field: 'expiry_days_before' | 'claim_days_before',
+    current: number[] | undefined,
+    label: string,
+  ) => (
+    <div>
+      <p className='mb-1 text-[12px] font-semibold text-d-muted'>{label}</p>
+      <div className='flex gap-2'>
+        {OPPORTUNITY_DAY_CHOICES.map((d) => (
+          <button
+            key={d}
+            type='button'
+            disabled={disabled}
+            onClick={() => update({ [field]: toggleDayList(current, d) } as Partial<NonNullable<UserReminderConfig['opportunities']>>)}
+            className={
+              'h-8 rounded-full px-3 text-[12px] font-semibold disabled:opacity-50 ' +
+              ((current ?? []).includes(d) ? 'bg-d-accent text-white' : 'bg-d-subtle text-d-muted')
+            }
+          >
+            {d === 0 ? '当天' : `前 ${d} 天`}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+
+  return (
+    <div className='mt-5 rounded-2xl border border-d-border bg-d-surface p-4'>
+      <div className='flex items-center justify-between'>
+        <div>
+          <p className='text-[13px] font-bold text-d-text'>权益提醒</p>
+          <p className='text-[11px] text-d-muted'>到期/领取截止/额度重置的提醒</p>
+        </div>
+        <button
+          type='button'
+          disabled={disabled}
+          onClick={() => update({ enabled: !(opp?.enabled ?? true) })}
+          className={
+            'h-8 rounded-full px-3 text-[12px] font-semibold disabled:opacity-50 ' +
+            ((opp?.enabled ?? true) ? 'bg-d-accent text-white' : 'bg-d-subtle text-d-muted')
+          }
+        >
+          {(opp?.enabled ?? true) ? '已开启' : '已关闭'}
+        </button>
+      </div>
+
+      <div className='mt-3 flex flex-col gap-3'>
+        <label className='flex items-center justify-between'>
+          <span className='text-[12px] text-d-muted'>Web Push 渠道</span>
+          <input
+            type='checkbox'
+            disabled={disabled}
+            checked={opp?.web_push_enabled ?? true}
+            onChange={(e) => update({ web_push_enabled: e.target.checked })}
+          />
+        </label>
+        <div className='flex gap-3'>
+          <label className='flex-1'>
+            <span className='mb-1 block text-[12px] font-semibold text-d-muted'>提醒时区</span>
+            <input
+              value={opp?.time_zone ?? 'Asia/Shanghai'}
+              disabled={disabled}
+              onChange={(e) => update({ time_zone: e.target.value })}
+              className='w-full rounded-xl border border-d-border bg-d-bg px-3 py-2 text-[14px] text-d-text outline-none focus:border-d-accent'
+            />
+          </label>
+          <label className='flex-1'>
+            <span className='mb-1 block text-[12px] font-semibold text-d-muted'>每日时间</span>
+            <input
+              type='time'
+              value={opp?.local_time ?? '09:00'}
+              disabled={disabled}
+              onChange={(e) => update({ local_time: e.target.value })}
+              className='w-full rounded-xl border border-d-border bg-d-bg px-3 py-2 text-[14px] text-d-text outline-none focus:border-d-accent'
+            />
+          </label>
+        </div>
+        {dayChips('expiry_days_before', opp?.expiry_days_before, '到期提醒节点')}
+        {dayChips('claim_days_before', opp?.claim_days_before, '领取截止节点')}
+        <p className='text-[11px] leading-4 text-d-muted'>
+          推送连接测试沿用上方「发送测试通知」（真实 /api/push/test，不代表设备必达）。
+        </p>
+      </div>
     </div>
   )
 }

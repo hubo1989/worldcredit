@@ -226,6 +226,7 @@ export function ExportDialog({ open, onClose, holderId, holders, cards }: Props)
       payments: '还款',
       benefit_usages: '权益使用',
       promo_usages: '优惠使用',
+      opportunity_usages: '机会台账使用',
     }
     return labels[type]
   }

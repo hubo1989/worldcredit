@@ -4,7 +4,7 @@
 // 免息期等所有口径（见 migrations/d1/0009 的说明）。
 
 import { query, queryOne, execute, uuid, now } from '../db'
-import { payablePeriodOf, payableDueDate, diffInCalendarDays } from '../utils'
+import { payablePeriodOf, payableDueDate, nextPayablePeriodOf, diffInCalendarDays } from '../utils'
 import type { PayableCategory } from './payables.shared'
 
 export type { PayableCategory } from './payables.shared'
@@ -19,6 +19,8 @@ export interface RecurringPayable {
   due_day: number
   holder_id: string | null
   note: string | null
+  /** 还款/转账目标银行账号（选填，展示层一键复制） */
+  bank_account?: string | null
   is_active: number
   created_at: string
 }
@@ -31,6 +33,7 @@ export interface RecurringPayableInput {
   due_day: number
   holder_id?: string | null
   note?: string | null
+  bank_account?: string | null
 }
 
 /** 创建入参：created_by 由客户端带上、服务端按会话覆盖（与 createHolder 同约定）。 */
@@ -88,6 +91,32 @@ function withStatus(
   }
 }
 
+/**
+ * 展示期解析（2026-10-21 滚动规则）：本期已付清且距下期应付日不足 30 天时，
+ * 展示期滚动到下期——卡片转为「待还款」，可以直接对下期登记付款，不再出现
+ * 「已进入应付窗口却显示已登记」的矛盾。
+ *
+ * 滚动以本期付清为前提：本期未付清（含逾期）时绝不滚动，否则下期临近
+ * （如应付日 5 号、今天 10 号，下期只剩 26 天）会把当前逾期掩盖成待还款。
+ * 列表展示与付款登记必须共用此函数，保证登记写进的账期与用户看到的账期一致。
+ */
+/** 导出仅供测试：滚动规则的核心判定。 */
+export async function resolveDisplayPeriod(
+  row: RecurringPayable,
+  today: Date
+): Promise<{ period: string; paidAmount: number }> {
+  const current = payablePeriodOf(today)
+  const amount = Number(row.amount) || 0
+  const paidCurrent = await paidAmountFor(row.id, current)
+  const settled = amount > 0 && paidCurrent >= amount - 0.01
+  const nextDue = payableDueDate(row.due_day, nextPayablePeriodOf(current))
+  if (settled && diffInCalendarDays(nextDue, today) < 30) {
+    // 滚动到下期：该期此前不可能有付款记录，已付金额为 0
+    return { period: nextPayablePeriodOf(current), paidAmount: 0 }
+  }
+  return { period: current, paidAmount: paidCurrent }
+}
+
 /** 账单页用：当前生效的应付事项 + 当期状态。 */
 export async function getRecurringPayables(
   userId: string,
@@ -101,9 +130,12 @@ export async function getRecurringPayables(
   const rows = data || []
   if (rows.length === 0) return []
 
-  const period = payablePeriodOf(today)
-  const paid = await Promise.all(rows.map(r => paidAmountFor(r.id, period)))
-  return rows.map((row, i) => withStatus(row, period, paid[i], today))
+  return Promise.all(
+    rows.map(async row => {
+      const { period, paidAmount } = await resolveDisplayPeriod(row, today)
+      return withStatus(row, period, paidAmount, today)
+    })
+  )
 }
 
 export async function createRecurringPayable(
@@ -116,10 +148,11 @@ export async function createRecurringPayable(
   }
   const id = uuid()
   const { error } = await execute(
-    `INSERT INTO recurring_payables (id, created_by, name, category, amount, currency, due_day, holder_id, note, is_active, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+    `INSERT INTO recurring_payables (id, created_by, name, category, amount, currency, due_day, holder_id, note, bank_account, is_active, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     [id, input.created_by, input.name.trim(), input.category, input.amount,
-     input.currency || 'CNY', input.due_day, input.holder_id || null, input.note || null, now()]
+     input.currency || 'CNY', input.due_day, input.holder_id || null, input.note || null,
+     input.bank_account?.trim() || null, now()]
   )
   if (error) throw new Error(error.message)
   const created = await queryOne<RecurringPayable>('SELECT * FROM recurring_payables WHERE id = ?', [id])
@@ -133,7 +166,7 @@ export async function updateRecurringPayable(
 ): Promise<PayableWithStatus> {
   const fields: string[] = []
   const params: unknown[] = []
-  for (const key of ['name', 'category', 'amount', 'currency', 'due_day', 'holder_id', 'note', 'is_active'] as const) {
+  for (const key of ['name', 'category', 'amount', 'currency', 'due_day', 'holder_id', 'note', 'bank_account', 'is_active'] as const) {
     const value = (patch as Record<string, unknown>)[key]
     if (value !== undefined) {
       fields.push(`${key} = ?`)
@@ -157,8 +190,9 @@ export async function deleteRecurringPayable(id: string): Promise<void> {
 /**
  * 登记当期还款。
  *
- * period 由服务端按「今天所属账期」决定：客户端传账期就等于让它可以往任意
- * 月份记账。重复登记由 (payable_id, period) 唯一约束挡下，天然幂等。
+ * period 由服务端按展示期滚动规则决定（与列表展示一致）：本期已付清且
+ * 距下期不足 30 天时登记的就是下期。重复登记由 (payable_id, period)
+ * 唯一约束挡下，天然幂等。
  */
 export async function payRecurringPayable(
   payableId: string,
@@ -167,16 +201,19 @@ export async function payRecurringPayable(
   today: Date = new Date()
 ): Promise<PayableWithStatus> {
   if (!Number.isFinite(amount) || amount <= 0) throw new Error('还款金额必须大于 0')
-  const period = payablePeriodOf(today)
+
+  const payable = await queryOne<RecurringPayable>('SELECT * FROM recurring_payables WHERE id = ?', [payableId])
+  if (!payable.data) throw new Error('应付事项不存在')
+
+  // 账期与列表展示共用同一滚动逻辑：卡片显示「待还款」的是哪一期，
+  // 登记就写进哪一期，不会出现展示下期却记到本期的错位。
+  const { period } = await resolveDisplayPeriod(payable.data, today)
 
   const existing = await queryOne<{ id: string }>(
     'SELECT id FROM recurring_payable_payments WHERE payable_id = ? AND period = ?',
     [payableId, period]
   )
   if (existing.data) throw new Error('本期已登记还款，无需重复登记')
-
-  const payable = await queryOne<RecurringPayable>('SELECT * FROM recurring_payables WHERE id = ?', [payableId])
-  if (!payable.data) throw new Error('应付事项不存在')
 
   const { error } = await execute(
     `INSERT INTO recurring_payable_payments (id, payable_id, period, amount, paid_at, note, created_at)

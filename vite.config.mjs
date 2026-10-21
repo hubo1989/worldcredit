@@ -62,6 +62,12 @@ export default defineConfig(({ mode, isSsrBuild }) => {
       tailwindcss(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
+        // 隔离本地验证（scripts/opportunities-local.mjs）：可选的独立
+        // wrangler 配置与持久化目录，避免读写共享 .wrangler/state。
+        ...(process.env.WC_LOCAL_WRANGLER_CONFIG
+          ? { configPath: process.env.WC_LOCAL_WRANGLER_CONFIG }
+          : {}),
+        ...(process.env.WC_LOCAL_PERSIST ? { persistState: { path: process.env.WC_LOCAL_PERSIST } } : {}),
       }),
       patchVinextCloudflareOutput(),
       ...(!isSsrBuild

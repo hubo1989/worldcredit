@@ -2,11 +2,14 @@
 
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
-import { getCardDetail, updateCard } from '@/lib/api/cards'
+import Link from 'next/link'
+import { getCardDetail, updateCard, updateCardHolder } from '@/lib/api/cards'
 import { CardForm } from '@/components/mobile/CardForm'
 import { ChevronLeftIcon, ClockIcon } from '@/components/icons/WcIcon'
 import { getEffectiveBillingDay, getEffectiveDueConfig, formatCardTail, getEffectiveCardName, getEffectiveAnnualFee } from '@/lib/utils'
 import type { CreditCard, CardProduct, CardHolder, Bill, Benefit } from '@/lib/types'
+import type { OpportunityDto } from '@/lib/opportunities/queries.server'
+import { STATUS_LABELS } from '@/lib/opportunities/view-model'
 
 type CardDetail = CreditCard & {
   card_product: CardProduct
@@ -70,11 +73,14 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
   const [card, setCard] = useState<CardDetail | null>(null)
   const [bills, setBills] = useState<BillWithPaid[]>([])
   const [benefits, setBenefits] = useState<Array<Benefit & { used: number }>>([])
+  const [opportunities, setOpportunities] = useState<OpportunityDto[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   // 编辑表单状态
   const [cardFormOpen, setCardFormOpen] = useState(false)
+  // 持卡人选项已改由 updateCardHolder 专用通道处理，这里只剩展示名
+  const [holders] = useState<Array<{ id: string; name: string }>>([])
 
   const load = useCallback(async () => {
     try {
@@ -89,6 +95,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       } as unknown as CardDetail)
       setBills(detail.bills as unknown as BillWithPaid[])
       setBenefits(detail.benefits)
+      setOpportunities(detail.opportunities ?? [])
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载卡片失败')
     } finally {
@@ -268,10 +275,17 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
           open={cardFormOpen}
           onClose={() => setCardFormOpen(false)}
           holderId={card.holder_id}
+          holders={holders}
           initial={card}
           lockProduct
           onSubmit={async data => {
-            await updateCard(card.id, data)
+            // 归属变化走专用通道（双端 scope 校验 + 权益关联冲突提示），其余字段原路更新
+            if (data.holder_id !== card.holder_id) {
+              await updateCardHolder(card.id, data.holder_id)
+            }
+            const { holder_id: _holderId, ...rest } = data
+            void _holderId
+            await updateCard(card.id, rest)
             await load()
           }}
         />
@@ -288,7 +302,39 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
           <BillTrendChart bills={bills.slice(0, 6)} />
         )}
       </Section>
+      {/* 可用机会（Task 12）：统一 DTO 最多 3 条，完整列表进入 /promos */}
+
       {/* 权益进度（如无数据则省略） */}
+      {opportunities.length > 0 && (
+        <Section title='可用机会'>
+          <div className='flex flex-col gap-2'>
+            {opportunities.map(o => (
+              <Link
+                key={o.account_id}
+                href={`/promos?card=${o.card_ids[0] ?? ''}`}
+                className='flex items-center justify-between rounded-xl bg-d-subtle px-3 py-2'
+              >
+                <span className='min-w-0 flex-1'>
+                  <span className='block truncate text-[13px] font-semibold text-d-text'>{o.title}</span>
+                  <span className='block truncate text-[11px] text-d-muted'>
+                    {STATUS_LABELS[o.status]} · {o.reason}
+                  </span>
+                </span>
+                <span className='num-tabular shrink-0 text-[12px] font-semibold text-d-accent-light'>
+                  {o.remaining_count !== null ? `剩 ${o.remaining_count} ${o.unit_label}` : '可用'}
+                </span>
+              </Link>
+            ))}
+            <Link
+              href={`/promos?card=${card.id}`}
+              className='self-center text-[12px] font-semibold text-d-accent-light'
+            >
+              查看全部机会 ›
+            </Link>
+          </div>
+        </Section>
+      )}
+
       {benefits.length > 0 && (
         <Section title='权益进度'>
           <div className='flex flex-col gap-3'>

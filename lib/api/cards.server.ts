@@ -1,6 +1,11 @@
 import { query, queryOne, execute, uuid } from '../db'
 import type { CardProduct, CreditCard, CardHolder, Bill, Benefit, BenefitUsage } from '@/lib/types'
 import { normalizeAliases } from '../utils'
+import { legacyBenefitPeriodStart } from './benefits.server'
+import { localDateInZone } from '../opportunities/dates'
+import type { OpportunityActor } from '../opportunities/types'
+import type { OpportunityDto } from '../opportunities/queries.server'
+import { getCardOpportunities } from '../opportunities/queries.server'
 
 export type CreditCardWithProduct = CreditCard & {
   card_product?: CardProduct
@@ -21,6 +26,8 @@ interface CardJoinRow {
   override_billing_day: number | null
   override_due_type: string | null
   override_due_value: number | null
+  issued_on: string | null
+  activated_on: string | null
   name_override: string | null
   annual_fee_override: number | null
   created_at: string
@@ -55,6 +62,8 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
     override_due_value: row.override_due_value || undefined,
     name_override: row.name_override || undefined,
     annual_fee_override: row.annual_fee_override != null ? row.annual_fee_override : undefined,
+    issued_on: row.issued_on ?? null,
+    activated_on: row.activated_on ?? null,
     created_at: row.created_at,
   }
   if (row.p_id) {
@@ -81,6 +90,7 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
 const CARD_SELECT = `cc.id, cc.holder_id, cc.card_product_id, cc.card_number_last4, cc.credit_limit,
   cc.billing_day, cc.status, cc.card_type, cc.loan_due_day, cc.override_billing_day,
   cc.override_due_type, cc.override_due_value, cc.name_override, cc.annual_fee_override, cc.created_at,
+  cc.issued_on, cc.activated_on,
   cp.id AS p_id, cp.country AS p_country, cp.bank_id AS p_bank_id, cp.bank_name AS p_bank_name,
   cp.card_name AS p_card_name, cp.currency AS p_currency, cp.payment_due_type AS p_payment_due_type,
   cp.payment_due_value AS p_payment_due_value, cp.annual_fee AS p_annual_fee,
@@ -142,6 +152,8 @@ export interface CardDetail {
   }
   bills: CardDetailBill[]
   benefits: CardDetailBenefit[]
+  /** 统一机会 DTO（Task 11）：默认最多 3 条，完整列表走机会页。 */
+  opportunities: OpportunityDto[]
 }
 
 function computeBillStatus(billAmount: number, paid: number, dueDate: string): Bill['status'] {
@@ -157,7 +169,11 @@ function computeBillStatus(billAmount: number, paid: number, dueDate: string): B
 
 /** Card detail page aggregate: card + product + holder, recent bills with
  *  payment totals, and per-period benefit usage counts. */
-export async function getCardDetail(cardId: string): Promise<CardDetail> {
+export async function getCardDetail(
+  actor: OpportunityActor,
+  cardId: string,
+  nowOnParam?: string,
+): Promise<CardDetail> {
   const base = await getCardById(cardId)
   if (!base) throw new Error('卡片不存在')
 
@@ -220,28 +236,37 @@ export async function getCardDetail(cardId: string): Promise<CardDetail> {
       )
       if (usageError) throw new Error(usageError.message)
       const allUsages = usageRows || []
-      const nowDate = new Date()
+      // 统一周期口径：与权益列表相同的 [period_start_on, today] 区间。
+      // 原实现用主机本地时区的 getMonth() 比较（Workers 上是 UTC，月初会
+      // 误算上月），现在用规则时区的 civil date。nowOn 可注入供测试。
+      const nowOn = nowOnParam ?? localDateInZone(new Date(), 'Asia/Shanghai')
       for (const b of bs) {
+        const periodStart = legacyBenefitPeriodStart(b, nowOn)
         const periodUsages = allUsages.filter(u => {
           if (u.benefit_id !== b.id) return false
           if (!u.used_at) return false
-          if (b.period === 'one_time') return true
-          const d = new Date(u.used_at)
-          if (b.period === 'monthly') {
-            return d.getMonth() === nowDate.getMonth() && d.getFullYear() === nowDate.getFullYear()
-          }
-          // yearly
-          const resetMonth = b.reset_month || 1
-          const startY = nowDate.getMonth() + 1 >= resetMonth ? nowDate.getFullYear() : nowDate.getFullYear() - 1
-          const start = new Date(startY, resetMonth - 1, 1)
-          return d >= start
+          if (periodStart === null) return true // one_time: all usages count
+          return u.used_at >= periodStart && u.used_at <= nowOn
         })
         benefits.push({ ...b, used: periodUsages.length })
       }
     }
   }
 
-  return { card, bills: billList, benefits }
+  // 可用机会（Task 11）：同一 DTO/可用性服务，最多 3 条；失败不阻塞卡详情
+  let opportunities: OpportunityDto[]
+  try {
+    opportunities = await getCardOpportunities(
+      actor,
+      cardId,
+      3,
+      nowOnParam ? { now: `${nowOnParam}T12:00:00Z` } : {},
+    )
+  } catch {
+    opportunities = []
+  }
+
+  return { card, bills: billList, benefits, opportunities }
 }
 
 export async function getCardsByHolder(holderId: string): Promise<CreditCardWithProduct[]> {
@@ -256,11 +281,12 @@ export async function getCardsByHolder(holderId: string): Promise<CreditCardWith
 export async function createCard(card: Omit<CreditCard, 'id' | 'created_at'>): Promise<CreditCardWithProduct> {
   const id = uuid()
   const { error } = await execute(
-    `INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type, loan_due_day, override_billing_day, override_due_type, override_due_value)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type, loan_due_day, override_billing_day, override_due_type, override_due_value, issued_on, activated_on)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, card.holder_id, card.card_product_id, card.card_number_last4 || null, card.credit_limit,
      card.billing_day, card.status || 'active', card.card_type || 'credit', card.loan_due_day || null,
-     card.override_billing_day || null, card.override_due_type || null, card.override_due_value || null]
+     card.override_billing_day || null, card.override_due_type || null, card.override_due_value || null,
+     card.issued_on ?? null, card.activated_on ?? null]
   )
   if (error) throw new Error(error.message)
   const created = await getCardById(id)
@@ -296,6 +322,8 @@ export async function updateCard(
     name_override: patch.name_override,
     annual_fee_override: patch.annual_fee_override,
     account_mode_override: patch.account_mode_override,
+    issued_on: patch.issued_on,
+    activated_on: patch.activated_on,
   }
   for (const [key, value] of Object.entries(fieldMap)) {
     if (value !== undefined) {
@@ -315,4 +343,49 @@ export async function updateCard(
 export async function deleteCard(id: string): Promise<void> {
   const { error } = await execute('DELETE FROM credit_cards WHERE id = ?', [id])
   if (error) throw new Error(error.message)
+}
+
+/**
+ * 修改卡片归属持卡人（Task：UI 内调整归属）。
+ * 双端 scope 校验：当前持卡人与目标持卡人都必须在调用者名下
+ * （与 getCardsWithBillsSummary 同谓词），防止把卡移给别人家或从别人家移入。
+ * 卡上挂着权益台账关联时数据库触发器会拒绝（OPPORTUNITY_CARD_OWNERSHIP_CONFLICT），
+ * 这里转成可读提示，让用户先去权益页解绑。
+ */
+export async function updateCardHolder(
+  userId: string,
+  cardId: string,
+  newHolderId: string
+): Promise<CreditCardWithProduct> {
+  if (!cardId || !newHolderId) throw new Error('缺少卡片或目标持卡人')
+  const card = await getCardById(cardId)
+  if (!card) throw new Error('卡片不存在')
+
+  if (card.holder_id === newHolderId) return card // 幂等：同持卡人直接返回
+
+  const { data: holders } = await query<{ id: string }>(
+    `SELECT id FROM card_holders WHERE (created_by = ? OR auth_user_id = ?) AND id IN (?, ?)`,
+    [userId, userId, card.holder_id, newHolderId]
+  )
+  const visible = new Set((holders || []).map((h) => h.id))
+  // “不存在”与“无权”同口径，避免探测他人持卡人
+  if (!visible.has(card.holder_id) || !visible.has(newHolderId)) {
+    throw new Error('卡片或目标持卡人不存在，或不属于当前账户')
+  }
+
+  const { error } = await execute(
+    'UPDATE credit_cards SET holder_id = ? WHERE id = ? AND holder_id = ?',
+    [newHolderId, cardId, card.holder_id]
+  )
+  if (error) {
+    if (/OPPORTUNITY_CARD_OWNERSHIP_CONFLICT/.test(error.message)) {
+      throw new Error('该卡已关联权益台账账户，请先在「我的权益」解绑后再转移归属')
+    }
+    throw new Error(error.message)
+  }
+  const moved = await getCardById(cardId)
+  if (!moved || moved.holder_id !== newHolderId) {
+    throw new Error('归属转移未生效（并发修改），请刷新后重试')
+  }
+  return moved
 }

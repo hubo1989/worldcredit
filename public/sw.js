@@ -38,10 +38,18 @@ self.addEventListener('push', (event) => {
 })
 
 // ── Notification click ────────────────────────────────────────────────────
+// 权益推送（tag 前缀 wc-op:）只允许跳转到站内白名单路径，之后由应用自身
+// 鉴权；不向任意入参 URL 导航。
+const OPPORTUNITY_ALLOWED_URLS = new Set(['/promos', '/benefits', '/benefits/calendar'])
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
 
-  const targetUrl = (event.notification.data && event.notification.data.url) || '/bills'
+  let targetUrl = (event.notification.data && event.notification.data.url) || '/bills'
+  const tag = (event.notification.data && event.notification.data.tag) || event.notification.tag || ''
+  if (tag.startsWith('wc-op:')) {
+    if (!OPPORTUNITY_ALLOWED_URLS.has(targetUrl)) targetUrl = '/benefits'
+  }
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {

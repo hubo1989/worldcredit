@@ -8,7 +8,7 @@ import { getPromoUsagesByHolder } from './api/promoUsages'
 import { getAnalyticsByHolder } from './api/analytics'
 import { formatCardTail } from './utils'
 
-export type ExportType = 'bills' | 'payments' | 'benefit_usages' | 'promo_usages'
+export type ExportType = 'bills' | 'payments' | 'benefit_usages' | 'promo_usages' | 'opportunity_usages'
 
 export interface ExportFilters {
   holderId?: string
@@ -30,10 +30,12 @@ export function buildCsv(headers: string[], rows: CsvRow[]): string {
   // UTF-8 BOM for Excel compatibility
   const BOM = '﻿'
 
-  // Escape CSV field according to RFC 4180
+  // Escape CSV field according to RFC 4180 + neutralize spreadsheet formula
+  // prefixes (=, +, -, @, tab) so user text can never execute as a formula.
   const escapeField = (field: string | number | null | undefined): string => {
     if (field === null || field === undefined) return ''
-    const str = String(field)
+    let str = String(field)
+    if (/^[=+\-@\t\r]/.test(str)) str = `'${str}`
     // If field contains comma, quote, or newline, wrap in quotes and escape internal quotes
     if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
       return `"${str.replace(/"/g, '""')}"`
@@ -80,6 +82,7 @@ export function generateFilename(type: ExportType, startDate: string, endDate: s
     payments: '还款',
     benefit_usages: '权益使用',
     promo_usages: '优惠使用',
+    opportunity_usages: '机会台账使用',
   }
 
   const dateRange = startDate === endDate
@@ -111,6 +114,8 @@ export async function getExportData(
       return exportBenefitUsages(holderId, cardId, startDate, endDate)
     case 'promo_usages':
       return exportPromoUsages(holderId, cardId, startDate, endDate)
+    case 'opportunity_usages':
+      return exportOpportunityUsageRows(holderId, cardId, startDate, endDate)
     default:
       return []
   }
@@ -341,4 +346,53 @@ export interface AnnualReport {
   highest_spending_month: string
   highest_spending_amount: number
   monthly_breakdown: MonthlyReport[]
+}
+
+/**
+ * 机会台账统一扁平导出（Task 13）：经 RPC 取本人在 scope 内的账本使用，
+ * 原币种/单位在表头标注；金额保持 minor units 由调用方展示。
+ */
+export async function exportOpportunityUsageRows(
+  holderId?: string,
+  cardId?: string,
+  startDate?: string,
+  endDate?: string,
+): Promise<CsvRow[]> {
+  const { exportOpportunityUsages } = await import('./api/opportunities')
+  const rows: CsvRow[] = []
+  let cursor: string | null = null
+  do {
+    const page = await exportOpportunityUsages({
+      holder_id: holderId ?? null,
+      card_id: cardId ?? null,
+      from_on: startDate ?? null,
+      to_before: endDate ? addOneDay(endDate) : null,
+      cursor,
+      limit: 200,
+    })
+    for (const item of page.items) {
+      rows.push({
+        使用日期: item.used_on,
+        类型: item.kind,
+        名称: item.title,
+        持卡人: item.holder_name,
+        卡ID: item.card_id,
+        周期: item.cycle_key ?? '',
+        数量: item.quantity,
+        金额_最小单位: item.amount_minor,
+        币种: item.currency ?? '',
+        状态: item.status,
+        备注: item.note ?? '',
+        数据来源: item.source,
+      })
+    }
+    cursor = page.next_cursor
+  } while (cursor !== null)
+  return rows
+}
+
+function addOneDay(date: string): string {
+  const [y, m, d] = date.split('-').map(Number)
+  const next = new Date(Date.UTC(y, m - 1, d + 1))
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`
 }

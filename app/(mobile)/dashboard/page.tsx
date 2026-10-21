@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import { getBillDashboardItems, markBillAsPaid, markAllOverdueBillsAsPaid, type BillDashboardItem } from '@/lib/api/bills'
 import { getHolders } from '@/lib/api/holders'
 import { getCardsBasicByHolders } from '@/lib/api/cards'
-import { getPromosWithBanks } from '@/lib/api/promos'
 import {
   type HolderFilter,
   type FutureRange,
@@ -18,6 +17,8 @@ import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
 import { fetchRates, type FxRates } from '@/lib/fx'
 import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
 import { useAuth } from '@/lib/auth'
+import { getOpportunityTodayCount } from '@/lib/api/dashboard'
+import { loadReminders } from '@/components/opportunities/ReminderList'
 import { QuickActionSheet } from '@/components/mobile/QuickActionSheet'
 import { DashboardView } from '@/components/obsidian/DashboardView'
 import { DashboardOverlays } from '@/components/obsidian/DashboardOverlays'
@@ -57,8 +58,10 @@ export default function DashboardPage() {
   const [futureRange, setFutureRange] = useState<FutureRange>(7)
   const [debtExpanded, setDebtExpanded] = useState(false)
   const [quickSheetOpen, setQuickSheetOpen] = useState(false)
-  // 今日优惠统计：拿不到就退回纯入口文案，不阻塞主数据加载
+  // 优惠入口：P0 起不再展示“可享数量”——当前接口只能给有效活动总数，
+  // 不能证明持卡资格，数字会误导。可信计数待 Task 11 统一查询接入后恢复。
   const [promoCount, setPromoCount] = useState<number | null>(null)
+  const [urgentReminders, setUrgentReminders] = useState<Array<{ event: { event_key: string; kind: string; title: string; local_date_on: string; action_hint: string } }>>([])
 
   // 一键还款与 Toast 状态
   const [payAllOpen, setPayAllOpen] = useState(false)
@@ -111,14 +114,19 @@ export default function DashboardPage() {
     return () => { cancelled = true }
   }, [])
 
-  // 优惠统计同样与主数据解耦：接口失败时保持 null，卡片继续展示「查看优惠」入口。
+  // 今天可用机会数（Task 11/12）：与 /promos 同一服务端口径；失败显示入口
+  // 文案而不是假数字，绝不回退目录总数。
   useEffect(() => {
+    if (!user) return
     let cancelled = false
-    getPromosWithBanks()
-      .then(({ promos }) => { if (!cancelled) setPromoCount(promos.length) })
+    void getOpportunityTodayCount()
+      .then((n) => { if (!cancelled) setPromoCount(n) })
       .catch(() => { if (!cancelled) setPromoCount(null) })
+    void loadReminders()
+      .then((items) => { if (!cancelled) setUrgentReminders(items.slice(0, 3)) })
+      .catch(() => { if (!cancelled) setUrgentReminders([]) })
     return () => { cancelled = true }
-  }, [])
+  }, [user])
 
   const handlePaySingle = async (e: React.MouseEvent, bill: BillDashboardItem) => {
     e.stopPropagation()
@@ -287,6 +295,7 @@ export default function DashboardPage() {
         cardsByHolder={cardsByHolder}
         quickActions={quickActions}
         promoCount={promoCount}
+        urgentReminders={urgentReminders}
         userName={user?.name ?? null}
         userEmail={user?.email ?? null}
       />

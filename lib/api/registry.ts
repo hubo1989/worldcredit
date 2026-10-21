@@ -24,6 +24,8 @@ import * as holdersServer from './holders.server'
 import * as payablesServer from './payables.server'
 import * as preferencesServer from './preferences.server'
 import * as promosServer from './promos.server'
+import * as opportunitiesServer from './opportunities.server'
+import { getTodayAvailableCount } from '../opportunities/queries.server'
 import * as pushServer from './push.server'
 import * as remindersServer from './reminders.server'
 import * as syncGmailServer from './sync-gmail.server'
@@ -52,6 +54,14 @@ export interface RpcEntry {
   bindField?: { arg: number; field: string }
   memberGuard?: (args: unknown[], ctx: MemberContext) => Promise<void>
   memberFilter?: (data: unknown, ctx: MemberContext) => unknown
+  /**
+   * Entries for the opportunity ledger: the route prepends the session-derived
+   * OpportunityActor as impl argument 0. Client args shift by one; an entry
+   * must never bind client input at position 0 (contract-tested). Impl
+   * re-authorizes objects via lib/opportunities/scope.server.ts for both
+   * roles — the flag alone is not an authorization.
+   */
+  prependActor?: boolean
 }
 
 type Guard = NonNullable<RpcEntry['memberGuard']>
@@ -137,7 +147,7 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
   },
   benefits: {
     getAllMyBenefits: { impl: benefitsServer.getAllMyBenefits, bindUser: 0 },
-    recordBenefitUsage: { impl: benefitsServer.recordBenefitUsage, memberGuard: guardObjField(0, "benefit_id", assertBenefitAccess) },
+    recordBenefitUsage: { impl: benefitsServer.recordBenefitUsage, prependActor: true, memberGuard: guardObjField(0, "benefit_id", assertBenefitAccess) },
     autoEnrichCardBenefits: { impl: benefitsServer.autoEnrichCardBenefits, admin: true },
     createBenefit: { impl: benefitsServer.createBenefit, admin: true },
     updateBenefit: { impl: benefitsServer.updateBenefit, admin: true },
@@ -171,11 +181,13 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     getCardProducts: { impl: cardsServer.getCardProducts },
     getAllCardsWithProduct: { impl: cardsServer.getAllCardsWithProduct, memberFilter: (data, ctx) => filterCardsByHolder(data as { holder_id?: string }[], ctx) },
     getCardsBasicByHolders: { impl: cardsServer.getCardsBasicByHolders, memberGuard: async (args, ctx) => assertHolderIdsAccess(args[0], ctx) },
-    getCardDetail: { impl: cardsServer.getCardDetail, memberGuard: guardCard(0) },
+    getCardDetail: { impl: cardsServer.getCardDetail, prependActor: true, memberGuard: guardCard(0) },
     createCard: { impl: cardsServer.createCard, memberGuard: guardObjField(0, "holder_id", async (holderId, ctx) => assertHolderAccess(holderId, ctx)) },
     updateCard: { impl: cardsServer.updateCard, memberGuard: guardCard(0) },
+    updateCardHolder: { impl: cardsServer.updateCardHolder, bindUser: 0 },
   },
   dashboard: {
+    getOpportunityTodayCount: { impl: getTodayAvailableCount, prependActor: true },
     getDashboardStats: { impl: dashboardServer.getDashboardStats, admin: true },
     getUserActivity: { impl: dashboardServer.getUserActivity, admin: true },
     getCardProductStats: { impl: dashboardServer.getCardProductStats, admin: true },
@@ -206,7 +218,7 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     updateUserPreferences: { impl: preferencesServer.updateUserPreferences, bindUser: 0 },
   },
   promos: {
-    getPromosWithBanks: { impl: promosServer.getPromosWithBanks },
+    getPromosWithBanks: { impl: promosServer.getPromosWithBanks, bindUser: 0 },
     createUserPromo: { impl: promosServer.createUserPromo, admin: true },
   },
   payables: {
@@ -222,6 +234,44 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     updateRecurringPayable: { impl: payablesServer.updateRecurringPayable, memberGuard: (args, ctx) => assertPayableAccess(args[0], ctx) },
     deleteRecurringPayable: { impl: payablesServer.deleteRecurringPayable, memberGuard: (args, ctx) => assertPayableAccess(args[0], ctx) },
     payRecurringPayable: { impl: payablesServer.payRecurringPayable, memberGuard: (args, ctx) => assertPayableAccess(args[0], ctx) },
+  },
+  opportunities: {
+    // Session actor is prepended by the route; each impl re-authorizes via
+    // lib/opportunities/scope.server.ts for both roles (tech spec §2.1/§2.2).
+    createOpportunityAccount: { impl: opportunitiesServer.createOpportunityAccount, prependActor: true },
+    confirmOpportunityEligibility: { impl: opportunitiesServer.confirmOpportunityEligibility, prependActor: true },
+    confirmOpeningBalance: { impl: opportunitiesServer.confirmOpeningBalance, prependActor: true },
+    updateOpportunityCycleWorkflow: { impl: opportunitiesServer.updateOpportunityCycleWorkflow, prependActor: true },
+    recordOpportunityUsage: { impl: opportunitiesServer.recordOpportunityUsage, prependActor: true },
+    correctOpportunityUsage: { impl: opportunitiesServer.correctOpportunityUsage, prependActor: true },
+    voidOpportunityUsage: { impl: opportunitiesServer.voidOpportunityUsage, prependActor: true },
+    getUsageHistory: { impl: opportunitiesServer.getUsageHistory, prependActor: true },
+    getUnassignedLegacyUsages: { impl: opportunitiesServer.getUnassignedLegacyUsages, prependActor: true, admin: true },
+    assignLegacyUsage: { impl: opportunitiesServer.assignLegacyUsage, prependActor: true, admin: true },
+    getOpportunityPage: { impl: opportunitiesServer.getOpportunityPage, prependActor: true },
+    getBenefitLedger: { impl: opportunitiesServer.getBenefitLedger, prependActor: true },
+    getCardOpportunities: { impl: opportunitiesServer.getCardOpportunities, prependActor: true },
+    getOpportunityDetail: { impl: opportunitiesServer.getOpportunityDetail, prependActor: true },
+    setOpportunityFollowed: { impl: opportunitiesServer.setOpportunityFollowed, prependActor: true },
+    getTodayAvailableCount: { impl: opportunitiesServer.getTodayAvailableCount, prependActor: true },
+    previewOpportunityCandidates: { impl: opportunitiesServer.previewOpportunityCandidates, prependActor: true, admin: true },
+    publishOpportunityVersion: { impl: opportunitiesServer.publishOpportunityVersion, prependActor: true },
+    archiveOpportunityDefinition: { impl: opportunitiesServer.archiveOpportunityDefinition, prependActor: true, admin: true },
+    exportOpportunityUsages: { impl: opportunitiesServer.exportOpportunityUsages, prependActor: true },
+    getLegacyBenefitUsages: { impl: opportunitiesServer.getLegacyBenefitUsages, prependActor: true },
+    getLegacyPromoUsages: { impl: opportunitiesServer.getLegacyPromoUsages, prependActor: true },
+    getOpportunityCalendar: { impl: opportunitiesServer.getOpportunityCalendar, prependActor: true },
+    getOpportunityReminders: { impl: opportunitiesServer.getOpportunityReminders, prependActor: true },
+    updateOpportunityReminderState: { impl: opportunitiesServer.updateOpportunityReminderState, prependActor: true },
+    getOpportunityTasks: { impl: opportunitiesServer.getOpportunityTasks, prependActor: true },
+    saveOpportunityTask: { impl: opportunitiesServer.saveOpportunityTask, prependActor: true },
+    updateManualTaskProgress: { impl: opportunitiesServer.updateManualTaskProgress, prependActor: true },
+    recordOpportunityClaim: { impl: opportunitiesServer.recordOpportunityClaim, prependActor: true },
+    recordTaskRewardReceived: { impl: opportunitiesServer.recordTaskRewardReceived, prependActor: true },
+    voidOpportunityClaim: { impl: opportunitiesServer.voidOpportunityClaim, prependActor: true },
+    recordOpportunityBooking: { impl: opportunitiesServer.recordOpportunityBooking, prependActor: true },
+    completeOpportunityBooking: { impl: opportunitiesServer.completeOpportunityBooking, prependActor: true },
+    cancelOpportunityBooking: { impl: opportunitiesServer.cancelOpportunityBooking, prependActor: true },
   },
   push: {
     subscribePush: { impl: pushServer.subscribePush, bindUser: 1 },

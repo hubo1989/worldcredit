@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
-    statusBarStyle: 'default',
+    statusBarStyle: 'black-translucent',
     title: 'WorldCredit',
   },
 }
@@ -18,6 +18,9 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  // cover：内容延伸到状态栏/刘海下，深色背景由 body 填满整屏，
+  // 否则系统用默认底色画安全区，顶部出现一条异色带。
+  viewportFit: 'cover',
   themeColor: '#0a0f1e',
 }
 

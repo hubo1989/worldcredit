@@ -19,7 +19,7 @@ jobs:
       - name: Run OpenCodeReview
         uses: alibaba/open-code-review@main
         with:
-          llm_url: https://api.z.ai/api/paas/v4
+          llm_url: https://api.z.ai/api/coding/paas/v4
           llm_auth_token: ${{ secrets.OCR_LLM_TOKEN }}
           llm_model: glm-5.3-flash
           llm_use_anthropic: 'false'
@@ -27,3 +27,6 @@ jobs:
           language: Chinese
           max_tokens_budget: '2000000'
           effort: medium
+          # z.ai 免费档并发上限很低：默认无限并发时 97 个审查项全部 rate_limited
+          #（0 token 消耗，请求直接被拒）。收敛到 2 串行化 LLM 调用。
+          review_concurrency: 2

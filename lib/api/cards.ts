@@ -1,6 +1,11 @@
 // lib/api/cards.ts — client-side RPC wrappers (server: cards.server.ts).
+// getCardDetail takes the server-injected OpportunityActor first (for the
+// unified opportunities strip); the wrapper strips it client-side.
 import type * as Server from './cards.server'
 import { callRpc } from './rpc-client'
+import type { PublicScopedRpc } from '../opportunities/types'
+
+type Public<F> = PublicScopedRpc<F>
 
 export type {
   CreditCardWithProduct,
@@ -24,12 +29,16 @@ export function getAllCardsWithProduct() {
 export function getCardsBasicByHolders(...args: Parameters<typeof Server.getCardsBasicByHolders>) {
   return callRpc<typeof Server.getCardsBasicByHolders>('cards', 'getCardsBasicByHolders', ...args)
 }
-export function getCardDetail(...args: Parameters<typeof Server.getCardDetail>) {
-  return callRpc<typeof Server.getCardDetail>('cards', 'getCardDetail', ...args)
+export function getCardDetail(...args: Parameters<Public<typeof Server.getCardDetail>>) {
+  return callRpc<Public<typeof Server.getCardDetail>>('cards', 'getCardDetail', ...args)
 }
 export function createCard(...args: Parameters<typeof Server.createCard>) {
   return callRpc<typeof Server.createCard>('cards', 'createCard', ...args)
 }
 export function updateCard(...args: Parameters<typeof Server.updateCard>) {
   return callRpc<typeof Server.updateCard>('cards', 'updateCard', ...args)
+}
+// 第 0 参由服务端 bindUser 注入会话用户（客户端传占位值，服务端强制覆盖）
+export function updateCardHolder(cardId: string, newHolderId: string) {
+  return callRpc<typeof Server.updateCardHolder>('cards', 'updateCardHolder', '', cardId, newHolderId)
 }

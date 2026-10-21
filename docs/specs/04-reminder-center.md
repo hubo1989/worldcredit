@@ -1,5 +1,7 @@
 # Spec: 应用内提醒中心
 
+> **历史规格。** 优惠、权益、领取、预约及手动任务提醒以 [WC-BEN-12](./12-credit-card-benefits-opportunities.md) 和[技术附录](./12-credit-card-benefits-opportunities-technical.md)为准。本文的 PostgreSQL `reminder_states` 不能直接应用于 D1；既有账单提醒行为保持独立。
+
 **状态**: 路线图规划  
 **日期**: 2026-04-29  
 **相关模块**: 首页、账单、权益、优惠、年费规则

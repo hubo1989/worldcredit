@@ -139,6 +139,10 @@ export interface CreditCard {
   annual_fee_override?: number | null
   /** 账户模式覆盖：multi=多卡一账户 / single=单卡单账户（NULL = 自动推导） */
   account_mode_override?: 'multi' | 'single' | null
+  /** 发卡日（civil date，未知为 null；周年权益锚点用，不映射 created_at） */
+  issued_on?: string | null
+  /** 激活日（civil date，未知为 null） */
+  activated_on?: string | null
   created_at: string
 }
 
@@ -275,6 +279,22 @@ export interface UserReminderConfig {
   quiet_hours_end?: string
   enabled_channels: ('web_push' | 'email' | 'webhook')[]
   custom_reminder_email?: string
+  /**
+   * 权益提醒子树（Task 14）：深合并 OpportunityReminderConfig 默认值；
+   * 旧字段保持原语义，读取时两者并列生效（旧 quiet hours 约束推送时段）。
+   */
+  opportunities?: Partial<{
+    enabled: boolean
+    web_push_enabled: boolean
+    time_zone: string
+    local_time: string
+    expiry_days_before: number[]
+    activity_days_before: number[]
+    claim_days_before: number[]
+    task_days_before: number[]
+    reset_enabled: boolean
+    booking_enabled: boolean
+  }>
 }
 
 /**
@@ -340,3 +360,24 @@ export interface ScenarioGroup {
   /** 该分组下的快捷问题列表 */
   questions: string[]
 }
+
+// ---------------------------------------------------------------------------
+// 信用卡优惠权益台账（opportunities）— 增量导出，客户端安全。
+// 行类型在 lib/db/types.ts；这里只导出枚举与共享值类型。
+// ---------------------------------------------------------------------------
+
+export type {
+  OpportunityActor,
+  OpportunityDefinitionKind,
+  OpportunityVisibility,
+  OpportunityDefinitionStatus,
+  OpportunityRuleVerification,
+  OpportunityAccountScopeKind,
+  OpportunityAccountEligibility,
+  OpportunityAccountStatus,
+  OpportunityCycleAllocation,
+  OpportunityCycleActivationState,
+  OpportunityUsageStatus,
+  OpportunityEventEntityKind,
+  OpportunityEventDeltas,
+} from './opportunities/types'

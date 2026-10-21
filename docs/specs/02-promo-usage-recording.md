@@ -1,5 +1,7 @@
 # Spec: 优惠使用记录
 
+> **历史规格，优惠权益范围已由 [WC-BEN-12](./12-credit-card-benefits-opportunities.md) 和[实施 plan](../plans/2026-10-15-credit-card-benefits-opportunities.md)替代。** 当前代码未提供本文所称的完整 `recordPromoUsage` 可调用链；请以新规格中的账户归属、使用流水和命名 RPC 为实施依据。
+
 **状态**: 已建模，界面不完整  
 **日期**: 2026-04-29  
 **相关表**: `promos`, `promo_usages`, `credit_cards`  

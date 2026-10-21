@@ -315,8 +315,8 @@ export async function getBillById(id: string): Promise<BillWithCard | null> {
 }
 
 
-export function calculateCardGracePeriod(card: CreditCard & { card_product: CardProduct }) {
-  const d = new Date()
+export function calculateCardGracePeriod(card: CreditCard & { card_product: CardProduct }, today: Date = new Date()) {
+  const d = new Date(today)
   d.setHours(0, 0, 0, 0)
   const billingDay = Number(card.override_billing_day ?? card.billing_day ?? 10)
   if (card.card_type === 'loan' && card.loan_due_day) {
@@ -326,7 +326,10 @@ export function calculateCardGracePeriod(card: CreditCard & { card_product: Card
   }
   let purchaseMonth = new Date(d.getFullYear(), d.getMonth(), 1)
   const effectiveBillingDay = Math.min(billingDay, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())
-  if (d.getDate() > effectiveBillingDay) {
+  // 账单日当天（含）的交易归下一期：当天已出账，今天的消费进下一期账单。
+  // 用 >= 而不是 >：今天 == 账单日时 purchaseMonth 必须推到下月，否则
+  // 「今日刷卡免息期」会少算整整一个账期（约 30 天）。
+  if (d.getDate() >= effectiveBillingDay) {
     purchaseMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1)
   }
   const nextBillingDate = new Date(purchaseMonth.getFullYear(), purchaseMonth.getMonth(), effectiveBillingDay)
@@ -343,6 +346,8 @@ export interface CardWithBillsSummary {
   unpaidAmount: number
   graceDays: number
   billingDay: number
+  /** 下期账单日（今天交易落在下一期，到这天出账） */
+  nextBillingDate: Date
   nextDueDate: Date
   historyBills: BillDashboardItem[]
 }
@@ -412,7 +417,7 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
     } else if (unpaidBills.length > 0) {
       status = 'unpaid'
     }
-    return { card: cardWithProduct, holder_id: card.holder_id, status, activeBill, unpaidAmount, graceDays: graceInfo.graceDays, billingDay: graceInfo.billingDay, nextDueDate: graceInfo.nextDueDate, historyBills }
+    return { card: cardWithProduct, holder_id: card.holder_id, status, activeBill, unpaidAmount, graceDays: graceInfo.graceDays, billingDay: graceInfo.billingDay, nextBillingDate: graceInfo.nextBillingDate, nextDueDate: graceInfo.nextDueDate, historyBills }
   })
 }
 

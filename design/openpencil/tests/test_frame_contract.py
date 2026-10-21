@@ -524,13 +524,20 @@ class RealSourceIntegration(unittest.TestCase):
         self.assertEqual(code, 0, failure_text(summary))
         self.assertGreater(summary["frameCount"], 0)
         ok_entries = [e for e in summary["screens"] if e["status"] == "OK"]
-        # B0-2 起真实源含 candidate.mobile.dashboard 与 candidate.mobile.bills：
-        # Current 两屏 + Candidate 两屏按同一契约通过。
+        # B0-2 起真实源含 candidate.mobile.dashboard 与 candidate.mobile.bills；
+        # B5（WC-BEN-12）新增六个机会候选屏。Current 两屏 + Candidate 两屏
+        # + B5 候选六屏按同一契约通过。
+        b5_heads = sorted(
+            "candidate." + s["key"][len("screen."):]
+            for s in real_contract()["screens"]
+            if s["key"].startswith("screen.opportunities.")
+        )
         self.assertEqual(
             sorted((e["head"], e["role"]) for e in ok_entries),
             [
                 ("candidate.mobile.bills", "candidate"),
                 ("candidate.mobile.dashboard", "candidate"),
+                *[(h, "candidate") for h in b5_heads],
                 ("screen.mobile.bills", "current"),
                 ("screen.mobile.dashboard", "current"),
             ],
@@ -548,7 +555,12 @@ class RealSourceIntegration(unittest.TestCase):
         code, _, summary = CHK.check_doc(doc, real_contract(), None)
         self.assertEqual(code, 0)
         skipped = [e for e in summary["screens"] if e["status"] == "SKIP"]
-        self.assertEqual(len(skipped), 4, summary["screens"])
+        # dashboard/bills 的 current 帧仍在（OK）；其余角色 SKIP。
+        # B5 机会屏尚未有 current 帧：三角色全 SKIP。按契约屏数推导期望值。
+        b5_count = sum(
+            1 for s in real_contract()["screens"] if s["key"].startswith("screen.opportunities.")
+        )
+        self.assertEqual(len(skipped), 4 + 3 * b5_count, summary["screens"])
 
     def test_main_cli_exit_zero_on_repo(self):
         self.assertEqual(
@@ -561,7 +573,10 @@ class RealSourceIntegration(unittest.TestCase):
         registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
         registry_keys = {s["key"] for s in registry["screens"]}
         for screen in real_contract()["screens"]:
-            self.assertIn(screen["registryKey"], registry_keys)
+            # registryKey 可选：B5 候选屏尚未替换 Current，不声明映射；
+            # 声明了的（Current 屏）必须能在 registry 中找到。
+            if "registryKey" in screen:
+                self.assertIn(screen["registryKey"], registry_keys)
 
 
 class MobileDesignSourceContracts(unittest.TestCase):

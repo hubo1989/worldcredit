@@ -1,5 +1,7 @@
 # Spec: PWA 与系统通知
 
+> **历史规格。** 当前已有账单 Web Push 和 Worker Cron；优惠权益的新增提醒、时区、个人处理状态和投递语义以 [WC-BEN-12](./12-credit-card-benefits-opportunities.md) 及[技术附录](./12-credit-card-benefits-opportunities-technical.md)为准。本轮不借权益改造改变既有账单提醒语义。
+
 **状态**: 路线图规划  
 **日期**: 2026-04-29  
 **相关模块**: PWA、提醒中心、后台任务
