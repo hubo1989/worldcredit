@@ -128,4 +128,46 @@ public enum BillingDateCalculator {
             return "距离还款日 \(days) 日"
         }
     }
+
+    public static func calculateCardGracePeriod(
+        card: CreditCard,
+        cardProduct: CardProduct?,
+        today: Date = Date()
+    ) -> (nextBillingDate: Date, nextDueDate: Date, graceDays: Int) {
+        let cal = calendar
+        let d = cal.startOfDay(for: today)
+        let billingDay = card.overrideBillingDay ?? card.billingDay
+
+        if card.cardType == "loan", let loanDueDay = card.loanDueDay {
+            let nextDueDate = getLoanNextDueDate(loanDueDay: loanDueDay, today: d)
+            let diffDays = max(1, diffInCalendarDays(target: nextDueDate, today: d))
+            return (nextDueDate, nextDueDate, diffDays)
+        }
+
+        guard let cardProduct else {
+            return (d, d, 0)
+        }
+
+        let range = cal.range(of: .day, in: .month, for: d) ?? 1..<31
+        let effectiveBillingDay = min(billingDay, range.count)
+
+        var purchaseMonthComp = cal.dateComponents([.year, .month], from: d)
+        purchaseMonthComp.day = 1
+        var purchaseMonth = cal.date(from: purchaseMonthComp) ?? d
+
+        let currentDay = cal.component(.day, from: d)
+        if currentDay >= effectiveBillingDay {
+            purchaseMonth = cal.date(byAdding: .month, value: 1, to: purchaseMonth) ?? purchaseMonth
+        }
+
+        var nextBillingComp = cal.dateComponents([.year, .month], from: purchaseMonth)
+        let nextMonthRange = cal.range(of: .day, in: .month, for: purchaseMonth) ?? 1..<31
+        nextBillingComp.day = min(effectiveBillingDay, nextMonthRange.count)
+        let nextBillingDate = cal.date(from: nextBillingComp) ?? purchaseMonth
+
+        let nextDueDate = getDueDate(card: card, cardProduct: cardProduct, billMonth: purchaseMonth)
+        let diffDays = max(1, diffInCalendarDays(target: nextDueDate, today: d))
+
+        return (nextBillingDate, nextDueDate, diffDays)
+    }
 }

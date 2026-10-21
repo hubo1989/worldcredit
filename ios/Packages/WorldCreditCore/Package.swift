@@ -14,11 +14,15 @@ let package = Package(
             targets: ["WorldCreditCore"]
         ),
     ],
-    dependencies: [],
+    dependencies: [
+        .package(path: "../GRDB")
+    ],
     targets: [
         .target(
             name: "WorldCreditCore",
-            dependencies: [],
+            dependencies: [
+                .product(name: "GRDB", package: "GRDB")
+            ],
             path: "Sources/WorldCreditCore"
         ),
         .testTarget(
