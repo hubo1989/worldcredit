@@ -172,6 +172,7 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     setBillAmountOverride: { impl: billsServer.setBillAmountOverride, memberGuard: guardBill(0) },
     setCardManualBillAmount: { impl: billsServer.setCardManualBillAmount, memberGuard: guardCard(0) },
     createPayment: { impl: billsServer.createPayment, memberGuard: guardObjField(0, "bill_id", assertBillAccess) },
+    recordPayment: { impl: billsServer.recordPayment, memberGuard: guardObjField(0, "bill_id", assertBillAccess) },
     markBillAsPaid: { impl: billsServer.markBillAsPaid, memberGuard: guardBill(0) },
     markAllOverdueBillsAsPaid: { impl: billsServer.markAllOverdueBillsAsPaid, bindUser: 0, memberGuard: (args, ctx) => assertBillListAccess(args[1], ctx) },
   },

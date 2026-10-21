@@ -819,6 +819,94 @@ export async function markBillAsPaid(billId: string, amount: number, note = '一
   if (error) throw new Error(error.message)
 }
 
+export interface RecordPaymentInput {
+  id?: string
+  bill_id: string
+  amount: number
+  paid_at?: string
+  channel?: string | null
+  note?: string | null
+  idempotency_key: string
+}
+
+export interface RecordPaymentResult {
+  payment: Payment
+  bill_status: Bill['status']
+  already_processed?: boolean
+}
+
+/**
+ * 离线同步与客户端优先还款。
+ * 1. 客户端生成 id 与 idempotency_key，防重并支持多次重放。
+ * 2. 校验账单状态与剩余应还金额（留 0.01 浮点容差）。
+ * 3. 插入还款记录并原子更新账单状态（paid / partial）。
+ */
+export async function recordPayment(input: RecordPaymentInput): Promise<RecordPaymentResult> {
+  if (!input.idempotency_key) {
+    throw new Error('缺少 idempotency_key')
+  }
+
+  // 1. 幂等检查：若已存在则直接返回
+  const existing = await queryOne<Payment>(
+    'SELECT * FROM payments WHERE idempotency_key = ?',
+    [input.idempotency_key]
+  )
+  if (existing.data) {
+    const bill = await getBillById(input.bill_id)
+    return {
+      payment: existing.data,
+      bill_status: bill?.status ?? 'paid',
+      already_processed: true,
+    }
+  }
+
+  // 2. 校验账单
+  const bill = await getBillById(input.bill_id)
+  if (!bill) throw new Error('账单不存在')
+  if (bill.status === 'paid') throw new Error('该账单已结清，无需重复还款')
+
+  const billAmount = effectiveBillAmount(bill)
+  const alreadyPaid = await getPaymentTotal(input.bill_id)
+  const remaining = Math.max(0, billAmount - alreadyPaid)
+  if (remaining <= 0) throw new Error('该账单已无应还金额，无需重复还款')
+
+  if (!Number.isFinite(input.amount) || input.amount <= 0) {
+    throw new Error('还款金额必须是大于 0 的数字')
+  }
+  if (input.amount > remaining + 0.01) {
+    throw new Error(`还款金额超过剩余应还（剩余 ¥${remaining.toFixed(2)}）`)
+  }
+
+  const paymentId = input.id || uuid()
+  const paidAt = input.paid_at || today()
+  const channel = input.channel || '手动还款'
+  const note = input.note || null
+  const covered = alreadyPaid + input.amount >= billAmount - 0.01
+  const newStatus: Bill['status'] = covered ? 'paid' : 'partial'
+  const ts = now()
+
+  // 3. 原子批处理插入与状态更新
+  const { error } = await batch([
+    {
+      sql: 'INSERT INTO payments (id, bill_id, amount, paid_at, channel, note, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      params: [paymentId, input.bill_id, input.amount, paidAt, channel, note, input.idempotency_key, ts],
+    },
+    {
+      sql: 'UPDATE bills SET status = ? WHERE id = ?',
+      params: [newStatus, input.bill_id],
+    },
+  ])
+  if (error) throw new Error(error.message)
+
+  const created = await queryOne<Payment>('SELECT * FROM payments WHERE id = ?', [paymentId])
+  if (!created.data) throw new Error('还款记录保存失败')
+
+  return {
+    payment: created.data,
+    bill_status: newStatus,
+  }
+}
+
 export async function markAllOverdueBillsAsPaid(
   userId: string,
   targetBills?: { id: string; remaining_amount?: number; bill_amount?: number }[]

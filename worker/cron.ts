@@ -2,6 +2,7 @@
 // Deployed as part of the main Worker (cron trigger in wrangler.jsonc)
 
 import webpush from 'web-push'
+import { getLocalTodayString } from '../lib/utils'
 
 interface CronEnv {
   DB: D1Database
@@ -30,7 +31,7 @@ export async function handleScheduled(_event: ScheduledEvent, env: CronEnv, _ctx
   console.log('[cron] Running daily notification scan...')
 
   const db = env.DB
-  const today = new Date().toISOString().slice(0, 10)
+  const today = getLocalTodayString('Asia/Shanghai')
 
   // 1. Get all unpaid/overdue bills with card + holder info
   const bills = await db.prepare(`
