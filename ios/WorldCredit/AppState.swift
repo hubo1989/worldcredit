@@ -69,6 +69,12 @@ public final class AppState {
             self.cards = cList
             self.lastSyncedAt = meta?.0
             self.pendingSyncCount = meta?.1 ?? 0
+
+            // 生成并更新 Apple Watch 快照
+            if let snapshot = try? await WatchSnapshotManager.shared.buildSnapshot(dbManager: dbManager) {
+                try? WatchSnapshotManager.shared.save(snapshot)
+                WatchSyncCoordinator.shared.sendSnapshotToWatch(snapshot)
+            }
         } catch {
             print("Failed to reload local data: \(error)")
         }

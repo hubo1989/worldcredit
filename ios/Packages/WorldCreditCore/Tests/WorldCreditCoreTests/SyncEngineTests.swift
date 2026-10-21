@@ -359,4 +359,47 @@ struct SyncEngineTests {
         #expect(cards[0].displayName == "经典白金卡")
         #expect(cards[0].interestFreeDaysToday > 0)
     }
+
+    @Test("WatchSnapshot encodes, decodes and calculates dynamic countdown offline")
+    func testWatchSnapshot() async throws {
+        let dbManager = try makeTestDatabase()
+        let snapshotManager = WatchSnapshotManager.shared
+
+        let calendar = Calendar(identifier: .gregorian)
+        var comp = DateComponents()
+        comp.year = 2026
+        comp.month = 10
+        comp.day = 22
+        let today = calendar.date(from: comp)!
+
+        let snapshot = try await snapshotManager.buildSnapshot(dbManager: dbManager, today: today)
+
+        #expect(snapshot.totalDebt == 1000.0)
+        #expect(snapshot.bills.count == 1)
+        #expect(snapshot.cards.count == 1)
+        #expect(snapshot.calendarEvents.count == 1)
+
+        let bill = snapshot.bills[0]
+        #expect(bill.id == "b-100")
+        #expect(bill.remainingAmount == 1000.0)
+        #expect(bill.daysUntilDue(today: today, calendar: calendar) == 6)
+        #expect(bill.isOverdue(today: today, calendar: calendar) == false)
+
+        // 7 days later: 2026-10-29 (due date was 10-28)
+        var futureComp = DateComponents()
+        futureComp.year = 2026
+        futureComp.month = 10
+        futureComp.day = 29
+        let futureDate = calendar.date(from: futureComp)!
+
+        #expect(bill.daysUntilDue(today: futureDate, calendar: calendar) == -1)
+        #expect(bill.isOverdue(today: futureDate, calendar: calendar) == true)
+        #expect(bill.distanceLabel(today: futureDate, calendar: calendar) == "逾期 1 日")
+
+        // Encode / decode test
+        let data = try JSONEncoder().encode(snapshot)
+        let decoded = try JSONDecoder().decode(WatchSnapshot.self, from: data)
+        #expect(decoded.bills.count == 1)
+        #expect(decoded.totalDebt == 1000.0)
+    }
 }

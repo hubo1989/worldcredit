@@ -5,10 +5,17 @@ import WorldCreditCore
 struct WorldCreditApp: App {
     @State private var appState = AppState()
 
+    init() {
+        // App-wide configuration
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(appState)
+                .onAppear {
+                    WatchSyncCoordinator.shared.configure(appState: appState)
+                }
         }
     }
 }
