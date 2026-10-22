@@ -5,6 +5,7 @@ struct BillDetailView: View {
     @Environment(AppState.self) private var appState
     let item: BillDisplayItem
     @State private var showingPaymentSheet: Bool = false
+    @State private var showingAmountOverrideSheet: Bool = false
     @State private var payments: [Payment] = []
 
     var body: some View {
@@ -24,7 +25,13 @@ struct BillDetailView: View {
 
             // 金额信息
             Section("金额与状态") {
-                LabeledContent("账单金额", value: "¥\(String(format: "%.2f", item.bill.effectiveAmount))")
+                if item.bill.billAmountOverride != nil {
+                    LabeledContent("应还金额 (已调整)", value: "¥\(String(format: "%.2f", item.bill.effectiveAmount))")
+                    LabeledContent("原始出账金额", value: "¥\(String(format: "%.2f", item.bill.billAmount))")
+                } else {
+                    LabeledContent("账单金额", value: "¥\(String(format: "%.2f", item.bill.effectiveAmount))")
+                }
+
                 if let minP = item.bill.minPayment, minP > 0 {
                     LabeledContent("最低还款", value: "¥\(String(format: "%.2f", minP))")
                 }
@@ -49,6 +56,11 @@ struct BillDetailView: View {
                         )
                         .clipShape(Capsule())
                 }
+
+                Button("调整账单金额") {
+                    showingAmountOverrideSheet = true
+                }
+                .font(.subheadline)
             }
 
             // 还款记录
@@ -97,6 +109,11 @@ struct BillDetailView: View {
                     note: note
                 )
                 await loadPayments()
+            }
+        }
+        .sheet(isPresented: $showingAmountOverrideSheet) {
+            BillAmountOverrideSheetView(item: item) { newAmount in
+                try await appState.setBillAmountOverride(billId: item.bill.id, amount: newAmount)
             }
         }
         .task {

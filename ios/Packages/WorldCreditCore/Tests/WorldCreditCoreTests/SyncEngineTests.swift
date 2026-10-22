@@ -402,4 +402,75 @@ struct SyncEngineTests {
         #expect(decoded.bills.count == 1)
         #expect(decoded.totalDebt == 1000.0)
     }
+
+    @Test("BillEditService adjusts bill amount override and recalculates status offline")
+    func testBillEditService() async throws {
+        let dbManager = try makeTestDatabase()
+        let billEditService = BillEditService(dbManager: dbManager)
+        let paymentService = PaymentService(dbManager: dbManager)
+
+        // 1. Pay 400 on 1000 bill -> partial
+        _ = try await paymentService.recordPayment(billId: "b-100", amount: 400.0)
+
+        // 2. Override bill amount to 400 -> bill should become paid!
+        let updatedBill = try await billEditService.setBillAmountOverride(billId: "b-100", amount: 400.0)
+        #expect(updatedBill.billAmountOverride == 400.0)
+        #expect(updatedBill.effectiveAmount == 400.0)
+        #expect(updatedBill.status == "paid")
+
+        // 3. Reset override to nil -> bill effective amount returns to 1000, status returns to partial!
+        let resetBill = try await billEditService.setBillAmountOverride(billId: "b-100", amount: nil)
+        #expect(resetBill.billAmountOverride == nil)
+        #expect(resetBill.effectiveAmount == 1000.0)
+        #expect(resetBill.status == "partial")
+
+        // 4. Negative amount rejected
+        await #expect(throws: BillEditError.invalidAmount(-10.0)) {
+            try await billEditService.setBillAmountOverride(billId: "b-100", amount: -10.0)
+        }
+
+        // 5. Verify outbox contains bills.setBillAmountOverride
+        try await dbManager.dbWriter.read { db in
+            let outbox = try MutationOutbox.filter(Column("name") == "bills.setBillAmountOverride").fetchAll(db)
+            #expect(outbox.count == 2)
+        }
+    }
+
+    @Test("CardEditService updates card offline and enqueues mutation")
+    func testCardEditService() async throws {
+        let dbManager = try makeTestDatabase()
+        let cardEditService = CardEditService(dbManager: dbManager)
+
+        let input = CardUpdateInput(
+            nameOverride: "招商大白金",
+            creditLimit: 88000.0,
+            overrideBillingDay: 15,
+            overrideDueType: .fixed,
+            overrideDueValue: 25
+        )
+
+        let updatedCard = try await cardEditService.updateCard(cardId: "c-1", input: input)
+        #expect(updatedCard.nameOverride == "招商大白金")
+        #expect(updatedCard.creditLimit == 88000.0)
+        #expect(updatedCard.overrideBillingDay == 15)
+        #expect(updatedCard.overrideDueType == .fixed)
+        #expect(updatedCard.overrideDueValue == 25)
+
+        // Verify outbox
+        try await dbManager.dbWriter.read { db in
+            let outbox = try MutationOutbox.filter(Column("name") == "cards.updateCard").fetchAll(db)
+            #expect(outbox.count == 1)
+            #expect(outbox[0].argsJson.contains("招商大白金"))
+            #expect(outbox[0].argsJson.contains("88000"))
+        }
+
+        // Validation errors
+        await #expect(throws: CardEditError.invalidBillingDay(35)) {
+            try await cardEditService.updateCard(cardId: "c-1", input: CardUpdateInput(billingDay: 35))
+        }
+
+        await #expect(throws: CardEditError.invalidCreditLimit(-500.0)) {
+            try await cardEditService.updateCard(cardId: "c-1", input: CardUpdateInput(creditLimit: -500.0))
+        }
+    }
 }

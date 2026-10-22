@@ -10,6 +10,8 @@ public final class AppState {
     public let apiClient: ApiClient
     public let syncEngine: SyncEngine
     public let paymentService: PaymentService
+    public let billEditService: BillEditService
+    public let cardEditService: CardEditService
     public let queryService: QueryService
     public let notificationScheduler: NotificationScheduler
 
@@ -45,6 +47,8 @@ public final class AppState {
         self.apiClient = client
         self.syncEngine = SyncEngine(dbManager: db, apiClient: client)
         self.paymentService = PaymentService(dbManager: db)
+        self.billEditService = BillEditService(dbManager: db)
+        self.cardEditService = CardEditService(dbManager: db)
         self.queryService = QueryService(dbManager: db)
         self.notificationScheduler = NotificationScheduler(dbManager: db)
 
@@ -128,6 +132,23 @@ public final class AppState {
         try? await notificationScheduler.rescheduleAll()
 
         // Background trigger sync if online
+        Task {
+            await self.sync()
+        }
+    }
+
+    public func setBillAmountOverride(billId: String, amount: Double?) async throws {
+        try await billEditService.setBillAmountOverride(billId: billId, amount: amount)
+        await reloadData()
+        try? await notificationScheduler.rescheduleAll()
+        Task {
+            await self.sync()
+        }
+    }
+
+    public func updateCard(cardId: String, input: CardUpdateInput) async throws {
+        try await cardEditService.updateCard(cardId: cardId, input: input)
+        await reloadData()
         Task {
             await self.sync()
         }

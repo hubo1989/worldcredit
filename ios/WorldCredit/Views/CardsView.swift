@@ -3,6 +3,7 @@ import WorldCreditCore
 
 struct CardsView: View {
     @Environment(AppState.self) private var appState
+    @State private var editingCard: CardDisplayItem?
 
     var body: some View {
         NavigationStack {
@@ -15,7 +16,12 @@ struct CardsView: View {
                     )
                 } else {
                     ForEach(appState.cards) { card in
-                        CardRowView(card: card)
+                        Button {
+                            editingCard = card
+                        } label: {
+                            CardRowView(card: card)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -23,6 +29,11 @@ struct CardsView: View {
             .navigationTitle("卡片")
             .refreshable {
                 await appState.sync()
+            }
+            .sheet(item: $editingCard) { card in
+                CardEditSheetView(card: card) { input in
+                    try await appState.updateCard(cardId: card.id, input: input)
+                }
             }
         }
     }
