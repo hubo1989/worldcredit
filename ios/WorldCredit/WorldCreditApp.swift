@@ -15,6 +15,11 @@ struct WorldCreditApp: App {
                 .environment(appState)
                 .onAppear {
                     WatchSyncCoordinator.shared.configure(appState: appState)
+                    if CommandLine.arguments.contains("--demo-mode") {
+                        Task {
+                            await appState.loadDemoData()
+                        }
+                    }
                 }
         }
     }

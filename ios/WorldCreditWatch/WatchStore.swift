@@ -39,7 +39,7 @@ public final class WatchStore: NSObject, Sendable {
 
     public func markAsPaid(bill: WatchBillItem) {
         // 1. 本地乐观更新快照
-        guard var current = snapshot else { return }
+        guard let current = snapshot else { return }
         let updatedBills = current.bills.filter { $0.id != bill.id }
         let newTotalDebt = max(0.0, current.totalDebt - bill.remainingAmount)
         let isOverdue = bill.isOverdue()
@@ -106,14 +106,16 @@ extension WatchStore: WCSessionDelegate {
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: (any Error)?
     ) {
+        let reachable = session.isReachable
         Task { @MainActor in
-            self.isReachable = session.isReachable
+            self.isReachable = reachable
         }
     }
 
     nonisolated public func sessionReachabilityDidChange(_ session: WCSession) {
+        let reachable = session.isReachable
         Task { @MainActor in
-            self.isReachable = session.isReachable
+            self.isReachable = reachable
         }
     }
 

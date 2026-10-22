@@ -45,6 +45,7 @@ __pycache__/
 DerivedData/
 .swiftpm/
 ios/Packages/GRDB/
+ios/build/
 
 # Node.js
 node_modules

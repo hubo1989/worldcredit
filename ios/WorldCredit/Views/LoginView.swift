@@ -64,6 +64,15 @@ struct LoginView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                     .disabled(isLoading || email.isEmpty || password.isEmpty)
+
+                    Button("快速体验（演示账单数据）") {
+                        Task {
+                            await appState.loadDemoData()
+                        }
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 8)
                 }
                 .padding(.horizontal)
 

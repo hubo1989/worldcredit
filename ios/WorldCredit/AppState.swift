@@ -153,4 +153,143 @@ public final class AppState {
             await self.sync()
         }
     }
+
+    public func loadDemoData() async {
+        let now = ISO8601DateFormatter().string(from: Date())
+        do {
+            try await dbManager.dbWriter.write { db in
+                let holder = CardHolder(
+                    id: "holder-me",
+                    createdBy: "user-1",
+                    managedBy: "user-1",
+                    name: "自用",
+                    createdAt: now
+                )
+                try holder.save(db)
+
+                let bank1 = Bank(id: "bank-cmb", name: "招商银行", shortName: "招行")
+                let bank2 = Bank(id: "bank-icbc", name: "工商银行", shortName: "工行")
+                let bank3 = Bank(id: "bank-boc", name: "中国银行", shortName: "中行")
+                try bank1.save(db)
+                try bank2.save(db)
+                try bank3.save(db)
+
+                let prod1 = CardProduct(
+                    id: "prod-cmb-1",
+                    bankId: "bank-cmb",
+                    bankName: "招商银行",
+                    cardName: "经典白金卡",
+                    paymentDueType: .fixed,
+                    paymentDueValue: 25
+                )
+                let prod2 = CardProduct(
+                    id: "prod-icbc-1",
+                    bankId: "bank-icbc",
+                    bankName: "工商银行",
+                    cardName: "工银大莱卡",
+                    paymentDueType: .fixed,
+                    paymentDueValue: 26
+                )
+                let prod3 = CardProduct(
+                    id: "prod-boc-1",
+                    bankId: "bank-boc",
+                    bankName: "中国银行",
+                    cardName: "长城世界卡",
+                    paymentDueType: .fixed,
+                    paymentDueValue: 28
+                )
+                try prod1.save(db)
+                try prod2.save(db)
+                try prod3.save(db)
+
+                let card1 = CreditCard(
+                    id: "card-cmb-1",
+                    holderId: "holder-me",
+                    cardProductId: "prod-cmb-1",
+                    billingDay: 5,
+                    cardNumberLast4: "8888",
+                    creditLimit: 60000.0,
+                    createdAt: now
+                )
+                let card2 = CreditCard(
+                    id: "card-icbc-1",
+                    holderId: "holder-me",
+                    cardProductId: "prod-icbc-1",
+                    billingDay: 1,
+                    cardNumberLast4: "6666",
+                    creditLimit: 50000.0,
+                    createdAt: now
+                )
+                let card3 = CreditCard(
+                    id: "card-boc-1",
+                    holderId: "holder-me",
+                    cardProductId: "prod-boc-1",
+                    billingDay: 10,
+                    cardNumberLast4: "1234",
+                    creditLimit: 100000.0,
+                    createdAt: now
+                )
+                try card1.save(db)
+                try card2.save(db)
+                try card3.save(db)
+
+                // 账单 1：待还账单
+                let bill1 = Bill(
+                    id: "bill-cmb-202610",
+                    cardId: "card-cmb-1",
+                    billMonth: "2026-10",
+                    statementDate: "2026-10-05",
+                    billAmount: 12800.50,
+                    minPayment: 1280.0,
+                    dueDate: "2026-10-25",
+                    status: "unpaid",
+                    createdAt: now
+                )
+                // 账单 2：逾期账单
+                let bill2 = Bill(
+                    id: "bill-icbc-202609",
+                    cardId: "card-icbc-1",
+                    billMonth: "2026-09",
+                    statementDate: "2026-09-01",
+                    billAmount: 5430.00,
+                    minPayment: 543.0,
+                    dueDate: "2026-09-26",
+                    status: "unpaid",
+                    createdAt: now
+                )
+                // 账单 3：已结清账单
+                let bill3 = Bill(
+                    id: "bill-boc-202609",
+                    cardId: "card-boc-1",
+                    billMonth: "2026-09",
+                    statementDate: "2026-09-10",
+                    billAmount: 8900.00,
+                    minPayment: 890.0,
+                    dueDate: "2026-09-28",
+                    status: "paid",
+                    createdAt: now
+                )
+                try bill1.save(db)
+                try bill2.save(db)
+                try bill3.save(db)
+
+                // 为账单 3 写入结清的 payment
+                let pay3 = Payment(
+                    id: "pay-boc-full",
+                    billId: "bill-boc-202609",
+                    amount: 8900.00,
+                    paidAt: "2026-09-20",
+                    channel: "手机银行",
+                    note: "结清",
+                    idempotencyKey: "init-key",
+                    createdAt: now
+                )
+                try pay3.save(db)
+            }
+            self.isLoggedIn = true
+            await reloadData()
+        } catch {
+            print("Failed to load demo data: \(error)")
+        }
+    }
 }

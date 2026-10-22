@@ -58,22 +58,39 @@ extension WatchSyncCoordinator: WCSessionDelegate {
     }
 
     nonisolated public func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        let action = userInfo["action"] as? String
+        let billId = userInfo["bill_id"] as? String
+        let amount = userInfo["amount"] as? Double
+
         Task { @MainActor in
-            await self.handleWatchAction(userInfo)
+            await self.handleParsedWatchAction(action: action, billId: billId, amount: amount)
         }
     }
 
-    nonisolated public func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
+    nonisolated public func session(
+        _ session: WCSession,
+        didReceiveMessage message: [String: Any],
+        replyHandler: @escaping ([String: Any]) -> Void
+    ) {
+        let action = message["action"] as? String
+        let billId = message["bill_id"] as? String
+        let amount = message["amount"] as? Double
+
+        struct SendableReply: @unchecked Sendable {
+            let handler: ([String: Any]) -> Void
+        }
+        let safeReply = SendableReply(handler: replyHandler)
+
         Task { @MainActor in
-            await self.handleWatchAction(message)
-            replyHandler(["status": "ok"])
+            await self.handleParsedWatchAction(action: action, billId: billId, amount: amount)
+            safeReply.handler(["status": "ok"])
         }
     }
 
-    private func handleWatchAction(_ dict: [String: Any]) async {
-        guard let action = dict["action"] as? String, action == "mark_as_paid",
-              let billId = dict["bill_id"] as? String,
-              let amount = dict["amount"] as? Double,
+    private func handleParsedWatchAction(action: String?, billId: String?, amount: Double?) async {
+        guard let action, action == "mark_as_paid",
+              let billId,
+              let amount,
               let appState = self.appState else {
             return
         }

@@ -123,12 +123,8 @@ struct BillDetailView: View {
 
     private func loadPayments() async {
         do {
-            let list = try await appState.paymentService.dbManager.dbWriter.read { db in
-                try Payment.filter(Column("bill_id") == item.bill.id)
-                    .order(Column("paid_at").desc, Column("created_at").desc)
-                    .fetchAll(db)
-            }
-            self.payments = list
+            let summary = try await appState.paymentService.getPaymentSummary(billId: item.bill.id)
+            self.payments = summary.payments
         } catch {
             print("Failed to load payments: \(error)")
         }

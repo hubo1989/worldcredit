@@ -25,7 +25,7 @@ targets:
     dependencies:
       - package: WorldCreditCore
       - target: WorldCreditWidgets
-      - target: WorldCreditWatch
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.worldcredit.app
@@ -42,11 +42,17 @@ targets:
       - path: WorldCreditWidgets
     dependencies:
       - package: WorldCreditCore
+    info:
+      path: WorldCreditWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: WorldCredit
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.worldcredit.app.widgets
-        INFOPLIST_GENERATION: YES
-        GENERATE_INFOPLIST_FILE: YES
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: WorldCreditWidgets/Info.plist
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: "1.0.0"
 
@@ -58,6 +64,7 @@ targets:
     dependencies:
       - package: WorldCreditCore
       - target: WorldCreditWatchWidgets
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.worldcredit.app.watch
@@ -74,11 +81,17 @@ targets:
       - path: WorldCreditWatchWidgets
     dependencies:
       - package: WorldCreditCore
+    info:
+      path: WorldCreditWatchWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: WorldCredit
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.worldcredit.app.watch.widgets
         TARGETED_DEVICE_FAMILY: "4" # Apple Watch
-        INFOPLIST_GENERATION: YES
-        GENERATE_INFOPLIST_FILE: YES
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: WorldCreditWatchWidgets/Info.plist
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: "1.0.0"
