@@ -8,6 +8,7 @@ import { RPC_REGISTRY, type RpcEntry } from '@/lib/api/registry'
 import { readSession } from '@/lib/session'
 import { buildMemberContext, MemberScopeError, type MemberContext } from '@/lib/api/member-scope'
 import { OpportunityError } from '@/lib/opportunities/errors'
+import { RpcDomainError } from '@/lib/api/errors'
 import type { OpportunityActor } from '@/lib/opportunities/types'
 import type { SessionUser } from '@/lib/session'
 
@@ -81,7 +82,7 @@ export async function dispatchRpc(
     if (err instanceof MemberScopeError) {
       return { ok: false, error: err.message, status: 403 }
     }
-    if (err instanceof OpportunityError) {
+    if (err instanceof OpportunityError || err instanceof RpcDomainError) {
       return {
         ok: false,
         error: err.message,
