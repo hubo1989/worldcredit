@@ -141,7 +141,7 @@ describe('Device Tokens & APNs Push Server', () => {
         keyP8: pem,
         keyId: 'KEYID12345',
         teamId: 'TEAMID1234',
-        bundleId: 'com.worldcredit.app',
+        bundleId: 'com.chunfenshijie.worldcredit',
       }
 
       const jwt = await getApnsJwt(config)
@@ -156,6 +156,23 @@ describe('Device Tokens & APNs Push Server', () => {
       const payload = JSON.parse(atob(parts[1]))
       expect(payload.iss).toBe('TEAMID1234')
       expect(payload.iat).toBeGreaterThan(0)
+
+      const signature = Uint8Array.from(
+        atob(parts[2].replace(/-/g, '+').replace(/_/g, '/')),
+        char => char.charCodeAt(0)
+      )
+      expect(await crypto.subtle.verify(
+        { name: 'ECDSA', hash: 'SHA-256' },
+        keyPair.publicKey,
+        signature,
+        new TextEncoder().encode(`${parts[0]}.${parts[1]}`)
+      )).toBe(true)
+
+      // Distinct Worker credentials must never reuse a cached JWT from another team/key.
+      const otherJwt = await getApnsJwt({ ...config, keyId: 'OTHERKEY', teamId: 'OTHERTEAM' })
+      expect(otherJwt).not.toBe(jwt)
+      expect(JSON.parse(atob(otherJwt.split('.')[0])).kid).toBe('OTHERKEY')
+      expect(JSON.parse(atob(otherJwt.split('.')[1])).iss).toBe('OTHERTEAM')
     })
 
     it('deletes invalid token when APNs responds with 410 Gone', async () => {
@@ -172,7 +189,7 @@ describe('Device Tokens & APNs Push Server', () => {
         keyP8: pem,
         keyId: 'KEYID12345',
         teamId: 'TEAMID1234',
-        bundleId: 'com.worldcredit.app',
+        bundleId: 'com.chunfenshijie.worldcredit',
       }
 
       const token = 'expired_token'
@@ -232,6 +249,32 @@ describe('Device Tokens & APNs Push Server', () => {
 
       expect(fetchSpy).toHaveBeenCalledTimes(4)
       fetchSpy.mockRestore()
+    })
+
+    it.each([
+      { status: 400, reason: 'BadDeviceToken', removed: true },
+      { status: 403, reason: 'InvalidProviderToken', removed: false },
+      { status: 503, reason: 'ServiceUnavailable', removed: false },
+    ])('APNs $status $reason only removes definitively invalid device tokens', async ({ status, reason, removed }) => {
+      const keyPair = await crypto.subtle.generateKey(
+        { name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']
+      )
+      const pkcs8 = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey)
+      const pem = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...new Uint8Array(pkcs8)))}\n-----END PRIVATE KEY-----`
+      await registerDeviceToken({ platform: 'ios', token: 'device-token' }, userId)
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        Response.json({ reason }, { status })
+      )
+      try {
+        const result = await sendApnsNotification('device-token', { isSilent: true }, {
+          keyP8: pem, keyId: 'TESTKEY', teamId: 'TESTTEAM',
+        })
+        expect(result).toMatchObject({ success: false, statusCode: status, invalidToken: removed })
+        const row = await db.prepare('SELECT token FROM device_tokens WHERE token = ?').bind('device-token').first()
+        expect(row === null).toBe(removed)
+      } finally {
+        fetchSpy.mockRestore()
+      }
     })
   })
 })

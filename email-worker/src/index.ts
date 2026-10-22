@@ -23,12 +23,13 @@ import {
 } from './bills'
 import { extractHeaderDisplayName } from './mime'
 import { extractNameFromBody, resolveHolder } from './holders'
+import { scheduleBillSync } from './push'
 
 export default {
   async email(
     message: ForwardableEmailMessage,
     env: Env,
-    _ctx: ExecutionContext
+    ctx: ExecutionContext
   ): Promise<void> {
     const db = env.DB
 
@@ -92,6 +93,7 @@ export default {
         log.error_msg = bundle.summary
         log.raw_ai_response = buildBundleLogPayload(bundle)
         await writeLog(db, log)
+        if (bundle.billsWritten > 0) scheduleBillSync(env, ctx, userId)
         return
       }
 
@@ -208,6 +210,7 @@ export default {
       log.status = 'success'
       if (cardNote) log.error_msg = cardNote + '账单已写入'
       await writeLog(db, log)
+      if (outcome.action !== 'preserved') scheduleBillSync(env, ctx, userId)
     } catch (err) {
       log.status = 'failed'
       log.error_msg = err instanceof Error ? err.message : String(err)

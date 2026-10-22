@@ -1,5 +1,10 @@
 export interface Env {
   DB: D1Database
+  APNS_KEY_P8?: string
+  APNS_KEY_ID?: string
+  APNS_TEAM_ID?: string
+  APNS_BUNDLE_ID?: string
+  APNS_ENVIRONMENT?: string
 }
 
 export interface AiConfig {

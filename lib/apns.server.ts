@@ -1,200 +1,26 @@
-// lib/apns.server.ts — APNs (Apple Push Notification service) client for Cloudflare Workers.
-
+// APNs operations for the main app Worker, including stale device cleanup.
 import { execute, query } from './db'
+import {
+  sendApnsNotification as sendNotification,
+  type ApnsConfig,
+  type ApnsResponse,
+  type SendPushOptions,
+} from './apns-client'
 
-export interface ApnsConfig {
-  keyP8?: string
-  keyId?: string
-  teamId?: string
-  bundleId?: string
-  isProduction?: boolean
-}
+export { getApnsJwt } from './apns-client'
+export type { ApnsConfig, ApnsAlertPayload, SendPushOptions } from './apns-client'
 
-export interface ApnsAlertPayload {
-  title: string
-  body: string
-}
-
-export interface SendPushOptions {
-  alert?: ApnsAlertPayload
-  badge?: number
-  sound?: string
-  isSilent?: boolean
-  customData?: Record<string, unknown>
-}
-
-let cachedJwt: { token: string; expiresAt: number } | null = null
-
-function base64UrlEncode(buffer: ArrayBuffer | Uint8Array | string): string {
-  let str: string
-  if (typeof buffer === 'string') {
-    str = btoa(unescape(encodeURIComponent(buffer)))
-  } else {
-    const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
-    let binary = ''
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i])
-    }
-    str = btoa(binary)
-  }
-  return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
-}
-
-function pemToBinary(pem: string): Uint8Array {
-  const cleanPem = pem
-    .replace(/-----BEGIN [A-Z0-9 ]+-----/g, '')
-    .replace(/-----END [A-Z0-9 ]+-----/g, '')
-    .replace(/\s+/g, '')
-  const binaryString = atob(cleanPem)
-  const len = binaryString.length
-  const bytes = new Uint8Array(len)
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i)
-  }
-  return bytes
-}
-
-/**
- * 构造并签名 APNs 认证 JWT (ES256)。
- * 缓存 30 分钟以避免每次调用都重新导入私钥并签名。
- */
-export async function getApnsJwt(config: ApnsConfig): Promise<string> {
-  const nowSec = Math.floor(Date.now() / 1000)
-  if (cachedJwt && cachedJwt.expiresAt > nowSec + 60) {
-    return cachedJwt.token
-  }
-
-  const { keyP8, keyId, teamId } = config
-  if (!keyP8 || !keyId || !teamId) {
-    throw new Error('APNs 凭证不完整（缺少 keyP8, keyId 或 teamId）')
-  }
-
-  const header = {
-    alg: 'ES256',
-    kid: keyId,
-  }
-  const payload = {
-    iss: teamId,
-    iat: nowSec,
-  }
-
-  const encodedHeader = base64UrlEncode(JSON.stringify(header))
-  const encodedPayload = base64UrlEncode(JSON.stringify(payload))
-  const dataToSign = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`)
-
-  const privateKeyDer = pemToBinary(keyP8)
-  const cryptoKey = await crypto.subtle.importKey(
-    'pkcs8',
-    privateKeyDer.buffer as ArrayBuffer,
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    false,
-    ['sign']
-  )
-
-  const signature = await crypto.subtle.sign(
-    { name: 'ECDSA', hash: { name: 'SHA-256' } },
-    cryptoKey,
-    dataToSign
-  )
-
-  const encodedSignature = base64UrlEncode(signature)
-  const jwt = `${encodedHeader}.${encodedPayload}.${encodedSignature}`
-
-  // 缓存 30 分钟 (1800 秒)
-  cachedJwt = {
-    token: jwt,
-    expiresAt: nowSec + 1800,
-  }
-
-  return jwt
-}
-
-/**
- * 向单台 iOS 设备推送 APNs 消息。
- */
 export async function sendApnsNotification(
   token: string,
   options: SendPushOptions,
   config: ApnsConfig
-): Promise<{ success: boolean; statusCode?: number; error?: string }> {
-  const { keyP8, keyId, teamId } = config
-  if (!keyP8 || !keyId || !teamId) {
-    return { success: false, error: 'apns_not_configured' }
+): Promise<ApnsResponse> {
+  const result = await sendNotification(token, options, config)
+  if (result.invalidToken) {
+    const { error } = await execute('DELETE FROM device_tokens WHERE token = ?', [token])
+    if (error) throw new Error(error.message)
   }
-
-  const bundleId = config.bundleId ?? 'com.worldcredit.app'
-  const isProduction = config.isProduction ?? false
-  const host = isProduction
-    ? 'https://api.push.apple.com'
-    : 'https://api.sandbox.push.apple.com'
-  const endpoint = `${host}/3/device/${token}`
-
-  let jwt: string
-  try {
-    jwt = await getApnsJwt(config)
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { success: false, error: msg }
-  }
-
-  // 构造 aps 负载
-  const aps: Record<string, unknown> = {}
-  let pushType: 'alert' | 'background' = 'alert'
-  let priority = '10'
-
-  if (options.isSilent) {
-    aps['content-available'] = 1
-    pushType = 'background'
-    priority = '5'
-  } else {
-    if (options.alert) {
-      aps.alert = options.alert
-    }
-    if (typeof options.badge === 'number') {
-      aps.badge = options.badge
-    }
-    if (options.sound) {
-      aps.sound = options.sound
-    }
-  }
-
-  const requestBody = {
-    aps,
-    ...(options.customData ?? {}),
-  }
-
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        authorization: `bearer ${jwt}`,
-        'apns-topic': bundleId,
-        'apns-push-type': pushType,
-        'apns-priority': priority,
-        'apns-expiration': '0',
-      },
-      body: JSON.stringify(requestBody),
-    })
-
-    if (res.status === 200) {
-      return { success: true, statusCode: 200 }
-    }
-
-    const text = await res.text()
-    // 若 Token 失效 (410 或 400 BadDeviceToken)，自动清理数据库对应记录
-    if (res.status === 410 || text.includes('BadDeviceToken') || text.includes('Unregistered')) {
-      await execute('DELETE FROM device_tokens WHERE token = ?', [token])
-    }
-
-    return {
-      success: false,
-      statusCode: res.status,
-      error: `APNs error ${res.status}: ${text}`,
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { success: false, error: msg }
-  }
+  return result
 }
 
 /**
