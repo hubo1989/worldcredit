@@ -1,6 +1,6 @@
 name: WorldCredit
 options:
-  bundleIdPrefix: com.worldcredit
+  bundleIdPrefix: com.chunfenshijie
   deploymentTarget:
     iOS: "27.0"
     watchOS: "27.0"
@@ -10,13 +10,34 @@ options:
 packages:
   WorldCreditCore:
     path: Packages/WorldCreditCore
+  # Google Sign-In 只给 iPhone 主 App 用。该包仅声明 iOS/macOS，且 Watch/Widget
+  # 不做登录，不要把依赖挂到 WorldCreditCore 或任何扩展 target 上。
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    from: 10.0.0
 
 settings:
   base:
     SWIFT_VERSION: "6.0"
     TARGETED_DEVICE_FAMILY: "1,2" # iPhone, iPad
+    # Chengdu Chunfenshijie Technology Co.,Ltd.
+    DEVELOPMENT_TEAM: 27LU47J28S
+    CODE_SIGN_STYLE: Automatic
 
 targets:
+  WorldCreditUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: WorldCreditUITests
+    dependencies:
+      - target: WorldCredit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chunfenshijie.worldcredit.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: WorldCredit
+
   WorldCredit:
     type: application
     platform: iOS
@@ -24,17 +45,45 @@ targets:
       - path: WorldCredit
     dependencies:
       - package: WorldCreditCore
+      - package: GoogleSignIn
+        product: GoogleSignIn
       - target: WorldCreditWidgets
         embed: true
+      - target: WorldCreditWatch
+        embed: true
+    info:
+      path: WorldCredit/Info.plist
+      properties:
+        CFBundleDisplayName: WorldCredit
+        NSFaceIDUsageDescription: "使用 Face ID 保护您的账单和信用卡财务数据安全"
+        # GoogleSignIn 从 Info.plist 读 client id；URL scheme 必须是 client id 的反转形式，
+        # 供授权完成后跳回 App。这两个键必须写在这里——xcodegen 会按本段重建 Info.plist，
+        # 直接改 plist 文件会在下次 generate 时被覆盖。
+        GIDClientID: 752531640450-l3h029onesb3u51t3s40jok1j5stgnoc.apps.googleusercontent.com
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLSchemes:
+              - com.googleusercontent.apps.752531640450-l3h029onesb3u51t3s40jok1j5stgnoc
+        UIBackgroundModes:
+          - remote-notification
+    entitlements:
+      path: WorldCredit/WorldCredit.entitlements
+      properties:
+        aps-environment: $(APS_ENVIRONMENT)
+        com.apple.security.application-groups:
+          - group.com.chunfenshijie.worldcredit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.worldcredit.app
-        INFOPLIST_GENERATION: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.chunfenshijie.worldcredit
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_NSFaceIDUsageDescription: "使用 Face ID 保护您的账单和信用卡财务数据安全"
+        GENERATE_INFOPLIST_FILE: NO
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: "1.0.0"
+      configs:
+        Debug:
+          APS_ENVIRONMENT: development
+        Release:
+          APS_ENVIRONMENT: production
 
   WorldCreditWidgets:
     type: app-extension
@@ -49,9 +98,14 @@ targets:
         CFBundleDisplayName: WorldCredit
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: WorldCreditWidgets/WorldCreditWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.chunfenshijie.worldcredit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.worldcredit.app.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: com.chunfenshijie.worldcredit.widgets
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: WorldCreditWidgets/Info.plist
         CURRENT_PROJECT_VERSION: 1
@@ -66,12 +120,22 @@ targets:
       - package: WorldCreditCore
       - target: WorldCreditWatchWidgets
         embed: true
+    info:
+      path: WorldCreditWatch/Info.plist
+      properties:
+        CFBundleDisplayName: WorldCredit
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: com.chunfenshijie.worldcredit
+    entitlements:
+      path: WorldCreditWatch/WorldCreditWatch.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.chunfenshijie.worldcredit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.worldcredit.app.watch
+        PRODUCT_BUNDLE_IDENTIFIER: com.chunfenshijie.worldcredit.watch
         TARGETED_DEVICE_FAMILY: "4" # Apple Watch
-        INFOPLIST_GENERATION: YES
-        GENERATE_INFOPLIST_FILE: YES
+        GENERATE_INFOPLIST_FILE: NO
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: "1.0.0"
 
@@ -88,11 +152,32 @@ targets:
         CFBundleDisplayName: WorldCredit
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: WorldCreditWatchWidgets/WorldCreditWatchWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.chunfenshijie.worldcredit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.worldcredit.app.watch.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: com.chunfenshijie.worldcredit.watch.widgets
         TARGETED_DEVICE_FAMILY: "4" # Apple Watch
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: WorldCreditWatchWidgets/Info.plist
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: "1.0.0"
+
+schemes:
+  WorldCredit:
+    build:
+      targets:
+        WorldCredit: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - name: WorldCreditUITests
+          parallelizable: false
+          randomExecutionOrder: false
+    archive:
+      config: Release

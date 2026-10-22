@@ -147,7 +147,7 @@ public struct WatchSnapshot: Codable, Sendable {
 
 public final class WatchSnapshotManager: Sendable {
     public static let shared = WatchSnapshotManager()
-    public static let appGroupId = "group.com.worldcredit.app"
+    public static let appGroupId = "group.com.chunfenshijie.worldcredit"
     public static let snapshotFileName = "watch_snapshot.json"
 
     public init() {}

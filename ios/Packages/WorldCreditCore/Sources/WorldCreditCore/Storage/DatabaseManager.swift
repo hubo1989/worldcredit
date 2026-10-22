@@ -41,7 +41,7 @@ public final class DatabaseManager: @unchecked Sendable {
     public static func defaultDatabase() throws -> DatabaseManager {
         let fileManager = FileManager.default
         let folder: URL
-        if let groupURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: "group.com.worldcredit.app") {
+        if let groupURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: "group.com.chunfenshijie.worldcredit") {
             folder = groupURL
         } else {
             folder = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]

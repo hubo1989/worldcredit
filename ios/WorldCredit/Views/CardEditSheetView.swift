@@ -42,6 +42,7 @@ struct CardEditSheetView: View {
                     }
 
                     TextField("卡片备注名称", text: $nameOverride)
+                        .accessibilityIdentifier("card.edit.name")
                 }
 
                 Section("额度与账单日") {
@@ -51,6 +52,7 @@ struct CardEditSheetView: View {
                         TextField("0", text: $creditLimitText)
                             .keyboardType(.numberPad)
                             .multilineTextAlignment(.trailing)
+                            .accessibilityIdentifier("card.edit.limit")
                     }
 
                     HStack {
@@ -59,6 +61,7 @@ struct CardEditSheetView: View {
                         TextField("1-31", text: $billingDayText)
                             .keyboardType(.numberPad)
                             .multilineTextAlignment(.trailing)
+                            .accessibilityIdentifier("card.edit.billingDay")
                         Text("日")
                             .foregroundStyle(.secondary)
                     }
@@ -66,6 +69,7 @@ struct CardEditSheetView: View {
 
                 Section("还款日规则") {
                     Toggle("自定义还款规则", isOn: $hasCustomDueRule)
+                        .accessibilityIdentifier("card.edit.customDue")
 
                     if hasCustomDueRule {
                         Picker("还款计算方式", selection: $dueType) {
@@ -80,6 +84,7 @@ struct CardEditSheetView: View {
                             TextField("天数或日期", text: $dueValueText)
                                 .keyboardType(.numberPad)
                                 .multilineTextAlignment(.trailing)
+                                .accessibilityIdentifier("card.edit.dueValue")
                             Text(dueType == .afterBilling ? "天" : "日")
                                 .foregroundStyle(.secondary)
                         }
@@ -117,6 +122,7 @@ struct CardEditSheetView: View {
                         }
                     }
                     .disabled(isSubmitting)
+                    .accessibilityIdentifier("card.edit.save")
                 }
             }
         }

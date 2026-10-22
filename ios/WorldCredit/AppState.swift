@@ -14,6 +14,7 @@ public final class AppState {
     public let cardEditService: CardEditService
     public let queryService: QueryService
     public let notificationScheduler: NotificationScheduler
+    @ObservationIgnored private let syncCoordinator = SyncCoordinator()
 
     public var isLoggedIn: Bool = false
     public var currentUser: SessionUser?
@@ -30,7 +31,8 @@ public final class AppState {
     // MARK: - Biometric Security
     public var isBiometricsEnabled: Bool {
         get {
-            UserDefaults.standard.bool(forKey: "worldcredit_biometrics_enabled")
+            if UITestConfiguration.isEnabled { return false }
+            return UserDefaults.standard.bool(forKey: "worldcredit_biometrics_enabled")
         }
         set {
             UserDefaults.standard.set(newValue, forKey: "worldcredit_biometrics_enabled")
@@ -43,6 +45,23 @@ public final class AppState {
         baseURL: URL = URL(string: "https://app.all-bill.com")!
     ) {
         let db: DatabaseManager
+        #if DEBUG
+        if UITestConfiguration.isEnabled {
+            do {
+                db = try DatabaseManager.file(at: UITestConfiguration.databaseURL)
+            } catch {
+                preconditionFailure("UI test database could not open: \(error)")
+            }
+        } else if let dbManager {
+            db = dbManager
+        } else {
+            do {
+                db = try DatabaseManager.defaultDatabase()
+            } catch {
+                db = (try? DatabaseManager.inMemory())!
+            }
+        }
+        #else
         if let dbManager {
             db = dbManager
         } else {
@@ -53,8 +72,19 @@ public final class AppState {
                 db = (try? DatabaseManager.inMemory())!
             }
         }
+        #endif
         self.dbManager = db
-        let client = ApiClient(baseURL: baseURL)
+        let client: ApiClient
+        #if DEBUG
+        if UITestConfiguration.isEnabled {
+            client = ApiClient(baseURL: URL(string: "https://ui-tests.invalid")!,
+                               session: OfflineUITestNetworkSession(), token: "ui-test-session", useKeychain: false)
+        } else {
+            client = ApiClient(baseURL: baseURL)
+        }
+        #else
+        client = ApiClient(baseURL: baseURL)
+        #endif
         self.apiClient = client
         self.syncEngine = SyncEngine(dbManager: db, apiClient: client)
         self.paymentService = PaymentService(dbManager: db)
@@ -64,7 +94,7 @@ public final class AppState {
         self.notificationScheduler = NotificationScheduler(dbManager: db)
 
         self.isLoggedIn = client.token != nil
-        if self.isLoggedIn && UserDefaults.standard.bool(forKey: "worldcredit_biometrics_enabled") {
+        if self.isLoggedIn && isBiometricsEnabled {
             self.isLocked = true
         }
     }
@@ -83,7 +113,8 @@ public final class AppState {
         }
     }
 
-    public func reloadData() async {
+    @discardableResult
+    public func reloadData() async -> Bool {
         do {
             let sum = try await queryService.fetchDashboardSummary()
             let bList = try await queryService.fetchBills(filter: selectedBillFilter)
@@ -107,29 +138,53 @@ public final class AppState {
                 try? WatchSnapshotManager.shared.save(snapshot)
                 WatchSyncCoordinator.shared.sendSnapshotToWatch(snapshot)
             }
+            #if DEBUG
+            await UITestConfiguration.recordMetadata()
+            #endif
+            return true
         } catch {
             print("Failed to reload local data: \(error)")
+            return false
         }
     }
 
-    public func sync() async {
-        guard !isSyncing else { return }
-        isSyncing = true
-        lastSyncError = nil
-        defer { isSyncing = false }
-
+    @discardableResult
+    public func sync() async -> Bool {
         do {
-            try await syncEngine.sync()
-            try? await notificationScheduler.rescheduleAll()
-            await reloadData()
+            try await syncCoordinator.perform { [self] in
+                isSyncing = true
+                lastSyncError = nil
+                defer { isSyncing = false }
+                do {
+                    try await syncEngine.sync()
+                    try await notificationScheduler.rescheduleAll()
+                    guard await reloadData() else {
+                        throw NSError(domain: "WorldCredit.Sync", code: 1,
+                                      userInfo: [NSLocalizedDescriptionKey: "同步后刷新本地数据失败"])
+                    }
+                } catch {
+                    lastSyncError = error.localizedDescription
+                    await reloadData()
+                    throw error
+                }
+            }
+            return true
         } catch {
-            lastSyncError = error.localizedDescription
-            await reloadData()
+            return false
         }
     }
 
     public func login(email: String, password: String) async throws {
         let user = try await apiClient.loginWithPassword(email: email, password: password)
+        self.currentUser = user
+        self.isLoggedIn = true
+        await sync()
+    }
+
+    /// 用 Google Sign-In 取到的 ID token 完成登录，状态迁移与密码登录一致。
+    /// GoogleSignIn SDK 的交互留在 LoginView，此处不引入该依赖。
+    public func loginWithGoogle(idToken: String) async throws {
+        let user = try await apiClient.loginWithGoogle(idToken: idToken)
         self.currentUser = user
         self.isLoggedIn = true
         await sync()
@@ -184,10 +239,13 @@ public final class AppState {
         }
     }
 
-    public func loadDemoData() async {
+    public func loadDemoData(onlyIfNeeded: Bool = false) async {
         let now = ISO8601DateFormatter().string(from: Date())
         do {
             try await dbManager.dbWriter.write { db in
+                if onlyIfNeeded, try SyncMeta.fetchOne(db, key: "ui_test_seeded") != nil {
+                    return
+                }
                 let holder = CardHolder(
                     id: "holder-me",
                     createdBy: "user-1",
@@ -315,6 +373,9 @@ public final class AppState {
                     createdAt: now
                 )
                 try pay3.save(db)
+                if onlyIfNeeded {
+                    try SyncMeta(key: "ui_test_seeded", value: "1").save(db)
+                }
             }
             self.isLoggedIn = true
             await reloadData()

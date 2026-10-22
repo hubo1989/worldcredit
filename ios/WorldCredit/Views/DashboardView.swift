@@ -23,6 +23,9 @@ struct DashboardView: View {
                 .padding()
             }
             .navigationTitle("概览")
+            .navigationDestination(for: BillDetailRoute.self) { route in
+                BillDetailView(item: route.item)
+            }
             .refreshable {
                 await appState.sync()
             }
@@ -59,6 +62,7 @@ struct DashboardView: View {
             }
 
             Text("¥\(String(format: "%.2f", appState.summary?.totalDebt ?? 0))")
+                .accessibilityIdentifier("dashboard.totalDebt")
                 .font(.system(size: 36, weight: .bold, design: .rounded))
 
             Divider()
@@ -126,7 +130,7 @@ struct DashboardView: View {
 
             if let urgent = appState.summary?.urgentBills, !urgent.isEmpty {
                 ForEach(urgent) { item in
-                    NavigationLink(destination: BillDetailView(item: item)) {
+                    NavigationLink(value: BillDetailRoute(item: item)) {
                         VStack(spacing: 8) {
                             HStack {
                                 Text("\(item.bankName) · \(item.cardTitle)")

@@ -1,12 +1,24 @@
 import SwiftUI
 import WorldCreditCore
 
+struct BillDetailRoute: Hashable {
+    let item: BillDisplayItem
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.item.id == rhs.item.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(item.id) }
+}
+
 struct BillDetailView: View {
     @Environment(AppState.self) private var appState
-    let item: BillDisplayItem
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var item: BillDisplayItem
     @State private var showingPaymentSheet: Bool = false
     @State private var showingAmountOverrideSheet: Bool = false
     @State private var payments: [Payment] = []
+
+    init(item: BillDisplayItem) {
+        _item = State(initialValue: item)
+    }
 
     var body: some View {
         List {
@@ -27,9 +39,11 @@ struct BillDetailView: View {
             Section("金额与状态") {
                 if item.bill.billAmountOverride != nil {
                     LabeledContent("应还金额 (已调整)", value: "¥\(String(format: "%.2f", item.bill.effectiveAmount))")
+                        .accessibilityIdentifier("bill.detail.amount")
                     LabeledContent("原始出账金额", value: "¥\(String(format: "%.2f", item.bill.billAmount))")
                 } else {
                     LabeledContent("账单金额", value: "¥\(String(format: "%.2f", item.bill.effectiveAmount))")
+                        .accessibilityIdentifier("bill.detail.amount")
                 }
 
                 if let minP = item.bill.minPayment, minP > 0 {
@@ -40,6 +54,7 @@ struct BillDetailView: View {
                     Text("¥\(String(format: "%.2f", item.remainingAmount))")
                         .bold()
                         .foregroundStyle(item.isOverdue ? .red : (item.remainingAmount <= 0.01 ? .green : .primary))
+                        .accessibilityIdentifier("bill.detail.remaining")
                 }
                 LabeledContent("状态") {
                     Text(item.displayStatus)
@@ -55,12 +70,14 @@ struct BillDetailView: View {
                             (item.isOverdue ? .red : .blue)
                         )
                         .clipShape(Capsule())
+                        .accessibilityIdentifier("bill.detail.status")
                 }
 
                 Button("调整账单金额") {
                     showingAmountOverrideSheet = true
                 }
                 .font(.subheadline)
+                .accessibilityIdentifier("bill.detail.adjust")
             }
 
             // 还款记录
@@ -96,6 +113,7 @@ struct BillDetailView: View {
                     Button("登记还款") {
                         showingPaymentSheet = true
                     }
+                    .accessibilityIdentifier("bill.detail.pay")
                 }
             }
         }
@@ -108,25 +126,40 @@ struct BillDetailView: View {
                     channel: channel,
                     note: note
                 )
-                await loadPayments()
+                await loadDetails()
             }
         }
         .sheet(isPresented: $showingAmountOverrideSheet) {
             BillAmountOverrideSheetView(item: item) { newAmount in
                 try await appState.setBillAmountOverride(billId: item.bill.id, amount: newAmount)
+                await loadDetails()
             }
         }
         .task {
-            await loadPayments()
+            await loadDetails()
+        }
+        .onChange(of: appState.isSyncing) { _, isSyncing in
+            if !isSyncing {
+                Task { await loadDetails() }
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task { await loadDetails() }
+            }
         }
     }
 
-    private func loadPayments() async {
+    private func loadDetails() async {
         do {
+            // A paid bill disappears from the unpaid list, but its open detail must stay current.
+            if let updated = try await appState.queryService.fetchBills(filter: .all).first(where: { $0.id == item.id }) {
+                self.item = updated
+            }
             let summary = try await appState.paymentService.getPaymentSummary(billId: item.bill.id)
             self.payments = summary.payments
         } catch {
-            print("Failed to load payments: \(error)")
+            print("Failed to refresh bill details: \(error)")
         }
     }
 }

@@ -54,11 +54,22 @@ struct WorldCreditApp: App {
                 }
             }
             .animation(.easeInOut(duration: 0.25), value: appState.isLocked)
+            .onChange(of: appState.isLoggedIn) { _, isLoggedIn in
+                if isLoggedIn {
+                    PushNotificationManager.shared.requestAuthorizationAndRegister()
+                }
+            }
             .onAppear {
                 WatchSyncCoordinator.shared.configure(appState: appState)
                 PushNotificationManager.shared.configure(appState: appState)
 
-                if CommandLine.arguments.contains("--demo-mode") {
+                #if DEBUG
+                if UITestConfiguration.isEnabled {
+                    Task {
+                        await appState.loadDemoData(onlyIfNeeded: true)
+                        await UITestConfiguration.requestLocalNotificationPermissionIfNeeded()
+                    }
+                } else if CommandLine.arguments.contains("--demo-mode") {
                     Task {
                         await appState.loadDemoData()
                         PushNotificationManager.shared.requestAuthorizationAndRegister()
@@ -66,6 +77,11 @@ struct WorldCreditApp: App {
                 } else if appState.isLoggedIn {
                     PushNotificationManager.shared.requestAuthorizationAndRegister()
                 }
+                #else
+                if appState.isLoggedIn {
+                    PushNotificationManager.shared.requestAuthorizationAndRegister()
+                }
+                #endif
 
                 if CommandLine.arguments.contains("--lock") {
                     appState.isLocked = true

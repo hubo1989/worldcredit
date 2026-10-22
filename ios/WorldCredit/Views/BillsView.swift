@@ -23,6 +23,7 @@ struct BillsView: View {
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
                 .padding(.vertical, 8)
+                .accessibilityIdentifier("bills.filter")
 
                 if appState.bills.isEmpty {
                     ContentUnavailableView(
@@ -33,17 +34,21 @@ struct BillsView: View {
                 } else {
                     List {
                         ForEach(appState.bills) { item in
-                            NavigationLink(destination: BillDetailView(item: item)) {
+                            NavigationLink(value: BillDetailRoute(item: item)) {
                                 BillRowView(item: item) {
                                     payingItem = item
                                 }
                             }
+                            .accessibilityIdentifier("bill.row.\(item.id)")
                         }
                     }
                     .listStyle(.insetGrouped)
                 }
             }
             .navigationTitle("账单")
+            .navigationDestination(for: BillDetailRoute.self) { route in
+                BillDetailView(item: route.item)
+            }
             .refreshable {
                 await appState.sync()
             }

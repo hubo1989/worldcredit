@@ -15,6 +15,7 @@ public final class WatchSyncCoordinator: NSObject, Sendable {
 
     public func configure(appState: AppState) {
         self.appState = appState
+        guard !UITestConfiguration.isEnabled else { return }
         #if canImport(WatchConnectivity)
         if WCSession.isSupported() {
             let session = WCSession.default
@@ -25,6 +26,7 @@ public final class WatchSyncCoordinator: NSObject, Sendable {
     }
 
     public func sendSnapshotToWatch(_ snapshot: WatchSnapshot) {
+        guard !UITestConfiguration.isEnabled else { return }
         #if canImport(WatchConnectivity)
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
@@ -88,6 +90,7 @@ extension WatchSyncCoordinator: WCSessionDelegate {
     }
 
     private func handleParsedWatchAction(action: String?, billId: String?, amount: Double?) async {
+        guard !UITestConfiguration.isEnabled else { return }
         guard let action, action == "mark_as_paid",
               let billId,
               let amount,

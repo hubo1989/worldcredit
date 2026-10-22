@@ -22,6 +22,7 @@ struct CardsView: View {
                             CardRowView(card: card)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("card.row.\(card.id)")
                     }
                 }
             }
@@ -40,6 +41,7 @@ struct CardsView: View {
 }
 
 struct CardRowView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let card: CardDisplayItem
 
     var body: some View {
@@ -83,36 +85,45 @@ struct CardRowView: View {
 
             Divider()
 
-            HStack {
+            let useVerticalMetrics = dynamicTypeSize.isAccessibilitySize
+            let metricsLayout = useVerticalMetrics
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+                : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+            metricsLayout {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("信用额度")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Text("¥\(String(format: "%.0f", card.card.creditLimit))")
                         .font(.footnote.bold())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Spacer()
-
-                VStack(alignment: .center, spacing: 2) {
+                VStack(alignment: useVerticalMetrics ? .leading : .center, spacing: 2) {
                     let billingDay = card.card.overrideBillingDay ?? card.card.billingDay
                     Text("账单日")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Text("每月 \(billingDay) 日")
                         .font(.footnote.bold())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                 }
+                .frame(maxWidth: .infinity, alignment: useVerticalMetrics ? .leading : .center)
 
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 2) {
+                VStack(alignment: useVerticalMetrics ? .leading : .trailing, spacing: 2) {
                     Text("未还账款")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Text("¥\(String(format: "%.2f", card.remainingAmount))")
                         .font(.footnote.bold())
                         .foregroundStyle(card.remainingAmount > 0.01 ? .primary : .secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                 }
+                .frame(maxWidth: .infinity, alignment: useVerticalMetrics ? .leading : .trailing)
             }
         }
         .padding(.vertical, 4)

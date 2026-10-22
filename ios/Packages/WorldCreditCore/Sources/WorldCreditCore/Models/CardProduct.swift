@@ -45,6 +45,21 @@ public struct CardProduct: Codable, FetchableRecord, TableRecord, PersistableRec
         self.cardArtUrl = cardArtUrl
     }
 
+    public init(from decoder: Decoder) throws {
+        let row = try decoder.container(keyedBy: CodingKeys.self)
+        id = try row.decode(String.self, forKey: .id)
+        bankId = try row.decodeIfPresent(String.self, forKey: .bankId)
+        bankName = try row.decode(String.self, forKey: .bankName)
+        cardName = try row.decode(String.self, forKey: .cardName)
+        // D1 products describe credit card templates; card_type exists only on the owned card.
+        cardType = try row.decodeIfPresent(String.self, forKey: .cardType) ?? "credit"
+        currency = try row.decode(String.self, forKey: .currency)
+        paymentDueType = try row.decode(PaymentDueType.self, forKey: .paymentDueType)
+        paymentDueValue = try row.decode(Int.self, forKey: .paymentDueValue)
+        annualFee = try row.decodeIfPresent(Double.self, forKey: .annualFee)
+        cardArtUrl = try row.decodeIfPresent(String.self, forKey: .cardArtUrl)
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case bankId = "bank_id"

@@ -1,10 +1,32 @@
 import Foundation
 import GRDB
 
+public enum SyncError: LocalizedError {
+    case pendingMutations
+    case invalidChange(table: String, rowID: String)
+    case invalidCursor
+    case incompleteReconciliation
+    case invalidMutation(String)
+    case duplicateMutationResult
+
+    public var errorDescription: String? {
+        switch self {
+        case .pendingMutations: return "本地改动尚未提交，将在下次同步重试"
+        case let .invalidChange(table, rowID): return "同步数据格式错误：\(table)/\(rowID)"
+        case .invalidCursor: return "服务器返回了无效的同步游标"
+        case .incompleteReconciliation: return "尚未收到需要恢复的服务器数据，将在下次同步重试"
+        case let .invalidMutation(id): return "本地待提交操作格式错误：\(id)"
+        case .duplicateMutationResult: return "服务器返回了重复的同步操作结果"
+        }
+    }
+}
+
 public final class SyncEngine: @unchecked Sendable {
     public let dbManager: DatabaseManager
     public let apiClient: ApiClient
     public let clientId: String
+    private static let reconcileMetaKey = "sync_reconcile_targets"
+    private static let supportedTables: Set<String> = ["banks", "card_products", "card_holders", "credit_cards", "bills", "payments"]
 
     public init(
         dbManager: DatabaseManager,
@@ -25,53 +47,68 @@ public final class SyncEngine: @unchecked Sendable {
     public func pull() async throws {
         var hasMore = true
         while hasMore {
-            let cursor = try await dbManager.dbWriter.read { db in
+            let (cursor, targets) = try await dbManager.dbWriter.read { db in
+                try self.requireEmptyOutbox(in: db)
                 let meta = try SyncMeta.fetchOne(db, key: "sync_cursor")
-                return Int(meta?.value ?? "0") ?? 0
+                return (Int(meta?.value ?? "0") ?? 0, Array(try self.reconcileTargets(in: db).prefix(100)))
             }
 
-            let response = try await apiClient.pull(cursor: cursor)
-            if response.changes.isEmpty && response.cursor == cursor {
-                break
-            }
-
-            try await dbManager.dbWriter.write { db in
+            let response = try await apiClient.pull(cursor: cursor, reconcile: targets)
+            guard response.cursor >= cursor else { throw SyncError.invalidCursor }
+            guard !response.hasMore || response.cursor > cursor else { throw SyncError.invalidCursor }
+            let returnedTargets = Set(response.changes.map { SyncReconcileTarget(tbl: $0.tbl, rowId: $0.rowId) })
+            let acknowledged = Set(targets).intersection(returnedTargets)
+            if !targets.isEmpty && acknowledged.isEmpty { throw SyncError.incompleteReconciliation }
+            let stillNeedsRecovery = try await dbManager.dbWriter.write { db in
+                // An edit may have been queued while the network request was in flight.
+                try self.requireEmptyOutbox(in: db)
                 for change in response.changes {
                     try self.applyChange(change, in: db)
                 }
+                let remaining = try self.reconcileTargets(in: db).filter { !acknowledged.contains($0) }
+                if !targets.isEmpty { try self.saveReconcileTargets(remaining, in: db) }
                 try SyncMeta(key: "sync_cursor", value: String(response.cursor)).save(db)
                 try SyncMeta(key: "last_synced_at", value: response.serverTime).save(db)
+                return !remaining.isEmpty
             }
 
-            hasMore = response.hasMore
+            hasMore = response.hasMore || stillNeedsRecovery
         }
     }
 
     public func push() async throws {
         let mutations = try await dbManager.dbWriter.read { db in
-            try MutationOutbox.order(Column("created_at").asc).fetchAll(db)
+            try MutationOutbox.order(Column("created_at").asc, Column("rowid").asc).fetchAll(db)
         }
         guard !mutations.isEmpty else { return }
 
-        let payloads = mutations.compactMap { item -> MutationPayload? in
-            guard let data = item.argsJson.data(using: .utf8),
-                  let args = try? JSONDecoder().decode([AnyCodable].self, from: data) else {
-                return nil
-            }
+        let payloads = try mutations.map { item -> MutationPayload in
+            guard let data = item.argsJson.data(using: .utf8) else { throw SyncError.invalidMutation(item.id) }
+            let args = try JSONDecoder().decode([AnyCodable].self, from: data)
             return MutationPayload(id: item.id, name: item.name, args: args)
         }
 
         let results = try await apiClient.push(clientId: clientId, mutations: payloads)
-        let resultMap = Dictionary(uniqueKeysWithValues: results.map { ($0.id, $0) })
+        var resultMap: [String: MutationPushResult] = [:]
+        for result in results {
+            guard resultMap.updateValue(result, forKey: result.id) == nil else { throw SyncError.duplicateMutationResult }
+        }
+        let resultsByID = resultMap
 
         try await dbManager.dbWriter.write { db in
             for item in mutations {
-                guard let res = resultMap[item.id] else { continue }
+                guard let res = resultsByID[item.id] else { continue }
                 if res.ok {
                     // Success: remove from outbox
                     try item.delete(db)
                 } else if res.permanent == true {
-                    // Permanent error (e.g. already paid on web): remove from outbox & rollback
+                    // Persist recovery before dropping the mutation, even if the server row
+                    // has not changed since our last cursor or the app exits before pull.
+                    let pending = try self.reconcileTargets(in: db)
+                    let additions = try self.targetsForRejectedMutation(item)
+                    var targets = pending
+                    for target in additions where !targets.contains(target) { targets.append(target) }
+                    try self.saveReconcileTargets(targets, in: db)
                     try item.delete(db)
                     try self.rollbackMutation(item, in: db)
                 } else {
@@ -88,6 +125,9 @@ public final class SyncEngine: @unchecked Sendable {
     private func applyChange(_ change: PullChangeItem, in db: Database) throws {
         let tbl = change.tbl
         let rowId = change.rowId
+        // The server also sends entities this version of the app does not display yet.
+        guard Self.supportedTables.contains(tbl) else { return }
+        guard !rowId.isEmpty else { throw SyncError.invalidChange(table: tbl, rowID: rowId) }
 
         if change.op == "delete" {
             switch tbl {
@@ -102,36 +142,57 @@ public final class SyncEngine: @unchecked Sendable {
             return
         }
 
-        // Upsert: decode row JSON into model
-        guard let rowDict = change.row else { return }
+        guard change.op == "upsert", let rowDict = change.row,
+              rowDict["id"]?.value as? String == rowId else {
+            throw SyncError.invalidChange(table: tbl, rowID: rowId)
+        }
         let jsonData = try JSONEncoder().encode(rowDict)
 
         switch tbl {
         case "banks":
-            if let model = try? JSONDecoder().decode(Bank.self, from: jsonData) {
-                try model.save(db)
-            }
+            try JSONDecoder().decode(Bank.self, from: jsonData).save(db)
         case "card_products":
-            if let model = try? JSONDecoder().decode(CardProduct.self, from: jsonData) {
-                try model.save(db)
-            }
+            try JSONDecoder().decode(CardProduct.self, from: jsonData).save(db)
         case "card_holders":
-            if let model = try? JSONDecoder().decode(CardHolder.self, from: jsonData) {
-                try model.save(db)
-            }
+            try JSONDecoder().decode(CardHolder.self, from: jsonData).save(db)
         case "credit_cards":
-            if let model = try? JSONDecoder().decode(CreditCard.self, from: jsonData) {
-                try model.save(db)
-            }
+            try JSONDecoder().decode(CreditCard.self, from: jsonData).save(db)
         case "bills":
-            if let model = try? JSONDecoder().decode(Bill.self, from: jsonData) {
-                try model.save(db)
-            }
+            try JSONDecoder().decode(Bill.self, from: jsonData).save(db)
         case "payments":
-            if let model = try? JSONDecoder().decode(Payment.self, from: jsonData) {
-                try model.save(db)
-            }
+            try JSONDecoder().decode(Payment.self, from: jsonData).save(db)
         default: break
+        }
+    }
+
+    private func requireEmptyOutbox(in db: Database) throws {
+        guard try MutationOutbox.fetchCount(db) == 0 else { throw SyncError.pendingMutations }
+    }
+
+    private func reconcileTargets(in db: Database) throws -> [SyncReconcileTarget] {
+        guard let value = try SyncMeta.fetchOne(db, key: Self.reconcileMetaKey)?.value else { return [] }
+        return try JSONDecoder().decode([SyncReconcileTarget].self, from: Data(value.utf8))
+    }
+
+    private func saveReconcileTargets(_ targets: [SyncReconcileTarget], in db: Database) throws {
+        let data = try JSONEncoder().encode(targets)
+        try SyncMeta(key: Self.reconcileMetaKey, value: String(decoding: data, as: UTF8.self)).save(db)
+    }
+
+    private func targetsForRejectedMutation(_ item: MutationOutbox) throws -> [SyncReconcileTarget] {
+        let args = try JSONDecoder().decode([AnyCodable].self, from: Data(item.argsJson.utf8))
+        switch item.name {
+        case "bills.recordPayment":
+            guard let input = args.first?.value as? [String: Any],
+                  let billID = input["bill_id"] as? String, let paymentID = input["id"] as? String else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            return [.init(tbl: "bills", rowId: billID), .init(tbl: "payments", rowId: paymentID)]
+        case "bills.setBillAmountOverride", "cards.updateCard":
+            guard let id = args.first?.value as? String else { throw SyncError.invalidMutation(item.id) }
+            return [.init(tbl: item.name == "cards.updateCard" ? "credit_cards" : "bills", rowId: id)]
+        default:
+            throw SyncError.invalidMutation(item.id)
         }
     }
 

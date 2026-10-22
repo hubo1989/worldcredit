@@ -43,6 +43,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .accessibilityIdentifier("settings.pendingChanges")
 
                     if let err = appState.lastSyncError {
                         VStack(alignment: .leading, spacing: 4) {

@@ -32,6 +32,7 @@ struct BillAmountOverrideSheetView: View {
                         TextField("输入调整金额", text: $amountText)
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
+                            .accessibilityIdentifier("bill.adjust.amount")
                     }
                 }
 
@@ -66,6 +67,7 @@ struct BillAmountOverrideSheetView: View {
                         submit(amt)
                     }
                     .disabled(isSubmitting)
+                    .accessibilityIdentifier("bill.adjust.save")
                 }
             }
         }

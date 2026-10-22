@@ -60,6 +60,21 @@ public struct PullResponse: Codable, Sendable {
     }
 }
 
+public struct SyncReconcileTarget: Codable, Hashable, Sendable {
+    public let tbl: String
+    public let rowId: String
+
+    public init(tbl: String, rowId: String) {
+        self.tbl = tbl
+        self.rowId = rowId
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case tbl
+        case rowId = "row_id"
+    }
+}
+
 public struct MutationPayload: Codable, Sendable {
     public var id: String
     public var name: String
@@ -99,17 +114,20 @@ public final class ApiClient: @unchecked Sendable {
     public let baseURL: URL
     public let session: NetworkSession
     private var inMemoryToken: String?
+    private let useKeychain: Bool
 
-    public init(baseURL: URL, session: NetworkSession = URLSession.shared, token: String? = nil) {
+    public init(baseURL: URL, session: NetworkSession = URLSession.shared, token: String? = nil, useKeychain: Bool = true) {
         self.baseURL = baseURL
         self.session = session
         self.inMemoryToken = token
+        self.useKeychain = useKeychain
     }
 
     public var token: String? {
-        get { inMemoryToken ?? readKeychainToken() }
+        get { inMemoryToken ?? (useKeychain ? readKeychainToken() : nil) }
         set {
             inMemoryToken = newValue
+            guard useKeychain else { return }
             if let newValue {
                 saveKeychainToken(newValue)
             } else {
@@ -119,11 +137,23 @@ public final class ApiClient: @unchecked Sendable {
     }
 
     public func loginWithPassword(email: String, password: String) async throws -> SessionUser {
+        try await exchangeToken(["grant_type": "password", "email": email, "password": password])
+    }
+
+    /// 用 Google Sign-In 换到的 ID token 换取会话。
+    ///
+    /// GoogleSignIn SDK 的交互留在 App 层：Core 只接收 token 字符串，这样 Watch 与
+    /// Widget 不必链接一个只支持 iOS/macOS 的包。服务端 `POST /api/auth/token`
+    /// 的 `grant_type: "google"` 会按 JWKS 验签并核对 audience。
+    public func loginWithGoogle(idToken: String) async throws -> SessionUser {
+        try await exchangeToken(["grant_type": "google", "id_token": idToken])
+    }
+
+    private func exchangeToken(_ body: [String: String]) async throws -> SessionUser {
         let url = baseURL.appendingPathComponent("api/auth/token")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: String] = ["grant_type": "password", "email": email, "password": password]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await session.data(for: req)
@@ -141,7 +171,7 @@ public final class ApiClient: @unchecked Sendable {
         return tokenRes.user
     }
 
-    public func pull(cursor: Int, limit: Int = 500) async throws -> PullResponse {
+    public func pull(cursor: Int, limit: Int = 500, reconcile: [SyncReconcileTarget] = []) async throws -> PullResponse {
         guard let token = self.token else {
             throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
         }
@@ -150,7 +180,10 @@ public final class ApiClient: @unchecked Sendable {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let body: [String: Any] = ["cursor": cursor, "limit": limit]
+        var body: [String: Any] = ["cursor": cursor, "limit": limit]
+        if !reconcile.isEmpty {
+            body["reconcile"] = reconcile.map { ["tbl": $0.tbl, "row_id": $0.rowId] }
+        }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await session.data(for: req)
@@ -194,14 +227,12 @@ public final class ApiClient: @unchecked Sendable {
 
     // MARK: - Device Tokens (APNs)
 
-    public func registerDeviceToken(token: String, platform: String = "ios", appVersion: String? = nil) async throws {
-        let url = baseURL.appendingPathComponent("/api/rpc/devices/registerToken")
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let authToken = self.token {
-            req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
-        }
+    public func registerDeviceToken(
+        token: String,
+        platform: String = "ios",
+        appVersion: String? = nil,
+        authenticationToken: String? = nil
+    ) async throws {
         var inputObj: [String: Any] = [
             "token": token,
             "platform": platform,
@@ -209,40 +240,65 @@ public final class ApiClient: @unchecked Sendable {
         if let appVersion {
             inputObj["appVersion"] = appVersion
         }
-        let bodyObj: [String: Any] = [
-            "args": [inputObj]
-        ]
-        req.httpBody = try JSONSerialization.data(withJSONObject: bodyObj)
-
-        let (_, response) = try await session.data(for: req)
-        guard let httpRes = response as? HTTPURLResponse, (200...299).contains(httpRes.statusCode) else {
-            throw NSError(domain: "ApiClient", code: (response as? HTTPURLResponse)?.statusCode ?? 500, userInfo: [NSLocalizedDescriptionKey: "注册设备推送失败"])
-        }
+        try await sendDeviceTokenRequest(
+            function: "registerToken", input: inputObj,
+            authenticationToken: authenticationToken, failureMessage: "注册设备推送失败"
+        )
     }
 
-    public func unregisterDeviceToken(token: String) async throws {
-        let url = baseURL.appendingPathComponent("/api/rpc/devices/unregisterToken")
+    /// The explicit credential lets logout finish a queued request after clearing the local session.
+    public func unregisterDeviceToken(token: String, authenticationToken: String? = nil) async throws {
+        try await sendDeviceTokenRequest(
+            function: "unregisterToken", input: ["token": token],
+            authenticationToken: authenticationToken, failureMessage: "注销设备推送失败"
+        )
+    }
+
+    private struct DeviceTokenResponse: Decodable {
+        struct Result: Decodable {
+            let success: Bool
+        }
+        let data: Result?
+        let error: String?
+    }
+
+    private func sendDeviceTokenRequest(
+        function: String,
+        input: [String: Any],
+        authenticationToken: String?,
+        failureMessage: String
+    ) async throws {
+        guard let authToken = authenticationToken ?? self.token, !authToken.isEmpty else {
+            throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
+        }
+        let url = baseURL.appendingPathComponent("api/rpc/devices/\(function)")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
+        req.timeoutInterval = 20
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let authToken = self.token {
-            req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
-        }
-        let bodyObj: [String: Any] = [
-            "args": [["token": token]]
-        ]
-        req.httpBody = try JSONSerialization.data(withJSONObject: bodyObj)
+        req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["args": [input]])
 
-        let (_, response) = try await session.data(for: req)
-        guard let httpRes = response as? HTTPURLResponse, (200...299).contains(httpRes.statusCode) else {
-            throw NSError(domain: "ApiClient", code: (response as? HTTPURLResponse)?.statusCode ?? 500, userInfo: [NSLocalizedDescriptionKey: "注销设备推送失败"])
+        let (data, response) = try await session.data(for: req)
+        guard let httpRes = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        guard (200...299).contains(httpRes.statusCode) else {
+            let body = try? JSONDecoder().decode(DeviceTokenResponse.self, from: data)
+            throw NSError(domain: "ApiClient", code: httpRes.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: body?.error ?? failureMessage])
+        }
+        let body = try JSONDecoder().decode(DeviceTokenResponse.self, from: data)
+        guard body.error == nil, body.data?.success == true else {
+            throw NSError(domain: "ApiClient", code: 500,
+                          userInfo: [NSLocalizedDescriptionKey: body.error ?? failureMessage])
         }
     }
 
     // MARK: - Keychain Helpers
 
-    private let keychainAccount = "com.worldcredit.app.sessionToken"
-    private let keychainService = "com.worldcredit.app"
+    private let keychainAccount = "com.chunfenshijie.worldcredit.sessionToken"
+    private let keychainService = "com.chunfenshijie.worldcredit"
 
     private func saveKeychainToken(_ token: String) {
         let data = Data(token.utf8)

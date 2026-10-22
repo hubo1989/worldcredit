@@ -61,6 +61,7 @@ struct PaymentSheetView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    .accessibilityIdentifier("payment.type")
 
                     if payType == .custom {
                         HStack {
@@ -119,6 +120,7 @@ struct PaymentSheetView: View {
                         }
                     }
                     .disabled(isSubmitting || effectiveAmount <= 0)
+                    .accessibilityIdentifier("payment.confirm")
                 }
             }
         }
