@@ -192,6 +192,53 @@ public final class ApiClient: @unchecked Sendable {
         return pushRes.results
     }
 
+    // MARK: - Device Tokens (APNs)
+
+    public func registerDeviceToken(token: String, platform: String = "ios", appVersion: String? = nil) async throws {
+        let url = baseURL.appendingPathComponent("/api/rpc/devices/registerToken")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let authToken = self.token {
+            req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        }
+        var inputObj: [String: Any] = [
+            "token": token,
+            "platform": platform,
+        ]
+        if let appVersion {
+            inputObj["appVersion"] = appVersion
+        }
+        let bodyObj: [String: Any] = [
+            "args": [inputObj]
+        ]
+        req.httpBody = try JSONSerialization.data(withJSONObject: bodyObj)
+
+        let (_, response) = try await session.data(for: req)
+        guard let httpRes = response as? HTTPURLResponse, (200...299).contains(httpRes.statusCode) else {
+            throw NSError(domain: "ApiClient", code: (response as? HTTPURLResponse)?.statusCode ?? 500, userInfo: [NSLocalizedDescriptionKey: "注册设备推送失败"])
+        }
+    }
+
+    public func unregisterDeviceToken(token: String) async throws {
+        let url = baseURL.appendingPathComponent("/api/rpc/devices/unregisterToken")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let authToken = self.token {
+            req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        }
+        let bodyObj: [String: Any] = [
+            "args": [["token": token]]
+        ]
+        req.httpBody = try JSONSerialization.data(withJSONObject: bodyObj)
+
+        let (_, response) = try await session.data(for: req)
+        guard let httpRes = response as? HTTPURLResponse, (200...299).contains(httpRes.statusCode) else {
+            throw NSError(domain: "ApiClient", code: (response as? HTTPURLResponse)?.statusCode ?? 500, userInfo: [NSLocalizedDescriptionKey: "注销设备推送失败"])
+        }
+    }
+
     // MARK: - Keychain Helpers
 
     private let keychainAccount = "com.worldcredit.app.sessionToken"

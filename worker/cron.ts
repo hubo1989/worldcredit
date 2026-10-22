@@ -3,12 +3,18 @@
 
 import webpush from 'web-push'
 import { getLocalTodayString } from '../lib/utils'
+import { sendApnsToUser } from '../lib/apns.server'
 
 interface CronEnv {
   DB: D1Database
   VAPID_PUBLIC_KEY?: string
   VAPID_PRIVATE_KEY?: string
   VAPID_SUBJECT?: string
+  APNS_KEY_P8?: string
+  APNS_KEY_ID?: string
+  APNS_TEAM_ID?: string
+  APNS_BUNDLE_ID?: string
+  APNS_ENVIRONMENT?: string
 }
 
 interface BillWithCard {
@@ -59,13 +65,19 @@ export async function handleScheduled(_event: ScheduledEvent, env: CronEnv, _ctx
     return
   }
 
-  // 3. Get all push subscriptions
+  // 3. Get all push subscriptions (Web Push & iOS device tokens)
   const subs = await db.prepare(
     'SELECT id, user_id, endpoint, p256dh, auth FROM push_subscriptions'
   ).all<{ id: string; user_id: string; endpoint: string; p256dh: string; auth: string }>()
   const subscriptions = subs.results || []
-  if (!subscriptions.length) {
-    console.log('[cron] No push subscriptions.')
+
+  const iosTokens = await db.prepare(
+    "SELECT id, user_id, token FROM device_tokens WHERE platform = 'ios'"
+  ).all<{ id: string; user_id: string; token: string }>()
+  const iosDevices = iosTokens.results || []
+
+  if (!subscriptions.length && !iosDevices.length) {
+    console.log('[cron] No push subscriptions or iOS devices.')
     return
   }
 
@@ -74,7 +86,8 @@ export async function handleScheduled(_event: ScheduledEvent, env: CronEnv, _ctx
   for (const pref of allPrefs) {
     const userId = pref.user_id
     const userSubs = subscriptions.filter(s => s.user_id === userId)
-    if (!userSubs.length) continue
+    const userDevices = iosDevices.filter(d => d.user_id === userId)
+    if (!userSubs.length && !userDevices.length) continue
 
     for (const bill of allBills) {
       // Skip bills not belonging to this user
@@ -114,11 +127,37 @@ export async function handleScheduled(_event: ScheduledEvent, env: CronEnv, _ctx
 
       // 6. Send push notification
       try {
-        const { staleIds } = await sendPushToSubscriptions(env, userSubs, title, body)
-        // Drop subscriptions the push service reports as gone (404/410).
-        for (const id of staleIds) {
-          await db.prepare('DELETE FROM push_subscriptions WHERE id = ?').bind(id).run()
+        if (userSubs.length > 0) {
+          const { staleIds } = await sendPushToSubscriptions(env, userSubs, title, body)
+          // Drop subscriptions the push service reports as gone (404/410).
+          for (const id of staleIds) {
+            await db.prepare('DELETE FROM push_subscriptions WHERE id = ?').bind(id).run()
+          }
         }
+
+        // Send to iOS devices via APNs if configured
+        if (userDevices.length > 0 && env.APNS_KEY_P8 && env.APNS_KEY_ID && env.APNS_TEAM_ID) {
+          await sendApnsToUser(
+            userId,
+            {
+              alert: { title, body },
+              sound: 'default',
+              badge: 1,
+              customData: {
+                type: 'bill_reminder',
+                billId: bill.id,
+              },
+            },
+            {
+              keyP8: env.APNS_KEY_P8,
+              keyId: env.APNS_KEY_ID,
+              teamId: env.APNS_TEAM_ID,
+              bundleId: env.APNS_BUNDLE_ID,
+              isProduction: env.APNS_ENVIRONMENT === 'production',
+            }
+          )
+        }
+
         await db.prepare(
           'INSERT INTO notification_history (id, user_id, notification_key, title, body, status) VALUES (?, ?, ?, ?, ?, ?)'
         ).bind(crypto.randomUUID(), userId, notificationKey, title, body, 'sent').run()

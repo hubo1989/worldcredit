@@ -17,9 +17,24 @@ public final class DatabaseManager: @unchecked Sendable {
     }
 
     public static func file(at url: URL) throws -> DatabaseManager {
+        // 确保父目录存在并应用数据保护
+        let dir = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: dir.path
+        )
+
         var config = Configuration()
         config.foreignKeysEnabled = true
         let pool = try DatabasePool(path: url.path, configuration: config)
+
+        // 应用 SQLite 文件数据保护
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: url.path
+        )
+
         return try DatabaseManager(dbWriter: pool)
     }
 

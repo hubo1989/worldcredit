@@ -69,10 +69,30 @@ struct SettingsView: View {
                     .disabled(appState.isSyncing)
                 }
 
-                Section("离线机制与安全") {
+                Section("安全与隐私") {
+                    Toggle("启用 \(BiometricAuthManager.shared.biometryName) 锁定", isOn: Binding(
+                        get: { appState.isBiometricsEnabled },
+                        set: { enabled in
+                            if enabled {
+                                Task {
+                                    let success = await BiometricAuthManager.shared.authenticate(reason: "验证身份以启用生物识别保护")
+                                    if success {
+                                        appState.isBiometricsEnabled = true
+                                    }
+                                }
+                            } else {
+                                appState.isBiometricsEnabled = false
+                            }
+                        }
+                    ))
+
+                    Button("测试锁定屏幕") {
+                        appState.isLocked = true
+                    }
+
+                    LabeledContent("文件数据保护", value: "CompleteUntilFirstAuth")
                     LabeledContent("本地数据库", value: "SQLite (GRDB)")
-                    LabeledContent("通知提醒", value: "本地系统日历推导 (09:00)")
-                    LabeledContent("离线能力", value: "断网查看 / 本地离线还款")
+                    LabeledContent("远程通道", value: "APNs (HTTP/2)")
                 }
 
                 Section {

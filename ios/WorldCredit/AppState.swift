@@ -27,6 +27,17 @@ public final class AppState {
     public var cards: [CardDisplayItem] = []
     public var selectedBillFilter: BillFilter = .unpaid
 
+    // MARK: - Biometric Security
+    public var isBiometricsEnabled: Bool {
+        get {
+            UserDefaults.standard.bool(forKey: "worldcredit_biometrics_enabled")
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "worldcredit_biometrics_enabled")
+        }
+    }
+    public var isLocked: Bool = false
+
     public init(
         dbManager: DatabaseManager? = nil,
         baseURL: URL = URL(string: "https://app.all-bill.com")!
@@ -53,6 +64,23 @@ public final class AppState {
         self.notificationScheduler = NotificationScheduler(dbManager: db)
 
         self.isLoggedIn = client.token != nil
+        if self.isLoggedIn && UserDefaults.standard.bool(forKey: "worldcredit_biometrics_enabled") {
+            self.isLocked = true
+        }
+    }
+
+    public func lock() {
+        if isBiometricsEnabled && isLoggedIn {
+            isLocked = true
+        }
+    }
+
+    public func unlockWithBiometrics() async {
+        guard isLocked else { return }
+        let success = await BiometricAuthManager.shared.authenticate(reason: "解锁 WorldCredit 查看财务数据")
+        if success {
+            isLocked = false
+        }
     }
 
     public func reloadData() async {
@@ -108,9 +136,11 @@ public final class AppState {
     }
 
     public func logout() {
+        PushNotificationManager.shared.unregisterCurrentToken()
         apiClient.token = nil
         self.isLoggedIn = false
         self.currentUser = nil
+        self.isLocked = false
     }
 
     public func recordPayment(

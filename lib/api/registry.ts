@@ -18,6 +18,7 @@ import * as billDraftsServer from './billDrafts.server'
 import * as billsServer from './bills.server'
 import * as cardsServer from './cards.server'
 import * as dashboardServer from './dashboard.server'
+import * as devicesServer from './devices.server'
 import * as emailBillsServer from './emailBills.server'
 import * as gmailLedgerServer from './gmail-ledger.server'
 import * as holdersServer from './holders.server'
@@ -273,6 +274,10 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     recordOpportunityBooking: { impl: opportunitiesServer.recordOpportunityBooking, prependActor: true },
     completeOpportunityBooking: { impl: opportunitiesServer.completeOpportunityBooking, prependActor: true },
     cancelOpportunityBooking: { impl: opportunitiesServer.cancelOpportunityBooking, prependActor: true },
+  },
+  devices: {
+    registerToken: { impl: devicesServer.registerDeviceToken, bindUser: 1 },
+    unregisterToken: { impl: devicesServer.unregisterDeviceToken, bindUser: 1 },
   },
   push: {
     subscribePush: { impl: pushServer.subscribePush, bindUser: 1 },
