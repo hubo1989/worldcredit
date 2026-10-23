@@ -254,14 +254,25 @@ describe('并发竞争（barrier 后同状态入批）', () => {
       settle(recordUsage(w.accountId, w.cycleId, { quantity: 1, request_key: key })),
       settle(recordUsage(w.accountId, w.cycleId, { quantity: 3, request_key: key })),
     ])
-    // 先到者（q1）先入批，确定性获胜；q3 同 key 异参被拒
-    expect(q1.ok).toBe(true)
-    expect(errorCode(q3)).toBe('IDEMPOTENCY_CONFLICT')
+    // 哈希是异步操作，调用顺序不保证入批顺序；任一请求都可能合法获胜。
+    expect([errorCode(q1), errorCode(q3)].sort()).toEqual(['IDEMPOTENCY_CONFLICT', null])
+    const winner = q1.ok ? q1 : q3
+    if (!winner.ok) throw new Error('同 key 异参竞争必须有一个成功结果')
+    const winningQuantity = q1.ok ? 1 : 3
     const cycle = db.raw
-      .prepare('SELECT used_count FROM opportunity_cycles WHERE id = ?')
-      .get(w.cycleId) as { used_count: number }
-    expect(cycle.used_count).toBe(1)
-    expect(db.raw.prepare('SELECT COUNT(*) AS n FROM opportunity_usages').get()).toEqual({ n: 1 })
+      .prepare('SELECT used_count, revision FROM opportunity_cycles WHERE id = ?')
+      .get(w.cycleId) as { used_count: number; revision: number }
+    expect(cycle).toEqual({ used_count: winningQuantity, revision: 2 })
+    expect(db.raw.prepare('SELECT id, quantity FROM opportunity_usages').all()).toEqual([
+      { id: winner.value.usage_id, quantity: winningQuantity },
+    ])
+    expect(
+      db.raw.prepare("SELECT COUNT(*) AS n FROM opportunity_events WHERE entity_kind = 'usage'").get(),
+    ).toEqual({ n: 1 })
+    expect(
+      db.raw.prepare("SELECT COUNT(*) AS n FROM opportunity_commands WHERE command_type = 'recordOpportunityUsage'").get(),
+    ).toEqual({ n: 1 })
+    expect(db.raw.prepare('SELECT COUNT(*) AS n FROM opportunity_write_checks').get()).toEqual({ n: 0 })
     expect((await reconcileOpportunityCycle(actorAdminA, w.cycleId)).ok).toBe(true)
   })
 
