@@ -1,5 +1,6 @@
 // APNs operations for the main app Worker, including stale device cleanup.
-import { execute, query } from './db'
+import { getDb } from './db'
+import { broadcastApnsToUser, broadcastSilentSync } from './apns-broadcast'
 import {
   sendApnsNotification as sendNotification,
   type ApnsConfig,
@@ -15,10 +16,13 @@ export async function sendApnsNotification(
   options: SendPushOptions,
   config: ApnsConfig
 ): Promise<ApnsResponse> {
+  const db = getDb()
+  const owner = await db.prepare('SELECT user_id FROM device_tokens WHERE token = ?')
+    .bind(token).first<{ user_id: string }>()
   const result = await sendNotification(token, options, config)
-  if (result.invalidToken) {
-    const { error } = await execute('DELETE FROM device_tokens WHERE token = ?', [token])
-    if (error) throw new Error(error.message)
+  if (result.invalidToken && owner) {
+    await db.prepare('DELETE FROM device_tokens WHERE token = ? AND user_id = ?')
+      .bind(token, owner.user_id).run()
   }
   return result
 }
@@ -31,30 +35,8 @@ export async function sendApnsToUser(
   options: SendPushOptions,
   config: ApnsConfig
 ): Promise<{ total: number; sent: number; failed: number }> {
-  const { data: devices } = await query<{ token: string }>(
-    "SELECT token FROM device_tokens WHERE user_id = ? AND platform = 'ios'",
-    [userId]
-  )
-
-  if (!devices || devices.length === 0) {
-    return { total: 0, sent: 0, failed: 0 }
-  }
-
-  let sent = 0
-  let failed = 0
-
-  await Promise.all(
-    devices.map(async ({ token }) => {
-      const res = await sendApnsNotification(token, options, config)
-      if (res.success) {
-        sent++
-      } else {
-        failed++
-      }
-    })
-  )
-
-  return { total: devices.length, sent, failed }
+  const { total, sent, failed } = await broadcastApnsToUser(getDb(), userId, options, config)
+  return { total, sent, failed }
 }
 
 /**
@@ -64,15 +46,5 @@ export async function triggerSilentSyncForUser(
   userId: string,
   config: ApnsConfig
 ): Promise<void> {
-  await sendApnsToUser(
-    userId,
-    {
-      isSilent: true,
-      customData: {
-        type: 'sync',
-        timestamp: Date.now(),
-      },
-    },
-    config
-  )
+  await broadcastSilentSync(getDb(), userId, config)
 }

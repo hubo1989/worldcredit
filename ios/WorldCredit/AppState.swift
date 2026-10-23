@@ -214,7 +214,12 @@ public final class AppState {
         )
         // Refresh local UI immediately
         await reloadData()
-        try? await notificationScheduler.rescheduleAll()
+        do {
+            try await notificationScheduler.rescheduleAll()
+        } catch {
+            lastSyncError = "本地修改已保存，提醒更新失败：\(error.localizedDescription)"
+            print("提醒更新失败：\(error)")
+        }
 
         // Background trigger sync if online
         Task {
@@ -225,7 +230,12 @@ public final class AppState {
     public func setBillAmountOverride(billId: String, amount: Double?) async throws {
         try await billEditService.setBillAmountOverride(billId: billId, amount: amount)
         await reloadData()
-        try? await notificationScheduler.rescheduleAll()
+        do {
+            try await notificationScheduler.rescheduleAll()
+        } catch {
+            lastSyncError = "本地修改已保存，提醒更新失败：\(error.localizedDescription)"
+            print("提醒更新失败：\(error)")
+        }
         Task {
             await self.sync()
         }

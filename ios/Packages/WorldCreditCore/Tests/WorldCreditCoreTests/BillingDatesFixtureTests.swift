@@ -87,7 +87,7 @@ private let dateFormatter: DateFormatter = {
     let df = DateFormatter()
     df.dateFormat = "yyyy-MM-dd"
     df.locale = Locale(identifier: "en_US_POSIX")
-    df.timeZone = TimeZone.current
+    df.timeZone = TimeZone(identifier: "Asia/Shanghai")!
     return df
 }()
 

@@ -25,6 +25,8 @@ public struct CardUpdateInput: Sendable {
     public var overrideBillingDay: Int?
     public var overrideDueType: PaymentDueType?
     public var overrideDueValue: Int?
+    /// Omitted values leave the rule unchanged; this flag clears both fields.
+    public var clearDueOverride: Bool = false
 
     public init(
         nameOverride: String? = nil,
@@ -86,13 +88,20 @@ public final class CardEditService: Sendable {
                 card.overrideBillingDay = ovDay
                 patchDict["override_billing_day"] = ovDay
             }
-            if let dueType = input.overrideDueType {
-                card.overrideDueType = dueType
-                patchDict["override_due_type"] = dueType.rawValue
-            }
-            if let dueValue = input.overrideDueValue {
-                card.overrideDueValue = dueValue
-                patchDict["override_due_value"] = dueValue
+            if input.clearDueOverride {
+                card.overrideDueType = nil
+                card.overrideDueValue = nil
+                patchDict["override_due_type"] = NSNull()
+                patchDict["override_due_value"] = NSNull()
+            } else {
+                if let dueType = input.overrideDueType {
+                    card.overrideDueType = dueType
+                    patchDict["override_due_type"] = dueType.rawValue
+                }
+                if let dueValue = input.overrideDueValue {
+                    card.overrideDueValue = dueValue
+                    patchDict["override_due_value"] = dueValue
+                }
             }
 
             try card.update(db)

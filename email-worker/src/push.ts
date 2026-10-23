@@ -1,4 +1,5 @@
-import { sendApnsNotification, type ApnsConfig } from '../../lib/apns-client'
+import type { ApnsConfig } from '../../lib/apns-client'
+import { broadcastSilentSync } from '../../lib/apns-broadcast'
 import type { Env } from './types'
 
 /** Keep notification delivery outside the bill import transaction and response path. */
@@ -19,27 +20,11 @@ export function scheduleBillSync(env: Env, ctx: ExecutionContext, userId: string
 }
 
 async function sendBillSync(db: D1Database, userId: string, config: ApnsConfig): Promise<void> {
-  const { results } = await db.prepare(
-    "SELECT token FROM device_tokens WHERE user_id = ? AND platform = 'ios'"
-  ).bind(userId).all<{ token: string }>()
-
-  const outcomes = await Promise.all(results.map(async ({ token }) => {
-    const result = await sendApnsNotification(token, {
-      isSilent: true,
-      customData: { type: 'sync', timestamp: Date.now() },
-    }, config)
-    if (result.invalidToken) {
-      // Do not delete a device that changed ownership while the request was in flight.
-      await db.prepare('DELETE FROM device_tokens WHERE token = ? AND user_id = ?')
-        .bind(token, userId).run()
-    }
-    return result
-  }))
-  const failed = outcomes.filter(result => !result.success).length
-  if (failed) {
+  const { total, failedResults } = await broadcastSilentSync(db, userId, config)
+  if (failedResults.length) {
     console.warn(
-      `[email-worker] Silent sync delivery failed for ${failed}/${outcomes.length} devices`,
-      outcomes.filter(result => !result.success).map(({ statusCode, error }) => ({ statusCode, error }))
+      `[email-worker] Silent sync delivery failed for ${failedResults.length}/${total} devices`,
+      failedResults.map(({ statusCode, error }) => ({ statusCode, error }))
     )
   }
 }

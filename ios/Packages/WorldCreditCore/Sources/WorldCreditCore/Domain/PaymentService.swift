@@ -88,7 +88,7 @@ public final class PaymentService: Sendable {
             let totalPaidBefore = existingPayments.reduce(0.0) { $0 + $1.amount }
             let remainingDue = max(0.0, bill.effectiveAmount - totalPaidBefore)
 
-            if remainingDue <= 0.001 {
+            if remainingDue <= 0.01 {
                 throw PaymentError.billAlreadyPaid
             }
 

@@ -57,7 +57,17 @@ public struct CardProduct: Codable, FetchableRecord, TableRecord, PersistableRec
         paymentDueType = try row.decode(PaymentDueType.self, forKey: .paymentDueType)
         paymentDueValue = try row.decode(Int.self, forKey: .paymentDueValue)
         annualFee = try row.decodeIfPresent(Double.self, forKey: .annualFee)
-        cardArtUrl = try row.decodeIfPresent(String.self, forKey: .cardArtUrl)
+        // D1 stores an image identifier, while the existing local column is card_art_url.
+        let remote = try decoder.container(keyedBy: RemoteKeys.self)
+        if remote.contains(.cardImageId) {
+            cardArtUrl = try remote.decodeIfPresent(String.self, forKey: .cardImageId)
+        } else {
+            cardArtUrl = try row.decodeIfPresent(String.self, forKey: .cardArtUrl)
+        }
+    }
+
+    private enum RemoteKeys: String, CodingKey {
+        case cardImageId = "card_image_id"
     }
 
     enum CodingKeys: String, CodingKey {

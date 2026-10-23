@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import OSLog
 
 public struct SessionUser: Codable, Sendable {
     public var id: String
@@ -110,28 +111,74 @@ public protocol NetworkSession: Sendable {
 
 extension URLSession: NetworkSession {}
 
+protocol TokenKeychain: Sendable {
+    func add(_ attributes: [String: Any]) -> OSStatus
+    func delete(_ query: [String: Any]) -> OSStatus
+    func read(_ query: [String: Any]) -> (OSStatus, Data?)
+}
+
+private struct SystemTokenKeychain: TokenKeychain {
+    func add(_ attributes: [String: Any]) -> OSStatus { SecItemAdd(attributes as CFDictionary, nil) }
+    func delete(_ query: [String: Any]) -> OSStatus { SecItemDelete(query as CFDictionary) }
+    func read(_ query: [String: Any]) -> (OSStatus, Data?) {
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        return (status, item as? Data)
+    }
+}
+
+public struct KeychainFailure: Error, Equatable, Sendable {
+    public enum Operation: String, Sendable { case read, add, delete }
+    public let operation: Operation
+    public let status: OSStatus
+}
+
 public final class ApiClient: @unchecked Sendable {
+    // This lock covers memory AND the complete synchronous Keychain operation.
+    private let stateLock = NSLock()
+    private var keychainFailure: KeychainFailure?
+    private var hasExplicitToken = false
+    private static let logger = Logger(subsystem: "com.chunfenshijie.worldcredit", category: "Keychain")
+
+    /// Most recent persistence failure. Contains only an operation and OSStatus, never credentials.
+    public var lastKeychainFailure: KeychainFailure? { stateLock.withLock { keychainFailure } }
     public let baseURL: URL
     public let session: NetworkSession
     private var inMemoryToken: String?
     private let useKeychain: Bool
+    private let keychain: any TokenKeychain
 
-    public init(baseURL: URL, session: NetworkSession = URLSession.shared, token: String? = nil, useKeychain: Bool = true) {
+    public convenience init(baseURL: URL, session: NetworkSession = URLSession.shared, token: String? = nil, useKeychain: Bool = true) {
+        self.init(baseURL: baseURL, session: session, token: token, useKeychain: useKeychain, keychain: SystemTokenKeychain())
+    }
+
+    init(baseURL: URL, session: NetworkSession = URLSession.shared, token: String? = nil,
+         useKeychain: Bool = true, keychain: any TokenKeychain) {
         self.baseURL = baseURL
         self.session = session
         self.inMemoryToken = token
         self.useKeychain = useKeychain
+        self.keychain = keychain
     }
 
     public var token: String? {
-        get { inMemoryToken ?? (useKeychain ? readKeychainToken() : nil) }
+        get {
+            stateLock.withLock {
+                // Explicit nil is a logout tombstone, even if Keychain deletion failed.
+                if hasExplicitToken || inMemoryToken != nil { return inMemoryToken }
+                return useKeychain ? readKeychainToken() : nil
+            }
+        }
         set {
-            inMemoryToken = newValue
-            guard useKeychain else { return }
-            if let newValue {
-                saveKeychainToken(newValue)
-            } else {
-                deleteKeychainToken()
+            stateLock.withLock {
+                hasExplicitToken = true
+                inMemoryToken = newValue
+                guard useKeychain else { return }
+                if let newValue {
+                    saveKeychainToken(newValue)
+                } else {
+                    deleteKeychainToken()
+                }
             }
         }
     }
@@ -307,11 +354,12 @@ public final class ApiClient: @unchecked Sendable {
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount,
         ]
-        SecItemDelete(query as CFDictionary)
+        let deletion = keychain.delete(query)
+        guard checkKeychainStatus(deletion, operation: .delete, allowsMissing: true) else { return }
         var newQuery = query
         newQuery[kSecValueData as String] = data
-        newQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(newQuery as CFDictionary, nil)
+        newQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        checkKeychainStatus(keychain.add(newQuery), operation: .add)
     }
 
     private func readKeychainToken() -> String? {
@@ -322,10 +370,13 @@ public final class ApiClient: @unchecked Sendable {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let (status, item) = keychain.read(query)
+        guard checkKeychainStatus(status, operation: .read, allowsMissing: true), status == errSecSuccess else { return nil }
+        guard let data = item, let token = String(data: data, encoding: .utf8) else {
+            checkKeychainStatus(errSecDecode, operation: .read)
+            return nil
+        }
+        return token
     }
 
     private func deleteKeychainToken() {
@@ -334,7 +385,20 @@ public final class ApiClient: @unchecked Sendable {
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount,
         ]
-        SecItemDelete(query as CFDictionary)
+        checkKeychainStatus(keychain.delete(query), operation: .delete, allowsMissing: true)
+    }
+
+    /// Called only while stateLock is held. Preserve failures until a later successful persistence operation.
+    @discardableResult
+    private func checkKeychainStatus(_ status: OSStatus, operation: KeychainFailure.Operation,
+                                     allowsMissing: Bool = false) -> Bool {
+        if status == errSecSuccess || (allowsMissing && status == errSecItemNotFound) {
+            keychainFailure = nil
+            return true
+        }
+        keychainFailure = KeychainFailure(operation: operation, status: status)
+        Self.logger.error("Keychain \(operation.rawValue, privacy: .public) failed (OSStatus \(status, privacy: .public))")
+        return false
     }
 }
 

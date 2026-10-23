@@ -7,6 +7,9 @@ public final class SyncCoordinator {
 
     public init() {}
 
+    /// Joiners share the current cycle's result; their operation is intentionally not run.
+    /// Cancelling a waiter does not cancel the unstructured task or interrupt Task.value:
+    /// inFlight stays occupied until the complete cycle has actually returned or thrown.
     public func perform(_ operation: @escaping @MainActor () async throws -> Void) async throws {
         if let inFlight {
             try await inFlight.value

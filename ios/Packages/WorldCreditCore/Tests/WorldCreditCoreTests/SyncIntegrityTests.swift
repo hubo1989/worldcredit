@@ -128,6 +128,33 @@ struct SyncIntegrityTests {
         }
     }
 
+    @Test("未知还款规则拒绝猜测默认到期日")
+    func unknownDueRule() throws {
+        var row = try #require(fixtureChange(table: "card_products")["row"] as? [String: Any])
+        row["payment_due_type"] = "future-rule"
+        let data = try JSONSerialization.data(withJSONObject: row)
+        #expect(throws: (any Error).self) { try JSONDecoder().decode(CardProduct.self, from: data) }
+    }
+
+    @Test("坏行修正后可从保留的游标恢复而不漏账")
+    func correctedPageRecovers() async throws {
+        let manager = try database()
+        var bad = try fixtureChange(table: "bills")
+        bad.removeValue(forKey: "row")
+        let broken = try responseData(changes: [bad], cursor: 10)
+        await #expect(throws: (any Error).self) { try await engine(manager) { _ in broken }.pull() }
+        let corrected = try responseData(changes: [fixtureChange(table: "bills")], cursor: 10)
+        try await engine(manager) { request in
+            let body = try #require(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
+            #expect(body["cursor"] as? Int == 6)
+            return corrected
+        }.pull()
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            #expect(try Bill.fetchOne(db, id: billID) != nil)
+            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "10")
+        }
+    }
+
     @Test("Unsupported server entities remain forward compatible")
     func unsupportedTable() async throws {
         let manager = try database()

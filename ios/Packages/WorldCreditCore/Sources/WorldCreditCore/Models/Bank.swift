@@ -30,6 +30,27 @@ public struct Bank: Codable, FetchableRecord, TableRecord, PersistableRecord, Se
         self.statementMode = statementMode
     }
 
+    public init(from decoder: Decoder) throws {
+        let row = try decoder.container(keyedBy: CodingKeys.self)
+        id = try row.decode(String.self, forKey: .id)
+        name = try row.decode(String.self, forKey: .name)
+        shortName = try row.decodeIfPresent(String.self, forKey: .shortName)
+        logoUrl = try row.decodeIfPresent(String.self, forKey: .logoUrl)
+        quotaMode = try row.decodeIfPresent(String.self, forKey: .quotaMode)
+        statementMode = try row.decodeIfPresent(String.self, forKey: .statementMode)
+        // Pull returns D1 names; encoding and GRDB retain the existing local column.
+        let remote = try decoder.container(keyedBy: RemoteKeys.self)
+        if remote.contains(.customerServicePhone) {
+            tel = try remote.decodeIfPresent(String.self, forKey: .customerServicePhone)
+        } else {
+            tel = try row.decodeIfPresent(String.self, forKey: .tel)
+        }
+    }
+
+    private enum RemoteKeys: String, CodingKey {
+        case customerServicePhone = "customer_service_phone"
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, name, tel
         case shortName = "short_name"

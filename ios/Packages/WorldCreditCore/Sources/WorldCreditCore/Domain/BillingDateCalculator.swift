@@ -13,7 +13,7 @@ public struct DueConfig: Equatable, Sendable {
 public enum BillingDateCalculator {
     private static var calendar: Calendar {
         var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone.current
+        cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!
         return cal
     }
 

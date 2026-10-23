@@ -210,7 +210,7 @@ export default {
       log.status = 'success'
       if (cardNote) log.error_msg = cardNote + '账单已写入'
       await writeLog(db, log)
-      if (outcome.action !== 'preserved') scheduleBillSync(env, ctx, userId)
+      if (outcome.action !== 'preserved' || billingDayUpdated) scheduleBillSync(env, ctx, userId)
     } catch (err) {
       log.status = 'failed'
       log.error_msg = err instanceof Error ? err.message : String(err)

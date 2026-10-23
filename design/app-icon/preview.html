@@ -340,20 +340,31 @@
 
   <script>
     function downloadCanvas(size, filename) {
+      if (location.protocol === 'file:') {
+        alert('本地文件预览无法安全导出 canvas，请通过本地 HTTP 服务打开本页面后再导出（见 README）。');
+        return;
+      }
       const img = new Image();
-      img.src = 'worldcredit-app-icon.svg';
+      img.onerror = () => alert('图标加载失败，无法导出，请检查 SVG 文件是否存在。');
       img.onload = () => {
-        const canvas = document.getElementById('exportCanvas');
-        canvas.width = size;
-        canvas.height = size;
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, size, size);
-        ctx.drawImage(img, 0, 0, size, size);
-        const link = document.createElement('a');
-        link.download = filename;
-        link.href = canvas.toDataURL('image/png');
-        link.click();
+        try {
+          const canvas = document.getElementById('exportCanvas');
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('Canvas 2D unavailable');
+          ctx.clearRect(0, 0, size, size);
+          ctx.drawImage(img, 0, 0, size, size);
+          const link = document.createElement('a');
+          link.download = filename;
+          link.href = canvas.toDataURL('image/png');
+          link.click();
+        } catch (error) {
+          console.error('PNG export failed:', error);
+          alert('PNG 导出失败，请通过同源 HTTP 服务打开本页面后重试。');
+        }
       };
+      img.src = 'worldcredit-app-icon.svg';
     }
   </script>
 </body>

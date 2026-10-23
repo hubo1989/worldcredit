@@ -40,7 +40,9 @@ public struct WatchBillItem: Codable, Identifiable, Sendable {
     public func daysUntilDue(today: Date = Date(), calendar: Calendar = Calendar.current) -> Int {
         let df = DateFormatter()
         df.dateFormat = "yyyy-MM-dd"
-        df.timeZone = calendar.timeZone
+        // Keep the calendar argument for source compatibility; dates use the business timezone.
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = TimeZone(identifier: "Asia/Shanghai")!
         guard let due = df.date(from: dueDate) else { return 0 }
         return BillingDateCalculator.diffInCalendarDays(target: due, today: today)
     }
@@ -211,7 +213,8 @@ public final class WatchSnapshotManager: Sendable {
             )
         }
 
-        // Generate upcoming 60-day calendar events (due dates & billing dates)
+        // Repayment calendar mirrors all outstanding bills, including overdue ones.
+        // Billing-day projections and a rolling time window are not part of this view.
         var events: [WatchCalendarEvent] = []
 
         // 1. Due dates from active bills

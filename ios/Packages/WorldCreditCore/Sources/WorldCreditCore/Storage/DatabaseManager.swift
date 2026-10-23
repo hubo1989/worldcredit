@@ -17,25 +17,50 @@ public final class DatabaseManager: @unchecked Sendable {
     }
 
     public static func file(at url: URL) throws -> DatabaseManager {
-        // 确保父目录存在并应用数据保护
+        try file(at: url, fileManager: .default)
+    }
+
+    // Simulator filesystems may accept protection writes without returning protectionKey.
+    // Physical devices must always verify protection before exposing the database.
+    static var requiresProtectionReadback: Bool {
+        #if targetEnvironment(simulator)
+        false
+        #else
+        true
+        #endif
+    }
+
+    static func file(at url: URL, fileManager: FileManager,
+                     requiresProtectionReadback: Bool = DatabaseManager.requiresProtectionReadback) throws -> DatabaseManager {
+        // Protect the directory before SQLite can create database or sidecar files.
         let dir = url.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try? FileManager.default.setAttributes(
-            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-            ofItemAtPath: dir.path
-        )
+        try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+        try protectFile(at: dir.path, fileManager: fileManager, requiresReadback: requiresProtectionReadback)
+        let paths = [url.path, url.path + "-wal", url.path + "-shm"]
+        // Existing files may have been created with weaker protection.
+        for path in paths where fileManager.fileExists(atPath: path) {
+            try protectFile(at: path, fileManager: fileManager, requiresReadback: requiresProtectionReadback)
+        }
 
         var config = Configuration()
         config.foreignKeysEnabled = true
         let pool = try DatabasePool(path: url.path, configuration: config)
+        let manager = try DatabaseManager(dbWriter: pool)
+        for path in paths where fileManager.fileExists(atPath: path) {
+            try protectFile(at: path, fileManager: fileManager, requiresReadback: requiresProtectionReadback)
+        }
+        return manager
+    }
 
-        // 应用 SQLite 文件数据保护
-        try? FileManager.default.setAttributes(
-            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-            ofItemAtPath: url.path
-        )
-
-        return try DatabaseManager(dbWriter: pool)
+    private static func protectFile(at path: String, fileManager: FileManager, requiresReadback: Bool) throws {
+        let protection = FileProtectionType.completeUntilFirstUserAuthentication
+        try fileManager.setAttributes([.protectionKey: protection], ofItemAtPath: path)
+        let attributes = try fileManager.attributesOfItem(atPath: path)
+        if !requiresReadback && attributes[.protectionKey] == nil { return }
+        guard attributes[.protectionKey] as? FileProtectionType == protection else {
+            throw NSError(domain: "DatabaseManager.FileProtection", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Database file protection verification failed"])
+        }
     }
 
     public static func defaultDatabase() throws -> DatabaseManager {

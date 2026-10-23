@@ -27,10 +27,7 @@ trap cleanup EXIT
 
 cd "$repo_root"
 command -v xcodegen >/dev/null
-if [ ! -f ios/Packages/GRDB/Package.swift ]; then
-  echo 'Missing ios/Packages/GRDB; see docs/runbooks/ios-native-setup.md' >&2
-  exit 1
-fi
+# Xcode resolves the revision-pinned remote GRDB dependency via WorldCreditCore.
 if [ -e "$artifacts/results.xcresult" ]; then
   echo "Refusing to overwrite an existing result bundle: $artifacts/results.xcresult" >&2
   exit 1

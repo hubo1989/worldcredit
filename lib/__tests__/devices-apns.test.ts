@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createOpportunityDb } from './helpers/sqlite-d1'
 import { setDb } from '../db/client'
+import { broadcastSilentSync } from '../apns-broadcast'
 import { registerDeviceToken, unregisterDeviceToken } from '../api/devices.server'
 import {
   getApnsJwt,
@@ -212,6 +213,76 @@ describe('Device Tokens & APNs Push Server', () => {
 
       expect(row).toBeNull()
       fetchSpy.mockRestore()
+    })
+
+    it('shared silent broadcast uses the supplied DB and reports mixed outcomes', async () => {
+      await db.exec("INSERT INTO users (id, email, password_hash) VALUES ('other', 'other@example.com', 'hash')")
+      await registerDeviceToken({ platform: 'ios', token: 'ok' }, userId)
+      await registerDeviceToken({ platform: 'ios', token: 'bad' }, userId)
+      await registerDeviceToken({ platform: 'ios', token: 'other-device' }, 'other')
+      await registerDeviceToken({ platform: 'android', token: 'android' }, userId)
+      const pair = await crypto.subtle.generateKey(
+        { name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']
+      )
+      const key = await crypto.subtle.exportKey('pkcs8', pair.privateKey)
+      const pem = [
+        ['-----BEGIN', 'PRIVATE KEY-----'].join(' '),
+        btoa(String.fromCharCode(...new Uint8Array(key))),
+        ['-----END', 'PRIVATE KEY-----'].join(' '),
+      ].join('\n')
+      const config = { keyP8: pem, keyId: 'MIXKEY', teamId: 'TEAM' }
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async url =>
+        String(url).endsWith('/bad')
+          ? Response.json({ reason: 'Unregistered' }, { status: 410 })
+          : new Response(null, { status: 200 }))
+      setDb(null)
+      try {
+        expect(await broadcastSilentSync(db as unknown as D1Database, userId, config))
+          .toMatchObject({ total: 2, sent: 1, failed: 1, failedResults: [{ statusCode: 410 }] })
+        expect(fetchSpy).toHaveBeenCalledTimes(2)
+        for (const [, options] of fetchSpy.mock.calls) {
+          expect(JSON.parse(String(options?.body))).toMatchObject({ aps: { 'content-available': 1 }, type: 'sync' })
+        }
+        expect(await db.prepare('SELECT token FROM device_tokens WHERE token = ?').bind('bad').first()).toBeNull()
+        expect(await broadcastSilentSync(db as unknown as D1Database, 'no-devices', config))
+          .toEqual({ total: 0, sent: 0, failed: 0, failedResults: [] })
+        expect(fetchSpy).toHaveBeenCalledTimes(2)
+      } finally {
+        setDb(db as unknown as D1Database)
+        fetchSpy.mockRestore()
+      }
+    })
+
+    it.each(['broadcast', 'single'])('%s cleanup preserves a token rebound during APNs delivery', async kind => {
+      await db.exec("INSERT INTO users (id, email, password_hash) VALUES ('new-owner', 'new@example.com', 'hash')")
+      await registerDeviceToken({ platform: 'ios', token: 'rebound' }, userId)
+      const pair = await crypto.subtle.generateKey(
+        { name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']
+      )
+      const key = await crypto.subtle.exportKey('pkcs8', pair.privateKey)
+      const pem = [
+        ['-----BEGIN', 'PRIVATE KEY-----'].join(' '),
+        btoa(String.fromCharCode(...new Uint8Array(key))),
+        ['-----END', 'PRIVATE KEY-----'].join(' '),
+      ].join('\n')
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        await registerDeviceToken({ platform: 'ios', token: 'rebound' }, 'new-owner')
+        return Response.json({ reason: 'Unregistered' }, { status: 410 })
+      })
+      try {
+        const config = { keyP8: pem, keyId: 'RACEKEY', teamId: 'TEAM' }
+        if (kind === 'broadcast') {
+          expect(await sendApnsToUser(userId, { isSilent: true }, config))
+            .toEqual({ total: 1, sent: 0, failed: 1 })
+        } else {
+          expect(await sendApnsNotification('rebound', { isSilent: true }, config))
+            .toMatchObject({ success: false, invalidToken: true })
+        }
+        expect(await db.prepare('SELECT user_id FROM device_tokens WHERE token = ?')
+          .bind('rebound').first()).toEqual({ user_id: 'new-owner' })
+      } finally {
+        fetchSpy.mockRestore()
+      }
     })
 
     it('broadcasts to all user devices and triggers silent sync', async () => {

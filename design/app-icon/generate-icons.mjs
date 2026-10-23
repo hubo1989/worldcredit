@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 
-const DIR = path.resolve('design/app-icon');
+const DIR = path.dirname(fileURLToPath(import.meta.url));
 // Xcode 资产目录：主图标直接落到 appiconset，避免与 design/ 下的副本漂移。
-const APPICONSET = path.resolve('ios/WorldCredit/Assets.xcassets/AppIcon.appiconset');
+const APPICONSET = path.resolve(DIR, '../../ios/WorldCredit/Assets.xcassets/AppIcon.appiconset');
 const svgPath = path.join(DIR, 'worldcredit-app-icon.svg');
 const svgBuffer = fs.readFileSync(svgPath);
 
@@ -24,16 +25,13 @@ async function generate() {
     const outPath = path.join(DIR, name);
     await sharp(svgBuffer)
       .resize(size, size)
-      .png({ quality: 100, compressionLevel: 9 })
+      .png({ palette: true, compressionLevel: 9 })
       .toFile(outPath);
     console.log(`✓ Generated ${name} (${size}x${size})`);
 
     // 1024 主图标同时写入 Xcode 资产目录，保证两边永不漂移。
     if (size === 1024) {
-      await sharp(svgBuffer)
-        .resize(1024, 1024)
-        .png({ quality: 100, compressionLevel: 9 })
-        .toFile(path.join(APPICONSET, name));
+      fs.copyFileSync(outPath, path.join(APPICONSET, name));
       console.log(`✓ Synced ${name} -> ios/WorldCredit/Assets.xcassets/AppIcon.appiconset/`);
     }
   }
@@ -67,7 +65,7 @@ async function generate() {
       </defs>
       <rect width="800" height="800" fill="url(#wall)"/>
       <g filter="url(#shadow)">
-        <rect x="144" y="144" width="512" height="512" rx="114" fill="none"/>
+        <rect x="144" y="144" width="512" height="512" rx="114" fill="#000"/>
       </g>
     </svg>
   `);

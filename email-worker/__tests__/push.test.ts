@@ -77,7 +77,7 @@ function plain(trusted = true): string {
   ].join('\r\n')
 }
 
-function bundle(): string {
+function bundle(trusted = true): string {
   return [
     'From: me@example.test',
     `To: ${RECIPIENT}`,
@@ -91,7 +91,7 @@ function bundle(): string {
     'Content-Type: message/rfc822',
     'Content-Disposition: attachment; filename="bill.eml"',
     '',
-    plain(),
+    plain(trusted),
     '--BUNDLE--',
     '',
   ].join('\r\n')
@@ -170,6 +170,39 @@ describe('邮件入库后的 APNs 静默同步', () => {
     expect(ctx.waitUntil).not.toHaveBeenCalled()
   })
 
+  it('直发保留账单但修正账单日时仍通知设备', async () => {
+    const { env, tables, ctx, pending } = seed()
+    tables.credit_cards[0].billing_day = 1
+    tables.bills.push({ id: 'existing', card_id: 'c1', bill_month: parsed.bill_month, bill_amount: 100, status: 'paid' })
+    mockNetwork()
+    await worker.email(message(plain(false)), env, ctx)
+    await Promise.all(pending)
+    expect(tables.bills[0]).toMatchObject({ bill_amount: 100, status: 'paid' })
+    expect(tables.credit_cards[0].billing_day).toBe(16)
+    expect(ctx.waitUntil).toHaveBeenCalledTimes(1)
+  })
+
+  it('转发保留账单时跳过账单日修正且不通知设备', async () => {
+    const { env, tables, ctx } = seed()
+    tables.credit_cards[0].billing_day = 1
+    tables.bills.push({ id: 'existing', card_id: 'c1', bill_month: parsed.bill_month, bill_amount: 100, status: 'paid' })
+    mockNetwork()
+    await worker.email(message(bundle(false)), env, ctx)
+    expect(tables.bills[0]).toMatchObject({ bill_amount: 100, status: 'paid' })
+    expect(tables.credit_cards[0].billing_day).toBe(1)
+    expect(ctx.waitUntil).not.toHaveBeenCalled()
+  })
+
+  it.each(['plain', 'bundle'])('%s 更新账单日时通知设备', async kind => {
+    const { env, tables, ctx, pending } = seed()
+    tables.credit_cards[0].billing_day = 1
+    mockNetwork()
+    await worker.email(message(kind === 'plain' ? plain() : bundle()), env, ctx)
+    await Promise.all(pending)
+    expect(tables.credit_cards[0].billing_day).toBe(16)
+    expect(ctx.waitUntil).toHaveBeenCalledTimes(1)
+  })
+
   it('推送网络失败不改变账单或邮件成功状态', async () => {
     const { env, tables, ctx, pending } = seed()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -194,6 +227,19 @@ describe('邮件入库后的 APNs 静默同步', () => {
     expect(tables.device_tokens.map(row => row.token)).toEqual(['other-user-device', 'android-device'])
     expect(tables.bills).toHaveLength(1)
     expect(tables.email_parse_logs).toMatchObject([{ status: 'success' }])
+  })
+
+  it('发送期间换绑的失效 token 不会被旧用户任务删除', async () => {
+    const { env, tables, ctx, pending } = seed()
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    mockNetwork(parsed, async () => {
+      tables.device_tokens[0].user_id = 'new-owner'
+      return Response.json({ reason: 'Unregistered' }, { status: 410 })
+    })
+    await worker.email(message(plain()), env, ctx)
+    await Promise.all(pending)
+    expect(tables.device_tokens).toHaveLength(3)
+    expect(tables.device_tokens[0].user_id).toBe('new-owner')
   })
 
   it('APNs 临时故障保留 token，后续可重试', async () => {

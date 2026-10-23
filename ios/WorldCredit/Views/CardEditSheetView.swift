@@ -163,8 +163,7 @@ struct CardEditSheetView: View {
             input.overrideDueType = dueType
             input.overrideDueValue = val
         } else {
-            input.overrideDueType = nil
-            input.overrideDueValue = nil
+            input.clearDueOverride = true
         }
 
         isSubmitting = true

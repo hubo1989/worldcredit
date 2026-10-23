@@ -3,12 +3,14 @@
 工程配置以 `ios/project.yml` 为准。此前会话提到的 `task-list.md` 和
 `app-offline-sync-architecture.md` 不在当前仓库；本页记录可从代码核实的配置和待验证边界。
 
+PR #42 的逐项审查结论见 [OpenCodeReview 核验记录](pr-42-review.md)。
+
 ## 本地构建
 
-需要 Xcode 27.1、iOS / watchOS 27 SDK 与 XcodeGen。当前 `WorldCreditCore`
-仍通过 `../GRDB` 引用未入库的本地依赖；新检出仓库需要先准备
-`ios/Packages/GRDB`。本次使用的 GRDB commit 为
-`0d8cf958b4b66a0473ec6e6986eb9da462171da9`。这项依赖尚未改成可自动解析的远程包。
+需要 Xcode 27.1、iOS / watchOS 27 SDK 与 XcodeGen。`WorldCreditCore` 通过
+Swift Package Manager 从 `https://github.com/groue/GRDB.swift.git` 解析 GRDB，固定 revision
+`0d8cf958b4b66a0473ec6e6986eb9da462171da9`。新检出仓库无需准备
+`ios/Packages/GRDB`；首次解析需要访问上游仓库，离线构建需要已有依赖缓存。
 
 在项目根目录运行：
 
@@ -146,6 +148,8 @@ SQLite 及快照副本；共享快照仍写入真实 App Group，副本供逐场
   已还账单；金额调整后总待还 `18800.50`；卡片额度 `65000`、覆盖账单日 `7` 均持久化，
   快照同步反映修改。四个场景均确认通知授权值 `1` 和实际 App Group 容器。
 - iPhone、Watch 和两个 Widget 构建与打包通过；GRDB 仍有 `Any` / `Sendable` 依赖告警。
+  当时使用未入库的本地 `../GRDB`；该依赖方式已由 PR42 #10 的远程固定 revision 配置替代，
+  当前构建前提见本页开头。
   未使用 Apple Team 做真机签名、未运行实际 Watch 配对，也未向 APNs 实际投递。
 - 视觉核验：修正卡片底部日期和金额挤压，本地检查最终截图。GLM-V 因 429 余额不足
   不可用，按本机规则使用本地图片能力核验；未充值、未重试。

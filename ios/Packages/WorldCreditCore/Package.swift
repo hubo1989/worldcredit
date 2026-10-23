@@ -15,13 +15,13 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(path: "../GRDB")
+        .package(url: "https://github.com/groue/GRDB.swift.git", revision: "0d8cf958b4b66a0473ec6e6986eb9da462171da9")
     ],
     targets: [
         .target(
             name: "WorldCreditCore",
             dependencies: [
-                .product(name: "GRDB", package: "GRDB")
+                .product(name: "GRDB", package: "GRDB.swift")
             ],
             path: "Sources/WorldCreditCore"
         ),

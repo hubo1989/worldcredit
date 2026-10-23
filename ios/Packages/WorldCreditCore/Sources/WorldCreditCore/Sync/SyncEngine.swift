@@ -24,23 +24,46 @@ public enum SyncError: LocalizedError {
 public final class SyncEngine: @unchecked Sendable {
     public let dbManager: DatabaseManager
     public let apiClient: ApiClient
-    public let clientId: String
+    /// 兼容读取入口；持久化失败时 push 会报告错误，不使用未确认的身份发请求。
+    public var clientId: String { identityLock.withLock { storedClientId } }
+    private let identityLock = NSLock()
+    private var storedClientId: String
+    private let clientIdOverride: String?
     private static let reconcileMetaKey = "sync_reconcile_targets"
     private static let supportedTables: Set<String> = ["banks", "card_products", "card_holders", "credit_cards", "bills", "payments"]
 
     public init(
         dbManager: DatabaseManager,
         apiClient: ApiClient,
-        clientId: String = UUID().uuidString
+        clientId: String? = nil
     ) {
         self.dbManager = dbManager
         self.apiClient = apiClient
-        self.clientId = clientId
+        let identity: Result<String, any Error> = Result {
+            if let clientId { return clientId }
+            return try dbManager.dbWriter.write { db in
+                if let saved = try SyncMeta.fetchOne(db, key: "sync_client_id"), !saved.value.isEmpty {
+                    return saved.value
+                }
+                let fresh = UUID().uuidString
+                try SyncMeta(key: "sync_client_id", value: fresh).save(db)
+                return fresh
+            }
+        }
+        self.clientIdOverride = clientId
+        self.storedClientId = (try? identity.get()) ?? ""
     }
 
     public func sync() async throws {
-        // Push local mutations first, then pull authoritative server state
-        try await push()
+        // 清空所有成功批次；没有进展时停止，保留退避或失败中的操作。
+        var pending = try await dbManager.dbWriter.read { try MutationOutbox.fetchCount($0) }
+        repeat {
+            try await push()
+            let remaining = try await dbManager.dbWriter.read { try MutationOutbox.fetchCount($0) }
+            if remaining == 0 { break }
+            guard remaining < pending else { throw SyncError.pendingMutations }
+            pending = remaining
+        } while true
         try await pull()
     }
 
@@ -77,8 +100,28 @@ public final class SyncEngine: @unchecked Sendable {
     }
 
     public func push() async throws {
+        let clientId = try await dbManager.dbWriter.write { db in
+            if let override = self.clientIdOverride { return override }
+            if let saved = try SyncMeta.fetchOne(db, key: "sync_client_id"), !saved.value.isEmpty {
+                return saved.value
+            }
+            let fresh = UUID().uuidString
+            try SyncMeta(key: "sync_client_id", value: fresh).save(db)
+            return fresh
+        }
+        identityLock.withLock { storedClientId = clientId }
         let mutations = try await dbManager.dbWriter.read { db in
-            try MutationOutbox.order(Column("created_at").asc, Column("rowid").asc).fetchAll(db)
+            // 两种历史时间格式都转为实际时间排序；相同时按入队顺序处理。
+            let candidates = try MutationOutbox.order(sql: "julianday(created_at) ASC, rowid ASC").limit(100).fetchAll(db)
+            var ready: [MutationOutbox] = []
+            for item in candidates {
+                if let value = try SyncMeta.fetchOne(db, key: "sync_retry_after_\(item.id)")?.value,
+                   let retryAt = Double(value), retryAt > Date().timeIntervalSince1970 {
+                    break // 保持 FIFO，后续操作不越过退避中的操作。
+                }
+                ready.append(item)
+            }
+            return ready
         }
         guard !mutations.isEmpty else { return }
 
@@ -100,6 +143,7 @@ public final class SyncEngine: @unchecked Sendable {
                 guard let res = resultsByID[item.id] else { continue }
                 if res.ok {
                     // Success: remove from outbox
+                    try SyncMeta.deleteOne(db, key: "sync_retry_after_\(item.id)")
                     try item.delete(db)
                 } else if res.permanent == true {
                     // Persist recovery before dropping the mutation, even if the server row
@@ -109,6 +153,7 @@ public final class SyncEngine: @unchecked Sendable {
                     var targets = pending
                     for target in additions where !targets.contains(target) { targets.append(target) }
                     try self.saveReconcileTargets(targets, in: db)
+                    try SyncMeta.deleteOne(db, key: "sync_retry_after_\(item.id)")
                     try item.delete(db)
                     try self.rollbackMutation(item, in: db)
                 } else {
@@ -117,6 +162,9 @@ public final class SyncEngine: @unchecked Sendable {
                     updated.retryCount += 1
                     updated.lastError = res.error
                     try updated.update(db)
+                    let delay = min(3600.0, 5.0 * pow(2.0, Double(min(updated.retryCount - 1, 10))))
+                    try SyncMeta(key: "sync_retry_after_\(item.id)",
+                                 value: String(Date().timeIntervalSince1970 + delay)).save(db)
                 }
             }
         }
