@@ -2,6 +2,23 @@ import XCTest
 
 @MainActor
 final class WorldCreditUITests: XCTestCase {
+    override func tearDownWithError() throws {
+        if let testRun, testRun.totalFailureCount > 0 {
+            let app = XCUIApplication()
+            if app.state == .runningForeground {
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "failure-screen"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+                let hierarchy = XCTAttachment(string: app.debugDescription)
+                hierarchy.name = "failure-ui-hierarchy"
+                hierarchy.lifetime = .keepAlways
+                add(hierarchy)
+            }
+        }
+        try super.tearDownWithError()
+    }
+
     func test01BrowseAllTabsWithNotificationsDenied() {
         let app = launchScenario()
         assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥18230.50")
@@ -37,6 +54,7 @@ final class WorldCreditUITests: XCTestCase {
         app.segmentedControls["payment.type"].buttons["全额还款"].tap()
         attachScreenshot(app, name: "05-payment-confirmation")
         app.buttons["payment.confirm"].tap()
+        XCTAssertTrue(app.buttons["payment.confirm"].waitForNonExistence(timeout: 10), "Payment must finish and dismiss its sheet before checking the detail")
 
         assertLabel(app.staticTexts["bill.detail.remaining"], equals: "¥0.00", field: "剩余应还")
         assertLabel(app.staticTexts["bill.detail.status"], equals: "已结清", field: "状态")
@@ -71,6 +89,7 @@ final class WorldCreditUITests: XCTestCase {
         XCTAssertTrue(amount.waitForExistence(timeout: 5))
         replaceText(in: amount, with: "6000")
         app.buttons["bill.adjust.save"].tap()
+        XCTAssertTrue(app.buttons["bill.adjust.save"].waitForNonExistence(timeout: 10), "Amount edit must finish and dismiss its sheet before checking the detail")
         assertLabel(app.staticTexts["bill.detail.remaining"], equals: "¥6000.00", field: "剩余应还")
         XCTAssertTrue(app.buttons["bill.detail.pay"].exists)
         attachScreenshot(app, name: "09-adjusted-current-detail")
@@ -99,6 +118,7 @@ final class WorldCreditUITests: XCTestCase {
         replaceText(in: app.textFields["card.edit.billingDay"], with: "7")
         // Saving with notification permission denied must still commit the local edit.
         app.buttons["card.edit.save"].tap()
+        XCTAssertTrue(app.buttons["card.edit.save"].waitForNonExistence(timeout: 10), "Card edit must finish and dismiss its sheet before switching tabs")
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         let updated = NSPredicate(format: "label CONTAINS %@", "UI Test Card")
         expectation(for: updated, evaluatedWith: card)
@@ -146,7 +166,11 @@ final class WorldCreditUITests: XCTestCase {
     private func tab(_ title: String, in app: XCUIApplication) {
         let button = app.tabBars.buttons[title]
         XCTAssertTrue(button.waitForExistence(timeout: 5))
+        let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: button)
+        XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 5), .completed, "Tab \(title) must be reachable")
         button.tap()
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: button)
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed, "Tab \(title) must be selected before querying its contents")
     }
 
     private func openBill(_ id: String, in app: XCUIApplication) {
@@ -176,7 +200,7 @@ final class WorldCreditUITests: XCTestCase {
             if element.exists && element.isHittable { return }
             app.swipeUp()
         }
-        XCTFail("Could not reach \(element.identifier)")
+        XCTFail("Could not reach element: \(element)")
     }
 
     private func scrollToAndTap(_ element: XCUIElement, in app: XCUIApplication) {
