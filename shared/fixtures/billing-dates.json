@@ -1,0 +1,170 @@
+{
+  "description": "Cross-platform test fixtures for billing dates and due calculation (TS & Swift)",
+  "cases": [
+    {
+      "id": "after_billing_standard",
+      "description": "Standard after_billing: 20 days after 5th of each month",
+      "card": {
+        "billing_day": 5,
+        "override_billing_day": null,
+        "override_due_type": null,
+        "override_due_value": null
+      },
+      "card_product": {
+        "payment_due_type": "after_billing",
+        "payment_due_value": 20
+      },
+      "bill_month": "2026-10-01",
+      "expected_billing_date": "2026-10-05",
+      "expected_due_date": "2026-10-25"
+    },
+    {
+      "id": "after_billing_february_leap",
+      "description": "Feb leap year, billing day 31 falls on Feb 29 (2028 is leap year)",
+      "card": {
+        "billing_day": 31,
+        "override_billing_day": null,
+        "override_due_type": null,
+        "override_due_value": null
+      },
+      "card_product": {
+        "payment_due_type": "after_billing",
+        "payment_due_value": 20
+      },
+      "bill_month": "2028-02-01",
+      "expected_billing_date": "2028-02-29",
+      "expected_due_date": "2028-03-20"
+    },
+    {
+      "id": "after_billing_february_non_leap",
+      "description": "Feb non-leap year, billing day 30 falls on Feb 28",
+      "card": {
+        "billing_day": 30,
+        "override_billing_day": null,
+        "override_due_type": null,
+        "override_due_value": null
+      },
+      "card_product": {
+        "payment_due_type": "after_billing",
+        "payment_due_value": 20
+      },
+      "bill_month": "2026-02-01",
+      "expected_billing_date": "2026-02-28",
+      "expected_due_date": "2026-03-20"
+    },
+    {
+      "id": "fixed_next_month",
+      "description": "Fixed due date on the 25th of next month",
+      "card": {
+        "billing_day": 10,
+        "override_billing_day": null,
+        "override_due_type": null,
+        "override_due_value": null
+      },
+      "card_product": {
+        "payment_due_type": "fixed",
+        "payment_due_value": 25
+      },
+      "bill_month": "2026-10-01",
+      "expected_billing_date": "2026-10-10",
+      "expected_due_date": "2026-11-25"
+    },
+    {
+      "id": "fixed_next_month_clamped",
+      "description": "Fixed due date 31 in Feb falls on Feb 28",
+      "card": {
+        "billing_day": 10,
+        "override_billing_day": null,
+        "override_due_type": null,
+        "override_due_value": null
+      },
+      "card_product": {
+        "payment_due_type": "fixed",
+        "payment_due_value": 31
+      },
+      "bill_month": "2026-01-01",
+      "expected_billing_date": "2026-01-10",
+      "expected_due_date": "2026-02-28"
+    },
+    {
+      "id": "fixed_before_billing_same_month",
+      "description": "Fixed before billing: due date in same month as bill month",
+      "card": {
+        "billing_day": 28,
+        "override_billing_day": null,
+        "override_due_type": null,
+        "override_due_value": null
+      },
+      "card_product": {
+        "payment_due_type": "fixed_before_billing",
+        "payment_due_value": 15
+      },
+      "bill_month": "2026-10-01",
+      "expected_billing_date": "2026-10-28",
+      "expected_due_date": "2026-10-15"
+    },
+    {
+      "id": "card_override_due_and_billing",
+      "description": "Card overrides both billing day and due type/value",
+      "card": {
+        "billing_day": 1,
+        "override_billing_day": 18,
+        "override_due_type": "after_billing",
+        "override_due_value": 25
+      },
+      "card_product": {
+        "payment_due_type": "fixed",
+        "payment_due_value": 10
+      },
+      "bill_month": "2026-05-01",
+      "expected_billing_date": "2026-05-18",
+      "expected_due_date": "2026-06-12"
+    }
+  ],
+  "loan_cases": [
+    {
+      "id": "loan_today_before_due",
+      "loan_due_day": 15,
+      "today": "2026-10-10",
+      "expected_next_due": "2026-10-15"
+    },
+    {
+      "id": "loan_today_is_due",
+      "loan_due_day": 15,
+      "today": "2026-10-15",
+      "expected_next_due": "2026-10-15"
+    },
+    {
+      "id": "loan_today_after_due",
+      "loan_due_day": 15,
+      "today": "2026-10-16",
+      "expected_next_due": "2026-11-15"
+    },
+    {
+      "id": "loan_end_of_feb_clamped",
+      "loan_due_day": 31,
+      "today": "2026-02-01",
+      "expected_next_due": "2026-02-28"
+    }
+  ],
+  "diff_days_cases": [
+    {
+      "target": "2026-10-25",
+      "today": "2026-10-20",
+      "expected_diff": 5,
+      "expected_label": "距离还款日 5 日"
+    },
+    {
+      "target": "2026-10-20",
+      "today": "2026-10-20",
+      "expected_diff": 0,
+      "expected_label": "今天还款日"
+    },
+    {
+      "target": "2026-10-18",
+      "today": "2026-10-20",
+      "expected_diff": -2,
+      "expected_label": "逾期 2 日"
+    }
+  ]
+}

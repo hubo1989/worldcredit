@@ -4,6 +4,7 @@
 // must be rewritten manually to JOIN or separate queries.
 
 import { getDb } from './client'
+import { getLocalTodayString } from '../utils'
 
 // Server-only helpers: every module importing these runs inside the Worker
 // (API routes, cron, email worker). Browser code reaches data exclusively via
@@ -69,6 +70,6 @@ export function now(): string {
   return new Date().toISOString()
 }
 
-export function today(): string {
-  return new Date().toISOString().slice(0, 10)
+export function today(timeZone = 'Asia/Shanghai'): string {
+  return getLocalTodayString(timeZone)
 }

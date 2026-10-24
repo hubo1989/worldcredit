@@ -1,0 +1,306 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- 背景渐变：深邃黑曜石午夜极夜黑 -->
+    <linearGradient id="bg-grad" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#0E1626"/>
+      <stop offset="35%" stop-color="#0A0F1D"/>
+      <stop offset="100%" stop-color="#04070F"/>
+    </linearGradient>
+
+    <!-- 顶部中央聚光灯微光环境光源 -->
+    <radialGradient id="spotlight" cx="50%" cy="12%" r="70%">
+      <stop offset="0%" stop-color="#3B6FE0" stop-opacity="0.38"/>
+      <stop offset="30%" stop-color="#1E3A8A" stop-opacity="0.18"/>
+      <stop offset="70%" stop-color="#0E1626" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- 账单票据底色渐变：深蓝磨砂质感 -->
+    <linearGradient id="bill-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22324C"/>
+      <stop offset="50%" stop-color="#172338"/>
+      <stop offset="100%" stop-color="#101827"/>
+    </linearGradient>
+
+    <!-- 账单高亮描边 -->
+    <linearGradient id="bill-stroke" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#93C5FD" stop-opacity="0.6"/>
+      <stop offset="50%" stop-color="#3B82F6" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#1D4ED8" stop-opacity="0.1"/>
+    </linearGradient>
+
+    <!-- 信用卡主体材质：拉丝黑钛金 -->
+    <linearGradient id="card-surface" x1="15%" y1="0%" x2="85%" y2="100%">
+      <stop offset="0%" stop-color="#24334A"/>
+      <stop offset="25%" stop-color="#182335"/>
+      <stop offset="65%" stop-color="#101826"/>
+      <stop offset="100%" stop-color="#0A101A"/>
+    </linearGradient>
+
+    <!-- 卡片上边缘精密 CNC 切边倒角光 -->
+    <linearGradient id="card-edge-light" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7AADFF" stop-opacity="0.2"/>
+      <stop offset="20%" stop-color="#93C5FD" stop-opacity="0.9"/>
+      <stop offset="50%" stop-color="#FFFFFF" stop-opacity="0.75"/>
+      <stop offset="80%" stop-color="#60A5FA" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#3B82F6" stop-opacity="0.2"/>
+    </linearGradient>
+
+    <!-- 金色芯片渐变：高饱和度纯正黄金 -->
+    <linearGradient id="gold-chip" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFF2A3"/>
+      <stop offset="22%" stop-color="#F2C94C"/>
+      <stop offset="60%" stop-color="#D9A027"/>
+      <stop offset="100%" stop-color="#8C620D"/>
+    </linearGradient>
+
+    <!-- 芯片雕刻暗线 -->
+    <linearGradient id="chip-groove" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#593903"/>
+      <stop offset="100%" stop-color="#3D2600"/>
+    </linearGradient>
+
+    <!-- 激光扫描对账光带 -->
+    <linearGradient id="scan-laser" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3B6FE0" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#3B6FE0" stop-opacity="0.6"/>
+      <stop offset="45%" stop-color="#93C5FD" stop-opacity="1"/>
+      <stop offset="50%" stop-color="#FFFFFF" stop-opacity="1"/>
+      <stop offset="55%" stop-color="#93C5FD" stop-opacity="1"/>
+      <stop offset="80%" stop-color="#3B6FE0" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#3B6FE0" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- 投影与光晕滤镜 -->
+    <filter id="card-shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="36" stdDeviation="34" flood-color="#020408" flood-opacity="0.85"/>
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#030712" flood-opacity="0.55"/>
+    </filter>
+
+    <filter id="bill-shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="20" stdDeviation="24" flood-color="#01040A" flood-opacity="0.7"/>
+    </filter>
+
+    <filter id="laser-glow" x="-20%" y="-40%" width="140%" height="200%">
+      <feGaussianBlur stdDeviation="9" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 1. 背景底板 (1024x1024 直角满幅，系统自动应用 iOS Squircle) -->
+  <rect width="1024" height="1024" fill="url(#bg-grad)"/>
+  <rect width="1024" height="1024" fill="url(#spotlight)"/>
+
+  <!-- 极微弱边缘倒角内描边 (Subtle Inset Stroke) -->
+  <rect x="1.5" y="1.5" width="1021" height="1021" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/>
+
+  <!-- 精密工具几何刻度点阵 (Background Matrix Grid) -->
+  <g opacity="0.14" fill="#60A5FA">
+    <!-- 左上矩阵 -->
+    <circle cx="140" cy="160" r="3"/>
+    <circle cx="180" cy="160" r="3"/>
+    <circle cx="220" cy="160" r="3"/>
+    <circle cx="260" cy="160" r="3"/>
+    <circle cx="140" cy="200" r="3"/>
+    <circle cx="180" cy="200" r="3"/>
+    <circle cx="220" cy="200" r="3"/>
+    <circle cx="260" cy="200" r="3"/>
+
+    <!-- 右下矩阵 -->
+    <circle cx="760" cy="800" r="3"/>
+    <circle cx="800" cy="800" r="3"/>
+    <circle cx="840" cy="800" r="3"/>
+    <circle cx="880" cy="800" r="3"/>
+    <circle cx="760" cy="840" r="3"/>
+    <circle cx="800" cy="840" r="3"/>
+    <circle cx="840" cy="840" r="3"/>
+    <circle cx="880" cy="840" r="3"/>
+  </g>
+
+  <!-- 2. 后层：精密对账单/票据凭条 (Bill Statement Ledger Slip) -->
+  <!-- 强化“账单”元素：顶部做成打孔锯齿撕裂边 (Perforated Receipt Teeth) -->
+  <g filter="url(#bill-shadow)">
+    <!-- 票据纸张外轮廓 (锯齿上边缘 + 垂直两翼 + 延伸至卡身底部) -->
+    <path d="
+      M 284,142
+      L 310,126 L 336,142 L 362,126 L 388,142 L 414,126 L 440,142 L 466,126 L 492,142
+      L 518,126 L 544,142 L 570,126 L 596,142 L 622,126 L 648,142 L 674,126 L 700,142
+      L 726,126 L 740,136
+      L 740,580
+      L 284,580
+      Z"
+      fill="url(#bill-bg)"
+      stroke="url(#bill-stroke)"
+      stroke-width="2.5"
+      stroke-linejoin="round"
+    />
+
+    <!-- 票据装订圆孔 (Perforated Punch Holes) -->
+    <circle cx="320" cy="180" r="7" fill="#0A0F1D" stroke="#60A5FA" stroke-width="2" stroke-opacity="0.4"/>
+    <circle cx="512" cy="180" r="7" fill="#0A0F1D" stroke="#60A5FA" stroke-width="2" stroke-opacity="0.4"/>
+    <circle cx="704" cy="180" r="7" fill="#0A0F1D" stroke="#60A5FA" stroke-width="2" stroke-opacity="0.4"/>
+
+    <!-- 票据虚线撕裂指引线 (Perforation Guide Line) -->
+    <line x1="336" y1="180" x2="496" y2="180" stroke="#60A5FA" stroke-dasharray="5,6" stroke-width="2" stroke-opacity="0.3"/>
+    <line x1="528" y1="180" x2="688" y2="180" stroke="#60A5FA" stroke-dasharray="5,6" stroke-width="2" stroke-opacity="0.3"/>
+
+    <!-- 账单抬头与周期标牌 (Statement Header & Cycle Tag) -->
+    <g transform="translate(320, 218)">
+      <rect x="0" y="0" width="140" height="15" rx="7.5" fill="#7AADFF" fill-opacity="0.9"/>
+      <rect x="290" y="0" width="90" height="15" rx="7.5" fill="#F0C75E" fill-opacity="0.9"/>
+    </g>
+
+    <!-- 账单明细项 1 (Transaction Item 1) -->
+    <g transform="translate(320, 256)">
+      <circle cx="10" cy="9" r="7" fill="#3B6FE0" fill-opacity="0.7"/>
+      <rect x="30" y="2" width="180" height="14" rx="7" fill="#E2E8F0" fill-opacity="0.45"/>
+      <rect x="300" y="2" width="80" height="14" rx="7" fill="#E2E8F0" fill-opacity="0.85"/>
+    </g>
+
+    <!-- 账单明细项 2 (Transaction Item 2) -->
+    <g transform="translate(320, 296)">
+      <circle cx="10" cy="9" r="7" fill="#3B6FE0" fill-opacity="0.7"/>
+      <rect x="30" y="2" width="220" height="14" rx="7" fill="#E2E8F0" fill-opacity="0.35"/>
+      <rect x="315" y="2" width="65" height="14" rx="7" fill="#E2E8F0" fill-opacity="0.85"/>
+    </g>
+
+    <!-- 账单明细项 3 (Transaction Item 3) -->
+    <g transform="translate(320, 336)">
+      <circle cx="10" cy="9" r="7" fill="#3B6FE0" fill-opacity="0.7"/>
+      <rect x="30" y="2" width="140" height="14" rx="7" fill="#E2E8F0" fill-opacity="0.25"/>
+      <rect x="290" y="2" width="90" height="14" rx="7" fill="#E2E8F0" fill-opacity="0.85"/>
+    </g>
+
+    <!-- 账单合计虚线隔断 (Accounting Dashed Line) -->
+    <line x1="320" y1="380" x2="700" y2="380" stroke="#7AADFF" stroke-dasharray="6,6" stroke-width="2.5" stroke-opacity="0.4"/>
+
+    <!-- 本期账单应还合计汇总 (Total Statement Amount) -->
+    <g transform="translate(320, 398)">
+      <rect x="0" y="2" width="110" height="16" rx="8" fill="#7AADFF" fill-opacity="0.6"/>
+      <rect x="248" y="0" width="132" height="20" rx="10" fill="#F0C75E" fill-opacity="0.95"/>
+    </g>
+  </g>
+
+  <!-- 3. 前层：核心黑曜石钛金信用卡 (Obsidian Titanium Credit Card) -->
+  <!-- 规范尺寸：宽 740, 高 460，倒角 44px，位居 (142, 380) -->
+  <g filter="url(#card-shadow)">
+    <!-- 卡身底层 -->
+    <rect x="142" y="380" width="740" height="460" rx="44" fill="url(#card-surface)"/>
+
+    <!-- 卡身边缘 CNC 刀锋高光倒角 -->
+    <rect x="143" y="381" width="738" height="458" rx="43" fill="none" stroke="url(#card-edge-light)" stroke-width="2.5"/>
+
+    <!-- 卡面微弱经纬线图腾：突出“WorldCredit”全球资产与工具属性 -->
+    <g stroke="#3B6FE0" stroke-opacity="0.12" stroke-width="1.5" fill="none">
+      <ellipse cx="640" cy="560" rx="180" ry="120" stroke-dasharray="4,6"/>
+      <ellipse cx="640" cy="560" rx="180" ry="60" stroke-dasharray="4,6"/>
+      <line x1="460" y1="560" x2="820" y2="560"/>
+    </g>
+
+    <!-- 4. 核心组件 A：金色精密 EMV 芯片 (Gold EMV Microchip) -->
+    <!-- 经典信用卡核心象征，精雕细琢的电路与对称触点 -->
+    <g transform="translate(216, 448)">
+      <!-- 芯片底座沉槽 -->
+      <rect x="-4" y="-4" width="144" height="114" rx="22" fill="#060A13" fill-opacity="0.9"/>
+      <rect x="-4" y="-4" width="144" height="114" rx="22" fill="none" stroke="#F0C75E" stroke-opacity="0.35" stroke-width="1.5"/>
+
+      <!-- 芯片金色主体 (宽 136, 高 106, 倒角 18) -->
+      <rect x="0" y="0" width="136" height="106" rx="18" fill="url(#gold-chip)"/>
+      <rect x="0" y="0" width="136" height="106" rx="18" fill="none" stroke="#FFFFFF" stroke-opacity="0.45" stroke-width="1"/>
+
+      <!-- 芯片精密蚀刻槽线 (Etched Grooves) -->
+      <g stroke="url(#chip-groove)" stroke-width="2.5" fill="none" stroke-linecap="round">
+        <!-- 中央控制器核 -->
+        <rect x="46" y="30" width="44" height="46" rx="9" fill="#D9A027" fill-opacity="0.3" stroke="url(#chip-groove)" stroke-width="2.5"/>
+
+        <!-- 水平对称导流槽 -->
+        <line x1="0" y1="53" x2="46" y2="53"/>
+        <line x1="90" y1="53" x2="136" y2="53"/>
+
+        <!-- 四角发散引脚 -->
+        <path d="M 30,0 L 30,34 L 46,45"/>
+        <path d="M 30,106 L 30,72 L 46,61"/>
+        <path d="M 106,0 L 106,34 L 90,45"/>
+        <path d="M 106,106 L 106,72 L 90,61"/>
+
+        <!-- 内部微触点 -->
+        <circle cx="68" cy="53" r="4" fill="#593903"/>
+      </g>
+    </g>
+
+    <!-- 5. 核心组件 B：非接触式近场感应波 (Contactless Waves) -->
+    <g transform="translate(386, 478)" stroke="#7AADFF" stroke-linecap="round" fill="none" opacity="0.75">
+      <path d="M 0,12 A 26,26 0 0 1 0,46" stroke-width="3.5"/>
+      <path d="M 12,3 A 42,42 0 0 1 12,55" stroke-width="3.5"/>
+      <path d="M 24,-6 A 58,58 0 0 1 24,64" stroke-width="3.5"/>
+    </g>
+
+    <!-- 6. 核心组件 C：激光对账扫描线 (Smart Laser Scan Beam) -->
+    <!-- 穿过卡身与后方账单，传达“自动对账、智能扫描、精准核算”的工具属性 -->
+    <g transform="translate(142, 574)">
+      <!-- 柔和外发光束 -->
+      <rect x="30" y="-3" width="680" height="9" rx="4.5" fill="url(#scan-laser)" opacity="0.9" filter="url(#laser-glow)"/>
+      <!-- 极亮光核 -->
+      <rect x="120" y="-1" width="500" height="5" rx="2.5" fill="url(#scan-laser)"/>
+    </g>
+
+    <!-- 7. 核心组件 D：账单日与额度工具仪表盘 (Billing Due-Date & Gauge Instrument) -->
+    <!-- 位于卡片右下方：兼具“还款日警示日历”与“信用额度进度条”，将工具心智推向顶峰 -->
+    <g transform="translate(470, 674)">
+      <!-- 仪表外壳胶囊框 (Instrument Module Pill) -->
+      <rect x="0" y="0" width="362" height="94" rx="24" fill="#0B1322" fill-opacity="0.92"/>
+      <rect x="0" y="0" width="362" height="94" rx="24" fill="none" stroke="#25354F" stroke-width="1.8"/>
+
+      <!-- 左侧：账单日日历仪表图标 -->
+      <g transform="translate(24, 21)">
+        <!-- 日历底版 -->
+        <rect x="0" y="5" width="50" height="46" rx="11" fill="#142136" stroke="#7AADFF" stroke-width="2.2"/>
+        <!-- 日历横梁 -->
+        <line x1="0" y1="20" x2="50" y2="20" stroke="#7AADFF" stroke-width="2.2" stroke-opacity="0.6"/>
+        <!-- 日历金属挂环 -->
+        <line x1="13" y1="0" x2="13" y2="9" stroke="#F0C75E" stroke-width="3.5" stroke-linecap="round"/>
+        <line x1="37" y1="0" x2="37" y2="9" stroke="#F0C75E" stroke-width="3.5" stroke-linecap="round"/>
+        <!-- 待还款/账单日金黄色醒目圆点 -->
+        <circle cx="25" cy="33" r="5.5" fill="#F0C75E" filter="url(#laser-glow)"/>
+      </g>
+
+      <!-- 右侧：账单周期与额度进度条 (Billing Cycle Usage Meter) -->
+      <g transform="translate(94, 25)">
+        <!-- 顶部状态指示文本柱 -->
+        <rect x="0" y="0" width="110" height="11" rx="5.5" fill="#94A3B8" fill-opacity="0.8"/>
+        <rect x="180" y="0" width="66" height="11" rx="5.5" fill="#F0C75E" fill-opacity="0.95"/>
+
+        <!-- 进度底轨 (Progress Track) -->
+        <rect x="0" y="24" width="246" height="14" rx="7" fill="#17243B"/>
+
+        <!-- 已用额度/账单进度填充 (Active Usage) -->
+        <rect x="0" y="24" width="176" height="14" rx="7" fill="url(#scan-laser)"/>
+        <!-- 进度游标指示旋钮 (Tracker Knob) -->
+        <circle cx="176" cy="31" r="10" fill="#FFFFFF" stroke="#3B6FE0" stroke-width="3.5" filter="url(#laser-glow)"/>
+      </g>
+    </g>
+
+    <!-- 8. 核心组件 E：防伪卡号微点阵 (Security Card Number Matrix) -->
+    <g transform="translate(216, 722)" fill="#64748B" opacity="0.65">
+      <circle cx="0" cy="0" r="4"/>
+      <circle cx="16" cy="0" r="4"/>
+      <circle cx="32" cy="0" r="4"/>
+      <circle cx="48" cy="0" r="4"/>
+
+      <circle cx="80" cy="0" r="4"/>
+      <circle cx="96" cy="0" r="4"/>
+      <circle cx="112" cy="0" r="4"/>
+      <circle cx="128" cy="0" r="4"/>
+
+      <circle cx="160" cy="0" r="4"/>
+      <circle cx="176" cy="0" r="4"/>
+      <circle cx="192" cy="0" r="4"/>
+      <circle cx="208" cy="0" r="4"/>
+    </g>
+  </g>
+
+  <!-- 顶部轻微斜向全屏漫射倒光 (Subtle Screen Gloss) -->
+  <path d="M 0,0 L 1024,0 L 1024,380 L 0,220 Z" fill="#FFFFFF" opacity="0.02"/>
+</svg>

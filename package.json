@@ -12,7 +12,8 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "icons:generate": "node design/app-icon/generate-icons.mjs"
   },
   "keywords": [],
   "author": "",
@@ -54,6 +55,7 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "prettier": "3.8.3",
     "react-server-dom-webpack": "19.2.4",
+    "sharp": "0.35.2",
     "tailwindcss": "^4.3.3",
     "typescript": "5.9.3",
     "typescript-eslint": "8.60.1",

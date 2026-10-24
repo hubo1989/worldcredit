@@ -1,0 +1,129 @@
+{
+  "description": "Raw D1 rows from checked-in migrations; shared TypeScript/Swift sync wire contract. Synthetic test data only.",
+  "seed_sql": "INSERT INTO users (id,email,password_hash,created_at) VALUES ('sync-fixture-user','sync-fixture@example.test','fixture-only','2026-10-01T00:00:00Z');\nINSERT INTO banks (id,name,short_name,created_at) VALUES ('sync-fixture-bank','测试银行','测试','2026-10-01T00:00:00Z');\nINSERT INTO card_products (id,bank_id,bank_name,card_name,created_at) VALUES ('sync-fixture-product','sync-fixture-bank','测试银行','测试信用卡','2026-10-01T00:00:00Z');\nINSERT INTO card_holders (id,created_by,managed_by,name,auth_user_id,created_at) VALUES ('sync-fixture-holder','sync-fixture-user','sync-fixture-user','测试用户','sync-fixture-user','2026-10-01T00:00:00Z');\nINSERT INTO credit_cards (id,holder_id,card_product_id,credit_limit,billing_day,created_at) VALUES ('sync-fixture-card','sync-fixture-holder','sync-fixture-product',50000,5,'2026-10-01T00:00:00Z');\nINSERT INTO bills (id,card_id,bill_month,due_date,bill_amount,status,created_at) VALUES ('sync-fixture-bill','sync-fixture-card','2026-10','2026-10-25',1000,'partial','2026-10-01T00:00:00Z');\nINSERT INTO payments (id,bill_id,amount,paid_at,idempotency_key,created_at) VALUES ('sync-fixture-payment','sync-fixture-bill',100,'2026-10-20','sync-fixture-idempotency','2026-10-20T00:00:00Z');",
+  "response": {
+    "cursor": 6,
+    "has_more": false,
+    "changes": [
+      {
+        "tbl": "banks",
+        "row_id": "sync-fixture-bank",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-bank",
+          "name": "测试银行",
+          "full_name": null,
+          "logo_url": null,
+          "country": "CN",
+          "customer_service_phone": null,
+          "website_url": null,
+          "is_active": 1,
+          "created_at": "2026-10-01T00:00:00Z",
+          "short_name": "测试",
+          "quota_mode": "independent",
+          "statement_mode": "independent"
+        }
+      },
+      {
+        "tbl": "card_products",
+        "row_id": "sync-fixture-product",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-product",
+          "country": "CN",
+          "bank_id": "sync-fixture-bank",
+          "bank_name": "测试银行",
+          "card_name": "测试信用卡",
+          "card_image_id": null,
+          "description_md": null,
+          "apply_url": null,
+          "rewards_summary": null,
+          "currency": "CNY",
+          "payment_due_type": "after_billing",
+          "payment_due_value": 20,
+          "annual_fee": 0.0,
+          "annual_fee_waiver": null,
+          "is_active": 1,
+          "created_at": "2026-10-01T00:00:00Z"
+        }
+      },
+      {
+        "tbl": "card_holders",
+        "row_id": "sync-fixture-holder",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-holder",
+          "created_by": "sync-fixture-user",
+          "managed_by": "sync-fixture-user",
+          "name": "测试用户",
+          "phone": null,
+          "email": null,
+          "aliases": null,
+          "avatar_color": "#1976d2",
+          "created_at": "2026-10-01T00:00:00Z",
+          "auth_user_id": "sync-fixture-user"
+        }
+      },
+      {
+        "tbl": "credit_cards",
+        "row_id": "sync-fixture-card",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-card",
+          "holder_id": "sync-fixture-holder",
+          "card_product_id": "sync-fixture-product",
+          "card_number_last4": null,
+          "credit_limit": 50000.0,
+          "billing_day": 5,
+          "status": "active",
+          "card_type": "credit",
+          "loan_due_day": null,
+          "override_billing_day": null,
+          "override_due_type": null,
+          "override_due_value": null,
+          "created_at": "2026-10-01T00:00:00Z",
+          "name_override": null,
+          "annual_fee_override": null,
+          "account_mode_override": null,
+          "issued_on": null,
+          "activated_on": null
+        }
+      },
+      {
+        "tbl": "bills",
+        "row_id": "sync-fixture-bill",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-bill",
+          "card_id": "sync-fixture-card",
+          "bill_month": "2026-10",
+          "statement_start": null,
+          "statement_end": null,
+          "statement_date": null,
+          "bill_amount": 1000.0,
+          "min_payment": 0.0,
+          "due_date": "2026-10-25",
+          "status": "partial",
+          "created_at": "2026-10-01T00:00:00Z",
+          "bill_amount_override": null
+        }
+      },
+      {
+        "tbl": "payments",
+        "row_id": "sync-fixture-payment",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-payment",
+          "bill_id": "sync-fixture-bill",
+          "amount": 100.0,
+          "paid_at": "2026-10-20",
+          "channel": "手动还款",
+          "note": null,
+          "idempotency_key": "sync-fixture-idempotency",
+          "created_at": "2026-10-20T00:00:00Z"
+        }
+      }
+    ],
+    "server_time": "2026-10-22T00:00:00Z"
+  }
+}

@@ -53,6 +53,9 @@ export function createPayment(...args: Parameters<typeof Server.createPayment>) 
 export function markBillAsPaid(...args: Parameters<typeof Server.markBillAsPaid>) {
   return callRpc<typeof Server.markBillAsPaid>('bills', 'markBillAsPaid', ...args)
 }
+export function recordPayment(...args: Parameters<typeof Server.recordPayment>) {
+  return callRpc<typeof Server.recordPayment>('bills', 'recordPayment', ...args)
+}
 export function markAllOverdueBillsAsPaid(...args: Parameters<typeof Server.markAllOverdueBillsAsPaid>) {
   return callRpc<typeof Server.markAllOverdueBillsAsPaid>('bills', 'markAllOverdueBillsAsPaid', ...args)
 }

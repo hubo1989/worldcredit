@@ -14,6 +14,9 @@ export interface FakeDbTables {
   card_products: Row[]
   bills: Row[]
   bill_import_drafts: Row[]
+  system_settings: Row[]
+  email_parse_logs: Row[]
+  device_tokens: Row[]
 }
 
 function compareRows(a: Row, b: Row, columns: string[]): number {
@@ -45,6 +48,15 @@ class FakeStatement {
   async all<T = Row>(): Promise<{ results: T[]; success: true }> {
     const { tables, sql, args } = this
     const norm = sql.replace(/\s+/g, ' ').trim()
+
+    if (/FROM system_settings/i.test(norm)) {
+      return { results: tables.system_settings as T[], success: true }
+    }
+
+    if (/FROM device_tokens/i.test(norm)) {
+      const results = tables.device_tokens.filter(r => r.user_id === args[0] && r.platform === 'ios')
+      return { results: results as T[], success: true }
+    }
 
     if (/FROM card_holders/i.test(norm)) {
       const results = tables.card_holders
@@ -94,6 +106,17 @@ class FakeStatement {
   async run(): Promise<{ success: true }> {
     const { tables, sql, args } = this
     const norm = sql.replace(/\s+/g, ' ').trim()
+
+    if (/^INSERT INTO email_parse_logs/i.test(norm)) {
+      const [id, user_id, from_email, subject, bill_id, status, error_msg, raw_ai_response] = args
+      tables.email_parse_logs.push({ id, user_id, from_email, subject, bill_id, status, error_msg, raw_ai_response })
+      return { success: true }
+    }
+
+    if (/^DELETE FROM device_tokens/i.test(norm)) {
+      tables.device_tokens = tables.device_tokens.filter(r => !(r.token === args[0] && r.user_id === args[1]))
+      return { success: true }
+    }
 
     if (/^INSERT INTO credit_cards/i.test(norm)) {
       // 注意 credit_limit 在 SQL 里是字面量 0，不占绑定参数位
@@ -174,6 +197,9 @@ export function createFakeD1(seed: Partial<FakeDbTables> = {}): FakeDb {
     card_products: [],
     bills: [],
     bill_import_drafts: [],
+    system_settings: [],
+    email_parse_logs: [],
+    device_tokens: [],
     ...seed,
   }
   const db = {

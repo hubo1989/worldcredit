@@ -78,6 +78,12 @@ export async function verifySessionValue(value: string | undefined | null): Prom
 }
 
 export async function readSession(request: Request): Promise<SessionUser | null> {
+  const authHeader = request.headers.get('Authorization')
+  if (authHeader?.startsWith('Bearer ')) {
+    const bearerToken = authHeader.slice(7).trim()
+    const session = await verifySessionValue(bearerToken)
+    if (session) return session
+  }
   return verifySessionValue(readCookie(request.headers.get('Cookie'), SESSION_COOKIE))
 }
 

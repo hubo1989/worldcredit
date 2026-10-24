@@ -136,6 +136,29 @@ export function generateIdempotencyKey(): string {
 }
 
 /**
+ * 获取指定时区下的本地日期串（YYYY-MM-DD，默认 Asia/Shanghai）。
+ * 解决 Cloudflare Workers / Node 运行在 UTC 环境下，在 00:00-08:00 间比本地日期少一天的问题。
+ */
+export function getLocalTodayString(timeZone: string = 'Asia/Shanghai', now: Date = new Date()): string {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+    return formatter.format(now)
+  } catch {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(now)
+  }
+}
+
+/**
  * 归一化持卡人别名。
  *
  * D1 把 `card_holders.aliases` 声明为 TEXT，读回来是 JSON 字符串（如
