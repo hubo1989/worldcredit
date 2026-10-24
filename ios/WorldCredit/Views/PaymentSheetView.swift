@@ -34,6 +34,13 @@ struct PaymentSheetView: View {
         }
     }
 
+    /// 账单以原币结算：固定 ¥ 会把外币账单显示成人民币。
+    private var billCurrency: String { item.currency }
+
+    private func money(_ amount: Double) -> String {
+        DashboardMoney.format(amount, currency: billCurrency)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -48,7 +55,7 @@ struct PaymentSheetView: View {
                     HStack {
                         Text("剩余应还")
                         Spacer()
-                        Text("¥\(String(format: "%.2f", item.remainingAmount))")
+                        Text(money(item.remainingAmount))
                             .font(.headline)
                             .foregroundStyle(item.isOverdue ? .red : .primary)
                     }
@@ -65,7 +72,7 @@ struct PaymentSheetView: View {
 
                     if payType == .custom {
                         HStack {
-                            Text("¥")
+                            Text(DashboardMoney.currencySymbol(billCurrency))
                                 .font(.title3.bold())
                             TextField("输入金额", text: $customAmountText)
                                 .keyboardType(.decimalPad)
@@ -74,7 +81,7 @@ struct PaymentSheetView: View {
                         HStack {
                             Text("本次还款")
                             Spacer()
-                            Text("¥\(String(format: "%.2f", effectiveAmount))")
+                            Text(money(effectiveAmount))
                                 .font(.title3.bold())
                                 .foregroundStyle(.tint)
                         }
@@ -132,7 +139,7 @@ struct PaymentSheetView: View {
             return
         }
         guard effectiveAmount <= item.remainingAmount + 0.01 else {
-            errorMessage = "还款金额不能超过剩余应还 ¥\(String(format: "%.2f", item.remainingAmount))"
+            errorMessage = "还款金额不能超过剩余应还 \(money(item.remainingAmount))"
             return
         }
 

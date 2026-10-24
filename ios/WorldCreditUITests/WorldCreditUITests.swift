@@ -21,7 +21,7 @@ final class WorldCreditUITests: XCTestCase {
 
     func test01BrowseAllTabsWithNotificationsDenied() {
         let app = launchScenario()
-        assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥18230.50")
+        assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥18,230.5")
         attachScreenshot(app, name: "01-overview")
 
         tab("账单", in: app)
@@ -47,7 +47,7 @@ final class WorldCreditUITests: XCTestCase {
 
     func test02OfflineFullPaymentUpdatesCurrentDetailAndPersistsAfterRelaunch() {
         let app = launchScenario()
-        assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥18230.50")
+        assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥18,230.5")
         openBill("bill-cmb-202610", in: app)
         app.buttons["bill.detail.pay"].tap()
         XCTAssertTrue(app.buttons["payment.confirm"].waitForExistence(timeout: 5))
@@ -56,19 +56,19 @@ final class WorldCreditUITests: XCTestCase {
         app.buttons["payment.confirm"].tap()
         XCTAssertTrue(app.buttons["payment.confirm"].waitForNonExistence(timeout: 10), "Payment must finish and dismiss its sheet before checking the detail")
 
-        assertLabel(app.staticTexts["bill.detail.remaining"], equals: "¥0.00", field: "剩余应还")
+        assertLabel(app.staticTexts["bill.detail.remaining"], equals: "¥0", field: "剩余应还")
         assertLabel(app.staticTexts["bill.detail.status"], equals: "已结清", field: "状态")
         XCTAssertFalse(app.buttons["bill.detail.pay"].exists, "A paid bill must close its payment entry immediately")
         attachScreenshot(app, name: "06-paid-current-detail")
 
         tab("概览", in: app)
-        assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥5430.00")
+        assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥5,430")
         tab("设置", in: app)
         assertPendingChanges(1, in: app)
         attachScreenshot(app, name: "07-offline-payment-outbox")
 
         relaunch(app)
-        assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥5430.00")
+        assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥5,430")
         tab("账单", in: app)
         XCTAssertTrue(app.buttons["bill.row.bill-icbc-202609"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["bill.row.bill-cmb-202610"].exists)
@@ -90,18 +90,18 @@ final class WorldCreditUITests: XCTestCase {
         replaceText(in: amount, with: "6000")
         app.buttons["bill.adjust.save"].tap()
         XCTAssertTrue(app.buttons["bill.adjust.save"].waitForNonExistence(timeout: 10), "Amount edit must finish and dismiss its sheet before checking the detail")
-        assertLabel(app.staticTexts["bill.detail.remaining"], equals: "¥6000.00", field: "剩余应还")
+        assertLabel(app.staticTexts["bill.detail.remaining"], equals: "¥6,000", field: "剩余应还")
         XCTAssertTrue(app.buttons["bill.detail.pay"].exists)
         attachScreenshot(app, name: "09-adjusted-current-detail")
         tab("概览", in: app)
-        assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥18800.50")
+        assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥18,800.5")
         tab("设置", in: app)
         assertPendingChanges(1, in: app)
 
         relaunch(app)
-        assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥18800.50")
+        assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥18,800.5")
         openBill("bill-icbc-202609", in: app)
-        assertLabel(app.staticTexts["bill.detail.remaining"], equals: "¥6000.00", field: "剩余应还")
+        assertLabel(app.staticTexts["bill.detail.remaining"], equals: "¥6,000", field: "剩余应还")
         attachScreenshot(app, name: "10-adjusted-after-relaunch")
     }
 
@@ -137,6 +137,63 @@ final class WorldCreditUITests: XCTestCase {
         attachScreenshot(app, name: "12-card-settings-after-relaunch")
     }
 
+    /// 隐私开关切换后金额不再可读。XCTest 只能断言开关状态与金额元素仍占位；
+    /// 真实模糊效果由截图人工核验（见 attachment）。
+    func test05DashboardPrivacyToggleHidesAmounts() {
+        let app = launchScenario()
+        let debt = app.staticTexts["dashboard.totalDebt"]
+        XCTAssertTrue(debt.waitForExistence(timeout: 5))
+        XCTAssertTrue(debt.label.contains("¥"), "汇总金额应以原币符号展示")
+        attachScreenshot(app, name: "13-dashboard-privacy-shown")
+
+        let toggle = app.buttons["dashboard.privacy"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.label, "隐匿金额")
+        toggle.tap()
+        XCTAssertTrue(debt.exists, "隐私模式下金额仍占位，不应导致布局塌陷")
+        XCTAssertEqual(app.buttons["dashboard.privacy"].label, "显示金额")
+        attachScreenshot(app, name: "14-dashboard-privacy-hidden")
+
+        app.buttons["dashboard.privacy"].tap()
+        XCTAssertEqual(app.buttons["dashboard.privacy"].label, "隐匿金额")
+    }
+
+    /// 首页一键结清逾期：演示数据中 bill-icbc-202609 已逾期 5430，
+    /// 结清后总待还只余 bill-cmb-202610 的 12800.5。
+    func test06DashboardPayAllOverdueFromHero() {
+        let app = launchScenario()
+        let payAll = app.buttons["dashboard.payAllOverdue"]
+        XCTAssertTrue(payAll.waitForExistence(timeout: 5), "存在逾期时首页应提供一键全部还款")
+        attachScreenshot(app, name: "15-dashboard-overdue-banner")
+        payAll.tap()
+
+        let confirm = app.buttons["全部结清"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "批量结清必须二次确认，避免误触")
+        confirm.tap()
+
+        let debt = app.staticTexts["dashboard.totalDebt"]
+        let settled = NSPredicate(format: "label == %@", "¥12,800.5")
+        expectation(for: settled, evaluatedWith: debt)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse(app.buttons["dashboard.payAllOverdue"].exists, "逾期结清后不应再显示一键还款入口")
+        attachScreenshot(app, name: "16-dashboard-after-pay-all")
+    }
+
+    /// 快捷入口打开受限业务页，可正常关闭并回到首页。
+    func test07DashboardQuickActionOpensAndClosesWebPage() {
+        let app = launchScenario()
+        let quick = app.buttons["dashboard.quick.记一笔"]
+        XCTAssertTrue(quick.waitForExistence(timeout: 5))
+        quick.tap()
+
+        let close = app.buttons["webview.close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "业务页必须提供显式关闭")
+        attachScreenshot(app, name: "17-dashboard-webview")
+        close.tap()
+        XCTAssertTrue(app.buttons["dashboard.quick.记一笔"].waitForExistence(timeout: 5),
+                      "关闭后应回到首页")
+    }
+
     private func launchScenario() -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -156,11 +213,21 @@ final class WorldCreditUITests: XCTestCase {
     }
 
     private func denyNotificationPermissionIfPresented() {
-        let alert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        guard alert.waitForExistence(timeout: 3) else { return }
-        let deny = alert.buttons.matching(NSPredicate(format: "label IN %@", ["不允许", "Don't Allow", "Don’t Allow"])).firstMatch
-        XCTAssertTrue(deny.exists, "Unexpected system alert: \(alert.debugDescription)")
-        deny.tap()
+        // 系统权限弹窗可能晚于启动出现；单次短等待会漏掉，残留的 Springboard Alert
+        // 会阻塞后续所有 UI 查询。但轮询预算必须克制：每条用例都会跑一次，
+        // 过长会把整套用例拖过单测试执行时限。
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let alert = springboard.alerts.firstMatch
+        for _ in 0..<10 {
+            guard alert.waitForExistence(timeout: 0.5) else { continue }
+            let deny = alert.buttons.matching(
+                NSPredicate(format: "label IN %@", ["不允许", "Don't Allow", "Don’t Allow"])
+            ).firstMatch
+            if deny.exists {
+                deny.tap()
+            }
+            XCTAssertTrue(alert.waitForNonExistence(timeout: 2), "System alert did not dismiss: \(alert.debugDescription)")
+        }
     }
 
     private func tab(_ title: String, in app: XCUIApplication) {

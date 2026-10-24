@@ -20,6 +20,11 @@ struct BillDetailView: View {
         _item = State(initialValue: item)
     }
 
+    /// 账单以原币结算，不能固定写 ¥。
+    private func money(_ amount: Double) -> String {
+        DashboardMoney.format(amount, currency: item.currency)
+    }
+
     var body: some View {
         List {
             // 账单基本信息
@@ -38,20 +43,20 @@ struct BillDetailView: View {
             // 金额信息
             Section("金额与状态") {
                 if item.bill.billAmountOverride != nil {
-                    LabeledContent("应还金额 (已调整)", value: "¥\(String(format: "%.2f", item.bill.effectiveAmount))")
+                    LabeledContent("应还金额 (已调整)", value: money(item.bill.effectiveAmount))
                         .accessibilityIdentifier("bill.detail.amount")
-                    LabeledContent("原始出账金额", value: "¥\(String(format: "%.2f", item.bill.billAmount))")
+                    LabeledContent("原始出账金额", value: money(item.bill.billAmount))
                 } else {
-                    LabeledContent("账单金额", value: "¥\(String(format: "%.2f", item.bill.effectiveAmount))")
+                    LabeledContent("账单金额", value: money(item.bill.effectiveAmount))
                         .accessibilityIdentifier("bill.detail.amount")
                 }
 
                 if let minP = item.bill.minPayment, minP > 0 {
-                    LabeledContent("最低还款", value: "¥\(String(format: "%.2f", minP))")
+                    LabeledContent("最低还款", value: money(minP))
                 }
-                LabeledContent("已还金额", value: "¥\(String(format: "%.2f", item.totalPaid))")
+                LabeledContent("已还金额", value: money(item.totalPaid))
                 LabeledContent("剩余应还") {
-                    Text("¥\(String(format: "%.2f", item.remainingAmount))")
+                    Text(money(item.remainingAmount))
                         .bold()
                         .foregroundStyle(item.isOverdue ? .red : (item.remainingAmount <= 0.01 ? .green : .primary))
                         .accessibilityIdentifier("bill.detail.remaining")
@@ -89,7 +94,7 @@ struct BillDetailView: View {
                     ForEach(payments) { p in
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("¥\(String(format: "%.2f", p.amount))")
+                                Text(money(p.amount))
                                     .font(.headline)
                                 Text("\(p.paidAt) · \(p.channel ?? "手动还款")")
                                     .font(.caption)
@@ -130,9 +135,11 @@ struct BillDetailView: View {
             }
         }
         .sheet(isPresented: $showingAmountOverrideSheet) {
+            // onSave 只负责业务写入；详情刷新交给 appState.isSyncing 变更后的
+            // onChange / .task。若把 await loadDetails() 放进回调，它一慢就会
+            // 阻塞弹窗 dismiss()，表现为「提交转圈永不结束」。
             BillAmountOverrideSheetView(item: item) { newAmount in
                 try await appState.setBillAmountOverride(billId: item.bill.id, amount: newAmount)
-                await loadDetails()
             }
         }
         .task {

@@ -23,6 +23,11 @@ public struct BillDisplayItem: Identifiable, Sendable {
 
     public var id: String { bill.id }
 
+    /// 账单所在币种：卡产品的币种就是账单币种，缺产品时按 CNY。
+    public var currency: String {
+        product?.currency ?? "CNY"
+    }
+
     public var cardTitle: String {
         card.nameOverride ?? product?.cardName ?? bank?.shortName ?? bank?.name ?? "信用卡"
     }
@@ -74,6 +79,16 @@ public struct BillDisplayItem: Identifiable, Sendable {
         self.daysUntilDue = daysUntilDue
         self.isOverdue = isOverdue
         self.distanceLabel = distanceLabel
+    }
+}
+
+/// 展示项按 id + 指标消费的字段判等（DashboardMetrics 等值断言使用）。
+extension BillDisplayItem: Equatable {
+    public static func == (lhs: BillDisplayItem, rhs: BillDisplayItem) -> Bool {
+        lhs.id == rhs.id
+            && lhs.bill.status == rhs.bill.status
+            && lhs.remainingAmount == rhs.remainingAmount
+            && lhs.daysUntilDue == rhs.daysUntilDue
     }
 }
 
@@ -321,6 +336,20 @@ public final class QueryService: Sendable {
             // Default sort: highest interest free days first
             items.sort { $0.interestFreeDaysToday > $1.interestFreeDaysToday }
             return items
+        }
+    }
+
+    /// 首页账单数据源：全量未还（覆盖全部持卡人、全部币种）。
+    /// 与账单页 tab 筛选无关——首页指标和 CTA 永远基于完整的未还集合。
+    public func fetchDashboardBills(today: Date = Date()) async throws -> [BillDisplayItem] {
+        try await fetchBills(filter: .unpaid, today: today)
+    }
+
+    /// 全部持卡人（包括没有任何卡的持卡人），按创建时间升序，与 Web 首页一致；
+    /// id 作次级排序保证 created_at 相同（秒粒度默认值）时结果确定。
+    public func fetchHolders() async throws -> [CardHolder] {
+        try await dbManager.dbWriter.read { db in
+            try CardHolder.order(Column("created_at").asc, Column("id").asc).fetchAll(db)
         }
     }
 }

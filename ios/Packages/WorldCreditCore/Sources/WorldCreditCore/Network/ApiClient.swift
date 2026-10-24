@@ -272,6 +272,63 @@ public final class ApiClient: @unchecked Sendable {
         return pushRes.results
     }
 
+    // MARK: - Authenticated reads and generic RPC
+
+    /// Restores the current server identity without changing credentials or Keychain state.
+    public func fetchSessionUser() async throws -> SessionUser {
+        let request = try authenticatedRequest(path: "api/auth/session", method: "GET")
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response, data: data)
+        struct Envelope: Decodable { let user: SessionUser? }
+        guard let user = try JSONDecoder().decode(Envelope.self, from: data).user else {
+            throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
+        }
+        return user
+    }
+
+    /// Calls a named RPC and unwraps its {data,error} envelope. Does not mutate authentication.
+    public func rpc<Value: Decodable & Sendable>(module: String, function: String,
+                                                 args: [AnyCodable] = []) async throws -> Value {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_"))
+        guard [module, function].allSatisfy({ !$0.isEmpty && $0.unicodeScalars.allSatisfy(allowed.contains) }) else {
+            throw URLError(.badURL)
+        }
+        var request = try authenticatedRequest(path: "api/rpc/\(module)/\(function)", method: "POST")
+        request.httpBody = try JSONEncoder().encode(["args": args])
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response, data: data)
+        // Decode errors first: an error must win even if data has the wrong shape.
+        let failure = try JSONDecoder().decode(RPCErrorEnvelope.self, from: data)
+        if let error = failure.error {
+            throw NSError(domain: "ApiClient", code: 500, userInfo: [NSLocalizedDescriptionKey: error])
+        }
+        return try JSONDecoder().decode(RPCEnvelope<Value>.self, from: data).data
+    }
+
+    private struct RPCErrorEnvelope: Decodable { let error: String? }
+    private struct RPCEnvelope<Value: Decodable>: Decodable { let data: Value }
+
+    private func authenticatedRequest(path: String, method: String) throws -> URLRequest {
+        guard let token = self.token, !token.isEmpty else {
+            throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
+        }
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.httpMethod = method
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return request
+    }
+
+    private func validateHTTP(_ response: URLResponse, data: Data) throws {
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        guard (200...299).contains(http.statusCode) else {
+            let envelope = try? JSONDecoder().decode(RPCErrorEnvelope.self, from: data)
+            throw NSError(domain: "ApiClient", code: http.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: envelope?.error ?? "请求失败 (\(http.statusCode))"])
+        }
+    }
+
     // MARK: - Device Tokens (APNs)
 
     public func registerDeviceToken(

@@ -23,6 +23,26 @@ public final class AppState {
     public var pendingSyncCount: Int = 0
     public var lastSyncedAt: String?
 
+    public var selectedTab: Int = {
+        if CommandLine.arguments.contains("--tab=bills") { return 1 }
+        if CommandLine.arguments.contains("--tab=cards") { return 2 }
+        if CommandLine.arguments.contains("--tab=settings") { return 3 }
+        return 0
+    }()
+    public var dashboardBills: [BillDisplayItem] = []
+    public var dashboardHolders: [CardHolder] = []
+    public var dashboardCurrency = "CNY"
+    public var dashboardPrivacy = true
+    public var dashboardRates: FxRates?
+    public var dashboardAvailableCount: Int?
+    public var dashboardReminders: [DashboardReminder] = []
+    public var dashboardRemoteErrors: [String] = []
+    public var isDashboardLoading = false
+    public var dashboardLoadError: String?
+    @ObservationIgnored private var dashboardRemoteTask: Task<Void, Never>?
+    @ObservationIgnored private var dashboardRequestID = UUID()
+    @ObservationIgnored private lazy var dashboardRemote = DashboardRemoteService(apiClient: apiClient)
+
     public var summary: DashboardSummary?
     public var bills: [BillDisplayItem] = []
     public var cards: [CardDisplayItem] = []
@@ -94,6 +114,7 @@ public final class AppState {
         self.notificationScheduler = NotificationScheduler(dbManager: db)
 
         self.isLoggedIn = client.token != nil
+        if UITestConfiguration.isEnabled { dashboardPrivacy = false }
         if self.isLoggedIn && isBiometricsEnabled {
             self.isLocked = true
         }
@@ -116,9 +137,20 @@ public final class AppState {
     @discardableResult
     public func reloadData() async -> Bool {
         do {
+            // WCDBG 临时打点：定位弹窗提交偶发超时，交付前移除
+            let t0 = CFAbsoluteTimeGetCurrent()
             let sum = try await queryService.fetchDashboardSummary()
+            let t1 = CFAbsoluteTimeGetCurrent()
             let bList = try await queryService.fetchBills(filter: selectedBillFilter)
+            let t2 = CFAbsoluteTimeGetCurrent()
             let cList = try await queryService.fetchCards()
+            let t3 = CFAbsoluteTimeGetCurrent()
+            let dashboardList = try await queryService.fetchDashboardBills()
+            let t4 = CFAbsoluteTimeGetCurrent()
+            let holders = try await queryService.fetchHolders()
+            let t5 = CFAbsoluteTimeGetCurrent()
+            let ms: (Double, Double) -> Int = { Int(($1 - $0) * 1000) }
+            print("[WCDBG] reload summary=\(ms(t0, t1))ms bills=\(ms(t1, t2))ms cards=\(ms(t2, t3))ms dashBills=\(ms(t3, t4))ms holders=\(ms(t4, t5))ms")
 
             let meta = try? await dbManager.dbWriter.read { db in
                 (
@@ -130,22 +162,93 @@ public final class AppState {
             self.summary = sum
             self.bills = bList
             self.cards = cList
+            self.dashboardBills = dashboardList
+            self.dashboardHolders = holders
+            self.dashboardLoadError = nil
             self.lastSyncedAt = meta?.0
             self.pendingSyncCount = meta?.1 ?? 0
 
             // 生成并更新 Apple Watch 快照
+            NSLog("[WCDBG] reload WATCH-BEGIN")
             if let snapshot = try? await WatchSnapshotManager.shared.buildSnapshot(dbManager: dbManager) {
+                NSLog("[WCDBG] reload WATCH-SNAP-OK")
                 try? WatchSnapshotManager.shared.save(snapshot)
                 WatchSyncCoordinator.shared.sendSnapshotToWatch(snapshot)
             }
+            NSLog("[WCDBG] reload WATCH-DONE")
             #if DEBUG
-            await UITestConfiguration.recordMetadata()
+            // 证据采集不得阻塞业务链路：放后台，失败也不影响 UI 测试主流程。
+            // 证据采集不得阻塞业务链路：放后台，失败也不影响 UI 测试主流程。
+            Task { await UITestConfiguration.recordMetadata() }
             #endif
+            NSLog("[WCDBG] reload RETURN")
             return true
         } catch {
+            dashboardLoadError = "本地数据加载失败：\(error.localizedDescription)"
             print("Failed to reload local data: \(error)")
             return false
         }
+    }
+
+    public func refreshDashboard() async {
+        isDashboardLoading = dashboardBills.isEmpty
+        defer { isDashboardLoading = false }
+        _ = await reloadData()
+        await refreshDashboardRemote()
+    }
+
+    public func refreshDashboardRemote() async {
+        guard isLoggedIn, !UITestConfiguration.isEnabled else { return }
+        let requestID = UUID()
+        dashboardRequestID = requestID
+        let credential = apiClient.token
+        do {
+            let user: SessionUser
+            if let currentUser { user = currentUser }
+            else { user = try await apiClient.fetchSessionUser() }
+            guard dashboardRequestID == requestID, isLoggedIn, apiClient.token == credential else { return }
+            currentUser = user
+            let snapshot = await dashboardRemote.fetch(userId: user.id)
+            guard dashboardRequestID == requestID, isLoggedIn, apiClient.token == credential,
+                  currentUser?.id == user.id else { return }
+            if let currency = snapshot.displayCurrency { dashboardCurrency = currency }
+            if let privacy = snapshot.privacyMode { dashboardPrivacy = privacy }
+            dashboardAvailableCount = snapshot.availableCount
+            dashboardReminders = Array((snapshot.reminders ?? []).prefix(3))
+            if let rates = snapshot.exchangeRates {
+                dashboardRates = FxRates(base: rates.base, rates: rates.rates,
+                                         timestamp: rates.timestamp, fetchedAt: rates.fetchedAt.timeIntervalSince1970 * 1000)
+            } else { dashboardRates = nil }
+            dashboardRemoteErrors = snapshot.failures
+                .sorted { $0.key.rawValue < $1.key.rawValue }
+                .map { "\($0.key.rawValue) 暂不可用：\($0.value.message)" }
+        } catch {
+            guard dashboardRequestID == requestID, apiClient.token == credential else { return }
+            dashboardRemoteErrors = ["首页在线信息暂不可用：\(error.localizedDescription)"]
+            dashboardAvailableCount = nil
+            dashboardReminders = []
+        }
+    }
+
+    public func setDashboardPrivacy(_ enabled: Bool) async {
+        dashboardPrivacy = enabled
+        guard let user = currentUser else { return }
+        let credential = apiClient.token
+        do {
+            _ = try await dashboardRemote.updatePreferences(userId: user.id, privacyMode: enabled)
+        } catch {
+            guard currentUser?.id == user.id, apiClient.token == credential else { return }
+            dashboardRemoteErrors = ["隐私设置已在本次生效，云端保存失败：\(error.localizedDescription)"]
+        }
+    }
+
+    public func payDashboardBills(_ ids: [String]) async throws -> Int {
+        let count = try await paymentService.recordFullPayments(billIds: ids)
+        await reloadData()
+        do { try await notificationScheduler.rescheduleAll() }
+        catch { lastSyncError = "还款已保存，提醒更新失败：\(error.localizedDescription)" }
+        Task { await self.sync() }
+        return count
     }
 
     @discardableResult
@@ -191,6 +294,16 @@ public final class AppState {
     }
 
     public func logout() {
+        let oldUserID = currentUser?.id
+        dashboardRequestID = UUID()
+        dashboardRemoteTask?.cancel()
+        dashboardPrivacy = true
+        dashboardCurrency = "CNY"
+        dashboardRates = nil
+        dashboardAvailableCount = nil
+        dashboardReminders = []
+        dashboardRemoteErrors = []
+        if let oldUserID { Task { await dashboardRemote.clearCache(userId: oldUserID) } }
         PushNotificationManager.shared.unregisterCurrentToken()
         apiClient.token = nil
         self.isLoggedIn = false
@@ -205,6 +318,8 @@ public final class AppState {
         channel: String? = "手动还款",
         note: String? = nil
     ) async throws {
+        NSLog("[WCDBG] pay ENTRY")
+        let t0 = CFAbsoluteTimeGetCurrent()
         try await paymentService.recordPayment(
             billId: billId,
             amount: amount,
@@ -212,14 +327,22 @@ public final class AppState {
             channel: channel,
             note: note
         )
+        NSLog("[WCDBG] pay SVC-OK")
+        let t1 = CFAbsoluteTimeGetCurrent()
         // Refresh local UI immediately
         await reloadData()
+        NSLog("[WCDBG] pay RELOAD-OK")
+        let t2 = CFAbsoluteTimeGetCurrent()
+        print("[WCDBG] pre-resched svc=\(Int((t1 - t0) * 1000))ms reload=\(Int((t2 - t1) * 1000))ms")
         do {
             try await notificationScheduler.rescheduleAll()
         } catch {
             lastSyncError = "本地修改已保存，提醒更新失败：\(error.localizedDescription)"
             print("提醒更新失败：\(error)")
         }
+        let t3 = CFAbsoluteTimeGetCurrent()
+        let ms: (Double, Double) -> Int = { Int(($1 - $0) * 1000) }
+        print("[WCDBG] pay svc=\(ms(t0, t1))ms reload=\(ms(t1, t2))ms resched=\(ms(t2, t3))ms")
 
         // Background trigger sync if online
         Task {
