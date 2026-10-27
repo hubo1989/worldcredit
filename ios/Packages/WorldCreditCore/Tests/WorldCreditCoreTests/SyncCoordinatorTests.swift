@@ -80,4 +80,27 @@ struct SyncCoordinatorTests {
         try await coordinator.perform { retried = true }
         #expect(retried)
     }
+
+    @Test("Cancelling an in-flight cycle detaches it so a new session can start fresh")
+    func cancelInFlight() async throws {
+        let coordinator = SyncCoordinator()
+        let started = OperationGate()
+        let release = OperationGate()
+        var staleWasCancelled = false
+        let stale = Task {
+            try await coordinator.perform {
+                started.open()
+                await release.wait()
+                staleWasCancelled = Task.isCancelled
+            }
+        }
+        await started.wait()
+        coordinator.cancelInFlight()
+        var freshRan = false
+        try await coordinator.perform { freshRan = true }
+        #expect(freshRan)
+        release.open()
+        try await stale.value
+        #expect(staleWasCancelled)
+    }
 }

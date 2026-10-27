@@ -403,6 +403,80 @@ struct SyncEngineTests {
         #expect(decoded.totalDebt == 1000.0)
     }
 
+    @Test("WatchSnapshot builds purely from pre-fetched data without a DatabaseManager")
+    func testWatchSnapshotFromPrefetchedData() {
+        // 构造纯内存数据：重载不接受 DatabaseManager，签名上就消灭了重复查询的可能。
+        let bank = Bank(id: "b-1", name: "测试银行", shortName: "测试")
+        let holder = CardHolder(id: "h-1", createdBy: "u", managedBy: "u", name: "持卡人")
+        let product = CardProduct(id: "p-1", bankName: "测试银行", cardName: "测试卡",
+                                  paymentDueType: .afterBilling, paymentDueValue: 18)
+        let card = CreditCard(id: "c-1", holderId: "h-1", cardProductId: "p-1", billingDay: 10,
+                              cardNumberLast4: "8888", creditLimit: 20000)
+        let bill = Bill(id: "b-100", cardId: "c-1", billMonth: "2026-10", statementDate: "2026-10-10",
+                        billAmount: 300, minPayment: 30, dueDate: "2026-10-28")
+        let billItem = BillDisplayItem(bill: bill, card: card, product: product, bank: bank, holder: holder,
+                                       totalPaid: 0, remainingAmount: 300, daysUntilDue: 6, isOverdue: false,
+                                       distanceLabel: "6 天后", interestFreeDaysToday: 28)
+        let nextDue = ISO8601DateFormatter().date(from: "2026-10-28T00:00:00Z")!
+        let cardItem = CardDisplayItem(card: card, product: product, bank: bank, holder: holder, latestBill: bill,
+                                       remainingAmount: 300, interestFreeDaysToday: 28, nextDueDate: nextDue)
+        let summary = DashboardSummary(totalDebt: 300, overdueAmount: 0, overdueCount: 0, urgentBills: [billItem],
+                                       nextDueBill: billItem, totalCreditLimit: 20000, totalUtilized: 300)
+        let today = ISO8601DateFormatter().date(from: "2026-10-22T00:00:00Z")!
+
+        let snapshot = WatchSnapshotManager.shared.buildSnapshot(
+            summary: summary, bills: [billItem], cards: [cardItem], today: today)
+
+        #expect(snapshot.generatedAt == ISO8601DateFormatter().string(from: today))
+        #expect(snapshot.totalDebt == 300)
+        #expect(snapshot.overdueCount == 0)
+        #expect(snapshot.overdueAmount == 0)
+        #expect(snapshot.totalCreditLimit == 20000)
+        #expect(snapshot.bills.count == 1)
+        #expect(snapshot.bills[0].id == "b-100")
+        #expect(snapshot.bills[0].bankName == "测试")
+        #expect(snapshot.bills[0].billAmount == 300)
+        #expect(snapshot.bills[0].remainingAmount == 300)
+        #expect(snapshot.bills[0].minPayment == 30)
+        #expect(snapshot.cards.count == 1)
+        #expect(snapshot.cards[0].id == "c-1")
+        #expect(snapshot.cards[0].creditLimit == 20000)
+        #expect(snapshot.cards[0].unpaidAmount == 300)
+        #expect(snapshot.cards[0].billingDay == 10)
+        #expect(snapshot.calendarEvents.count == 1)
+        #expect(snapshot.calendarEvents[0].id == "due-b-100")
+        #expect(snapshot.calendarEvents[0].date == "2026-10-28")
+    }
+
+    @Test("WatchSnapshot dbManager entry point delegates to the pre-fetched overload with identical output")
+    func testWatchSnapshotDelegationMatchesPrefetched() async throws {
+        let dbManager = try makeTestDatabase()
+        let queryService = QueryService(dbManager: dbManager)
+        let calendar = Calendar(identifier: .gregorian)
+        var comp = DateComponents()
+        comp.year = 2026
+        comp.month = 10
+        comp.day = 22
+        let today = calendar.date(from: comp)!
+
+        let summary = try await queryService.fetchDashboardSummary(today: today)
+        let bills = try await queryService.fetchBills(filter: .unpaid, today: today)
+        let cards = try await queryService.fetchCards(today: today)
+
+        let manager = WatchSnapshotManager.shared
+        let reused = manager.buildSnapshot(summary: summary, bills: bills, cards: cards, today: today)
+        let fresh = try await manager.buildSnapshot(dbManager: dbManager, today: today)
+
+        #expect(reused.generatedAt == fresh.generatedAt)
+        #expect(reused.totalDebt == fresh.totalDebt)
+        #expect(reused.overdueCount == fresh.overdueCount)
+        #expect(reused.overdueAmount == fresh.overdueAmount)
+        #expect(reused.totalCreditLimit == fresh.totalCreditLimit)
+        #expect(reused.bills.map { $0.id } == fresh.bills.map { $0.id })
+        #expect(reused.cards.map { $0.id } == fresh.cards.map { $0.id })
+        #expect(reused.calendarEvents.map { $0.id } == fresh.calendarEvents.map { $0.id })
+    }
+
     @Test("BillEditService adjusts bill amount override and recalculates status offline")
     func testBillEditService() async throws {
         let dbManager = try makeTestDatabase()

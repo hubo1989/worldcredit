@@ -4,6 +4,7 @@ import Foundation
 @MainActor
 public final class SyncCoordinator {
     private var inFlight: Task<Void, Error>?
+    private var inFlightID: UUID?
 
     public init() {}
 
@@ -15,9 +16,22 @@ public final class SyncCoordinator {
             try await inFlight.value
             return
         }
+        let id = UUID()
         let task = Task { try await operation() }
         inFlight = task
-        defer { inFlight = nil }
+        inFlightID = id
+        defer {
+            if inFlightID == id {
+                inFlight = nil
+                inFlightID = nil
+            }
+        }
         try await task.value
+    }
+
+    public func cancelInFlight() {
+        inFlight?.cancel()
+        inFlight = nil
+        inFlightID = nil
     }
 }

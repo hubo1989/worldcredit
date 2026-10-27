@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct LockScreenView: View {
     @Environment(AppState.self) private var appState
+    @State private var showingLogoutConfirm = false
 
     public init() {}
 
@@ -38,29 +39,42 @@ public struct LockScreenView: View {
                 Spacer()
 
                 // 解锁按钮
-                Button {
-                    Task {
-                        await appState.unlockWithBiometrics()
+                VStack(spacing: 16) {
+                    Button {
+                        Task {
+                            await appState.unlockWithBiometrics()
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: BiometricAuthManager.shared.biometryKind == .touchID ? "touchid" : "faceid")
+                            Text("点击使用 \(BiometricAuthManager.shared.biometryName) 解锁")
+                        }
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color(red: 0.16, green: 0.18, blue: 0.24))
+                        .cornerRadius(12)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color(red: 0.25, green: 0.28, blue: 0.35), lineWidth: 1)
+                        )
                     }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: BiometricAuthManager.shared.biometryKind == .touchID ? "touchid" : "faceid")
-                        Text("点击使用 \(BiometricAuthManager.shared.biometryName) 解锁")
+
+                    Button("退出当前账号", role: .destructive) {
+                        showingLogoutConfirm = true
                     }
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color(red: 0.16, green: 0.18, blue: 0.24))
-                    .cornerRadius(12)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color(red: 0.25, green: 0.28, blue: 0.35), lineWidth: 1)
-                    )
+                    .font(.footnote)
                 }
                 .padding(.horizontal, 32)
                 .padding(.bottom, 48)
             }
+        }
+        .confirmationDialog("退出当前账号？", isPresented: $showingLogoutConfirm, titleVisibility: .visible) {
+            Button("退出登录", role: .destructive) {
+                appState.logout()
+            }
+            Button("取消", role: .cancel) {}
         }
         .task {
             // 视图出现时自动发起一次认证

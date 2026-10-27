@@ -75,6 +75,35 @@ public final class DatabaseManager: @unchecked Sendable {
         return try DatabaseManager.file(at: fileURL)
     }
 
+    /// Clears account-scoped rows, queued mutations and sync state on logout.
+    ///
+    /// 这是登出防跨账号数据泄漏的最后防线，必须覆盖全部业务表
+    /// （banks/card_products/card_holders/credit_cards/bills/payments）、
+    /// mutation_outbox 与 sync_meta 整表（含 sync_cursor、sync_retry_after_%、
+    /// sync_reconcile_targets 及任何未来新增键）。
+    ///
+    /// device 级 `sync_client_id` 的决定：**删除并重置**。理由：
+    /// 1) 登出后沿用同一 clientId 会让服务端把同一设备跨账号关联（隐私泄漏面）；
+    /// 2) mutation_outbox 已清空，不存在需要同一 clientId 续传的未确认操作；
+    /// 3) 下次 SyncEngine 启动会自动生成新 id（见 SyncEngine.init）。
+    /// 删除顺序遵循外键约束：payments → bills → credit_cards（card_product_id
+    /// 为 ON DELETE RESTRICT，必须先于 card_products 删除）→ card_holders →
+    /// card_products → banks。
+    public func clearUserData() async throws {
+        try await dbWriter.write { db in
+            try db.execute(sql: """
+                DELETE FROM payments;
+                DELETE FROM bills;
+                DELETE FROM credit_cards;
+                DELETE FROM card_holders;
+                DELETE FROM card_products;
+                DELETE FROM banks;
+                DELETE FROM mutation_outbox;
+                DELETE FROM sync_meta;
+                """)
+        }
+    }
+
     private var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
 

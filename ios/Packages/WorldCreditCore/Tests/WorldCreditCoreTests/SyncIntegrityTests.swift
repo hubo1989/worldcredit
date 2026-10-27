@@ -106,8 +106,8 @@ struct SyncIntegrityTests {
         }
     }
 
-    @Test("A malformed known change rolls back the full page and retains its cursor", arguments: ["missing-field", "missing-row", "wrong-id", "wrong-op"])
-    func malformedPage(kind: String) async throws {
+    @Test("A malformed known change is isolated so the rest of the page and the cursor still advance", arguments: ["missing-field", "missing-row", "wrong-id", "wrong-op"])
+    func malformedChangeIsolated(kind: String) async throws {
         let manager = try database()
         var bad = try fixtureChange(table: "bills")
         var row = try #require(bad["row"] as? [String: Any])
@@ -120,11 +120,17 @@ struct SyncIntegrityTests {
         let good: [String: Any] = ["tbl": "banks", "row_id": "new-bank", "op": "upsert",
                                    "row": ["id": "new-bank", "name": "New bank"]]
         let data = try responseData(changes: [good, bad], cursor: 10)
-        await #expect(throws: (any Error).self) { try await engine(manager) { _ in data }.pull() }
+        // 按条隔离：坏变更不拖垮整批，也不再让毒丸把游标永久卡住。
+        try await engine(manager) { _ in data }.pull()
         try await manager.dbWriter.read { (db: Database) throws -> Void in
-            #expect(try Bank.fetchOne(db, id: "new-bank") == nil)
-            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "6")
-            #expect(try SyncMeta.fetchOne(db, key: "last_synced_at")?.value == "before-sync")
+            // 同页好变更正常落库
+            #expect(try Bank.fetchOne(db, id: "new-bank") != nil)
+            // 游标必须前进，否则同一毒变更会被永久重放
+            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "10")
+            #expect(try SyncMeta.fetchOne(db, key: "last_synced_at")?.value == "2026-10-22T00:00:00Z")
+            // 被隔离的行留下记录，便于排查丢弃了什么
+            let isolated = try SyncMeta.fetchOne(db, key: "sync_isolated_changes")?.value
+            #expect(isolated?.contains(billID) == true)
         }
     }
 
@@ -136,22 +142,34 @@ struct SyncIntegrityTests {
         #expect(throws: (any Error).self) { try JSONDecoder().decode(CardProduct.self, from: data) }
     }
 
-    @Test("坏行修正后可从保留的游标恢复而不漏账")
+    @Test("坏行被隔离记录后游标仍前进，修正行从新游标继续应用不漏账")
     func correctedPageRecovers() async throws {
         let manager = try database()
         var bad = try fixtureChange(table: "bills")
         bad.removeValue(forKey: "row")
         let broken = try responseData(changes: [bad], cursor: 10)
-        await #expect(throws: (any Error).self) { try await engine(manager) { _ in broken }.pull() }
-        let corrected = try responseData(changes: [fixtureChange(table: "bills")], cursor: 10)
+        // 坏行被隔离而不是毒丸卡死：pull 不抛错，游标前进。
+        try await engine(manager) { _ in broken }.pull()
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "10")
+            let isolated = try SyncMeta.fetchOne(db, key: "sync_isolated_changes")?.value
+            #expect(isolated?.contains(billID) == true)
+        }
+        // 修正行以新的服务端变更重新到达（游标 10 之后），照常落库。
+        var corrected = try fixtureChange(table: "bills")
+        var row = try #require(corrected["row"] as? [String: Any])
+        row["bill_amount"] = 2000.0
+        corrected["row"] = row
+        let next = try responseData(changes: [corrected], cursor: 12)
         try await engine(manager) { request in
             let body = try #require(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
-            #expect(body["cursor"] as? Int == 6)
-            return corrected
+            #expect(body["cursor"] as? Int == 10)
+            return next
         }.pull()
         try await manager.dbWriter.read { (db: Database) throws -> Void in
-            #expect(try Bill.fetchOne(db, id: billID) != nil)
-            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "10")
+            let bill = try Bill.fetchOne(db, id: billID)
+            #expect(bill?.billAmount == 2000.0)
+            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "12")
         }
     }
 
@@ -236,6 +254,41 @@ struct SyncIntegrityTests {
         try await manager.dbWriter.read { (db: Database) throws -> Void in
             #expect(try CreditCard.fetchOne(db, id: cardID)?.creditLimit == 88000)
             #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "6")
+        }
+    }
+
+    @Test("Permanent rejection of an unparseable mutation marks only that item and continues the batch")
+    func unparseablePermanentRejection() async throws {
+        let manager = try database()
+        try await edit("payment", in: manager)
+        // 未来版本/形状漂移的 mutation：argsJson 合法但 targetsForRejectedMutation 无法解析。
+        try await manager.dbWriter.write { db in
+            try MutationOutbox(id: "mut-unknown", name: "future.unknownMutation", argsJson: "[]").insert(db)
+        }
+        // 服务端对整批返回永久拒绝（已幂等记录，重放只会拿到同样结果）。
+        let sync = engine(manager) { request in
+            if request.url?.path == "/api/sync/push" { return try rejection(request, permanent: true) }
+            throw URLError(.notConnectedToInternet)
+        }
+        // 解析失败只标记该条，绝不允许整个事务回滚或抛出中断其余条目。
+        try await sync.push()
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            // 解析失败条目保留并被标记
+            let unknown = try MutationOutbox.fetchOne(db, id: "mut-unknown")
+            #expect(unknown?.retryCount == 1)
+            #expect(unknown?.lastError?.isEmpty == false)
+            // 同批可解析的永久拒绝仍按原语义删除并回滚乐观状态
+            let recordPayment = try MutationOutbox.filter(Column("name") == "bills.recordPayment").fetchAll(db)
+            #expect(recordPayment.isEmpty)
+            #expect(try Payment.fetchOne(db, id: "optimistic-payment") == nil)
+            #expect(try Bill.fetchOne(db, id: billID)?.status == "partial")
+        }
+        // 重放拿到同样的永久结果时继续只标记该条，不再 throw（死锁回归）。
+        try await sync.push()
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            let unknown = try MutationOutbox.fetchOne(db, id: "mut-unknown")
+            #expect(unknown?.retryCount == 2)
+            #expect(try MutationOutbox.filter(Column("name") == "bills.recordPayment").fetchCount(db) == 0)
         }
     }
 

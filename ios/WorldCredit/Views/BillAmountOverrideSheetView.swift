@@ -65,7 +65,7 @@ struct BillAmountOverrideSheetView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
-                        guard let amt = Double(amountText), amt >= 0 else {
+                        guard let amt = Double(amountText), amt.isFinite, amt >= 0 else {
                             errorMessage = "请输入有效的非负金额"
                             return
                         }

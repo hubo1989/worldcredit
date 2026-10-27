@@ -30,6 +30,9 @@ public final class SyncEngine: @unchecked Sendable {
     private var storedClientId: String
     private let clientIdOverride: String?
     private static let reconcileMetaKey = "sync_reconcile_targets"
+    /// 被隔离的坏变更（解码失败/约束冲突等）落在这里，丢弃但留痕，便于排查。
+    private static let isolatedChangesMetaKey = "sync_isolated_changes"
+    private static let isolatedChangesCap = 50
     private static let supportedTables: Set<String> = ["banks", "card_products", "card_holders", "credit_cards", "bills", "payments"]
 
     public init(
@@ -85,8 +88,24 @@ public final class SyncEngine: @unchecked Sendable {
             let stillNeedsRecovery = try await dbManager.dbWriter.write { db in
                 // An edit may have been queued while the network request was in flight.
                 try self.requireEmptyOutbox(in: db)
+                // 按条隔离：单条 applyChange 失败不中断整批。整批单事务下任一条
+                // 解码失败/外键约束抛错都会回滚全部并卡住 sync_cursor，同变更被
+                // 永久重放、同步永久死锁。这里隔离坏行（记录后继续），保证游标
+                // 总能前进；全部成功或部分隔离都提交事务并保存 cursor。
+                var isolated: [[String: String]] = []
                 for change in response.changes {
-                    try self.applyChange(change, in: db)
+                    do {
+                        try self.applyChange(change, in: db)
+                    } catch {
+                        isolated.append([
+                            "tbl": change.tbl,
+                            "row_id": change.rowId,
+                            "error": error.localizedDescription,
+                        ])
+                    }
+                }
+                if !isolated.isEmpty {
+                    try self.appendIsolatedChanges(isolated, in: db)
                 }
                 let remaining = try self.reconcileTargets(in: db).filter { !acknowledged.contains($0) }
                 if !targets.isEmpty { try self.saveReconcileTargets(remaining, in: db) }
@@ -148,8 +167,22 @@ public final class SyncEngine: @unchecked Sendable {
                 } else if res.permanent == true {
                     // Persist recovery before dropping the mutation, even if the server row
                     // has not changed since our last cursor or the app exits before pull.
+                    let additions: [SyncReconcileTarget]
+                    do {
+                        additions = try self.targetsForRejectedMutation(item)
+                    } catch {
+                        // 解析失败（mutation 名/args 形状漂移）只标记该条并继续其余条目，
+                        // 绝不能抛出导致整个事务回滚：服务端已幂等记录永久拒绝，
+                        // 回滚会让 outbox 原样保留，重试再次拿到同样 permanent 再次 throw，
+                        // 形成死锁。这里按 transient 口径记 retryCount/lastError 后 update；
+                        // delete 与 rollbackMutation 的原有语义仅适用于能完成解析的条目。
+                        var updated = item
+                        updated.retryCount += 1
+                        updated.lastError = error.localizedDescription
+                        try updated.update(db)
+                        continue
+                    }
                     let pending = try self.reconcileTargets(in: db)
-                    let additions = try self.targetsForRejectedMutation(item)
                     var targets = pending
                     for target in additions where !targets.contains(target) { targets.append(target) }
                     try self.saveReconcileTargets(targets, in: db)
@@ -225,6 +258,22 @@ public final class SyncEngine: @unchecked Sendable {
     private func saveReconcileTargets(_ targets: [SyncReconcileTarget], in db: Database) throws {
         let data = try JSONEncoder().encode(targets)
         try SyncMeta(key: Self.reconcileMetaKey, value: String(decoding: data, as: UTF8.self)).save(db)
+    }
+
+    /// 把被隔离的坏变更追加进 `sync_isolated_changes`（JSON 数组，超上限丢最旧）。
+    private func appendIsolatedChanges(_ records: [[String: String]], in db: Database) throws {
+        var existing: [[String: String]] = []
+        if let value = try SyncMeta.fetchOne(db, key: Self.isolatedChangesMetaKey)?.value,
+           let decoded = try? JSONDecoder().decode([[String: String]].self, from: Data(value.utf8)) {
+            existing = decoded
+        }
+        existing.append(contentsOf: records)
+        if existing.count > Self.isolatedChangesCap {
+            existing.removeFirst(existing.count - Self.isolatedChangesCap)
+        }
+        let data = try JSONEncoder().encode(existing)
+        try SyncMeta(key: Self.isolatedChangesMetaKey,
+                     value: String(decoding: data, as: UTF8.self)).save(db)
     }
 
     private func targetsForRejectedMutation(_ item: MutationOutbox) throws -> [SyncReconcileTarget] {

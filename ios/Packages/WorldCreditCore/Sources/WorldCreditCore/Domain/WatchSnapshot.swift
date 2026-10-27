@@ -171,13 +171,33 @@ public final class WatchSnapshotManager: Sendable {
         return try? JSONDecoder().decode(WatchSnapshot.self, from: data)
     }
 
-    /// 从本地 SQLite 数据库生成手表快照
+    public func clear() {
+        guard let url = snapshotURL else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// 从本地 SQLite 数据库生成手表快照。
+    ///
+    /// 内部会重新查询 dashboard/bills/cards；若调用方已持有同一批数据，
+    /// 请改用 `buildSnapshot(summary:bills:cards:today:)` 避免重复查询。
     public func buildSnapshot(dbManager: DatabaseManager, today: Date = Date()) async throws -> WatchSnapshot {
         let queryService = QueryService(dbManager: dbManager)
         let summary = try await queryService.fetchDashboardSummary(today: today)
         let bills = try await queryService.fetchBills(filter: .unpaid, today: today)
         let cards = try await queryService.fetchCards(today: today)
+        return buildSnapshot(summary: summary, bills: bills, cards: cards, today: today)
+    }
 
+    /// 用已取好的 dashboard 摘要/账单/卡片数据直接拼装手表快照。
+    ///
+    /// 纯映射，不触碰数据库；`buildSnapshot(dbManager:today:)` 转调本方法。
+    /// 调用方应在同一次查询结果上组装，避免重复读库。
+    public func buildSnapshot(
+        summary: DashboardSummary,
+        bills: [BillDisplayItem],
+        cards: [CardDisplayItem],
+        today: Date = Date()
+    ) -> WatchSnapshot {
         let watchBills = bills.map { item in
             WatchBillItem(
                 id: item.bill.id,

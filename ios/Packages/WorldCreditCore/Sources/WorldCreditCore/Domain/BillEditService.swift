@@ -26,7 +26,7 @@ public final class BillEditService: Sendable {
     @discardableResult
     public func setBillAmountOverride(billId: String, amount: Double?) async throws -> Bill {
         if let amount {
-            guard amount >= 0 else {
+            guard amount.isFinite, amount >= 0 else {
                 throw BillEditError.invalidAmount(amount)
             }
         }

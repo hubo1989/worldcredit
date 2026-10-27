@@ -60,10 +60,22 @@ struct ContentView: View {
                 LoginView()
             }
         }
-        .task {
+        // 监听登录态翻转：登录完成后必须重新加载/同步，否则首页停留在空数据
+        .task(id: appState.isLoggedIn) {
             await appState.reloadData()
             if appState.isLoggedIn {
                 await appState.sync()
+            }
+        }
+        // 盘库退到内存库时的可恢复提示（数据不持久化）
+        .overlay(alignment: .top) {
+            if let warning = appState.dbInitWarning {
+                Text(warning)
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .padding(8)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.orange)
             }
         }
         .onChange(of: scenePhase) { _, newPhase in

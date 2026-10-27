@@ -41,6 +41,7 @@ public final class AppState {
     public var dashboardLoadError: String?
     @ObservationIgnored private var dashboardRemoteTask: Task<Void, Never>?
     @ObservationIgnored private var dashboardRequestID = UUID()
+    @ObservationIgnored private var sessionEpoch = UUID()
     @ObservationIgnored private lazy var dashboardRemote = DashboardRemoteService(apiClient: apiClient)
     @ObservationIgnored private lazy var payablesService = PayablesRemoteService(apiClient: apiClient)
 
@@ -55,6 +56,8 @@ public final class AppState {
     // 固定支出(周期应付)为在线数据：失败只降级提示，不影响本地账单。
     public var payables: [PayableItem] = []
     public var payablesError: String?
+    /// 盘库打不开、退到内存库时的可恢复提示（数据不持久化），由 UI 展示。
+    public var dbInitWarning: String?
 
     // MARK: - Biometric Security
     public var isBiometricsEnabled: Bool {
@@ -86,7 +89,8 @@ public final class AppState {
             do {
                 db = try DatabaseManager.defaultDatabase()
             } catch {
-                db = (try? DatabaseManager.inMemory())!
+                db = Self.fallbackInMemoryDatabase(originalError: error)
+                dbInitWarning = "本地数据库打开失败，已启用临时内存库：本次数据不会持久化"
             }
         }
         #else
@@ -96,8 +100,9 @@ public final class AppState {
             do {
                 db = try DatabaseManager.defaultDatabase()
             } catch {
-                // Fallback to in-memory if disk db fails
-                db = (try? DatabaseManager.inMemory())!
+                // 盘库失败退到内存库（可恢复：数据不持久化但功能可用）
+                db = Self.fallbackInMemoryDatabase(originalError: error)
+                dbInitWarning = "本地数据库打开失败，已启用临时内存库：本次数据不会持久化"
             }
         }
         #endif
@@ -128,6 +133,16 @@ public final class AppState {
         }
     }
 
+    /// 盘库不可用时的内存库兜底。进程内 SQLite 也创建失败属环境级故障，
+    /// 所有服务都依赖 DB，无可恢复 UI 可退——带原因终止，而不是裸 `!` 崩在隐晦位置。
+    private static func fallbackInMemoryDatabase(originalError: Error) -> DatabaseManager {
+        do {
+            return try DatabaseManager.inMemory()
+        } catch {
+            fatalError("本地数据库与内存兜底库均创建失败（不可恢复）：disk=\(originalError), memory=\(error)")
+        }
+    }
+
     public func lock() {
         if isBiometricsEnabled && isLoggedIn {
             isLocked = true
@@ -144,33 +159,27 @@ public final class AppState {
 
     @discardableResult
     public func reloadData() async -> Bool {
+        let epoch = sessionEpoch
         do {
-            // WCDBG 临时打点：定位弹窗提交偶发超时，交付前移除
-            let t0 = CFAbsoluteTimeGetCurrent()
             let sum = try await queryService.fetchDashboardSummary()
-            let t1 = CFAbsoluteTimeGetCurrent()
             let bList = try await queryService.fetchBills(
                 filter: selectedBillFilter,
                 sortMode: billsSortMode
             )
-            let t2 = CFAbsoluteTimeGetCurrent()
             // 缺账单提醒的全量基线：多一次本地查询（SQLite、小数据），失败随外层 catch。
             let allBillsList = try await queryService.fetchBills(filter: .all, sortMode: billsSortMode)
             let cList = try await queryService.fetchCards()
-            let t3 = CFAbsoluteTimeGetCurrent()
             let dashboardList = try await queryService.fetchDashboardBills()
-            let t4 = CFAbsoluteTimeGetCurrent()
             let holders = try await queryService.fetchHolders()
-            let t5 = CFAbsoluteTimeGetCurrent()
-            let ms: (Double, Double) -> Int = { Int(($1 - $0) * 1000) }
-            print("[WCDBG] reload summary=\(ms(t0, t1))ms bills=\(ms(t1, t2))ms cards=\(ms(t2, t3))ms dashBills=\(ms(t3, t4))ms holders=\(ms(t4, t5))ms")
 
-            let meta = try? await dbManager.dbWriter.read { db in
+            // 读失败只保留旧值，不把同步状态静默重置为「0 待同步/从未同步」。
+            let meta: (String?, Int)? = try? await dbManager.dbWriter.read { db in
                 (
-                    try? SyncMeta.fetchOne(db, key: "last_synced_at")?.value,
-                    try? MutationOutbox.fetchCount(db)
+                    try SyncMeta.fetchOne(db, key: "last_synced_at")?.value,
+                    try MutationOutbox.fetchCount(db)
                 )
             }
+            guard sessionEpoch == epoch else { return false }
 
             self.summary = sum
             self.bills = bList
@@ -179,23 +188,21 @@ public final class AppState {
             self.dashboardBills = dashboardList
             self.dashboardHolders = holders
             self.dashboardLoadError = nil
-            self.lastSyncedAt = meta?.0
-            self.pendingSyncCount = meta?.1 ?? 0
+            if let meta {
+                self.lastSyncedAt = meta.0
+                self.pendingSyncCount = meta.1
+            }
 
-            // 生成并更新 Apple Watch 快照
-            NSLog("[WCDBG] reload WATCH-BEGIN")
-            if let snapshot = try? await WatchSnapshotManager.shared.buildSnapshot(dbManager: dbManager) {
-                NSLog("[WCDBG] reload WATCH-SNAP-OK")
+            // 生成并更新 Apple Watch 快照（复用本次已查数据，避免重复查询）
+            if let snapshot = try? await WatchSnapshotManager.shared.buildSnapshot(
+                summary: sum, bills: bList, cards: cList) {
                 try? WatchSnapshotManager.shared.save(snapshot)
                 WatchSyncCoordinator.shared.sendSnapshotToWatch(snapshot)
             }
-            NSLog("[WCDBG] reload WATCH-DONE")
             #if DEBUG
-            // 证据采集不得阻塞业务链路：放后台，失败也不影响 UI 测试主流程。
             // 证据采集不得阻塞业务链路：放后台，失败也不影响 UI 测试主流程。
             Task { await UITestConfiguration.recordMetadata() }
             #endif
-            NSLog("[WCDBG] reload RETURN")
             return true
         } catch {
             dashboardLoadError = "本地数据加载失败：\(error.localizedDescription)"
@@ -216,6 +223,16 @@ public final class AppState {
         let requestID = UUID()
         dashboardRequestID = requestID
         let credential = apiClient.token
+        // 把在途请求登记到 dashboardRemoteTask：logout() 的 cancel() 才能真正取消，
+        // 而不是只靠 requestID/token 守卫丢弃结果。
+        let task = Task {
+            await self.performDashboardRemoteFetch(requestID: requestID, credential: credential)
+        }
+        dashboardRemoteTask = task
+        await task.value
+    }
+
+    private func performDashboardRemoteFetch(requestID: UUID, credential: String?) async {
         do {
             let user: SessionUser
             if let currentUser { user = currentUser }
@@ -305,31 +322,40 @@ public final class AppState {
 
     @discardableResult
     public func sync() async -> Bool {
+        guard isLoggedIn else { return false }
+        let epoch = sessionEpoch
         do {
             try await syncCoordinator.perform { [self] in
+                guard isLoggedIn, sessionEpoch == epoch else { return }
                 isSyncing = true
                 lastSyncError = nil
-                defer { isSyncing = false }
+                defer {
+                    if sessionEpoch == epoch { isSyncing = false }
+                }
                 do {
                     try await syncEngine.sync()
+                    guard isLoggedIn, sessionEpoch == epoch else { return }
                     try await notificationScheduler.rescheduleAll()
                     guard await reloadData() else {
                         throw NSError(domain: "WorldCredit.Sync", code: 1,
                                       userInfo: [NSLocalizedDescriptionKey: "同步后刷新本地数据失败"])
                     }
                 } catch {
+                    guard sessionEpoch == epoch else { return }
                     lastSyncError = error.localizedDescription
                     await reloadData()
                     throw error
                 }
             }
-            return true
+            return sessionEpoch == epoch
         } catch {
             return false
         }
     }
 
     public func login(email: String, password: String) async throws {
+        sessionEpoch = UUID()
+        try? await dbManager.clearUserData()
         let user = try await apiClient.loginWithPassword(email: email, password: password)
         self.currentUser = user
         self.isLoggedIn = true
@@ -339,6 +365,8 @@ public final class AppState {
     /// 用 Google Sign-In 取到的 ID token 完成登录，状态迁移与密码登录一致。
     /// GoogleSignIn SDK 的交互留在 LoginView，此处不引入该依赖。
     public func loginWithGoogle(idToken: String) async throws {
+        sessionEpoch = UUID()
+        try? await dbManager.clearUserData()
         let user = try await apiClient.loginWithGoogle(idToken: idToken)
         self.currentUser = user
         self.isLoggedIn = true
@@ -347,20 +375,52 @@ public final class AppState {
 
     public func logout() {
         let oldUserID = currentUser?.id
+        sessionEpoch = UUID()
         dashboardRequestID = UUID()
         dashboardRemoteTask?.cancel()
+        syncCoordinator.cancelInFlight()
+        PushNotificationManager.shared.unregisterCurrentToken()
+        apiClient.token = nil
+        isLoggedIn = false
+        currentUser = nil
+        isLocked = false
+        isSyncing = false
+        lastSyncError = nil
+        pendingSyncCount = 0
+        lastSyncedAt = nil
+        summary = nil
+        bills = []
+        allBills = []
+        cards = []
+        dashboardBills = []
+        dashboardHolders = []
         dashboardPrivacy = true
         dashboardCurrency = "CNY"
         dashboardRates = nil
         dashboardAvailableCount = nil
         dashboardReminders = []
         dashboardRemoteErrors = []
-        if let oldUserID { Task { await dashboardRemote.clearCache(userId: oldUserID) } }
-        PushNotificationManager.shared.unregisterCurrentToken()
-        apiClient.token = nil
-        self.isLoggedIn = false
-        self.currentUser = nil
-        self.isLocked = false
+        dashboardLoadError = nil
+        payables = []
+        payablesError = nil
+        notificationScheduler.center.removeAllPendingNotificationRequests()
+        WatchSnapshotManager.shared.clear()
+        let emptySnapshot = WatchSnapshot(
+            totalDebt: 0,
+            overdueCount: 0,
+            overdueAmount: 0,
+            totalCreditLimit: 0,
+            bills: [],
+            cards: [],
+            calendarEvents: []
+        )
+        WatchSyncCoordinator.shared.sendSnapshotToWatch(emptySnapshot)
+        let dbManager = self.dbManager
+        let dashboardRemote = self.dashboardRemote
+        Task {
+            if let oldUserID { await dashboardRemote.clearCache(userId: oldUserID) }
+            try? await dbManager.clearUserData()
+        }
     }
 
     public func recordPayment(
@@ -370,8 +430,6 @@ public final class AppState {
         channel: String? = "手动还款",
         note: String? = nil
     ) async throws {
-        NSLog("[WCDBG] pay ENTRY")
-        let t0 = CFAbsoluteTimeGetCurrent()
         try await paymentService.recordPayment(
             billId: billId,
             amount: amount,
@@ -379,22 +437,14 @@ public final class AppState {
             channel: channel,
             note: note
         )
-        NSLog("[WCDBG] pay SVC-OK")
-        let t1 = CFAbsoluteTimeGetCurrent()
         // Refresh local UI immediately
         await reloadData()
-        NSLog("[WCDBG] pay RELOAD-OK")
-        let t2 = CFAbsoluteTimeGetCurrent()
-        print("[WCDBG] pre-resched svc=\(Int((t1 - t0) * 1000))ms reload=\(Int((t2 - t1) * 1000))ms")
         do {
             try await notificationScheduler.rescheduleAll()
         } catch {
             lastSyncError = "本地修改已保存，提醒更新失败：\(error.localizedDescription)"
             print("提醒更新失败：\(error)")
         }
-        let t3 = CFAbsoluteTimeGetCurrent()
-        let ms: (Double, Double) -> Int = { Int(($1 - $0) * 1000) }
-        print("[WCDBG] pay svc=\(ms(t0, t1))ms reload=\(ms(t1, t2))ms resched=\(ms(t2, t3))ms")
 
         // Background trigger sync if online
         Task {

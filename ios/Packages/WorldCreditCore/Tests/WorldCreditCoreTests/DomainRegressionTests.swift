@@ -101,6 +101,93 @@ struct DomainRegressionTests {
         }
     }
 
+    @Test("Bill amount override rejects non-finite values without persisting them", arguments: [Double.infinity, -Double.infinity, .nan])
+    func rejectsNonFiniteBillAmounts(_ amount: Double) async throws {
+        let manager = try database()
+        try await manager.dbWriter.write { db in
+            try Bill(id: "bill", cardId: "card", billMonth: "2026-10", billAmount: 100, dueDate: "2026-10-28").insert(db)
+        }
+        do {
+            _ = try await BillEditService(dbManager: manager).setBillAmountOverride(billId: "bill", amount: amount)
+            Issue.record("Non-finite amount was accepted: \(amount)")
+        } catch let BillEditError.invalidAmount(value) {
+            #expect(amount.isNaN ? value.isNaN : value == amount)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        try await manager.dbWriter.read { db in
+            let persisted = try Bill.fetchOne(db, id: "bill")
+            let outboxCount = try MutationOutbox.fetchCount(db)
+            #expect(persisted?.billAmountOverride == nil)
+            #expect(outboxCount == 0)
+        }
+    }
+
+    @Test("Bill amount override still accepts finite amounts and clearing", arguments: [0.0, 100.25, nil])
+    func acceptsFiniteBillAmounts(_ amount: Double?) async throws {
+        let manager = try database()
+        try await manager.dbWriter.write { db in
+            try Bill(id: "bill", cardId: "card", billMonth: "2026-10", billAmount: 100, dueDate: "2026-10-28").insert(db)
+        }
+        let bill = try await BillEditService(dbManager: manager).setBillAmountOverride(billId: "bill", amount: amount)
+        #expect(bill.billAmountOverride == amount)
+        try await manager.dbWriter.read { db in
+            let persisted = try Bill.fetchOne(db, id: "bill")
+            let outboxCount = try MutationOutbox.fetchCount(db)
+            #expect(persisted?.billAmountOverride == amount)
+            #expect(outboxCount == 1)
+        }
+    }
+
+    @Test("Clearing user session data wipes account tables, outbox and cursor while resetting client identity")
+    func clearUserSessionData() async throws {
+        let manager = try database()
+        try await manager.dbWriter.write { db in
+            try Bill(id: "bill", cardId: "card", billMonth: "2026-10", billAmount: 100, dueDate: "2026-10-28").insert(db)
+            try Payment(id: "pay", billId: "bill", amount: 50, paidAt: "2026-10-20", idempotencyKey: "idem").insert(db)
+            try MutationOutbox(id: "mut", name: "bills.recordPayment", argsJson: "[]").insert(db)
+            try SyncMeta(key: "sync_cursor", value: "42").save(db)
+            try SyncMeta(key: "last_synced_at", value: "2026-10-27T00:00:00Z").save(db)
+            try SyncMeta(key: "sync_client_id", value: "previous-account-client").save(db)
+            try SyncMeta(key: "sync_reconcile_targets", value: "[{\"tbl\":\"bills\",\"row_id\":\"bill\"}]").save(db)
+            try SyncMeta(key: "sync_retry_after_mut", value: "9999999999").save(db)
+            // 未来新增的 sync_meta 键也不能在登出后泄漏给下一个账号。
+            try SyncMeta(key: "sync_future_key", value: "must-not-leak").save(db)
+        }
+        try await manager.clearUserData()
+        try await manager.dbWriter.read { db in
+            let banks = try Bank.fetchCount(db)
+            let products = try CardProduct.fetchCount(db)
+            let holders = try CardHolder.fetchCount(db)
+            let cards = try CreditCard.fetchCount(db)
+            let bills = try Bill.fetchCount(db)
+            let payments = try Payment.fetchCount(db)
+            let outbox = try MutationOutbox.fetchCount(db)
+            let metaAll = try SyncMeta.fetchCount(db)
+            let cursor = try SyncMeta.fetchOne(db, key: "sync_cursor")
+            let lastSynced = try SyncMeta.fetchOne(db, key: "last_synced_at")
+            let clientId = try SyncMeta.fetchOne(db, key: "sync_client_id")
+            let reconcile = try SyncMeta.fetchOne(db, key: "sync_reconcile_targets")
+            let retryAfter = try SyncMeta.fetchOne(db, key: "sync_retry_after_mut")
+            let futureKey = try SyncMeta.fetchOne(db, key: "sync_future_key")
+            // 登出防跨账号泄漏的最后防线：全部业务表（含目录表）都必须清空。
+            #expect(banks == 0)
+            #expect(products == 0)
+            #expect(holders == 0)
+            #expect(cards == 0)
+            #expect(bills == 0)
+            #expect(payments == 0)
+            #expect(outbox == 0)
+            #expect(metaAll == 0)
+            #expect(cursor == nil)
+            #expect(lastSynced == nil)
+            #expect(clientId == nil)
+            #expect(reconcile == nil)
+            #expect(retryAfter == nil)
+            #expect(futureKey == nil)
+        }
+    }
+
     @Test("Payment settlement tolerance rejects residuals up to one cent without writes", arguments: [0.005, 0.01])
     func paymentTolerance(residual: Double) async throws {
         let manager = try database()

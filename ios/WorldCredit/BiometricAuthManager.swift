@@ -1,5 +1,6 @@
 import Foundation
 import LocalAuthentication
+import WorldCreditCore
 
 @MainActor
 public final class BiometricAuthManager {
@@ -17,7 +18,8 @@ public final class BiometricAuthManager {
     public var isAvailable: Bool {
         let context = LAContext()
         var error: NSError?
-        return context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
+        return context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) ||
+            context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error)
     }
 
     public var biometryKind: BiometryKind {
@@ -49,7 +51,7 @@ public final class BiometricAuthManager {
         case .opticID:
             return "Optic ID"
         case .none:
-            return "生物识别"
+            return "设备密码"
         }
     }
 
@@ -58,14 +60,33 @@ public final class BiometricAuthManager {
         context.localizedCancelTitle = "取消"
 
         var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
-            // 设备未开启或不支持生物识别
+        let biometricsAvailable = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
+        let initial = DeviceUnlockPolicy.initialMethod(biometricsAvailable: biometricsAvailable)
+        if initial == .biometrics {
+            let (success, evalError) = await evaluate(.deviceOwnerAuthenticationWithBiometrics, on: context, reason: reason)
+            if success { return true }
+            guard DeviceUnlockPolicy.method(afterBiometricError: evalError?.code) == .deviceOwner else {
+                return false
+            }
+        } else if DeviceUnlockPolicy.method(afterBiometricError: error?.code) == .biometrics &&
+                    error?.code != LAError.biometryNotAvailable.rawValue &&
+                    error?.code != LAError.biometryNotEnrolled.rawValue {
             return false
         }
 
-        return await withCheckedContinuation { continuation in
-            context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, _ in
-                continuation.resume(returning: success)
+        let fallbackContext = LAContext()
+        fallbackContext.localizedCancelTitle = "取消"
+        guard fallbackContext.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+            return false
+        }
+        let (success, _) = await evaluate(.deviceOwnerAuthentication, on: fallbackContext, reason: reason)
+        return success
+    }
+
+    private func evaluate(_ policy: LAPolicy, on context: LAContext, reason: String) async -> (Bool, NSError?) {
+        await withCheckedContinuation { continuation in
+            context.evaluatePolicy(policy, localizedReason: reason) { success, error in
+                continuation.resume(returning: (success, error as NSError?))
             }
         }
     }
