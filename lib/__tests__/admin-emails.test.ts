@@ -61,7 +61,7 @@ describe('授权入口不得自动提权', () => {
 
   it('login 以白名单为准，历史 admin 行会在登录时被降级', () => {
     const src = read('app/api/auth/login/route.ts')
-    expect(src).toMatch(/isAdminEmail\(result\.email\)\s*\?\s*'admin'\s*:\s*'member'/)
+    expect(src).toMatch(/isAdminEmail\(result\.email\)\s*\?\s*['"]admin['"]\s*:\s*['"]member['"]/)
   })
 })
 

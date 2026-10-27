@@ -1,128 +1,189 @@
 // app/api/sync/push/route.ts — Offline mutation push endpoint.
 
-import { getDb } from '@/lib/db'
-import { readSession } from '@/lib/session'
-import { dispatchRpc } from '@/app/api/rpc/[module]/[fn]/route'
+import { getDb } from "@/lib/db";
+import { readSession } from "@/lib/session";
+import { dispatchRpc } from "@/lib/api/rpc-dispatch";
 
 interface MutationItem {
-  id: string
-  name: string // e.g. "bills.recordPayment"
-  args: unknown[]
+  id: string;
+  name: string; // e.g. "bills.recordPayment"
+  args: unknown[];
 }
 
 interface MutationResult {
-  id: string
-  ok: boolean
-  data?: unknown
-  error?: string
-  code?: string
-  permanent?: boolean
-  already_processed?: boolean
+  id: string;
+  ok: boolean;
+  data?: unknown;
+  error?: string;
+  code?: string;
+  permanent?: boolean;
+  already_processed?: boolean;
+}
+
+const MAX_MUTATIONS = 100;
+const MAX_ID_LENGTH = 256;
+/** Only offline mutations with row-level or key-level idempotency may use sync/push. */
+const OFFLINE_SYNC_MUTATIONS = new Set([
+  "bills.recordPayment",
+  "bills.setBillAmountOverride",
+  "cards.updateCard",
+]);
+const inFlightByMutation = new Map<string, Promise<MutationResult>>();
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseSavedResult(raw: string, id: string): MutationResult {
+  try {
+    const parsed = JSON.parse(raw) as MutationResult;
+    if (isRecord(parsed) && typeof parsed.ok === "boolean") {
+      return { ...parsed, id, already_processed: true };
+    }
+  } catch {
+    // Fall through to retryable error so corrupted state is never reported as success.
+  }
+  return { id, ok: false, error: "已缓存的同步结果无效，请稍后重试", permanent: false };
 }
 
 export async function POST(request: Request) {
-  const session = await readSession(request)
+  const session = await readSession(request);
   if (!session) {
-    return Response.json({ error: '未登录' }, { status: 401 })
+    return Response.json({ error: "未登录" }, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => ({}))) as {
-    client_id?: string
-    mutations?: MutationItem[]
+  const parsed: unknown = await request.json().catch(() => ({}));
+  const body = isRecord(parsed) ? parsed : {};
+  const clientId = body.client_id;
+  const mutations = body.mutations;
+
+  if (typeof clientId !== "string" || !clientId.trim() || clientId.length > MAX_ID_LENGTH) {
+    return Response.json({ error: "缺少合法的 client_id" }, { status: 400 });
+  }
+  if (!Array.isArray(mutations) || mutations.length > MAX_MUTATIONS) {
+    return Response.json({ error: "缺少合法的 mutations 数组" }, { status: 400 });
   }
 
-  const clientId = body.client_id
-  const mutations = body.mutations
+  const db = getDb();
+  const results: MutationResult[] = [];
 
-  if (!clientId || typeof clientId !== 'string') {
-    return Response.json({ error: '缺少 client_id' }, { status: 400 })
-  }
-  if (!Array.isArray(mutations)) {
-    return Response.json({ error: '缺少 mutations 数组' }, { status: 400 })
-  }
-
-  const db = getDb()
-  const results: MutationResult[] = []
-
-  for (const mut of mutations) {
-    if (!mut.id || !mut.name || !Array.isArray(mut.args)) {
+  for (const rawMut of mutations) {
+    if (
+      !isRecord(rawMut) ||
+      typeof rawMut.id !== "string" ||
+      !rawMut.id.trim() ||
+      rawMut.id.length > MAX_ID_LENGTH ||
+      typeof rawMut.name !== "string" ||
+      !rawMut.name.trim() ||
+      !Array.isArray(rawMut.args)
+    ) {
       results.push({
-        id: mut.id || 'unknown',
+        id: isRecord(rawMut) && typeof rawMut.id === "string" && rawMut.id ? rawMut.id : "unknown",
         ok: false,
-        error: '不合法的 mutation 格式',
+        error: "不合法的 mutation 格式",
         permanent: true,
-      })
-      continue
+      });
+      continue;
+    }
+    const mut: MutationItem = { id: rawMut.id, name: rawMut.name, args: rawMut.args };
+    const dot = mut.name.indexOf(".");
+    if (dot <= 0 || dot === mut.name.length - 1 || !OFFLINE_SYNC_MUTATIONS.has(mut.name)) {
+      results.push({
+        id: mut.id,
+        ok: false,
+        error: `不支持的离线同步调用: ${mut.name}`,
+        permanent: true,
+      });
+      continue;
     }
 
-    // 1. 幂等检查：是否已在 sync_mutations 中
-    const existing = await db
-      .prepare('SELECT result FROM sync_mutations WHERE client_id = ? AND mutation_id = ?')
-      .bind(clientId, mut.id)
-      .first<{ result: string }>()
+    const key = `${session.id}:${clientId}:${mut.id}`;
+    const running = inFlightByMutation.get(key);
+    if (running) {
+      results.push({ ...(await running), already_processed: true });
+      continue;
+    }
 
-    if (existing) {
-      let parsed: MutationResult = { id: mut.id, ok: true }
+    const claim = await db
+      .prepare(
+        "INSERT INTO sync_mutations (user_id, client_id, mutation_id, result) VALUES (?, ?, ?, NULL) ON CONFLICT DO NOTHING",
+      )
+      .bind(session.id, clientId, mut.id)
+      .run();
+    if ((claim.meta?.changes ?? 0) === 0) {
+      const existing = await db
+        .prepare(
+          "SELECT result FROM sync_mutations WHERE user_id = ? AND client_id = ? AND mutation_id = ?",
+        )
+        .bind(session.id, clientId, mut.id)
+        .first<{ result: string | null }>();
+      if (existing?.result) {
+        results.push(parseSavedResult(existing.result, mut.id));
+      } else {
+        results.push({
+          id: mut.id,
+          ok: false,
+          error: "同步操作正在处理中，请稍后重试",
+          permanent: false,
+        });
+      }
+      continue;
+    }
+
+    const module = mut.name.slice(0, dot);
+    const fn = mut.name.slice(dot + 1);
+    const execution = (async (): Promise<MutationResult> => {
       try {
-        parsed = JSON.parse(existing.result) as MutationResult
-      } catch {
-        // Fallback
-      }
-      results.push({ ...parsed, already_processed: true })
-      continue
-    }
-
-    // 2. 解析 module.fn
-    const dot = mut.name.indexOf('.')
-    if (dot <= 0 || dot === mut.name.length - 1) {
-      results.push({
-        id: mut.id,
-        ok: false,
-        error: `不合法的调用名称: ${mut.name}`,
-        permanent: true,
-      })
-      continue
-    }
-
-    const module = mut.name.slice(0, dot)
-    const fn = mut.name.slice(dot + 1)
-
-    // 3. 执行 RPC
-    const dispatchRes = await dispatchRpc(module, fn, mut.args, session)
-
-    if (dispatchRes.ok) {
-      const successResult: MutationResult = {
-        id: mut.id,
-        ok: true,
-        data: dispatchRes.data,
-      }
-      await db
-        .prepare('INSERT INTO sync_mutations (client_id, mutation_id, result) VALUES (?, ?, ?)')
-        .bind(clientId, mut.id, JSON.stringify(successResult))
-        .run()
-
-      results.push(successResult)
-    } else {
-      const isPermanent = dispatchRes.status < 500
-      const failureResult: MutationResult = {
-        id: mut.id,
-        ok: false,
-        error: dispatchRes.error,
-        code: dispatchRes.code,
-        permanent: isPermanent,
-      }
-
-      if (isPermanent) {
-        // 永久失败也记录下来，防止客户端重复提交
+        const dispatchRes = await dispatchRpc(module, fn, mut.args, session);
+        if (dispatchRes.ok) {
+          const successResult: MutationResult = { id: mut.id, ok: true, data: dispatchRes.data };
+          await db
+            .prepare(
+              "UPDATE sync_mutations SET result = ? WHERE user_id = ? AND client_id = ? AND mutation_id = ?",
+            )
+            .bind(JSON.stringify(successResult), session.id, clientId, mut.id)
+            .run();
+          return successResult;
+        }
+        const isPermanent = dispatchRes.status < 500;
+        const failureResult: MutationResult = {
+          id: mut.id,
+          ok: false,
+          error: dispatchRes.error,
+          code: dispatchRes.code,
+          permanent: isPermanent,
+        };
+        if (isPermanent) {
+          await db
+            .prepare(
+              "UPDATE sync_mutations SET result = ? WHERE user_id = ? AND client_id = ? AND mutation_id = ?",
+            )
+            .bind(JSON.stringify(failureResult), session.id, clientId, mut.id)
+            .run();
+        } else {
+          await db
+            .prepare(
+              "DELETE FROM sync_mutations WHERE user_id = ? AND client_id = ? AND mutation_id = ? AND result IS NULL",
+            )
+            .bind(session.id, clientId, mut.id)
+            .run();
+        }
+        return failureResult;
+      } catch (err) {
         await db
-          .prepare('INSERT INTO sync_mutations (client_id, mutation_id, result) VALUES (?, ?, ?)')
-          .bind(clientId, mut.id, JSON.stringify(failureResult))
-          .run()
+          .prepare(
+            "DELETE FROM sync_mutations WHERE user_id = ? AND client_id = ? AND mutation_id = ? AND result IS NULL",
+          )
+          .bind(session.id, clientId, mut.id)
+          .run();
+        throw err;
+      } finally {
+        inFlightByMutation.delete(key);
       }
-
-      results.push(failureResult)
-    }
+    })();
+    inFlightByMutation.set(key, execution);
+    results.push(await execution);
   }
 
-  return Response.json({ results })
+  return Response.json({ results });
 }
