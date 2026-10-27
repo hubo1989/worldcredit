@@ -144,6 +144,30 @@ describe("0019_offline_sync_tables: trigger verification on full schema", () => 
     db.close();
   });
 
+  it("enforces payment limits at the database boundary even without application pre-checks", async () => {
+    const db = createOpportunityDb();
+    await db.exec(`
+      INSERT INTO users (id, email, password_hash) VALUES ('u_guard', 'guard@example.com', 'hash');
+      INSERT INTO banks (id, name) VALUES ('b_guard', '测试银行');
+      INSERT INTO card_products (id, bank_id, bank_name, card_name) VALUES ('cp_guard', 'b_guard', '测试银行', '测试卡');
+      INSERT INTO card_holders (id, created_by, managed_by, name) VALUES ('h_guard', 'u_guard', 'u_guard', '甲');
+      INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day) VALUES ('cc_guard', 'h_guard', 'cp_guard', 5);
+      INSERT INTO bills (id, card_id, bill_month, due_date, bill_amount, status) VALUES ('bill_guard', 'cc_guard', '2026-10', '2026-10-25', 500, 'paid');
+    `);
+    // Settled bills must refuse any direct INSERT.
+    expect(() =>
+      db.exec("INSERT INTO payments (id,bill_id,amount,idempotency_key) VALUES ('p1','bill_guard',100,'k1')"),
+    ).toThrow(/PAYMENT_ALREADY_SETTLED/);
+
+    db.exec("UPDATE bills SET status='unpaid' WHERE id='bill_guard'");
+    db.exec("INSERT INTO payments (id,bill_id,amount,idempotency_key) VALUES ('p2','bill_guard',400,'k2')");
+    // Concurrently overfilling the remainder must be rejected by the trigger.
+    expect(() =>
+      db.exec("INSERT INTO payments (id,bill_id,amount,idempotency_key) VALUES ('p3','bill_guard',200,'k3')"),
+    ).toThrow(/PAYMENT_EXCEEDS_REMAINING/);
+    db.close();
+  });
+
   it("emits delete changes for the previous owner when a holder or card changes ownership", async () => {
     const db = createOpportunityDb();
     await db.exec(`

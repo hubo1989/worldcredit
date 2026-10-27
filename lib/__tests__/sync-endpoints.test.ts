@@ -174,6 +174,38 @@ describe("End-to-end /api/sync/pull & /api/sync/push", () => {
     expect(db.raw.prepare("SELECT COUNT(*) AS n FROM payments").get()).toEqual({ n: 1 });
   });
 
+  it("drops a corrupt mutation receipt so the next replay can execute instead of looping forever", async () => {
+    db.exec(
+      "INSERT INTO sync_mutations (user_id,client_id,mutation_id,result) VALUES ('u_sync_test','ios_client_1','corrupt-mut','not-json')",
+    );
+    const request = () =>
+      new Request("https://app.all-bill.com/api/sync/push", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          client_id: "ios_client_1",
+          mutations: [
+            {
+              id: "corrupt-mut",
+              name: "bills.setBillAmountOverride",
+              args: ["bill_1", 1200],
+            },
+          ],
+        }),
+      });
+    const first = await pushHandler(request());
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({
+      results: [{ id: "corrupt-mut", ok: false, permanent: false }],
+    });
+    // The bad receipt must be gone so a later retry re-executes the idempotent mutation.
+    expect(
+      db.raw.prepare("SELECT COUNT(*) AS n FROM sync_mutations WHERE result='not-json'").get(),
+    ).toEqual({ n: 0 });
+    const second = await pushHandler(request());
+    expect(await second.json()).toMatchObject({ results: [{ id: "corrupt-mut", ok: true }] });
+  });
+
   it("rejects non-idempotent RPCs that are not on the offline sync allowlist", async () => {
     const response = await pushHandler(
       new Request("https://app.all-bill.com/api/sync/push", {

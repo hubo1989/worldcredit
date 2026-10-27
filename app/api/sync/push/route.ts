@@ -126,11 +126,18 @@ export async function POST(request: Request) {
             throw new Error("corrupt result");
           }
         } catch {
-          // Corrupt result -> treat as retryable failure, never as success.
+          // 损坏回执删除后按未处理重放：白名单内 mutation 均幂等，
+          // 不删行会让后续所有重试永久命中坏数据（死循环）。
+          await db
+            .prepare(
+              "DELETE FROM sync_mutations WHERE user_id = ? AND client_id = ? AND mutation_id = ? AND result IS NOT NULL",
+            )
+            .bind(session.id, clientId, mut.id)
+            .run();
           results.push({
             id: mut.id,
             ok: false,
-            error: "缓存结果损坏，请稍后重试",
+            error: "缓存结果损坏，已重置，请重试",
             permanent: false,
           });
         }

@@ -126,6 +126,9 @@ export async function POST(request: Request) {
     return Response.json({ error: `不支持的 grant_type: ${grantType}` }, { status: 400 });
   } catch (err) {
     console.error("[auth/token] Error:", err);
-    return Response.json({ error: "登录失败" }, { status: 500 });
+    return Response.json(
+      { error: "登录失败" },
+      { status: 500, headers: NO_STORE_HEADERS },
+    );
   }
 }

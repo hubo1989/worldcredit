@@ -94,8 +94,14 @@ export async function POST(request: Request) {
     );
   }
 
-  const cursor = Math.max(0, Number(body.cursor) || 0);
-  const limit = Math.min(MAX_LIMIT, Math.max(1, Number(body.limit) || DEFAULT_LIMIT));
+  // 分页参数必须是整数：REAL 绑定到 LIMIT 会让 has_more 永远 false，静默断页。
+  const rawCursor = body.cursor === undefined ? 0 : Number(body.cursor);
+  const rawLimit = body.limit === undefined ? DEFAULT_LIMIT : Number(body.limit);
+  if (!Number.isInteger(rawCursor) || rawCursor < 0 || !Number.isInteger(rawLimit) || rawLimit < 1) {
+    return Response.json({ error: "cursor/limit 必须是合法整数" }, { status: 400 });
+  }
+  const cursor = rawCursor;
+  const limit = Math.min(MAX_LIMIT, rawLimit);
   const db = getDb();
   const rawChanges = await db
     .prepare(
@@ -103,10 +109,13 @@ export async function POST(request: Request) {
        WHERE (owner_id = ? OR owner_id IS NULL) AND seq > ?
        ORDER BY seq ASC LIMIT ?`,
     )
-    .bind(session.id, cursor, limit)
+    .bind(session.id, cursor, limit + 1)
     .all<ChangeRow>();
 
-  const rows = rawChanges.results || [];
+  const fetched = rawChanges.results || [];
+  // 多取一条判定 has_more：剩余恰好等于 limit 时不再多做一次空拉取。
+  const hasMore = fetched.length > limit;
+  const rows = hasMore ? fetched.slice(0, limit) : fetched;
   const maxSeq = rows.length ? rows[rows.length - 1].seq : cursor;
   const entities = new Map<string, EntityTarget>();
   for (const change of rows) {
@@ -163,7 +172,7 @@ export async function POST(request: Request) {
 
   return Response.json({
     cursor: maxSeq,
-    has_more: rows.length === limit,
+    has_more: hasMore,
     changes,
     server_time: new Date().toISOString(),
   });

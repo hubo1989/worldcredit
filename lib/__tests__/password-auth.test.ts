@@ -90,6 +90,18 @@ describe("password authentication", () => {
     expect(blockedKnownAccount.status).toBe(401);
   });
 
+  it("caps concurrent password attempts at the failure limit", async () => {
+    const attempts = await Promise.all(
+      Array.from({ length: 8 }, () => tokenLogin(tokenRequest("burst@example.test", "wrong"))),
+    );
+    const statuses = attempts.map((r) => r.status).sort();
+    // Exactly five attempts reach verification; the rest are rejected as rate-limited.
+    expect(statuses.filter((s) => s === 401).length).toBe(5);
+    expect(statuses.filter((s) => s === 429).length).toBe(3);
+    const blocked = await tokenLogin(tokenRequest("burst@example.test", "wrong"));
+    expect(blocked.status).toBe(429);
+  });
+
   it("clears the failure window after a successful password login", async () => {
     for (let attempt = 0; attempt < 4; attempt++) {
       expect((await tokenLogin(tokenRequest("member@example.test", "wrong-password"))).status).toBe(

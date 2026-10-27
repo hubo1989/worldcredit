@@ -353,6 +353,26 @@ describe("authoritative pull reconciliation", () => {
     expect(batchCalls).toBe(1);
   });
 
+  it("rejects fractional or negative paging params instead of silently breaking has_more", async () => {
+    const db = database();
+    seed(db);
+    for (const bad of [{ limit: 500.5 }, { cursor: 1.5 }, { limit: -1 }, { cursor: -2 }]) {
+      expect((await pull(bad)).status).toBe(400);
+    }
+    expect((await pull({})).status).toBe(200);
+  });
+
+  it("does not claim more pages when the last page holds exactly the limit", async () => {
+    const db = database();
+    seed(db);
+    const first = await pullData({ cursor: 0, limit: 1 });
+    expect(first.has_more).toBe(true);
+    const second = await pullData({ cursor: first.cursor, limit: 1000 });
+    // seed has exactly 21 remaining changes here; a full tail page must end pagination.
+    expect(second.has_more).toBe(false);
+    expect((await pullData({ cursor: second.cursor, limit: 1000 })).changes).toEqual([]);
+  });
+
   it.each(
     [
       [{ tbl: "__proto__", row_id: "owner-a" }],

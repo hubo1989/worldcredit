@@ -4,12 +4,15 @@ import { isAdminEmail } from "@/lib/admin-emails";
 import type { SessionUser } from "@/lib/session";
 import {
   passwordRateLimitRetryAfter,
-  recordPasswordFailure,
   clearPasswordFailures,
 } from "@/lib/auth-rate-limit";
 
-interface PasswordUserRow extends SessionUser {
+interface PasswordUserRow {
+  id: string;
+  email: string;
   password_hash: string;
+  name: string | null;
+  created_at: string;
 }
 
 /** The two auth entry points share validation, uniform rejection and role derivation. */
@@ -18,6 +21,7 @@ export async function verifyPasswordLogin(
   password: string,
   request: Request,
 ): Promise<SessionUser | null | Response> {
+  // 原子占位：放行的尝试已计入失败窗口，成功登录会清零。
   const retryAfter = await passwordRateLimitRetryAfter(request, email);
   if (retryAfter !== null) {
     return Response.json(
@@ -34,7 +38,7 @@ export async function verifyPasswordLogin(
     .first<PasswordUserRow>();
   const verified = await pbkdf2Verify(password, row?.password_hash ?? pbkdf2DummyHash());
   if (!row || !verified) {
-    await recordPasswordFailure(request, email);
+    // 放行时已原子计入失败窗口，此处不再二次递增。
     return null;
   }
   await clearPasswordFailures(request, email);

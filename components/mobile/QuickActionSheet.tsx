@@ -159,21 +159,26 @@ export function QuickActionSheet({ open, onClose, onChanged, initialAction }: Pr
 
   const handlePaymentSubmit = async (data: { amount: number; paid_at: string; note?: string }) => {
     if (!pickedBill) return;
-    await createPayment({
-      bill_id: pickedBill.id,
-      amount: data.amount,
-      paid_at: data.paid_at,
-      channel: "手动还款",
-      note: data.note,
-    });
-    // 重算状态
-    const totalPaid = await getPaymentTotal(pickedBill.id);
-    const billAmount = Number(pickedBill.bill_amount);
-    let status: "unpaid" | "partial" | "paid" | "overdue" = "unpaid";
-    if (totalPaid >= billAmount && billAmount > 0) status = "paid";
-    else if (totalPaid > 0) status = "partial";
-    await updateBillStatus(pickedBill.id, status);
-    onChanged?.();
+    try {
+      await createPayment({
+        bill_id: pickedBill.id,
+        amount: data.amount,
+        paid_at: data.paid_at,
+        channel: "手动还款",
+        note: data.note,
+      });
+      // 重算状态
+      const totalPaid = await getPaymentTotal(pickedBill.id);
+      const billAmount = Number(pickedBill.bill_amount);
+      let status: "unpaid" | "partial" | "paid" | "overdue" = "unpaid";
+      if (totalPaid >= billAmount && billAmount > 0) status = "paid";
+      else if (totalPaid > 0) status = "partial";
+      await updateBillStatus(pickedBill.id, status);
+      onChanged?.();
+    } catch (err) {
+      // 还款链路失败必须给可见提示，不能只落 console（PaymentForm 内部只 log）。
+      setNotice("还款保存失败：" + (err instanceof Error ? err.message : "未知错误"));
+    }
   };
 
   const handleCardSubmit = async (data: Omit<CreditCard, "id" | "created_at">) => {
