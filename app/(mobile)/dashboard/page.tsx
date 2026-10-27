@@ -25,7 +25,7 @@ import { useAuth } from "@/lib/auth";
 import { getOpportunityTodayCount } from "@/lib/api/dashboard";
 import { loadReminders } from "@/components/opportunities/ReminderList";
 import { QuickActionSheet } from "@/components/mobile/QuickActionSheet";
-import { parseNativeQuickAction, type NativeQuickAction } from "@/lib/native-action";
+import { consumeNativeQuickActionUrl, type NativeQuickAction } from "@/lib/native-action";
 import { DashboardView } from "@/components/obsidian/DashboardView";
 import { DashboardOverlays } from "@/components/obsidian/DashboardOverlays";
 import {
@@ -133,12 +133,11 @@ export default function DashboardPage() {
 
   // 原生快捷动作桥：?native_action=bill|card 打开 QuickActionSheet 对应子动作。
   // 与 promos 页一致直接读 window.location.search，避免 useSearchParams 的构建期 Suspense 边界。
-  // 未部署本支持前，旧 Web 会忽略未知 query，仅打开 dashboard（无直达表单）。
+  // 消费后立即清理该 query：否则刷新/重挂载会重复弹表单（原生侧约定由 Web 清理）。
   useEffect(() => {
-    const action = parseNativeQuickAction(
-      new URLSearchParams(window.location.search).get("native_action"),
-    );
-    if (!action) return;
+    const { action, nextUrl } = consumeNativeQuickActionUrl(window.location.href);
+    if (!action || !nextUrl) return;
+    window.history.replaceState(null, "", nextUrl);
     setQuickInitialAction(action);
     setQuickSheetOpen(true);
   }, []);

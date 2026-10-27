@@ -44,11 +44,13 @@ export function QuickActionSheet({ open, onClose, onChanged, initialAction }: Pr
   // 还款需要先选账单：这里做一个简易选择，从所有未还账单中挑
   const [holders, setHolders] = useState<CardHolder[]>([]);
   const [holdersLoaded, setHoldersLoaded] = useState(false);
+  const [holdersLoadFailed, setHoldersLoadFailed] = useState(false);
   const [holderPickerOpen, setHolderPickerOpen] = useState(false);
   const [pickedHolder, setPickedHolder] = useState<CardHolder | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /** 尚未消费的原生直达动作；非空时隐藏三选单，避免菜单闪现 */
   const [pendingAction, setPendingAction] = useState<NativeQuickAction | null>(null);
+  const [consumedInitial, setConsumedInitial] = useState(false);
 
   // 还款选择账单相关
   const [unpaidBills, setUnpaidBills] = useState<
@@ -65,15 +67,18 @@ export function QuickActionSheet({ open, onClose, onChanged, initialAction }: Pr
     if (!open) return;
     let cancelled = false;
     setHoldersLoaded(false);
+    setHoldersLoadFailed(false);
     getHolders()
       .then((rows) => {
         if (cancelled) return;
         setHolders(rows);
+        setHoldersLoadFailed(false);
         setHoldersLoaded(true);
       })
       .catch(() => {
         if (cancelled) return;
         setHolders([]);
+        setHoldersLoadFailed(true);
         setHoldersLoaded(true);
       });
     return () => {
@@ -86,6 +91,10 @@ export function QuickActionSheet({ open, onClose, onChanged, initialAction }: Pr
   }, []);
 
   const startCard = useCallback(() => {
+    if (holdersLoadFailed) {
+      setNotice("持卡人列表加载失败，请稍后重试");
+      return;
+    }
     if (holders.length === 0) {
       setNotice("还没有持卡人，请先到「我的 → 家庭管理」添加");
       return;
@@ -96,29 +105,36 @@ export function QuickActionSheet({ open, onClose, onChanged, initialAction }: Pr
     } else {
       setHolderPickerOpen(true);
     }
-  }, [holders]);
+  }, [holders, holdersLoadFailed]);
 
   // 原生 ?native_action=bill|card：打开即直达真实表单（card 等持卡人加载完成）
   useEffect(() => {
     if (!open) {
       setPendingAction(null);
+      setConsumedInitial(false);
       return;
     }
     setPendingAction(initialAction ?? null);
+    setConsumedInitial(!initialAction);
   }, [open, initialAction]);
 
+  const activePendingAction =
+    pendingAction ?? (open && !consumedInitial ? (initialAction ?? null) : null);
+
   useEffect(() => {
-    if (!pendingAction) return;
-    if (pendingAction === "bill") {
+    if (!activePendingAction) return;
+    if (activePendingAction === "bill") {
       setPendingAction(null);
+      setConsumedInitial(true);
       startBill();
       return;
     }
     // 加卡依赖持卡人列表，等加载结束后再进入真实流程
     if (!holdersLoaded) return;
     setPendingAction(null);
+    setConsumedInitial(true);
     startCard();
-  }, [pendingAction, holdersLoaded, startBill, startCard]);
+  }, [activePendingAction, holdersLoaded, startBill, startCard]);
 
   const closeAll = () => {
     setBillFormOpen(false);
@@ -204,7 +220,7 @@ export function QuickActionSheet({ open, onClose, onChanged, initialAction }: Pr
       <BottomSheet
         open={
           open &&
-          !pendingAction &&
+          !activePendingAction &&
           !billFormOpen &&
           !paymentOpen &&
           !cardFormOpen &&
@@ -236,6 +252,15 @@ export function QuickActionSheet({ open, onClose, onChanged, initialAction }: Pr
           ))}
           <div className="h-2" />
         </div>
+      </BottomSheet>
+
+      {/* 原生加卡直达等待持卡人加载时的可取消反馈，避免弱网无响应 */}
+      <BottomSheet
+        open={open && activePendingAction === "card" && !holdersLoaded}
+        title="添加卡片"
+        onClose={closeAll}
+      >
+        <p className="py-6 text-center text-[13px] leading-5 text-d-muted">正在加载持卡人...</p>
       </BottomSheet>
 
       {/* 持卡人选择子步 */}

@@ -1,14 +1,14 @@
 // lib/utils.ts
-import { addDays, setDate, addMonths, lastDayOfMonth } from 'date-fns'
-import type { CreditCard, CardProduct } from './types'
+import { addDays, setDate, addMonths, lastDayOfMonth } from "date-fns";
+import type { CreditCard, CardProduct } from "./types";
 
 /**
  * 计算实际账单日（处理 billing_day > 当月最后一天的情况）
  */
 export function getActualBillingDate(billingDay: number, month: Date): Date {
-  const lastDay = lastDayOfMonth(month).getDate()
-  const actualDay = Math.min(billingDay, lastDay)
-  return setDate(month, actualDay)
+  const lastDay = lastDayOfMonth(month).getDate();
+  const actualDay = Math.min(billingDay, lastDay);
+  return setDate(month, actualDay);
 }
 
 /**
@@ -16,29 +16,29 @@ export function getActualBillingDate(billingDay: number, month: Date): Date {
  * 注意：billing_day 存在于 CreditCard，不在 CardProduct，故此处只返回 override 或卡自身的 billing_day
  */
 export function getEffectiveBillingDay(card: CreditCard): number {
-  return card.override_billing_day ?? card.billing_day
+  return card.override_billing_day ?? card.billing_day;
 }
 
 /**
  * 返回卡片实际生效的名称（卡级别覆盖 > 卡产品默认）
  */
 export function getEffectiveCardName(
-  card: Pick<CreditCard, 'name_override'> | undefined | null,
-  cardProduct: Pick<CardProduct, 'card_name'> | undefined | null
+  card: Pick<CreditCard, "name_override"> | undefined | null,
+  cardProduct: Pick<CardProduct, "card_name"> | undefined | null,
 ): string {
-  return card?.name_override || cardProduct?.card_name || '信用卡'
+  return card?.name_override || cardProduct?.card_name || "信用卡";
 }
 
 /**
  * 返回卡片实际生效的年费（卡级别覆盖 > 卡产品默认）
  */
 export function getEffectiveAnnualFee(
-  card: Pick<CreditCard, 'annual_fee_override'> | undefined | null,
-  cardProduct: Pick<CardProduct, 'annual_fee'> | undefined | null
+  card: Pick<CreditCard, "annual_fee_override"> | undefined | null,
+  cardProduct: Pick<CardProduct, "annual_fee"> | undefined | null,
 ): number | null {
-  if (card?.annual_fee_override != null) return Number(card.annual_fee_override)
-  if (cardProduct?.annual_fee != null) return Number(cardProduct.annual_fee)
-  return null
+  if (card?.annual_fee_override != null) return Number(card.annual_fee_override);
+  if (cardProduct?.annual_fee != null) return Number(cardProduct.annual_fee);
+  return null;
 }
 
 /**
@@ -46,12 +46,12 @@ export function getEffectiveAnnualFee(
  */
 export function getEffectiveDueConfig(
   card: CreditCard,
-  cardProduct: CardProduct
-): { type: 'fixed' | 'after_billing' | 'fixed_before_billing'; value: number } {
+  cardProduct: CardProduct,
+): { type: "fixed" | "after_billing" | "fixed_before_billing"; value: number } {
   if (card.override_due_type != null && card.override_due_value != null) {
-    return { type: card.override_due_type, value: card.override_due_value }
+    return { type: card.override_due_type, value: card.override_due_value };
   }
-  return { type: cardProduct.payment_due_type, value: cardProduct.payment_due_value }
+  return { type: cardProduct.payment_due_type, value: cardProduct.payment_due_value };
 }
 
 /**
@@ -67,24 +67,24 @@ export function getEffectiveDueConfig(
  * @param billMonth 账单月份（任意该月内的 Date 即可）
  */
 export function getDueDate(card: CreditCard, cardProduct: CardProduct, billMonth: Date): Date {
-  const { type, value } = getEffectiveDueConfig(card, cardProduct)
-  const effectiveBillingDay = getEffectiveBillingDay(card)
+  const { type, value } = getEffectiveDueConfig(card, cardProduct);
+  const effectiveBillingDay = getEffectiveBillingDay(card);
 
-  if (type === 'fixed') {
+  if (type === "fixed") {
     // 还款日在账单月的下一个月
-    const nextMonth = addMonths(billMonth, 1)
-    const lastDay = lastDayOfMonth(nextMonth).getDate()
-    const actualDay = Math.min(value, lastDay)
-    return setDate(nextMonth, actualDay)
-  } else if (type === 'fixed_before_billing') {
+    const nextMonth = addMonths(billMonth, 1);
+    const lastDay = lastDayOfMonth(nextMonth).getDate();
+    const actualDay = Math.min(value, lastDay);
+    return setDate(nextMonth, actualDay);
+  } else if (type === "fixed_before_billing") {
     // 还款日在账单月同月（账单日倒推模式）
-    const lastDay = lastDayOfMonth(billMonth).getDate()
-    const actualDay = Math.min(value, lastDay)
-    return setDate(billMonth, actualDay)
+    const lastDay = lastDayOfMonth(billMonth).getDate();
+    const actualDay = Math.min(value, lastDay);
+    return setDate(billMonth, actualDay);
   } else {
     // after_billing：账单日 + X 天
-    const billingDate = getActualBillingDate(effectiveBillingDay, billMonth)
-    return addDays(billingDate, value)
+    const billingDate = getActualBillingDate(effectiveBillingDay, billMonth);
+    return addDays(billingDate, value);
   }
 }
 
@@ -98,63 +98,58 @@ export function getDueDate(card: CreditCard, cardProduct: CardProduct, billMonth
  * @param today 当前日期（默认 new Date()）
  */
 export function getLoanNextDueDate(loanDueDay: number, today: Date = new Date()): Date {
-  const d = new Date(today)
-  d.setHours(0, 0, 0, 0)
+  const d = new Date(today);
+  d.setHours(0, 0, 0, 0);
 
   // 本月实际还款日（处理月末不足的情况）
-  const thisMonthLastDay = lastDayOfMonth(d).getDate()
-  const thisMonthDueDay = Math.min(loanDueDay, thisMonthLastDay)
-  const thisMonthDue = setDate(new Date(d.getFullYear(), d.getMonth(), 1), thisMonthDueDay)
+  const thisMonthLastDay = lastDayOfMonth(d).getDate();
+  const thisMonthDueDay = Math.min(loanDueDay, thisMonthLastDay);
+  const thisMonthDue = setDate(new Date(d.getFullYear(), d.getMonth(), 1), thisMonthDueDay);
 
   if (d.getDate() <= thisMonthDue.getDate()) {
-    return thisMonthDue
+    return thisMonthDue;
   }
 
   // 下月实际还款日
-  const nextMonth = addMonths(d, 1)
-  const nextMonthLastDay = lastDayOfMonth(nextMonth).getDate()
-  const nextMonthDueDay = Math.min(loanDueDay, nextMonthLastDay)
-  return setDate(new Date(nextMonth.getFullYear(), nextMonth.getMonth(), 1), nextMonthDueDay)
+  const nextMonth = addMonths(d, 1);
+  const nextMonthLastDay = lastDayOfMonth(nextMonth).getDate();
+  const nextMonthDueDay = Math.min(loanDueDay, nextMonthLastDay);
+  return setDate(new Date(nextMonth.getFullYear(), nextMonth.getMonth(), 1), nextMonthDueDay);
 }
 
 /**
  * 格式化金额
  */
-export function formatAmount(amount: number, currency: string = 'CNY'): string {
-  return new Intl.NumberFormat('zh-CN', {
-    style: 'currency',
+export function formatAmount(amount: number, currency: string = "CNY"): string {
+  return new Intl.NumberFormat("zh-CN", {
+    style: "currency",
     currency,
     minimumFractionDigits: 2,
-  }).format(amount)
+  }).format(amount);
 }
 
 /**
  * 生成幂等键
  */
 export function generateIdempotencyKey(): string {
-  return crypto.randomUUID()
+  return crypto.randomUUID();
 }
 
 /**
  * 获取指定时区下的本地日期串（YYYY-MM-DD，默认 Asia/Shanghai）。
  * 解决 Cloudflare Workers / Node 运行在 UTC 环境下，在 00:00-08:00 间比本地日期少一天的问题。
  */
-export function getLocalTodayString(timeZone: string = 'Asia/Shanghai', now: Date = new Date()): string {
+export function getLocalTodayString(
+  timeZone: string = "Asia/Shanghai",
+  now: Date = new Date(),
+): string {
+  const dateParts = { year: "numeric", month: "2-digit", day: "2-digit" } as const;
   try {
-    const formatter = new Intl.DateTimeFormat('en-CA', {
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    })
-    return formatter.format(now)
+    return new Intl.DateTimeFormat("en-CA", { timeZone, ...dateParts }).format(now);
   } catch {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Shanghai',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(now)
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", ...dateParts }).format(
+      now,
+    );
   }
 }
 
@@ -171,21 +166,21 @@ export function getLocalTodayString(timeZone: string = 'Asia/Shanghai', now: Dat
  */
 export function normalizeAliases(value: unknown): string[] {
   if (Array.isArray(value)) {
-    return value.filter((item): item is string => typeof item === 'string' && item.length > 0)
+    return value.filter((item): item is string => typeof item === "string" && item.length > 0);
   }
-  if (typeof value === 'string') {
-    const trimmed = value.trim()
-    if (!trimmed) return []
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
     try {
-      const parsed: unknown = JSON.parse(trimmed)
+      const parsed: unknown = JSON.parse(trimmed);
       return Array.isArray(parsed)
-        ? parsed.filter((item): item is string => typeof item === 'string' && item.length > 0)
-        : []
+        ? parsed.filter((item): item is string => typeof item === "string" && item.length > 0)
+        : [];
     } catch {
-      return []
+      return [];
     }
   }
-  return []
+  return [];
 }
 
 /**
@@ -199,8 +194,8 @@ export function normalizeAliases(value: unknown): string[] {
  * 输入为空或无数字时返回 `''`；不足 4 位时原样返回。
  */
 export function formatCardTail(value: string | null | undefined): string {
-  const digits = String(value ?? '').replace(/\D/g, '')
-  return digits.length >= 4 ? digits.slice(-4) : digits
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return digits.length >= 4 ? digits.slice(-4) : digits;
 }
 
 // 账单的生效金额：用户手填值优先于一切导入来源。
@@ -209,19 +204,17 @@ export function formatCardTail(value: string | null | undefined): string {
 // bill_amount_override。两者都存、读取时按优先级合成，导入因此可以继续更新
 // 「账单原始值」，而不会覆盖用户已经确认过的数字。
 export function effectiveBillAmount(bill: {
-  bill_amount?: number | null
-  bill_amount_override?: number | null
+  bill_amount?: number | null;
+  bill_amount_override?: number | null;
 }): number {
-  const override = bill.bill_amount_override
-  if (override !== null && override !== undefined) return Number(override)
-  return Number(bill.bill_amount || 0)
+  const override = bill.bill_amount_override;
+  if (override !== null && override !== undefined) return Number(override);
+  return Number(bill.bill_amount || 0);
 }
 
 // 是否被用户手填值钉住（导入不得覆盖）。
-export function hasManualBillAmount(bill: {
-  bill_amount_override?: number | null
-}): boolean {
-  return bill.bill_amount_override !== null && bill.bill_amount_override !== undefined
+export function hasManualBillAmount(bill: { bill_amount_override?: number | null }): boolean {
+  return bill.bill_amount_override !== null && bill.bill_amount_override !== undefined;
 }
 
 // 账单日临近判定：距下一次账单日不足 days 天（含当天）时允许手填金额。
@@ -229,10 +222,10 @@ export function hasManualBillAmount(bill: {
 export function canManuallySetBillAmount(
   billingDay: number,
   today: Date = new Date(),
-  days = 5
+  days = 5,
 ): boolean {
-  const remaining = daysUntilNextBilling(billingDay, today)
-  return remaining >= 0 && remaining < days
+  const remaining = daysUntilNextBilling(billingDay, today);
+  return remaining >= 0 && remaining < days;
 }
 
 // ── 周期性固定支出（房租 / 贷款 / 其他按月应付） ────────────────────────────
@@ -245,21 +238,21 @@ export function canManuallySetBillAmount(
  * 这样逾期才表达得出来——滚动口径会把「本月该付没付」直接抹掉。
  */
 export function payablePeriodOf(today: Date = new Date()): string {
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 }
 
 /** 某账期内该应付事项的到期日（处理 due_day > 当月天数，如 31 日）。 */
 export function payableDueDate(dueDay: number, period: string): Date {
-  const [year, month] = period.split('-').map(Number)
-  const monthDate = new Date(year, month - 1, 1)
-  return getActualBillingDate(dueDay, monthDate)
+  const [year, month] = period.split("-").map(Number);
+  const monthDate = new Date(year, month - 1, 1);
+  return getActualBillingDate(dueDay, monthDate);
 }
 
 /** 当前账期的下一期（'YYYY-MM'）：本期已结清后用它指向下期应付日。 */
 export function nextPayablePeriodOf(period: string): string {
-  const [year, month] = period.split('-').map(Number)
-  const next = addMonths(new Date(year, month - 1, 1), 1)
-  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`
+  const [year, month] = period.split("-").map(Number);
+  const next = addMonths(new Date(year, month - 1, 1), 1);
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
 }
 
 /**
@@ -271,12 +264,12 @@ export function nextPayablePeriodOf(period: string): string {
  * 之所以要固定分组：只按免息期或还款日排序时，一笔刚到期的账单会和一堆
  * 未出账单的卡混在一起，用户得逐张翻才能看出哪张该还。
  */
-export type CardUrgencyStatus = 'overdue' | 'unpaid' | 'partial' | 'unissued'
+export type CardUrgencyStatus = "overdue" | "unpaid" | "partial" | "unissued";
 
 export function cardUrgencyRank(status: CardUrgencyStatus): number {
-  if (status === 'overdue') return 0
-  if (status === 'unpaid' || status === 'partial') return 1
-  return 2
+  if (status === "overdue") return 0;
+  if (status === "unpaid" || status === "partial") return 1;
+  return 2;
 }
 
 /**
@@ -288,9 +281,9 @@ export function cardUrgencyRank(status: CardUrgencyStatus): number {
  * 本地零点再相减。
  */
 export function diffInCalendarDays(target: string | Date, today: Date = new Date()): number {
-  const t = typeof target === 'string' ? new Date(target) : target
-  const localMidnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
-  return Math.round((localMidnight(t) - localMidnight(today)) / 86_400_000)
+  const t = typeof target === "string" ? new Date(target) : target;
+  const localMidnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  return Math.round((localMidnight(t) - localMidnight(today)) / 86_400_000);
 }
 
 /**
@@ -302,16 +295,16 @@ export function diffInCalendarDays(target: string | Date, today: Date = new Date
  */
 export function pickDueReference<T extends { due_date: string }>(
   bills: T[],
-  today: Date = new Date()
+  today: Date = new Date(),
 ): { bill: T; days: number } | null {
-  let best: { bill: T; days: number } | null = null
+  let best: { bill: T; days: number } | null = null;
   for (const bill of bills) {
-    const days = diffInCalendarDays(bill.due_date, today)
+    const days = diffInCalendarDays(bill.due_date, today);
     if (best === null || days < best.days) {
-      best = { bill, days }
+      best = { bill, days };
     }
   }
-  return best
+  return best;
 }
 
 /**
@@ -321,9 +314,9 @@ export function pickDueReference<T extends { due_date: string }>(
  * （days = 0 是「今天还款日」），只有 days < 0 才进入逾期分支。
  */
 export function dueDistanceLabel(days: number): string {
-  if (days < 0) return `逾期 ${-days} 日`
-  if (days === 0) return '今天还款日'
-  return `距离还款日 ${days} 日`
+  if (days < 0) return `逾期 ${-days} 日`;
+  if (days === 0) return "今天还款日";
+  return `距离还款日 ${days} 日`;
 }
 
 /**
@@ -334,18 +327,22 @@ export function dueDistanceLabel(days: number): string {
  * 下期还款日，这里只取账单日本身。
  */
 export function nextBillingDateOf(billingDay: number, today: Date = new Date()): Date {
-  const day = Number.isFinite(billingDay) && billingDay >= 1 ? Math.min(billingDay, 31) : 10
-  const thisMonthDay = Math.min(day, lastDayOfMonth(today).getDate())
+  const day = Number.isFinite(billingDay) && billingDay >= 1 ? Math.min(billingDay, 31) : 10;
+  const thisMonthDay = Math.min(day, lastDayOfMonth(today).getDate());
   if (today.getDate() <= thisMonthDay) {
-    return new Date(today.getFullYear(), today.getMonth(), thisMonthDay)
+    return new Date(today.getFullYear(), today.getMonth(), thisMonthDay);
   }
-  const nextMonth = addMonths(today, 1)
-  return new Date(nextMonth.getFullYear(), nextMonth.getMonth(), Math.min(day, lastDayOfMonth(nextMonth).getDate()))
+  const nextMonth = addMonths(today, 1);
+  return new Date(
+    nextMonth.getFullYear(),
+    nextMonth.getMonth(),
+    Math.min(day, lastDayOfMonth(nextMonth).getDate()),
+  );
 }
 
 /** 距下一次账单日还有几天（0 = 今天就是账单日）。 */
 export function daysUntilNextBilling(billingDay: number, today: Date = new Date()): number {
-  return diffInCalendarDays(nextBillingDateOf(billingDay, today), today)
+  return diffInCalendarDays(nextBillingDateOf(billingDay, today), today);
 }
 
 /**
@@ -366,44 +363,44 @@ export function missingStatementDays(
   billingDay: number,
   latestBillMonth: string | null,
   today: Date = new Date(),
-  graceDays = 3
+  graceDays = 3,
 ): number | null {
-  if (!latestBillMonth) return null
-  const [year, month] = latestBillMonth.split('-').map(Number)
-  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null
+  if (!latestBillMonth) return null;
+  const [year, month] = latestBillMonth.split("-").map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
   // 下一期出账月：latestBillMonth + 1 个月
-  const nextMonth = month === 12 ? new Date(year + 1, 0, 1) : new Date(year, month, 1)
+  const nextMonth = month === 12 ? new Date(year + 1, 0, 1) : new Date(year, month, 1);
   // 账单日大于当月天数时按当月最后一天算（与 nextBillingDateOf 同口径）
   const day = Math.min(
     Number.isFinite(billingDay) && billingDay >= 1 ? Math.min(billingDay, 31) : 1,
-    lastDayOfMonth(nextMonth).getDate()
-  )
-  const expected = new Date(nextMonth.getFullYear(), nextMonth.getMonth(), day)
+    lastDayOfMonth(nextMonth).getDate(),
+  );
+  const expected = new Date(nextMonth.getFullYear(), nextMonth.getMonth(), day);
   // diffInCalendarDays(expected, today) 是 expected 距今天的差，取负数 = 已过天数
-  const daysPast = -diffInCalendarDays(expected, today)
-  return daysPast > graceDays ? daysPast : null
+  const daysPast = -diffInCalendarDays(expected, today);
+  return daysPast > graceDays ? daysPast : null;
 }
 
 /** 账单页排序所需的最小卡片形状（便于单测，不依赖完整 RPC 类型）。 */
 export interface BillsListCard {
-  status: CardUrgencyStatus
-  billingDay: number
+  status: CardUrgencyStatus;
+  billingDay: number;
   /**
    * 今日刷卡可享的免息天数：今天交易 → 进下一期账单 → 到该期还款日的天数
    * （服务端 calculateCardGracePeriod 同口径），无数据时为 0。
    */
-  graceDays: number
+  graceDays: number;
   /** 下期账单日（今天交易落在下一期，到这天出账）；无数据时省略。 */
-  nextBillingDate?: Date | string
+  nextBillingDate?: Date | string;
   /** 下期还款日；服务端给 Date，测试里允许 string（YYYY-MM-DD）。 */
-  nextDueDate: Date | string
+  nextDueDate: Date | string;
   historyBills: Array<{
-    due_date: string
-    computed_status: string
-    days_until_due?: number
-  }>
+    due_date: string;
+    computed_status: string;
+    days_until_due?: number;
+  }>;
   /** 固定支出适配标记：true 表示这是房贷/贷款等按月应付，非信用卡。 */
-  payableSource?: boolean
+  payableSource?: boolean;
 }
 
 /**
@@ -420,26 +417,26 @@ export function payableNextCycleStatus(
   dueDay: number,
   period: string,
   today: Date = new Date(),
-  statementLeadDays = 30
+  statementLeadDays = 30,
 ): {
-  phase: 'awaiting_statement' | 'awaiting_payment'
+  phase: "awaiting_statement" | "awaiting_payment";
   /** awaiting_statement → 出账日；awaiting_payment → 还款日 */
-  date: Date
+  date: Date;
   /** 距该日期的天数 */
-  days: number
+  days: number;
 } {
   // 下期还款日按「due_day + 下期账期」算（月末收拢：31 日 → 下月最后一天）
-  const due = payableDueDate(dueDay, nextPayablePeriodOf(period))
-  const days = diffInCalendarDays(due, today)
+  const due = payableDueDate(dueDay, nextPayablePeriodOf(period));
+  const days = diffInCalendarDays(due, today);
   if (days >= statementLeadDays) {
-    const statementDate = addDays(due, -statementLeadDays)
-    return { phase: 'awaiting_statement', date: statementDate, days }
+    const statementDate = addDays(due, -statementLeadDays);
+    return { phase: "awaiting_statement", date: statementDate, days };
   }
-  return { phase: 'awaiting_payment', date: due, days }
+  return { phase: "awaiting_payment", date: due, days };
 }
 
 /** 账单页排序模式（对应顶部快捷切换栏）。最近账单日模式已移除——免息期排序已覆盖选卡场景。 */
-export type BillsSortMode = 'nearest_due' | 'max_interest_free'
+export type BillsSortMode = "nearest_due" | "max_interest_free";
 
 /**
  * 卡片剩余免息天数：今天刷卡 → 这笔交易落在下一期账单 → 到该期还款日的天数。
@@ -450,8 +447,8 @@ export type BillsSortMode = 'nearest_due' | 'max_interest_free'
  * 少算一个账期并让排序失真。
  */
 function interestFreeRank(card: BillsListCard, today: Date = new Date()): number {
-  if (!card.nextDueDate) return 0
-  return Math.max(0, diffInCalendarDays(new Date(card.nextDueDate), today))
+  if (!card.nextDueDate) return 0;
+  return Math.max(0, diffInCalendarDays(new Date(card.nextDueDate), today));
 }
 
 /**
@@ -468,20 +465,20 @@ export function compareBillsListCardsByMode(
   a: BillsListCard,
   b: BillsListCard,
   mode: BillsSortMode,
-  today: Date = new Date()
+  today: Date = new Date(),
 ): number {
-  if (mode === 'max_interest_free') {
-    return interestFreeRank(b, today) - interestFreeRank(a, today)
+  if (mode === "max_interest_free") {
+    return interestFreeRank(b, today) - interestFreeRank(a, today);
   }
 
-  const tierA = cardUrgencyRank(a.status)
-  const tierB = cardUrgencyRank(b.status)
-  if (tierA !== tierB) return tierA - tierB
+  const tierA = cardUrgencyRank(a.status);
+  const tierB = cardUrgencyRank(b.status);
+  if (tierA !== tierB) return tierA - tierB;
 
   // nearest_due（默认）
-  const ka = billsListSortKey(a, today)
-  const kb = billsListSortKey(b, today)
-  return ka.distance - kb.distance
+  const ka = billsListSortKey(a, today);
+  const kb = billsListSortKey(b, today);
+  return ka.distance - kb.distance;
 }
 
 /**
@@ -494,43 +491,50 @@ export function compareBillsListCardsByMode(
  */
 export function payableToSortCard(
   payable: {
-    status: 'unpaid' | 'paid' | 'overdue'
-    due_date: string
-    days_until_due: number
-    due_day: number
+    status: "unpaid" | "paid" | "overdue";
+    due_date: string;
+    days_until_due: number;
+    due_day: number;
   },
-  _today: Date = new Date()
+  _today: Date = new Date(),
 ): BillsListCard & { payableSource: true } {
-  const status: CardUrgencyStatus = payable.status === 'paid' ? 'unissued' : payable.status
+  const status: CardUrgencyStatus = payable.status === "paid" ? "unissued" : payable.status;
   // 下期应付日按「due_day + 下期账期」重算，而不是 due_date 顺延一个月：
   // setMonth 在 10-31 这类日期会溢出成 12-01，收拢口径要求落在 11-30。
-  const nextDue = payableDueDate(payable.due_day, nextPayablePeriodOf(payable.due_date.slice(0, 7)))
+  const nextDue = payableDueDate(
+    payable.due_day,
+    nextPayablePeriodOf(payable.due_date.slice(0, 7)),
+  );
   return {
     status,
     billingDay: payable.due_day,
     graceDays: 0,
     nextDueDate: nextDue,
     historyBills: [
-      { due_date: payable.due_date, computed_status: payable.status, days_until_due: payable.days_until_due },
+      {
+        due_date: payable.due_date,
+        computed_status: payable.status,
+        days_until_due: payable.days_until_due,
+      },
     ],
     payableSource: true,
-  }
+  };
 }
 
 /** 统一账单列表项：信用卡卡片的排序键已由 billsListSortKey 覆盖，固定支出用适配键。 */
 export function unifiedBillSortKey(
   card: BillsListCard,
-  today: Date = new Date()
+  today: Date = new Date(),
 ): { tier: number; distance: number } {
   // 固定支出：paid 落到第 2 组（和未出账单一起），组内按下期应付日距离排
-  if ('payableSource' in card && card.payableSource) {
-    const tier = cardUrgencyRank(card.status)
-    if (card.status === 'unissued') {
-      return { tier, distance: diffInCalendarDays(card.nextDueDate, today) }
+  if ("payableSource" in card && card.payableSource) {
+    const tier = cardUrgencyRank(card.status);
+    if (card.status === "unissued") {
+      return { tier, distance: diffInCalendarDays(card.nextDueDate, today) };
     }
-    return { tier, distance: card.historyBills[0]?.days_until_due ?? 0 }
+    return { tier, distance: card.historyBills[0]?.days_until_due ?? 0 };
   }
-  return billsListSortKey(card, today)
+  return billsListSortKey(card, today);
 }
 
 /**
@@ -544,21 +548,21 @@ export function compareUnifiedBills(
   a: BillsListCard,
   b: BillsListCard,
   mode: BillsSortMode,
-  today: Date = new Date()
+  today: Date = new Date(),
 ): number {
-  if (mode === 'max_interest_free') {
+  if (mode === "max_interest_free") {
     // 普通卡片按免息降序（免息最长的在前）；固定支出无免息概念，排最后。
     const rankOf = (c: BillsListCard) =>
-      c.payableSource ? Number.MIN_SAFE_INTEGER : interestFreeRank(c, today)
-    return rankOf(b) - rankOf(a)
+      c.payableSource ? Number.MIN_SAFE_INTEGER : interestFreeRank(c, today);
+    return rankOf(b) - rankOf(a);
   }
 
-  const tierA = cardUrgencyRank(a.status)
-  const tierB = cardUrgencyRank(b.status)
-  if (tierA !== tierB) return tierA - tierB
+  const tierA = cardUrgencyRank(a.status);
+  const tierB = cardUrgencyRank(b.status);
+  if (tierA !== tierB) return tierA - tierB;
 
   // nearest_due（默认）
-  return unifiedBillSortKey(a, today).distance - unifiedBillSortKey(b, today).distance
+  return unifiedBillSortKey(a, today).distance - unifiedBillSortKey(b, today).distance;
 }
 
 /**
@@ -577,26 +581,26 @@ export function compareUnifiedBills(
  */
 export function billsListSortKey(
   card: BillsListCard,
-  today: Date = new Date()
+  today: Date = new Date(),
 ): { tier: number; distance: number } {
-  const tier = cardUrgencyRank(card.status)
+  const tier = cardUrgencyRank(card.status);
   if (tier === 2) {
-    return { tier, distance: daysUntilNextBilling(card.billingDay, today) }
+    return { tier, distance: daysUntilNextBilling(card.billingDay, today) };
   }
-  const unpaid = card.historyBills.filter(b => b.computed_status !== 'paid')
-  const ref = pickDueReference(unpaid, today)
+  const unpaid = card.historyBills.filter((b) => b.computed_status !== "paid");
+  const ref = pickDueReference(unpaid, today);
   // 理论上 tier<2 时一定有未结清账单；真出现空集时给 0，不让它排到最前或最后。
-  return { tier, distance: ref ? ref.days : 0 }
+  return { tier, distance: ref ? ref.days : 0 };
 }
 
 /** 账单页卡片比较器：先比 tier，再比组内 distance，都按升序。 */
 export function compareBillsListCards(
   a: BillsListCard,
   b: BillsListCard,
-  today: Date = new Date()
+  today: Date = new Date(),
 ): number {
-  const ka = billsListSortKey(a, today)
-  const kb = billsListSortKey(b, today)
-  if (ka.tier !== kb.tier) return ka.tier - kb.tier
-  return ka.distance - kb.distance
+  const ka = billsListSortKey(a, today);
+  const kb = billsListSortKey(b, today);
+  if (ka.tier !== kb.tier) return ka.tier - kb.tier;
+  return ka.distance - kb.distance;
 }
