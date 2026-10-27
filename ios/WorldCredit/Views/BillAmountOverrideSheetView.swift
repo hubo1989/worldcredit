@@ -16,18 +16,23 @@ struct BillAmountOverrideSheetView: View {
         _amountText = State(initialValue: String(format: "%.2f", item.bill.effectiveAmount))
     }
 
+    /// 账单以原币种结算，固定 ¥ 会把外币账单显示成人民币。
+    private func money(_ amount: Double) -> String {
+        DashboardMoney.format(amount, currency: item.currency)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section("账单金额") {
-                    LabeledContent("原始出账金额", value: "¥\(String(format: "%.2f", item.bill.billAmount))")
+                    LabeledContent("原始出账金额", value: money(item.bill.billAmount))
 
                     if let override = item.bill.billAmountOverride {
-                        LabeledContent("当前人工调整", value: "¥\(String(format: "%.2f", override))")
+                        LabeledContent("当前人工调整", value: money(override))
                     }
 
                     HStack {
-                        Text("调整为 (¥)")
+                        Text("调整为 (\(DashboardMoney.currencySymbol(item.currency)))")
                         Spacer()
                         TextField("输入调整金额", text: $amountText)
                             .keyboardType(.decimalPad)

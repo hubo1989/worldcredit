@@ -9,6 +9,14 @@ public enum BillFilter: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
 }
 
+/// 账单页排序模式，与 Web BillsSortMode 同口径。
+public enum BillsSortMode: String, CaseIterable, Identifiable, Sendable {
+    case nearestDue = "最近还款日"
+    case maxInterestFree = "最长免息期"
+
+    public var id: String { rawValue }
+}
+
 public struct BillDisplayItem: Identifiable, Sendable {
     public let bill: Bill
     public let card: CreditCard
@@ -20,8 +28,15 @@ public struct BillDisplayItem: Identifiable, Sendable {
     public let daysUntilDue: Int
     public let isOverdue: Bool
     public let distanceLabel: String
+    /// 今日刷卡免息天数：与 Web interestFreeRank 同口径（下一期账单的还款日距今天数，
+    /// 与当前账单是否结清无关），用于「最长免息期」排序。
+    public let interestFreeDaysToday: Int
 
     public var id: String { bill.id }
+
+    public var holderId: String {
+        holder?.id ?? ""
+    }
 
     /// 账单所在币种：卡产品的币种就是账单币种，缺产品时按 CNY。
     public var currency: String {
@@ -67,7 +82,8 @@ public struct BillDisplayItem: Identifiable, Sendable {
         remainingAmount: Double,
         daysUntilDue: Int,
         isOverdue: Bool,
-        distanceLabel: String
+        distanceLabel: String,
+        interestFreeDaysToday: Int = 0
     ) {
         self.bill = bill
         self.card = card
@@ -79,6 +95,7 @@ public struct BillDisplayItem: Identifiable, Sendable {
         self.daysUntilDue = daysUntilDue
         self.isOverdue = isOverdue
         self.distanceLabel = distanceLabel
+        self.interestFreeDaysToday = interestFreeDaysToday
     }
 }
 
@@ -177,7 +194,11 @@ public final class QueryService: Sendable {
     }
 
     /// 查询账单列表
-    public func fetchBills(filter: BillFilter = .unpaid, today: Date = Date()) async throws -> [BillDisplayItem] {
+    public func fetchBills(
+        filter: BillFilter = .unpaid,
+        sortMode: BillsSortMode = .nearestDue,
+        today: Date = Date()
+    ) async throws -> [BillDisplayItem] {
         try await dbManager.dbWriter.read { db in
             let billsQuery: [Bill]
             switch filter {
@@ -221,6 +242,9 @@ public final class QueryService: Sendable {
                 let days = BillingDateCalculator.diffInCalendarDays(target: dueDate, today: today)
                 let isOverdue = days < 0 && remaining > 0.01
                 let label = BillingDateCalculator.dueDistanceLabel(days: days)
+                let grace = BillingDateCalculator.calculateCardGracePeriod(
+                    card: card, cardProduct: product, today: today
+                )
 
                 items.append(BillDisplayItem(
                     bill: bill,
@@ -232,8 +256,16 @@ public final class QueryService: Sendable {
                     remainingAmount: remaining,
                     daysUntilDue: days,
                     isOverdue: isOverdue,
-                    distanceLabel: label
+                    distanceLabel: label,
+                    interestFreeDaysToday: grace.graceDays
                 ))
+            }
+
+            // max_interest_free：纯按今日刷卡免息天数降序（Web 同口径，不参与
+            // 逾期/待还分组——回答「现在刷哪张卡最划算」）。
+            if sortMode == .maxInterestFree {
+                items.sort { $0.interestFreeDaysToday > $1.interestFreeDaysToday }
+                return items
             }
 
             // Sort: Overdue first (most overdue first), then soonest due, then settled

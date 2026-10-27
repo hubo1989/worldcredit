@@ -42,11 +42,19 @@ public final class AppState {
     @ObservationIgnored private var dashboardRemoteTask: Task<Void, Never>?
     @ObservationIgnored private var dashboardRequestID = UUID()
     @ObservationIgnored private lazy var dashboardRemote = DashboardRemoteService(apiClient: apiClient)
+    @ObservationIgnored private lazy var payablesService = PayablesRemoteService(apiClient: apiClient)
 
     public var summary: DashboardSummary?
     public var bills: [BillDisplayItem] = []
+    /// 全量账单（不受状态 tab 过滤）：账单页「缺账单提醒」的最新期基线必须用它，
+    /// 否则「待还」tab 里被过滤掉的已还最新期会让提醒误报。
+    public var allBills: [BillDisplayItem] = []
     public var cards: [CardDisplayItem] = []
     public var selectedBillFilter: BillFilter = .unpaid
+    public var billsSortMode: BillsSortMode = .nearestDue
+    // 固定支出(周期应付)为在线数据：失败只降级提示，不影响本地账单。
+    public var payables: [PayableItem] = []
+    public var payablesError: String?
 
     // MARK: - Biometric Security
     public var isBiometricsEnabled: Bool {
@@ -141,8 +149,13 @@ public final class AppState {
             let t0 = CFAbsoluteTimeGetCurrent()
             let sum = try await queryService.fetchDashboardSummary()
             let t1 = CFAbsoluteTimeGetCurrent()
-            let bList = try await queryService.fetchBills(filter: selectedBillFilter)
+            let bList = try await queryService.fetchBills(
+                filter: selectedBillFilter,
+                sortMode: billsSortMode
+            )
             let t2 = CFAbsoluteTimeGetCurrent()
+            // 缺账单提醒的全量基线：多一次本地查询（SQLite、小数据），失败随外层 catch。
+            let allBillsList = try await queryService.fetchBills(filter: .all, sortMode: billsSortMode)
             let cList = try await queryService.fetchCards()
             let t3 = CFAbsoluteTimeGetCurrent()
             let dashboardList = try await queryService.fetchDashboardBills()
@@ -161,6 +174,7 @@ public final class AppState {
 
             self.summary = sum
             self.bills = bList
+            self.allBills = allBillsList
             self.cards = cList
             self.dashboardBills = dashboardList
             self.dashboardHolders = holders
@@ -228,6 +242,44 @@ public final class AppState {
             dashboardAvailableCount = nil
             dashboardReminders = []
         }
+    }
+
+    /// 拉取固定支出列表；失败降级为提示文案，不抛出。
+    public func refreshPayables() async {
+        guard isLoggedIn, !UITestConfiguration.isEnabled else { return }
+        do {
+            let user: SessionUser
+            if let currentUser { user = currentUser }
+            else { user = try await apiClient.fetchSessionUser() }
+            payables = try await payablesService.fetchPayables(userId: user.id)
+            payablesError = nil
+        } catch {
+            payables = []
+            payablesError = "固定支出暂不可用：\(error.localizedDescription)"
+        }
+    }
+
+    /// 登记固定支出当期还款，返回成功后刷新列表。
+    public func payPayable(_ item: PayableItem, amount: Double) async throws {
+        _ = try await payablesService.pay(payableId: item.id, amount: amount)
+        await refreshPayables()
+    }
+
+    public func savePayable(_ draft: PayableDraft, existing: PayableItem?) async throws {
+        if let existing {
+            _ = try await payablesService.update(payableId: existing.id, draft: draft)
+        } else {
+            let user: SessionUser
+            if let currentUser { user = currentUser }
+            else { user = try await apiClient.fetchSessionUser() }
+            _ = try await payablesService.create(userId: user.id, draft: draft)
+        }
+        await refreshPayables()
+    }
+
+    public func deletePayable(_ item: PayableItem) async throws {
+        try await payablesService.delete(payableId: item.id)
+        await refreshPayables()
     }
 
     public func setDashboardPrivacy(_ enabled: Bool) async {
@@ -374,6 +426,14 @@ public final class AppState {
 
     public func loadDemoData(onlyIfNeeded: Bool = false) async {
         let now = ISO8601DateFormatter().string(from: Date())
+        // 演示账单的还款日相对当天生成：固定历史日期会随真实日期漂移，
+        // 让「逾期 / 待还」状态和依赖它的断言失去确定性。字符串在进 DB 写闭包前算好，
+        /// 闭包是 Sendable 的，捕获局部函数/DateFormatter 会编译失败。
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        df.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        let dueSoon = df.string(from: Date().addingTimeInterval(3 * 86400))
+        let overdueDue = df.string(from: Date().addingTimeInterval(-31 * 86400))
         do {
             try await dbManager.dbWriter.write { db in
                 if onlyIfNeeded, try SyncMeta.fetchOne(db, key: "ui_test_seeded") != nil {
@@ -387,13 +447,24 @@ public final class AppState {
                     createdAt: now
                 )
                 try holder.save(db)
+                // 仅有已结清账单的持卡人：锁「筛选选项不能只来自待还账单」的回归
+                let holder2 = CardHolder(
+                    id: "holder-wang",
+                    createdBy: "user-1",
+                    managedBy: "user-1",
+                    name: "王五",
+                    createdAt: now
+                )
+                try holder2.save(db)
 
                 let bank1 = Bank(id: "bank-cmb", name: "招商银行", shortName: "招行")
                 let bank2 = Bank(id: "bank-icbc", name: "工商银行", shortName: "工行")
                 let bank3 = Bank(id: "bank-boc", name: "中国银行", shortName: "中行")
+                let bank4 = Bank(id: "bank-ccb", name: "建设银行", shortName: "建行")
                 try bank1.save(db)
                 try bank2.save(db)
                 try bank3.save(db)
+                try bank4.save(db)
 
                 let prod1 = CardProduct(
                     id: "prod-cmb-1",
@@ -422,6 +493,16 @@ public final class AppState {
                 try prod1.save(db)
                 try prod2.save(db)
                 try prod3.save(db)
+
+                let prod4 = CardProduct(
+                    id: "prod-ccb-1",
+                    bankId: "bank-ccb",
+                    bankName: "建设银行",
+                    cardName: "龙卡全球支付卡",
+                    paymentDueType: .fixed,
+                    paymentDueValue: 20
+                )
+                try prod4.save(db)
 
                 let card1 = CreditCard(
                     id: "card-cmb-1",
@@ -454,6 +535,17 @@ public final class AppState {
                 try card2.save(db)
                 try card3.save(db)
 
+                let card4 = CreditCard(
+                    id: "card-ccb-1",
+                    holderId: "holder-wang",
+                    cardProductId: "prod-ccb-1",
+                    billingDay: 15,
+                    cardNumberLast4: "2222",
+                    creditLimit: 30000.0,
+                    createdAt: now
+                )
+                try card4.save(db)
+
                 // 账单 1：待还账单
                 let bill1 = Bill(
                     id: "bill-cmb-202610",
@@ -462,7 +554,7 @@ public final class AppState {
                     statementDate: "2026-10-05",
                     billAmount: 12800.50,
                     minPayment: 1280.0,
-                    dueDate: "2026-10-25",
+                    dueDate: dueSoon,
                     status: "unpaid",
                     createdAt: now
                 )
@@ -474,7 +566,7 @@ public final class AppState {
                     statementDate: "2026-09-01",
                     billAmount: 5430.00,
                     minPayment: 543.0,
-                    dueDate: "2026-09-26",
+                    dueDate: overdueDue,
                     status: "unpaid",
                     createdAt: now
                 )
@@ -493,6 +585,58 @@ public final class AppState {
                 try bill1.save(db)
                 try bill2.save(db)
                 try bill3.save(db)
+
+                // 账单 4：王五名下唯一账单（已结清）——待还 tab 下该持卡人无任何账单
+                let bill4 = Bill(
+                    id: "bill-ccb-202609",
+                    cardId: "card-ccb-1",
+                    billMonth: "2026-09",
+                    statementDate: "2026-09-15",
+                    billAmount: 2600.00,
+                    minPayment: 260.0,
+                    dueDate: overdueDue,
+                    status: "paid",
+                    createdAt: now
+                )
+                try bill4.save(db)
+
+                // 王五那期的结清 payment
+                let pay4 = Payment(
+                    id: "pay-ccb-full",
+                    billId: "bill-ccb-202609",
+                    amount: 2600.00,
+                    paidAt: overdueDue,
+                    channel: "手机银行",
+                    note: "结清",
+                    idempotencyKey: "init-key-4",
+                    createdAt: now
+                )
+                try pay4.save(db)
+
+                // 账单 5：中行卡的已结清历史期——锁「最大免息期不展示历史账单」的回归
+                let bill5 = Bill(
+                    id: "bill-boc-202608",
+                    cardId: "card-boc-1",
+                    billMonth: "2026-08",
+                    statementDate: "2026-08-10",
+                    billAmount: 7500.00,
+                    minPayment: 750.0,
+                    dueDate: overdueDue,
+                    status: "paid",
+                    createdAt: now
+                )
+                try bill5.save(db)
+                let pay5 = Payment(
+                    id: "pay-boc-202608",
+                    billId: "bill-boc-202608",
+                    amount: 7500.00,
+                    paidAt: overdueDue,
+                    channel: "手机银行",
+                    note: "结清",
+                    idempotencyKey: "init-key-5",
+                    createdAt: now
+                )
+                try pay5.save(db)
 
                 // 为账单 3 写入结清的 payment
                 let pay3 = Payment(

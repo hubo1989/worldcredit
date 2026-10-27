@@ -27,7 +27,7 @@ final class WorldCreditUITests: XCTestCase {
         tab("账单", in: app)
         XCTAssertTrue(app.buttons["bill.row.bill-cmb-202610"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["bill.row.bill-icbc-202609"].exists)
-        app.segmentedControls["bills.filter"].buttons["已还"].tap()
+        setBillStatus("已还", in: app)
         XCTAssertTrue(app.buttons["bill.row.bill-boc-202609"].waitForExistence(timeout: 5))
         attachScreenshot(app, name: "02-bills-paid-filter")
 
@@ -72,7 +72,7 @@ final class WorldCreditUITests: XCTestCase {
         tab("账单", in: app)
         XCTAssertTrue(app.buttons["bill.row.bill-icbc-202609"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["bill.row.bill-cmb-202610"].exists)
-        app.segmentedControls["bills.filter"].buttons["已还"].tap()
+        setBillStatus("已还", in: app)
         let paidBill = app.buttons["bill.row.bill-cmb-202610"]
         XCTAssertTrue(paidBill.waitForExistence(timeout: 5))
         paidBill.tap()
@@ -194,8 +194,97 @@ final class WorldCreditUITests: XCTestCase {
                       "关闭后应回到首页")
     }
 
-    private func launchScenario() -> XCUIApplication {
-        continueAfterFailure = false
+    /// 账单页排序双 tab：切到「最大免息期」后行内提示换为免息天数，切回恢复距还款日。
+    /// 演示数据的还款日相对当天生成，免息数值随日期漂移，因此只断言提示文案的切换。
+    func test08BillsSortTabsSwitchRowCaption() {
+        let app = launchScenario()
+        tab("账单", in: app)
+        let nearest = app.buttons["bills.sort.nearestDue"]
+        let maxFree = app.buttons["bills.sort.maxInterestFree"]
+        XCTAssertTrue(nearest.waitForExistence(timeout: 5), "排序应为顶部双 tab 而非折叠菜单")
+        XCTAssertTrue(maxFree.exists)
+
+        let interestFreeText = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "今日刷卡免息")
+        ).firstMatch
+        let distanceText = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "还款日")
+        ).firstMatch
+
+        // 筛选选项来自全部卡片而非当前 tab 的账单：默认「待还」下，
+        // 只有已还账单的持卡人/银行也必须出现在菜单里。
+        app.buttons["bills.holderBankFilter"].tap()
+        XCTAssertTrue(app.buttons["王五"].waitForExistence(timeout: 5), "无待还账单的持卡人也不应从筛选里消失")
+        // 点导航栏标题收起菜单（点"筛选" label 会命中菜单内项、干扰后续排序 tap）
+        app.staticTexts["账单"].firstMatch.tap()
+
+        maxFree.tap()
+        XCTAssertTrue(interestFreeText.waitForExistence(timeout: 5), "最大免息期模式下行内应展示免息天数")
+        XCTAssertFalse(app.staticTexts["固定支出"].exists, "最大免息期是选卡刷卡的排序，固定支出无免息概念不应出现")
+        // 免息排序是选卡视角：不受状态筛选限制，已结清卡的账单（默认待还下不可见）也必须展示。
+        // List 惰性加载屏外行，滚动后断言。
+        scrollTo(app.buttons["bill.row.bill-boc-202609"], in: app)
+        XCTAssertFalse(app.buttons["bill.row.bill-boc-202608"].exists,
+                       "最大免息期只看当前期，历史账单不应展示")
+        attachScreenshot(app, name: "18-bills-sort-max-interest-free")
+
+        nearest.tap()
+        XCTAssertTrue(distanceText.waitForExistence(timeout: 5), "最近需还款模式下行内应恢复距还款日")
+    }
+
+    /// 账单页逾期横幅一键结清：默认「待还」tab 出现横幅，结清后只剩未逾期账单，
+    /// 待提交改动 +1（离线 fixture 只结清逾期那一笔）。
+    func test09BillsOverdueBannerPayAll() {
+        let app = launchScenario()
+        tab("账单", in: app)
+        let payAll = app.buttons["bills.payAllOverdue"]
+        XCTAssertTrue(payAll.waitForExistence(timeout: 5), "存在逾期时账单页应提供一键结清横幅")
+
+        payAll.tap()
+        // dialog 按钮按 label 定位（与首页 test06 同模式），identifier 会匹配到多个元素
+        let confirm = app.buttons["一键结清"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "批量结清必须二次确认，避免误触")
+        confirm.tap()
+
+        XCTAssertTrue(app.buttons["bill.row.bill-icbc-202609"].waitForNonExistence(timeout: 10), "逾期账单结清后应离开待还列表")
+        XCTAssertTrue(app.buttons["bill.row.bill-cmb-202610"].waitForExistence(timeout: 5), "未逾期账单不应被一键结清误伤")
+        XCTAssertFalse(app.buttons["bills.payAllOverdue"].exists, "逾期结清后横幅应消失")
+        attachScreenshot(app, name: "19-bills-after-banner-pay-all")
+
+        tab("设置", in: app)
+        assertPendingChanges(1, in: app)
+    }
+
+    /// 账单页行内快捷还款：不进详情直接从列表行发起，全额还款后行离开待还列表。
+    func test10BillsQuickPayFromRow() {
+        let app = launchScenario()
+        tab("账单", in: app)
+        let quickPay = app.buttons["bill.row.pay.bill-cmb-202610"]
+        XCTAssertTrue(quickPay.waitForExistence(timeout: 5), "未结清账单行内应有快捷还款入口")
+        quickPay.tap()
+
+        let confirm = app.buttons["payment.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        app.segmentedControls["payment.type"].buttons["全额还款"].tap()
+        confirm.tap()
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: 10), "还款提交完成并关闭弹窗")
+
+        XCTAssertTrue(app.buttons["bill.row.bill-cmb-202610"].waitForNonExistence(timeout: 5), "结清账单应离开待还列表")
+        XCTAssertTrue(app.buttons["bill.row.bill-icbc-202609"].exists, "其他账单不受影响")
+
+        tab("设置", in: app)
+        assertPendingChanges(1, in: app)
+    }
+
+    /// 状态筛选收进菜单：打开筛选菜单 → 选状态 → 断言列表切换完成。
+    private func setBillStatus(_ status: String, in app: XCUIApplication) {
+        app.buttons["bills.holderBankFilter"].tap()
+        let item = app.buttons[status].firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "筛选菜单里应提供状态项「\(status)」")
+        item.tap()
+    }
+
+    private func launchScenario() -> XCUIApplication {        continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--ui-testing", "--ui-test-request-notifications", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launchEnvironment["WORLDCREDIT_UI_TEST_ID"] = UUID().uuidString
