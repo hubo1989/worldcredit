@@ -11,21 +11,30 @@ export async function broadcastApnsToUser(
   userId: string,
   options: SendPushOptions,
   config: ApnsConfig,
+  prefetchedTokens?: string[],
 ): Promise<{ total: number; sent: number; failed: number; failedResults: ApnsResponse[] }> {
-  const { results: devices } = await db
-    .prepare("SELECT token FROM device_tokens WHERE user_id = ? AND platform = 'ios'")
-    .bind(userId)
-    .all<{ token: string }>();
+  const tokens =
+    prefetchedTokens ??
+    (
+      await db
+        .prepare("SELECT token FROM device_tokens WHERE user_id = ? AND platform = 'ios'")
+        .bind(userId)
+        .all<{ token: string }>()
+    ).results.map((row) => row.token);
 
   const outcomes = await Promise.all(
-    devices.map(async ({ token }) => {
+    tokens.map(async (token) => {
       const result = await sendApnsNotification(token, options, config);
       if (result.invalidToken) {
-        // A device may have changed accounts while the APNs request was in flight.
-        await db
-          .prepare("DELETE FROM device_tokens WHERE token = ? AND user_id = ?")
-          .bind(token, userId)
-          .run();
+        try {
+          // A device may have changed accounts while the APNs request was in flight.
+          await db
+            .prepare("DELETE FROM device_tokens WHERE token = ? AND user_id = ?")
+            .bind(token, userId)
+            .run();
+        } catch (err) {
+          console.warn("[apns] Failed to prune invalid device token:", err);
+        }
       }
       return result;
     }),

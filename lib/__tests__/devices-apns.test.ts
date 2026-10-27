@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createOpportunityDb } from "./helpers/sqlite-d1";
 import { setDb } from "../db/client";
-import { broadcastSilentSync } from "../apns-broadcast";
+import { broadcastApnsToUser, broadcastSilentSync } from "../apns-broadcast";
 import { registerDeviceToken, unregisterDeviceToken } from "../api/devices.server";
+import { RpcDomainError } from "../api/errors";
 import {
   getApnsJwt,
   sendApnsNotification,
@@ -111,8 +112,32 @@ describe("Device Tokens & APNs Push Server", () => {
 
     it("rejects empty token", async () => {
       await expect(registerDeviceToken({ platform: "ios", token: "   " }, userId)).rejects.toThrow(
-        "Device Token 不能为空",
+        RpcDomainError,
       );
+      await expect(
+        registerDeviceToken({ platform: "web" as "ios", token: "valid-token" }, userId),
+      ).rejects.toThrow(RpcDomainError);
+      await expect(unregisterDeviceToken({ token: "" }, userId)).rejects.toThrow(RpcDomainError);
+    });
+
+    it("returns the persisted row id when concurrent upsert hits an existing token", async () => {
+      const first = await registerDeviceToken({ platform: "ios", token: "race_tok" }, userId);
+      const prepare = db.prepare.bind(db);
+      let hidSelect = false;
+      vi.spyOn(db, "prepare").mockImplementation((sql) => {
+        if (!hidSelect && sql.startsWith("SELECT id FROM device_tokens")) {
+          hidSelect = true;
+          return {
+            bind: () => ({
+              all: async () => ({ results: [], success: true, meta: {} }),
+            }),
+          } as unknown as D1PreparedStatement;
+        }
+        return prepare(sql);
+      });
+      const second = await registerDeviceToken({ platform: "ios", token: "race_tok" }, userId);
+      expect(second.id).toBe(first.id);
+      vi.restoreAllMocks();
     });
   });
 
@@ -390,5 +415,51 @@ describe("Device Tokens & APNs Push Server", () => {
         }
       },
     );
+
+    it("isolates DELETE failures during broadcast, uses prefetched tokens, and sets alert TTL", async () => {
+      const keyPair = await crypto.subtle.generateKey(
+        { name: "ECDSA", namedCurve: "P-256" },
+        true,
+        ["sign", "verify"],
+      );
+      const pkcs8 = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
+      const pem = [
+        ["-----BEGIN", "PRIVATE KEY-----"].join(" "),
+        btoa(String.fromCharCode(...new Uint8Array(pkcs8))),
+        ["-----END", "PRIVATE KEY-----"].join(" "),
+      ].join("\n");
+      const seenExpirations: string[] = [];
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+        const headers = new Headers(init?.headers);
+        seenExpirations.push(headers.get("apns-expiration") ?? "");
+        return String(url).endsWith("/stale")
+          ? Response.json({ reason: "Unregistered" }, { status: 410 })
+          : new Response(null, { status: 200 });
+      });
+      const prepare = db.prepare.bind(db);
+      let queriedTokens = 0;
+      vi.spyOn(db, "prepare").mockImplementation((sql) => {
+        if (sql.includes("SELECT token FROM device_tokens")) queriedTokens++;
+        if (sql.startsWith("DELETE FROM device_tokens")) {
+          throw new Error("D1 delete transient error");
+        }
+        return prepare(sql);
+      });
+      try {
+        const res = await broadcastApnsToUser(
+          db as unknown as D1Database,
+          userId,
+          { alert: { title: "提醒", body: "到期" } },
+          { keyP8: pem, keyId: "TTLKEY", teamId: "TTLTEAM" },
+          ["ok", "stale"],
+        );
+        expect(queriedTokens).toBe(0);
+        expect(res).toMatchObject({ total: 2, sent: 1, failed: 1 });
+        expect(Number(seenExpirations[0])).toBeGreaterThan(0);
+      } finally {
+        fetchSpy.mockRestore();
+        vi.restoreAllMocks();
+      }
+    });
   });
 });

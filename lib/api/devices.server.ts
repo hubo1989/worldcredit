@@ -1,15 +1,18 @@
 // lib/api/devices.server.ts — Device tokens management for APNs/FCM push.
 
-import { queryOne, execute, uuid, now } from '../db'
+import { queryOne, execute, uuid, now } from "../db";
+import { RpcDomainError } from "./errors";
+
+const VALID_PLATFORMS = new Set(["ios", "android"]);
 
 export interface RegisterDeviceInput {
-  platform: 'ios' | 'android'
-  token: string
-  appVersion?: string
+  platform: "ios" | "android";
+  token: string;
+  appVersion?: string;
 }
 
 export interface UnregisterDeviceInput {
-  token: string
+  token: string;
 }
 
 /**
@@ -18,25 +21,28 @@ export interface UnregisterDeviceInput {
  */
 export async function registerDeviceToken(
   input: RegisterDeviceInput,
-  userId: string
+  userId: string,
 ): Promise<{ success: boolean; id: string }> {
-  if (!input?.token || !input.platform) {
-    throw new Error('设备推送参数不完整')
+  if (!input || typeof input !== "object" || typeof input.token !== "string" || !input.platform) {
+    throw new RpcDomainError("VALIDATION_FAILED", "设备推送参数不完整");
+  }
+  if (!VALID_PLATFORMS.has(input.platform)) {
+    throw new RpcDomainError("VALIDATION_FAILED", "不支持的设备平台");
   }
 
-  const trimmedToken = input.token.trim()
-  if (!trimmedToken) {
-    throw new Error('Device Token 不能为空')
+  const trimmedToken = input.token.trim();
+  if (!trimmedToken || trimmedToken.length > 512) {
+    throw new RpcDomainError("VALIDATION_FAILED", "Device Token 不能为空");
   }
 
   // 检查是否已有该 token
   const { data: existing } = await queryOne<{ id: string }>(
-    'SELECT id FROM device_tokens WHERE token = ?',
-    [trimmedToken]
-  )
+    "SELECT id FROM device_tokens WHERE token = ?",
+    [trimmedToken],
+  );
 
-  const tokenId = existing?.id ?? uuid()
-  const currentTime = now()
+  const candidateId = existing?.id ?? uuid();
+  const currentTime = now();
 
   const { error } = await execute(
     `INSERT INTO device_tokens (id, user_id, platform, token, app_version, last_seen_at, created_at)
@@ -47,21 +53,26 @@ export async function registerDeviceToken(
        app_version = excluded.app_version,
        last_seen_at = excluded.last_seen_at`,
     [
-      tokenId,
+      candidateId,
       userId,
       input.platform,
       trimmedToken,
       input.appVersion ?? null,
       currentTime,
       currentTime,
-    ]
-  )
+    ],
+  );
 
   if (error) {
-    throw new Error(error.message)
+    throw new Error(error.message);
   }
 
-  return { success: true, id: tokenId }
+  const persisted = await queryOne<{ id: string }>("SELECT id FROM device_tokens WHERE token = ?", [
+    trimmedToken,
+  ]);
+  if (persisted.error) throw new Error(persisted.error.message);
+
+  return { success: true, id: persisted.data?.id ?? candidateId };
 }
 
 /**
@@ -69,20 +80,21 @@ export async function registerDeviceToken(
  */
 export async function unregisterDeviceToken(
   input: UnregisterDeviceInput,
-  userId: string
+  userId: string,
 ): Promise<{ success: boolean }> {
-  if (!input?.token) {
-    throw new Error('Device Token 不能为空')
+  const trimmedToken = typeof input?.token === "string" ? input.token.trim() : "";
+  if (!trimmedToken) {
+    throw new RpcDomainError("VALIDATION_FAILED", "Device Token 不能为空");
   }
 
-  const { error } = await execute(
-    'DELETE FROM device_tokens WHERE token = ? AND user_id = ?',
-    [input.token.trim(), userId]
-  )
+  const { error } = await execute("DELETE FROM device_tokens WHERE token = ? AND user_id = ?", [
+    trimmedToken,
+    userId,
+  ]);
 
   if (error) {
-    throw new Error(error.message)
+    throw new Error(error.message);
   }
 
-  return { success: true }
+  return { success: true };
 }

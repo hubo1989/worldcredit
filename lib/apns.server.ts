@@ -38,8 +38,15 @@ export async function sendApnsToUser(
   userId: string,
   options: SendPushOptions,
   config: ApnsConfig,
+  prefetchedTokens?: string[],
 ): Promise<{ total: number; sent: number; failed: number }> {
-  const { total, sent, failed } = await broadcastApnsToUser(getDb(), userId, options, config);
+  const { total, sent, failed } = await broadcastApnsToUser(
+    getDb(),
+    userId,
+    options,
+    config,
+    prefetchedTokens,
+  );
   return { total, sent, failed };
 }
 
