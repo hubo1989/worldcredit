@@ -143,4 +143,49 @@ describe("0019_offline_sync_tables: trigger verification on full schema", () => 
     );
     db.close();
   });
+
+  it("emits delete changes for the previous owner when a holder or card changes ownership", async () => {
+    const db = createOpportunityDb();
+    await db.exec(`
+      INSERT INTO users (id, email, password_hash) VALUES
+        ('u_old', 'old@example.com', 'hash'),
+        ('u_new', 'new@example.com', 'hash');
+      INSERT INTO banks (id, name) VALUES ('b_tx', '测试银行');
+      INSERT INTO card_products (id, bank_id, bank_name, card_name) VALUES ('cp_tx', 'b_tx', '测试银行', '测试卡');
+      INSERT INTO card_holders (id, created_by, managed_by, name) VALUES
+        ('h_tx', 'u_old', 'u_old', '甲'),
+        ('h_other', 'u_new', 'u_new', '乙');
+      INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day) VALUES
+        ('cc_tx', 'h_tx', 'cp_tx', 5),
+        ('cc_move', 'h_tx', 'cp_tx', 10);
+      INSERT INTO bills (id, card_id, bill_month, due_date, bill_amount) VALUES
+        ('bill_tx', 'cc_tx', '2026-10', '2026-10-25', 300),
+        ('bill_move', 'cc_move', '2026-10', '2026-10-25', 400);
+      INSERT INTO payments (id, bill_id, amount, paid_at, idempotency_key) VALUES
+        ('pay_tx', 'bill_tx', 100, '2026-10-20', 'tx_key_1'),
+        ('pay_move', 'bill_move', 100, '2026-10-20', 'tx_key_2');
+      DELETE FROM sync_changes;
+      UPDATE credit_cards SET holder_id = 'h_other' WHERE id = 'cc_move';
+      UPDATE card_holders SET managed_by = 'u_new' WHERE id = 'h_tx';
+    `);
+    const oldDeletes = (
+      await db
+        .prepare(
+          "SELECT tbl, row_id FROM sync_changes WHERE owner_id = 'u_old' AND op = 'delete' ORDER BY seq",
+        )
+        .all()
+    ).results;
+    expect(oldDeletes).toEqual(
+      expect.arrayContaining([
+        { tbl: "credit_cards", row_id: "cc_move" },
+        { tbl: "bills", row_id: "bill_move" },
+        { tbl: "payments", row_id: "pay_move" },
+        { tbl: "card_holders", row_id: "h_tx" },
+        { tbl: "credit_cards", row_id: "cc_tx" },
+        { tbl: "bills", row_id: "bill_tx" },
+        { tbl: "payments", row_id: "pay_tx" },
+      ]),
+    );
+    db.close();
+  });
 });

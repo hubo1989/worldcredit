@@ -1,7 +1,7 @@
 // app/api/rpc/[module]/[fn]/route.ts — HTTP entry point for the named RPC API.
 
 import { readSession } from "@/lib/session";
-import { dispatchRpc } from "@/lib/api/rpc-dispatch";
+import { dispatchRpc, rpcErrorResponseBody } from "@/lib/api/rpc-dispatch";
 
 export async function POST(
   request: Request,
@@ -31,19 +31,8 @@ export async function POST(
 
   const result = await dispatchRpc(module, fn, body.args, session);
   if (!result.ok) {
-    if (result.code || result.details) {
-      return Response.json(
-        {
-          data: null,
-          error: result.error,
-          code: result.code,
-          details: result.details,
-          request_id: crypto.randomUUID(),
-        },
-        { status: result.status },
-      );
-    }
-    return Response.json({ data: null, error: result.error }, { status: result.status });
+    const { body: errorBody } = rpcErrorResponseBody(result);
+    return Response.json(errorBody, { status: result.status });
   }
 
   return Response.json({ data: result.data, error: null });

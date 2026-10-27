@@ -103,7 +103,10 @@ describe("explicit bill business errors on the RPC and sync surfaces", () => {
     { input: { ...payment, amount: -1 }, status: 400, code: "VALIDATION_FAILED" },
     { input: { ...payment, amount: "100" }, status: 400, code: "VALIDATION_FAILED" },
     { input: { ...payment, id: 123 }, status: 400, code: "VALIDATION_FAILED" },
+    { input: { ...payment, id: "x".repeat(257) }, status: 400, code: "VALIDATION_FAILED" },
     { input: { ...payment, paid_at: 123 }, status: 400, code: "VALIDATION_FAILED" },
+    { input: { ...payment, paid_at: "yesterday" }, status: 400, code: "VALIDATION_FAILED" },
+    { input: { ...payment, paid_at: "2026-02-30" }, status: 400, code: "VALIDATION_FAILED" },
     { input: { ...payment, channel: {} }, status: 400, code: "VALIDATION_FAILED" },
     { input: { ...payment, note: [] }, status: 400, code: "VALIDATION_FAILED" },
     { input: { ...payment, bill_id: "missing" }, status: 404, code: "NOT_FOUND" },
@@ -242,7 +245,11 @@ describe("explicit bill business errors on the RPC and sync surfaces", () => {
         });
       }
       const first = await push("bills.recordPayment", [payment]);
-      expect(first).toMatchObject({ ok: false, permanent: false, error: message });
+      expect(first).toMatchObject({
+        ok: false,
+        permanent: false,
+        error: "服务暂时不可用，请稍后重试",
+      });
       expect(first.code).toBeUndefined();
       expect(db.raw.prepare("SELECT COUNT(*) AS n FROM sync_mutations").get()).toEqual({ n: 0 });
       expect(db.raw.prepare("SELECT COUNT(*) AS n FROM payments").get()).toEqual({ n: 0 });
@@ -261,11 +268,11 @@ describe("explicit bill business errors on the RPC and sync surfaces", () => {
     });
     const response = await rpc("setBillAmountOverride", ["bill", 1200]);
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ data: null, error: "D1 unavailable" });
+    expect(await response.json()).toEqual({ data: null, error: "服务暂时不可用，请稍后重试" });
     expect(await push("bills.setBillAmountOverride", ["bill", 1200])).toMatchObject({
       ok: false,
       permanent: false,
-      error: "D1 unavailable",
+      error: "服务暂时不可用，请稍后重试",
     });
     expect(db.raw.prepare("SELECT COUNT(*) AS n FROM sync_mutations").get()).toEqual({ n: 0 });
   });

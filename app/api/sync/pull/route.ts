@@ -112,6 +112,8 @@ export async function POST(request: Request) {
   for (const change of rows) {
     if (isSyncTable(change.tbl)) {
       entities.set(`${change.tbl}:${change.row_id}`, { tbl: change.tbl, row_id: change.row_id });
+    } else {
+      console.warn(`[sync/pull] Ignoring change for unmapped table: ${change.tbl}`);
     }
   }
   for (const target of reconcile) {
@@ -137,7 +139,9 @@ export async function POST(request: Request) {
       batchMeta.push({ tbl, pk });
       batchStatements.push(
         db
-          .prepare(`SELECT t.* FROM ${tbl} t WHERE t.${pk} IN (${placeholders})${owner ? ` AND ${owner}` : ""}`)
+          .prepare(
+            `SELECT t.* FROM ${tbl} t WHERE t.${pk} IN (${placeholders})${owner ? ` AND ${owner}` : ""}`,
+          )
           .bind(...chunk, ...(owner ? [session.id] : [])),
       );
     }

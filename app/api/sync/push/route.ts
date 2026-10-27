@@ -34,18 +34,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function parseSavedResult(raw: string, id: string): MutationResult {
-  try {
-    const parsed = JSON.parse(raw) as MutationResult;
-    if (isRecord(parsed) && typeof parsed.ok === "boolean") {
-      return { ...parsed, id, already_processed: true };
-    }
-  } catch {
-    // Fall through to retryable error so corrupted state is never reported as success.
-  }
-  return { id, ok: false, error: "已缓存的同步结果无效，请稍后重试", permanent: false };
-}
-
 export async function POST(request: Request) {
   const session = await readSession(request);
   if (!session) {
@@ -104,29 +92,96 @@ export async function POST(request: Request) {
       continue;
     }
 
+    // Try to claim the mutation atomically. If conflict, either it's being processed by this instance,
+    // or another instance completed/fell behind with a stale lock. We allow re-claiming after 5 minutes.
+    const now = Math.floor(Date.now() / 1000);
+    const staleThreshold = now - 5 * 60;
     const claim = await db
       .prepare(
-        "INSERT INTO sync_mutations (user_id, client_id, mutation_id, result) VALUES (?, ?, ?, NULL) ON CONFLICT DO NOTHING",
+        "INSERT INTO sync_mutations (user_id, client_id, mutation_id, result) VALUES (?, ?, ?, NULL) ON CONFLICT(user_id, client_id, mutation_id) DO NOTHING",
       )
       .bind(session.id, clientId, mut.id)
       .run();
-    if ((claim.meta?.changes ?? 0) === 0) {
-      const existing = await db
+
+    let claimSuccess = false;
+
+    if ((claim.meta?.changes ?? 0) > 0) {
+      claimSuccess = true;
+    } else {
+      // Conflict: check if existing result is available (completed) or still pending but not stale
+      const check = await db
         .prepare(
-          "SELECT result FROM sync_mutations WHERE user_id = ? AND client_id = ? AND mutation_id = ?",
+          "SELECT result, processed_at FROM sync_mutations WHERE user_id = ? AND client_id = ? AND mutation_id = ?",
         )
         .bind(session.id, clientId, mut.id)
-        .first<{ result: string | null }>();
-      if (existing?.result) {
-        results.push(parseSavedResult(existing.result, mut.id));
+        .first<{ result: string | null; processed_at: string }>();
+
+      if (check?.result) {
+        // Already completed: return the stored result immediately, marked as replayed.
+        try {
+          const parsed = JSON.parse(check.result) as MutationResult;
+          if (typeof parsed?.ok === "boolean") {
+            results.push({ ...parsed, id: mut.id, already_processed: true });
+          } else {
+            throw new Error("corrupt result");
+          }
+        } catch {
+          // Corrupt result -> treat as retryable failure, never as success.
+          results.push({
+            id: mut.id,
+            ok: false,
+            error: "缓存结果损坏，请稍后重试",
+            permanent: false,
+          });
+        }
+        continue;
+      }
+
+      // Still pending (NULL result) or row concurrently deleted: check staleness.
+      // A missing row reads as epoch 0 — always stale — so the reclaim path re-inserts it.
+      const processedAt = new Date(check?.processed_at ?? "1970-01-01T00:00:00Z").getTime() / 1000;
+      if (processedAt < staleThreshold) {
+        // Stale lock: reclaim ownership and proceed
+        try {
+          await db
+            .prepare(
+              "UPDATE sync_mutations SET result = NULL WHERE user_id = ? AND client_id = ? AND mutation_id = ?",
+            )
+            .bind(session.id, clientId, mut.id)
+            .run();
+          // Verify we successfully reclaimed
+          const verifyClaim = await db
+            .prepare(
+              "INSERT INTO sync_mutations (user_id, client_id, mutation_id, result) VALUES (?, ?, ?, NULL) ON CONFLICT(user_id, client_id, mutation_id) DO NOTHING",
+            )
+            .bind(session.id, clientId, mut.id)
+            .run();
+          if (verifyClaim.meta?.changes === 1) claimSuccess = true;
+        } catch {
+          // Cleanup failed -> refuse to avoid corruption
+          results.push({
+            id: mut.id,
+            ok: false,
+            error: "清理锁失败，请稍后重试",
+            permanent: false,
+          });
+          continue;
+        }
       } else {
+        // Not stale yet: wait for original request or fail gracefully
         results.push({
           id: mut.id,
           ok: false,
           error: "同步操作正在处理中，请稍后重试",
           permanent: false,
         });
+        continue;
       }
+    }
+
+    if (!claimSuccess) {
+      // Should not reach here, but just in case
+      results.push({ id: mut.id, ok: false, error: "未知错误，请稍后重试", permanent: false });
       continue;
     }
 

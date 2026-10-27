@@ -16,6 +16,29 @@ export interface RpcDispatchResult {
   status: number;
 }
 
+/**
+ * 统一的错误响应体：结构化业务错误保留 code/details/request_id，
+ * 未知错误只返回通用文案（原始信息仅进服务端日志）。
+ */
+export function rpcErrorResponseBody(result: RpcDispatchResult): {
+  body: Record<string, unknown>;
+  structured: boolean;
+} {
+  if (result.code || result.details) {
+    return {
+      body: {
+        data: null,
+        error: result.error,
+        code: result.code,
+        details: result.details,
+        request_id: crypto.randomUUID(),
+      },
+      structured: true,
+    };
+  }
+  return { body: { data: null, error: result.error }, structured: false };
+}
+
 export function bindEntryArgs(args: unknown[], entry: RpcEntry, user: { id: string }): unknown[] {
   const finalArgs = [...args];
   if (entry.bindUser !== undefined) {
@@ -87,6 +110,8 @@ export async function dispatchRpc(
       };
     }
     const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: message, status: 500 };
+    // 原始数据库/驱动错误只记日志：对外会泄露表结构与内部实现。
+    console.error(`[rpc] ${module}.${fn} unhandled error:`, message);
+    return { ok: false, error: "服务暂时不可用，请稍后重试", status: 500 };
   }
 }

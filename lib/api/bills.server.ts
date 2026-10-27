@@ -951,6 +951,18 @@ export interface RecordPaymentResult {
   already_processed?: boolean;
 }
 
+function isValidCalendarDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  return (
+    utc.getUTCFullYear() === year && utc.getUTCMonth() === month - 1 && utc.getUTCDate() === day
+  );
+}
+
 /**
  * 离线同步与客户端优先还款。
  * 1. 客户端生成 id 与 idempotency_key，防重并支持多次重放。
@@ -970,11 +982,17 @@ export async function recordPayment(input: RecordPaymentInput): Promise<RecordPa
   if (!Number.isFinite(input.amount) || input.amount <= 0) {
     throw new RpcDomainError("VALIDATION_FAILED", "还款金额必须是大于 0 的数字");
   }
-  if (input.id !== undefined && (typeof input.id !== "string" || !input.id.trim())) {
+  if (
+    input.id !== undefined &&
+    (typeof input.id !== "string" || !input.id.trim() || input.id.length > 256)
+  ) {
     throw new RpcDomainError("VALIDATION_FAILED", "还款记录 ID 不合法");
   }
-  if (input.paid_at !== undefined && (typeof input.paid_at !== "string" || !input.paid_at.trim())) {
-    throw new RpcDomainError("VALIDATION_FAILED", "还款日期不合法");
+  if (
+    input.paid_at !== undefined &&
+    (typeof input.paid_at !== "string" || !isValidCalendarDate(input.paid_at))
+  ) {
+    throw new RpcDomainError("VALIDATION_FAILED", "还款日期必须是 YYYY-MM-DD 格式");
   }
   for (const field of ["channel", "note"] as const) {
     if (input[field] !== undefined && input[field] !== null && typeof input[field] !== "string") {
