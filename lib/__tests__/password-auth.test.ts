@@ -103,4 +103,58 @@ describe("password authentication", () => {
       200,
     );
   });
+
+  it("forwards Google nonce and tolerates concurrent first-time Google user creation", async () => {
+    process.env.GOOGLE_CLIENT_ID = "web-client-id";
+    const googleMod = await import("../google-id-token");
+    const verifySpy = vi.spyOn(googleMod, "verifyGoogleIdToken").mockResolvedValue({
+      ok: true,
+      identity: { email: "new-google@example.test", name: "Google User", sub: "google-sub-1" },
+    });
+
+    const prepare = db.prepare.bind(db);
+    let seenSelects = 0;
+    let releaseSelects: (() => void) | undefined;
+    const bothMissed = new Promise<void>((resolve) => {
+      releaseSelects = resolve;
+    });
+    vi.spyOn(db, "prepare").mockImplementation((sql) => {
+      const statement = prepare(sql);
+      if (sql.startsWith("SELECT id, email, name") && sql.includes("FROM users WHERE email = ?")) {
+        const bind = statement.bind.bind(statement);
+        statement.bind = (...values: unknown[]) => {
+          const bound = bind(...values);
+          const first = bound.first.bind(bound);
+          bound.first = async <T = Record<string, unknown>>() => {
+            const row = await first<T>();
+            seenSelects++;
+            if (seenSelects >= 2) releaseSelects?.();
+            if (seenSelects <= 2 && row === null) await bothMissed;
+            return row;
+          };
+          return bound;
+        };
+      }
+      return statement;
+    });
+
+    const req = () =>
+      new Request("https://app.all-bill.com/api/auth/token", {
+        method: "POST",
+        body: JSON.stringify({ grant_type: "google", id_token: "id-tok", nonce: "nonce-123" }),
+      });
+    const [r1, r2] = await Promise.all([tokenLogin(req()), tokenLogin(req())]);
+    expect([r1.status, r2.status]).toEqual([200, 200]);
+    expect(verifySpy).toHaveBeenCalledWith("id-tok", {
+      clientId: ["web-client-id"],
+      nonce: "nonce-123",
+    });
+    const [b1, b2] = (await Promise.all([r1.json(), r2.json()])) as Array<{
+      user: { id: string };
+      expires_in: number;
+    }>;
+    expect(b1.user.id).toBe(b2.user.id);
+    const { SESSION_TTL_SECONDS } = await import("../session");
+    expect(b1.expires_in).toBe(SESSION_TTL_SECONDS);
+  });
 });
