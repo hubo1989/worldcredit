@@ -2,10 +2,7 @@ import { getDb } from "@/lib/db";
 import { pbkdf2Verify, pbkdf2DummyHash } from "@/lib/auth-crypto";
 import { isAdminEmail } from "@/lib/admin-emails";
 import type { SessionUser } from "@/lib/session";
-import {
-  passwordRateLimitRetryAfter,
-  clearPasswordFailures,
-} from "@/lib/auth-rate-limit";
+import { passwordRateLimitRetryAfter, clearPasswordFailures } from "@/lib/auth-rate-limit";
 
 interface PasswordUserRow {
   id: string;

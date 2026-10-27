@@ -97,7 +97,12 @@ export async function POST(request: Request) {
   // 分页参数必须是整数：REAL 绑定到 LIMIT 会让 has_more 永远 false，静默断页。
   const rawCursor = body.cursor === undefined ? 0 : Number(body.cursor);
   const rawLimit = body.limit === undefined ? DEFAULT_LIMIT : Number(body.limit);
-  if (!Number.isInteger(rawCursor) || rawCursor < 0 || !Number.isInteger(rawLimit) || rawLimit < 1) {
+  if (
+    !Number.isInteger(rawCursor) ||
+    rawCursor < 0 ||
+    !Number.isInteger(rawLimit) ||
+    rawLimit < 1
+  ) {
     return Response.json({ error: "cursor/limit 必须是合法整数" }, { status: 400 });
   }
   const cursor = rawCursor;

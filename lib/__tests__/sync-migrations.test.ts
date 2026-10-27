@@ -156,14 +156,20 @@ describe("0019_offline_sync_tables: trigger verification on full schema", () => 
     `);
     // Settled bills must refuse any direct INSERT.
     expect(() =>
-      db.exec("INSERT INTO payments (id,bill_id,amount,idempotency_key) VALUES ('p1','bill_guard',100,'k1')"),
+      db.exec(
+        "INSERT INTO payments (id,bill_id,amount,idempotency_key) VALUES ('p1','bill_guard',100,'k1')",
+      ),
     ).toThrow(/PAYMENT_ALREADY_SETTLED/);
 
     db.exec("UPDATE bills SET status='unpaid' WHERE id='bill_guard'");
-    db.exec("INSERT INTO payments (id,bill_id,amount,idempotency_key) VALUES ('p2','bill_guard',400,'k2')");
+    db.exec(
+      "INSERT INTO payments (id,bill_id,amount,idempotency_key) VALUES ('p2','bill_guard',400,'k2')",
+    );
     // Concurrently overfilling the remainder must be rejected by the trigger.
     expect(() =>
-      db.exec("INSERT INTO payments (id,bill_id,amount,idempotency_key) VALUES ('p3','bill_guard',200,'k3')"),
+      db.exec(
+        "INSERT INTO payments (id,bill_id,amount,idempotency_key) VALUES ('p3','bill_guard',200,'k3')",
+      ),
     ).toThrow(/PAYMENT_EXCEEDS_REMAINING/);
     db.close();
   });
