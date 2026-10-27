@@ -192,8 +192,12 @@ public final class ApiClient: @unchecked Sendable {
     /// GoogleSignIn SDK 的交互留在 App 层：Core 只接收 token 字符串，这样 Watch 与
     /// Widget 不必链接一个只支持 iOS/macOS 的包。服务端 `POST /api/auth/token`
     /// 的 `grant_type: "google"` 会按 JWKS 验签并核对 audience。
-    public func loginWithGoogle(idToken: String) async throws -> SessionUser {
-        try await exchangeToken(["grant_type": "google", "id_token": idToken])
+    public func loginWithGoogle(idToken: String, nonce: String? = nil) async throws -> SessionUser {
+        var payload = ["grant_type": "google", "id_token": idToken]
+        if let nonce, !nonce.isEmpty {
+            payload["nonce"] = nonce
+        }
+        return try await exchangeToken(payload)
     }
 
     private func exchangeToken(_ body: [String: String]) async throws -> SessionUser {

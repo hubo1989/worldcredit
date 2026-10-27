@@ -8,6 +8,7 @@ public enum SyncError: LocalizedError {
     case incompleteReconciliation
     case invalidMutation(String)
     case duplicateMutationResult
+    case sessionExpired
 
     public var errorDescription: String? {
         switch self {
@@ -17,6 +18,7 @@ public enum SyncError: LocalizedError {
         case .incompleteReconciliation: return "尚未收到需要恢复的服务器数据，将在下次同步重试"
         case let .invalidMutation(id): return "本地待提交操作格式错误：\(id)"
         case .duplicateMutationResult: return "服务器返回了重复的同步操作结果"
+        case .sessionExpired: return "会话已结束，已取消本次同步"
         }
     }
 }
@@ -29,6 +31,8 @@ public final class SyncEngine: @unchecked Sendable {
     private let identityLock = NSLock()
     private var storedClientId: String
     private let clientIdOverride: String?
+    private let sessionLock = NSLock()
+    private var sessionIsActive = true
     private static let reconcileMetaKey = "sync_reconcile_targets"
     /// 被隔离的坏变更（解码失败/约束冲突等）落在这里，丢弃但留痕，便于排查。
     private static let isolatedChangesMetaKey = "sync_isolated_changes"
@@ -57,7 +61,18 @@ public final class SyncEngine: @unchecked Sendable {
         self.storedClientId = (try? identity.get()) ?? ""
     }
 
+    /// 登出时调用。失效不可逆，后续登录必须由 AppState 创建新的引擎。
+    public func invalidateSession() {
+        sessionLock.withLock { sessionIsActive = false }
+    }
+
+    private func requireActiveSession() throws {
+        guard sessionLock.withLock({ sessionIsActive }) else { throw SyncError.sessionExpired }
+        try Task.checkCancellation()
+    }
+
     public func sync() async throws {
+        try requireActiveSession()
         // 清空所有成功批次；没有进展时停止，保留退避或失败中的操作。
         var pending = try await dbManager.dbWriter.read { try MutationOutbox.fetchCount($0) }
         repeat {
@@ -79,13 +94,24 @@ public final class SyncEngine: @unchecked Sendable {
                 return (Int(meta?.value ?? "0") ?? 0, Array(try self.reconcileTargets(in: db).prefix(100)))
             }
 
+            // 请求前检查；失效或已取消后不得发新请求。
+            try requireActiveSession()
+
             let response = try await apiClient.pull(cursor: cursor, reconcile: targets)
             guard response.cursor >= cursor else { throw SyncError.invalidCursor }
             guard !response.hasMore || response.cursor > cursor else { throw SyncError.invalidCursor }
             let returnedTargets = Set(response.changes.map { SyncReconcileTarget(tbl: $0.tbl, rowId: $0.rowId) })
             let acknowledged = Set(targets).intersection(returnedTargets)
             if !targets.isEmpty && acknowledged.isEmpty { throw SyncError.incompleteReconciliation }
+
+            // 网络返回后及事务写前再次检查，取消不会写入服务端结果。
+            try requireActiveSession()
+            try requireActiveSession()
             let stillNeedsRecovery = try await dbManager.dbWriter.write { db in
+                // 同步检查不能跨 async 边界；写入前失效会回滚整个事务。
+                guard self.sessionLock.withLock({ self.sessionIsActive }) else {
+                    throw SyncError.sessionExpired
+                }
                 // An edit may have been queued while the network request was in flight.
                 try self.requireEmptyOutbox(in: db)
                 // 按条隔离：单条 applyChange 失败不中断整批。整批单事务下任一条
@@ -150,6 +176,8 @@ public final class SyncEngine: @unchecked Sendable {
             return MutationPayload(id: item.id, name: item.name, args: args)
         }
 
+        // 只在发请求前检查，不读取 ApiClient.token：旧请求即使晚返回也不会用新账号凭据。
+        try requireActiveSession()
         let results = try await apiClient.push(clientId: clientId, mutations: payloads)
         var resultMap: [String: MutationPushResult] = [:]
         for result in results {
@@ -157,7 +185,12 @@ public final class SyncEngine: @unchecked Sendable {
         }
         let resultsByID = resultMap
 
+        try requireActiveSession()
         try await dbManager.dbWriter.write { db in
+            // 此处必须保持同步检查：NSLock 和 SQLite 状态在事务内可一致读取。
+            guard self.sessionLock.withLock({ self.sessionIsActive }) else {
+                throw SyncError.sessionExpired
+            }
             for item in mutations {
                 guard let res = resultsByID[item.id] else { continue }
                 if res.ok {

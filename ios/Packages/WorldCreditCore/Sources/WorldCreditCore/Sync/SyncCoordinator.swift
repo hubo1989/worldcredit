@@ -21,6 +21,7 @@ public final class SyncCoordinator {
         inFlight = task
         inFlightID = id
         defer {
+            // 登出 detach 后新任务可启动；旧任务结束不能清掉新任务的句柄。
             if inFlightID == id {
                 inFlight = nil
                 inFlightID = nil
@@ -29,9 +30,12 @@ public final class SyncCoordinator {
         try await task.value
     }
 
-    public func cancelInFlight() {
-        inFlight?.cancel()
+    /// 取消并移交旧任务的所有权。登出必须保存并等待返回值，不能只 detach。
+    public func cancelInFlight() -> Task<Void, Error>? {
+        let task = inFlight
+        task?.cancel()
         inFlight = nil
         inFlightID = nil
+        return task
     }
 }

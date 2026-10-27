@@ -112,7 +112,10 @@ struct SettingsView: View {
             .navigationTitle("设置")
             .confirmationDialog("确定退出登录？", isPresented: $showingLogoutAlert, titleVisibility: .visible) {
                 Button("退出登录", role: .destructive) {
-                    appState.logout()
+                    Task {
+                        do { try await appState.logout() }
+                        catch { appState.lastSyncError = "退出登录失败：\(error.localizedDescription)" }
+                    }
                 }
                 Button("取消", role: .cancel) {}
             }

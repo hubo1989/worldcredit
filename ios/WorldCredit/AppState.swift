@@ -7,14 +7,23 @@ import WorldCreditCore
 @Observable
 public final class AppState {
     public let dbManager: DatabaseManager
-    public let apiClient: ApiClient
-    public let syncEngine: SyncEngine
+    /// 仅测试构造器注入 mock 会替换实例；生产路径构造后不变。
+    @ObservationIgnored public private(set) var apiClient: ApiClient
+    public private(set) var syncEngine: SyncEngine
     public let paymentService: PaymentService
     public let billEditService: BillEditService
     public let cardEditService: CardEditService
     public let queryService: QueryService
     public let notificationScheduler: NotificationScheduler
     @ObservationIgnored private let syncCoordinator = SyncCoordinator()
+    @ObservationIgnored private var accountCleanupTask: Task<Void, Error>?
+    @ObservationIgnored private var accountTransitionTask: Task<Void, Error>?
+    @ObservationIgnored private var watchSnapshots: WatchSnapshotManager = .shared
+    @ObservationIgnored private var sendWatchSnapshot: @MainActor (WatchSnapshot) throws -> Void = {
+        WatchSyncCoordinator.shared.sendSnapshotToWatch($0)
+    }
+    /// 测试注入点：替换清库行为验证登出链路；生产路径为 nil 时走 dbManager.clearUserData()。
+    @ObservationIgnored private var clearUserDataHandler: (@Sendable () async throws -> Void)?
 
     public var isLoggedIn: Bool = false
     public var currentUser: SessionUser?
@@ -125,6 +134,7 @@ public final class AppState {
         self.cardEditService = CardEditService(dbManager: db)
         self.queryService = QueryService(dbManager: db)
         self.notificationScheduler = NotificationScheduler(dbManager: db)
+        self.clearUserDataHandler = { [db] in try await db.clearUserData() }
 
         self.isLoggedIn = client.token != nil
         if UITestConfiguration.isEnabled { dashboardPrivacy = false }
@@ -132,6 +142,22 @@ public final class AppState {
             self.isLocked = true
         }
     }
+
+    /// 测试辅助构造器：支持注入 MockNetworkSession 和文件路径数据库。
+    /// 用于端到端验证 logout/login 会话切换安全。
+    #if DEBUG
+    public convenience init(
+        dbURL: URL,
+        networkSession: some NetworkSession,
+        baseURL: URL = URL(string: "https://app.all-bill.com")!
+    ) throws {
+        let db = try DatabaseManager.file(at: dbURL)
+        let client = ApiClient(baseURL: baseURL, session: networkSession, token: nil, useKeychain: false)
+        self.init(dbManager: db, baseURL: baseURL)
+        self.apiClient = client
+        self.syncEngine = SyncEngine(dbManager: db, apiClient: client)
+    }
+    #endif
 
     /// 盘库不可用时的内存库兜底。进程内 SQLite 也创建失败属环境级故障，
     /// 所有服务都依赖 DB，无可恢复 UI 可退——带原因终止，而不是裸 `!` 崩在隐晦位置。
@@ -353,32 +379,42 @@ public final class AppState {
         }
     }
 
-    public func login(email: String, password: String) async throws {
-        sessionEpoch = UUID()
-        try? await dbManager.clearUserData()
-        let user = try await apiClient.loginWithPassword(email: email, password: password)
-        self.currentUser = user
-        self.isLoggedIn = true
-        await sync()
-    }
-
     /// 用 Google Sign-In 取到的 ID token 完成登录，状态迁移与密码登录一致。
     /// GoogleSignIn SDK 的交互留在 LoginView，此处不引入该依赖。
     public func loginWithGoogle(idToken: String) async throws {
         sessionEpoch = UUID()
-        try? await dbManager.clearUserData()
+        accountTransitionTask = Task {
+            do { try await dbManager.clearUserData() } catch {
+                throw LoginError.cleanupFailed(reason: error.localizedDescription)
+            }
+        }
+        try await accountTransitionTask?.value
+        accountTransitionTask = nil
+
         let user = try await apiClient.loginWithGoogle(idToken: idToken)
         self.currentUser = user
         self.isLoggedIn = true
         await sync()
     }
 
-    public func logout() {
+    public func logout() async throws {
         let oldUserID = currentUser?.id
         sessionEpoch = UUID()
         dashboardRequestID = UUID()
         dashboardRemoteTask?.cancel()
-        syncCoordinator.cancelInFlight()
+
+        // 等待现有 account transition 完成，避免并发登录；失败不阻塞登出清理。
+        try? await accountTransitionTask?.value
+
+        // cancelInFlight 返回的旧 task 必须被 await；不允许异步“丢弃”它。
+        if let syncedTask = syncCoordinator.cancelInFlight() {
+            do { try await syncedTask.value } catch {
+                print("Cancelled sync failed: \(error)")
+            }
+        }
+        // 引擎失效不可逆：防止被取消前的在途请求以旧会话写回。
+        syncEngine.invalidateSession()
+
         PushNotificationManager.shared.unregisterCurrentToken()
         apiClient.token = nil
         isLoggedIn = false
@@ -404,7 +440,7 @@ public final class AppState {
         payables = []
         payablesError = nil
         notificationScheduler.center.removeAllPendingNotificationRequests()
-        WatchSnapshotManager.shared.clear()
+        watchSnapshots.clear()
         let emptySnapshot = WatchSnapshot(
             totalDebt: 0,
             overdueCount: 0,
@@ -414,13 +450,56 @@ public final class AppState {
             cards: [],
             calendarEvents: []
         )
-        WatchSyncCoordinator.shared.sendSnapshotToWatch(emptySnapshot)
-        let dbManager = self.dbManager
-        let dashboardRemote = self.dashboardRemote
-        Task {
-            if let oldUserID { await dashboardRemote.clearCache(userId: oldUserID) }
-            try? await dbManager.clearUserData()
+        try? sendWatchSnapshot(emptySnapshot)
+
+        // 阻塞式清理数据库，失败时抛出异常让 UI 无法继续下一步；这是登出防跨账号泄漏的最后防线。
+        do {
+            if let clearUserDataHandler {
+                try await clearUserDataHandler()
+            } else {
+                try await dbManager.clearUserData()
+            }
+        } catch {
+            throw LoginError.cleanupFailed(reason: error.localizedDescription)
         }
+        // 登出后重建引擎：invalidateSession 不可逆，新账号必须用全新引擎同步。
+        syncEngine = SyncEngine(dbManager: dbManager, apiClient: apiClient)
+
+        if let oldUserID {
+            await dashboardRemote.clearCache(userId: oldUserID)
+        }
+    }
+
+    public enum LoginError: LocalizedError {
+        case cleanupFailed(reason: String)
+        public var errorDescription: String? {
+            switch self {
+            case .cleanupFailed(let r): return "登录前清除数据失败：\(r)"
+            }
+        }
+    }
+
+    @discardableResult
+    public func login(email: String, password: String) async throws -> UserSession {
+        sessionEpoch = UUID()
+        accountTransitionTask = Task {
+            do { try await dbManager.clearUserData() } catch {
+                throw LoginError.cleanupFailed(reason: error.localizedDescription)
+            }
+        }
+        try await accountTransitionTask?.value
+        accountTransitionTask = nil
+
+        let user = try await apiClient.loginWithPassword(email: email, password: password)
+        self.currentUser = user
+        self.isLoggedIn = true
+        let syncResult = try await sync()
+        return UserSession(user: user, syncSuccess: syncResult)
+    }
+
+    public struct UserSession: Sendable {
+        public let user: SessionUser
+        public let syncSuccess: Bool
     }
 
     public func recordPayment(

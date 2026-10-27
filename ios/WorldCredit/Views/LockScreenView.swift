@@ -72,7 +72,8 @@ public struct LockScreenView: View {
         }
         .confirmationDialog("退出当前账号？", isPresented: $showingLogoutConfirm, titleVisibility: .visible) {
             Button("退出登录", role: .destructive) {
-                appState.logout()
+                // 清库失败时抛错：保持锁屏可见，避免带着旧账号数据进入登录页。
+                Task { try? await appState.logout() }
             }
             Button("取消", role: .cancel) {}
         }

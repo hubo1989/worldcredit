@@ -95,7 +95,7 @@ struct SyncCoordinatorTests {
             }
         }
         await started.wait()
-        coordinator.cancelInFlight()
+        _ = coordinator.cancelInFlight()
         var freshRan = false
         try await coordinator.perform { freshRan = true }
         #expect(freshRan)
