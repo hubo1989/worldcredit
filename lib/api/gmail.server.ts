@@ -12,7 +12,10 @@ export interface GmailConnectionStatus {
   last_error: string | null
 }
 
-export async function getGmailConnection(userId: string): Promise<GmailConnectionStatus> {
+export async function getGmailConnection(userId?: string): Promise<GmailConnectionStatus> {
+  if (!userId) {
+    return { connected: false, email: null, status: null, last_sync_at: null, last_sync_summary: null, last_error: null }
+  }
   const { data } = await queryOne<{
     email: string; status: string; last_sync_at: string | null
     last_sync_summary: string | null; last_error: string | null
@@ -33,7 +36,8 @@ export async function getGmailConnection(userId: string): Promise<GmailConnectio
   }
 }
 
-export async function syncGmailNow(userId: string): Promise<GmailSyncSummary> {
+export async function syncGmailNow(userId?: string): Promise<GmailSyncSummary> {
+  if (!userId) throw new Error('未登录，无法同步 Gmail')
   return syncUserGmail(userId)
 }
 
@@ -41,7 +45,8 @@ export async function syncGmailNow(userId: string): Promise<GmailSyncSummary> {
  * 断开连接：删 token、删 R2 原文副本。gmail_sync_messages 与账单/草稿是
  * 业务数据，保留（审计与既成账单不受「断开邮箱」影响）。
  */
-export async function disconnectGmail(userId: string): Promise<{ ok: true }> {
+export async function disconnectGmail(userId?: string): Promise<{ ok: true }> {
+  if (!userId) return { ok: true }
   const bucket = getWorkerEnv().ATTACHMENTS as R2Bucket | undefined
   if (bucket) {
     let cursor: string | undefined
