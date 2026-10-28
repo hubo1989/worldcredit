@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
 import { DisplayPreferencesCard } from '@/components/settings/DisplayPreferencesCard'
 import { ReminderPreferencesCard } from '@/components/settings/ReminderPreferencesCard'
+import { GmailConnectPanel } from '@/components/mobile/GmailConnectPanel'
 import {
   UserIcon,
   PromoIcon,
@@ -160,7 +161,7 @@ export default function SettingsPage() {
         <MineEntry
           icon={<ImportIcon size={22} />}
           title='邮箱账单导入'
-          subtitle='专属地址直传，免登记来源邮箱'
+          subtitle='Gmail 直连拉取，专属地址补录'
           onClick={() => setOpenGmail(v => !v)}
           expanded={openGmail}
           rightSlot={
@@ -170,9 +171,11 @@ export default function SettingsPage() {
           }
         />
 
-        {/* 邮箱账单导入展开区：仅保留专属地址直传 */}
+        {/* 邮箱账单导入展开区：Gmail 直连为主，专属地址保留为补录通道 */}
         {openGmail && (
           <div className='flex flex-col gap-2.5'>
+            <GmailConnectPanel />
+
             <div className='flex justify-end'>
               <button
                 type='button'
@@ -184,16 +187,16 @@ export default function SettingsPage() {
               </button>
             </div>
 
-            {/* 账单自动录入地址 */}
+            {/* 账单补录地址 */}
             <div className='rounded-2xl border border-d-border bg-d-surface p-4'>
               <div className='mb-3 flex items-center gap-3'>
                 <div className='flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-d-subtle text-d-accent-light'>
                   <ImportIcon size={20} />
                 </div>
                 <div className='min-w-0 flex-1'>
-                  <p className='text-[15px] font-semibold leading-5 text-d-text'>收账单邮箱</p>
+                  <p className='text-[15px] font-semibold leading-5 text-d-text'>收账单邮箱（补录）</p>
                   <p className='mt-0.5 text-[12px] leading-4 text-d-muted'>
-                    转发银行账单至以下地址，系统将自动解析入库
+                    把账单邮件作为附件（.eml）转发到此地址补录。银行自动转发会被 DMARC 拒收，日常导入请用上方 Gmail 直连
                   </p>
                 </div>
               </div>
@@ -221,7 +224,7 @@ export default function SettingsPage() {
 
               <div className='mt-3 rounded-xl border-l-2 border-d-accent bg-d-subtle p-3'>
                 <p className='text-[11px] leading-4 text-d-muted'>
-                  该地址包含你的用户 ID，系统按收件地址即可归属到你的账号，无需登记来源邮箱。请用自动转发规则把银行账单转到此地址。
+                  该地址包含你的用户 ID，系统按收件地址归属到你的账号。仅用于手动转发 .eml 附件补录，勿配置自动转发规则。
                 </p>
               </div>
             </div>
