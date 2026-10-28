@@ -30,7 +30,17 @@ export interface GmailSyncSummary {
   drafted: number;
   skipped: number;
   failed: number;
+  /**
+   * 本次匹配到、但还没处理的邮件数（分批闸门截断的部分）。
+   * 客户端循环调用直到 remaining === 0；cron 不设限，恒为 0。
+   */
+  remaining: number;
   errors: string[];
+}
+
+export interface SyncUserGmailOptions {
+  /** 单次调用最多处理的新邮件数；省略 = 不设限（cron 全量跑）。 */
+  maxMessages?: number;
 }
 
 /** 预筛查询：宁可多拉几封让 AI 用 email_kind 门禁过滤，也不要漏账单。 */
@@ -68,13 +78,17 @@ function extractRfcMessageId(raw: Uint8Array): string | null {
   return m ? m[1].trim() : null;
 }
 
-export async function syncUserGmail(userId: string): Promise<GmailSyncSummary> {
+export async function syncUserGmail(
+  userId: string,
+  opts?: SyncUserGmailOptions,
+): Promise<GmailSyncSummary> {
   const summary: GmailSyncSummary = {
     scanned: 0,
     written: 0,
     drafted: 0,
     skipped: 0,
     failed: 0,
+    remaining: 0,
     errors: [],
   };
   const db = getDb();
@@ -112,12 +126,25 @@ export async function syncUserGmail(userId: string): Promise<GmailSyncSummary> {
   const { refs } = await listMessageRefs(tokens.accessToken, DEFAULT_QUERY, clientOpts);
   summary.scanned = refs.length;
 
+  // 分批闸门：每封邮件都要过一遍 LLM 解析（实测 5–15s/封），一次性处理
+  // 几十封会跑几分钟，超过 Cloudflare ~100s 代理超时——客户端先收到 524
+  // 报「同步失败」，worker 却还在后台推进（2026-10-28 首次回填实测 9 分钟）。
+  // 所以手动同步必须分轮：每轮 maxMessages 封，客户端看 remaining 续拉。
+  const maxMessages = opts?.maxMessages;
+  let alreadySeen = 0;
+  let processed = 0;
+
   for (const ref of refs) {
     const seen = await queryOne(
       "SELECT gmail_message_id FROM gmail_sync_messages WHERE gmail_message_id = ?",
       [ref.id],
     );
-    if (seen.data) continue;
+    if (seen.data) {
+      alreadySeen++;
+      continue;
+    }
+    // continue 而不是 break：把剩余量数完，remaining 才准
+    if (maxMessages !== undefined && processed >= maxMessages) continue;
 
     try {
       const raw = await getRawMessage(tokens.accessToken, ref.id, clientOpts);
@@ -154,6 +181,7 @@ export async function syncUserGmail(userId: string): Promise<GmailSyncSummary> {
       else if (outcome.status === "draft_parked") summary.drafted++;
       else if (outcome.status === "skipped") summary.skipped++;
       else summary.failed++;
+      processed++;
     } catch (err) {
       summary.failed++;
       const msg = err instanceof Error ? err.message : String(err);
@@ -162,8 +190,11 @@ export async function syncUserGmail(userId: string): Promise<GmailSyncSummary> {
         "INSERT INTO gmail_sync_messages (gmail_message_id, user_id, status, error_msg) VALUES (?,?, 'failed', ?)",
         [ref.id, userId, msg],
       );
+      processed++;
     }
   }
+
+  summary.remaining = refs.length - alreadySeen - processed;
 
   const summaryText = `扫描 ${summary.scanned}｜落账单 ${summary.written}｜草稿 ${summary.drafted}｜跳过 ${summary.skipped}｜失败 ${summary.failed}`;
   await execute(

@@ -175,6 +175,38 @@ describe("syncUserGmail", () => {
     expect(bills?.c).toBe(1);
   });
 
+  it("maxMessages 分批：单轮只处理 N 封并报 remaining，续轮跑完", async () => {
+    await seedHolderAndProduct();
+    __setGmailSyncDeps({
+      parse: async () => ({ ...parseOk }),
+      fetchImpl: gmailFetch({
+        list: {
+          messages: [
+            { id: "m5", threadId: "t5" },
+            { id: "m6", threadId: "t6" },
+            { id: "m7", threadId: "t7" },
+          ],
+        },
+        raw: { raw: toRawB64(RAW_EML), id: "x" },
+      }) as unknown as typeof fetch,
+      bucket: null,
+    });
+
+    const first = await syncUserGmail("u1", { maxMessages: 2 });
+    expect(first.scanned).toBe(3);
+    expect(first.written).toBe(2);
+    expect(first.remaining).toBe(1);
+
+    const second = await syncUserGmail("u1", { maxMessages: 2 });
+    expect(second.written).toBe(1);
+    expect(second.remaining).toBe(0);
+
+    const rows = await db
+      .prepare("SELECT COUNT(*) c FROM gmail_sync_messages")
+      .first<{ c: number }>();
+    expect(rows?.c).toBe(3);
+  });
+
   it("非账单邮件记 skipped 且不建账单", async () => {
     __setGmailSyncDeps({
       parse: async () => ({ is_bill: false, email_kind: "other" }),
