@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { decodeMimeHeaderValue, extractAttachments, extractHeaderDisplayName, parseRawMessage } from '../src/mime'
+import { decodeMimeHeaderValue, extractAttachments, extractHeaderDisplayName, parseRawMessage } from '../../lib/email-core/mime'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 

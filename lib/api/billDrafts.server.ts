@@ -74,7 +74,8 @@ export async function getBillImportDraft(id: string): Promise<BillImportDraft> {
   return rowToDraft(data)
 }
 
-export async function getBillImportDrafts(userId: string): Promise<BillImportDraft[]> {
+export async function getBillImportDrafts(userId?: string): Promise<BillImportDraft[]> {
+  if (!userId) return []
   const { data, error } = await query<DraftRow>(
     "SELECT * FROM bill_import_drafts WHERE created_by = ? AND status = 'draft' ORDER BY created_at DESC",
     [userId]

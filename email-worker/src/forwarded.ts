@@ -9,14 +9,14 @@
  * 账单的解析结果和归属依据，便于排查。
  */
 
-import type { AiConfig, BillParseResult, EmailParseLogRow, ForwardedBundleOutcome, ParsedRawMessage } from './types'
+import type { AiConfig, BillParseResult, EmailParseLogRow, ForwardedBundleOutcome, ParsedRawMessage } from '../../lib/email-core/types'
 import {
   extractNestedBillMessages,
   loadHolderScope,
   persistNestedBills,
   type HolderScope,
-} from './bills'
-import { isEmlAttachment } from './holders'
+} from '../../lib/email-core/bills'
+import { isEmlAttachment } from '../../lib/email-core/holders'
 
 export interface ForwardedBundleParams {
   db: D1Database

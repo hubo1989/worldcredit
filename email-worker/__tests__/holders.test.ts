@@ -6,8 +6,8 @@ import {
   resolveHolder,
   stripHonorificSuffix,
   type HolderRecord,
-} from '../src/holders'
-import type { RawAttachment } from '../src/types'
+} from '../../lib/email-core/holders'
+import type { RawAttachment } from '../../lib/email-core/types'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 

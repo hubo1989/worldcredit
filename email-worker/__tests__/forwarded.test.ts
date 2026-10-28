@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { createFakeD1 } from './fakeD1'
-import { parseRawMessage } from '../src/mime'
+import { parseRawMessage } from '../../lib/email-core/mime'
 import { processForwardedBundle, buildBundleLogPayload } from '../src/forwarded'
-import type { BillParseResult } from '../src/types'
+import type { BillParseResult } from '../../lib/email-core/types'
 
 /**
  * 端到端：一封真实字节形态的顶层转发包 -> 解析 -> 抽取嵌套 .eml -> 认人 -> 落库。
