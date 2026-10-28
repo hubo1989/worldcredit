@@ -76,7 +76,7 @@ describe('canManuallySetBillAmount：账单日前 5 天内可手填', () => {
 describe('导入路径不得触碰手填覆写列', () => {
   // 只要导入侧从来不写 bill_amount_override，手填值就天然不会被覆盖。
   const importPaths = [
-    'email-worker/src/bills.ts',
+    'lib/email-core/bills.ts',
     'email-worker/src/index.ts',
     'lib/api/sync-gmail.server.ts',
     'lib/api/billDrafts.server.ts',

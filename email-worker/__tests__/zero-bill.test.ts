@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { keepPaidStatus } from '../src/bills'
+import { keepPaidStatus } from '../../lib/email-core/bills'
 
 /**
  * 0 元账单回归：应还 0 元（本期已还清）的账单是合法数据。

@@ -6,8 +6,8 @@ import {
   deriveBillingDayFromEmail,
   findOrCreateCardForHolder,
   syncBillingDayFromBill,
-} from '../src/bills'
-import type { BillParseResult } from '../src/types'
+} from '../../lib/email-core/bills'
+import type { BillParseResult } from '../../lib/email-core/types'
 
 /**
  * 账单日三件套的回归（2026-10-20 原文核对的产物）：
