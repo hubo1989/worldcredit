@@ -38,6 +38,15 @@
 __pycache__/
 *.py[cod]
 
+# Swift & Xcode
+.build/
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+.swiftpm/
+ios/Packages/GRDB/
+ios/build/
+
 # Node.js
 node_modules
 .env

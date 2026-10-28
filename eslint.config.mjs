@@ -111,6 +111,8 @@ export default tseslint.config(
       "docs/**",
       "db/**",
       "import_bills.mjs",
+      // Swift 工具链管辖（SPM 的 .build/checkouts 含第三方 js，不归 web lint）
+      "ios/**",
     ],
   },
 );

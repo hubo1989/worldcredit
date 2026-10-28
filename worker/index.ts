@@ -14,6 +14,11 @@ interface WorkerEnv {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;
+  APNS_KEY_P8?: string;
+  APNS_KEY_ID?: string;
+  APNS_TEAM_ID?: string;
+  APNS_BUNDLE_ID?: string;
+  APNS_ENVIRONMENT?: string;
   ASSETS: { fetch(request: Request): Promise<Response> };
   IMAGES: { input(stream: ReadableStream): { transform(options: Record<string, unknown>): { output(options: { format: string; quality: number }): Promise<{ response(): Response }> } } };
 }

@@ -8,21 +8,21 @@
 
 /// <reference types="@cloudflare/workers-types" />
 
-import { DatabaseSync, type StatementSync } from 'node:sqlite'
-import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { DatabaseSync, type StatementSync } from "node:sqlite";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 
-export const SQLITE_D1_MIGRATIONS_DIR = join(__dirname, '../../../migrations/d1')
+export const SQLITE_D1_MIGRATIONS_DIR = join(__dirname, "../../../migrations/d1");
 
-type BindParam = null | number | string
+type BindParam = null | number | string;
 
 function toBindParams(params: unknown[]): BindParam[] {
   return params.map((p) => {
-    if (p === null || typeof p === 'number' || typeof p === 'string') return p
+    if (p === null || typeof p === "number" || typeof p === "string") return p;
     // D1 rejects booleans/undefined/objects at bind time; mirror that so the
     // tests surface the same class of bug before deploy.
-    throw new Error(`sqlite-d1: unsupported bind parameter ${typeof p} (${String(p)})`)
-  })
+    throw new Error(`sqlite-d1: unsupported bind parameter ${typeof p} (${String(p)})`);
+  });
 }
 
 class SqliteD1Statement implements D1PreparedStatement {
@@ -33,22 +33,34 @@ class SqliteD1Statement implements D1PreparedStatement {
   ) {}
 
   bind(...values: unknown[]): D1PreparedStatement {
-    return new SqliteD1Statement(this.db, this.sql, values)
+    return new SqliteD1Statement(this.db, this.sql, values);
   }
 
   async all<T = Record<string, unknown>>(): Promise<D1Result<T>> {
-    return { results: this.statement().all(...toBindParams(this.params)) as T[], success: true, meta: this.emptyMeta() }
+    return {
+      results: this.statement().all(...toBindParams(this.params)) as T[],
+      success: true,
+      meta: this.emptyMeta(),
+    };
   }
 
   async first<T = Record<string, unknown>>(): Promise<T | null> {
-    return (this.statement().get(...toBindParams(this.params)) as T) ?? null
+    return (this.statement().get(...toBindParams(this.params)) as T) ?? null;
   }
 
   async run<T = Record<string, unknown>>(): Promise<D1Result<T>> {
-    const meta = this.statement().run(...toBindParams(this.params)) as {
-      changes: number | bigint
-      lastInsertRowid: number | bigint
+    const stmt = this.statement();
+    if (stmt.columns().length > 0) {
+      return {
+        results: stmt.all(...toBindParams(this.params)) as T[],
+        success: true,
+        meta: this.emptyMeta(),
+      };
     }
+    const meta = stmt.run(...toBindParams(this.params)) as {
+      changes: number | bigint;
+      lastInsertRowid: number | bigint;
+    };
     return {
       results: [],
       success: true,
@@ -61,24 +73,24 @@ class SqliteD1Statement implements D1PreparedStatement {
         size_after: 0,
         changed_db: Number(meta.changes) > 0,
       },
-    }
+    };
   }
 
   async raw<T = unknown>(): Promise<[string[], ...T[]]> {
-    const columns = this.columnNames()
-    const rows = this.statement().all(...toBindParams(this.params)) as Record<string, unknown>[]
-    return [columns, ...(rows.map((row) => columns.map((c) => row[c])) as T[])]
+    const columns = this.columnNames();
+    const rows = this.statement().all(...toBindParams(this.params)) as Record<string, unknown>[];
+    return [columns, ...(rows.map((row) => columns.map((c) => row[c])) as T[])];
   }
 
   private columnNames(): string[] {
     return this.db
       .prepare(this.sql)
       .columns()
-      .map((c) => c.name)
+      .map((c) => c.name);
   }
 
   private statement(): StatementSync {
-    return this.db.prepare(this.sql)
+    return this.db.prepare(this.sql);
   }
 
   private emptyMeta() {
@@ -90,7 +102,7 @@ class SqliteD1Statement implements D1PreparedStatement {
       rows_written: 0,
       size_after: 0,
       changed_db: false,
-    }
+    };
   }
 }
 
@@ -102,62 +114,72 @@ class SqliteD1Statement implements D1PreparedStatement {
  */
 export class SqliteD1 {
   /** Raw handle for test-side assertions (COUNT, PRAGMA, sqlite_master). */
-  readonly raw: DatabaseSync
-  private batchDepth = 0
+  readonly raw: DatabaseSync;
+  private batchDepth = 0;
+  private batchChain: Promise<unknown> = Promise.resolve();
 
-  constructor(path = ':memory:') {
-    this.raw = new DatabaseSync(path)
-    this.raw.exec('PRAGMA foreign_keys = ON')
+  constructor(path = ":memory:") {
+    this.raw = new DatabaseSync(path);
+    this.raw.exec("PRAGMA foreign_keys = ON");
   }
 
   prepare(sql: string): D1PreparedStatement {
-    return new SqliteD1Statement(this.raw, sql)
+    return new SqliteD1Statement(this.raw, sql);
   }
 
   async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
-    if (this.batchDepth > 0) throw new Error('sqlite-d1: nested batch is not supported (same as D1)')
-    this.batchDepth++
-    this.raw.exec('BEGIN')
-    try {
-      const results: D1Result<T>[] = []
-      for (const statement of statements) {
-        results.push(await statement.run<T>())
+    if (this.batchDepth > 0)
+      throw new Error("sqlite-d1: nested batch is not supported (same as D1)");
+    const execute = async () => {
+      this.batchDepth++;
+      this.raw.exec("BEGIN");
+      try {
+        const results: D1Result<T>[] = [];
+        for (const statement of statements) {
+          results.push(await statement.run<T>());
+        }
+        this.raw.exec("COMMIT");
+        return results;
+      } catch (err) {
+        this.raw.exec("ROLLBACK");
+        throw err;
+      } finally {
+        this.batchDepth--;
       }
-      this.raw.exec('COMMIT')
-      return results
-    } catch (err) {
-      this.raw.exec('ROLLBACK')
-      throw err
-    } finally {
-      this.batchDepth--
-    }
+    };
+    const scheduled = this.batchChain.then(execute, execute);
+    this.batchChain = scheduled.then(
+      () => undefined,
+      () => undefined,
+    );
+    return scheduled;
   }
 
   /** D1 exec(): unparameterized multi-statement SQL (used by migrations). */
   exec(sql: string): void {
-    this.raw.exec(sql)
+    this.raw.exec(sql);
   }
 
   close(): void {
-    this.raw.close()
+    this.raw.close();
   }
 }
 
 /** Apply every checked-in D1 migration in filename order. */
 export function applyD1Migrations(db: SqliteD1, dir = SQLITE_D1_MIGRATIONS_DIR): void {
   const files = readdirSync(dir)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
   for (const file of files) {
-    db.exec(readFileSync(join(dir, file), 'utf8'))
+    db.exec(readFileSync(join(dir, file), "utf8"));
   }
 }
 
 /** Fresh in-memory database with all migrations applied. One per test. */
 export function createOpportunityDb(): SqliteD1 {
-  const db = createSqliteD1()
-  applyD1Migrations(db)
-  return db
+  const db = createSqliteD1();
+  applyD1Migrations(db);
+  return db;
 }
 
 /**
@@ -167,10 +189,12 @@ export function createOpportunityDb(): SqliteD1 {
  * deployment gets from applying 0015 over populated tables.
  */
 export function wrapLegacyCatalog(db: SqliteD1): void {
-  db.exec(readFileSync(join(SQLITE_D1_MIGRATIONS_DIR, '0015_opportunity_legacy_catalog.sql'), 'utf8'))
+  db.exec(
+    readFileSync(join(SQLITE_D1_MIGRATIONS_DIR, "0015_opportunity_legacy_catalog.sql"), "utf8"),
+  );
 }
 
 /** Bare harness without migrations, for harness-level contract tests. */
 export function createSqliteD1(): SqliteD1 {
-  return new SqliteD1()
+  return new SqliteD1();
 }

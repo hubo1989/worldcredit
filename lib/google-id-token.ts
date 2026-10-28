@@ -105,7 +105,7 @@ async function findKey(kid: string | undefined): Promise<JwksKey | null> {
 
 export async function verifyGoogleIdToken(
   idToken: string,
-  opts: { clientId: string; nonce?: string }
+  opts: { clientId: string | string[]; nonce?: string }
 ): Promise<{ ok: true; identity: GoogleIdentity } | { ok: false; reason: IdTokenFailure }> {
   const parts = idToken.split('.')
   if (parts.length !== 3) return { ok: false, reason: 'malformed' }
@@ -149,7 +149,8 @@ export async function verifyGoogleIdToken(
 
   // 签名过了才轮到 claim：iss/aud 防「换个应用的 token」，exp/iat 防旧 token 重放。
   if (!payload.iss || !ISSUERS.has(payload.iss)) return { ok: false, reason: 'bad-issuer' }
-  if (payload.aud !== opts.clientId) return { ok: false, reason: 'bad-audience' }
+  const allowedClients = Array.isArray(opts.clientId) ? opts.clientId : [opts.clientId]
+  if (!payload.aud || !allowedClients.includes(payload.aud)) return { ok: false, reason: 'bad-audience' }
 
   const now = Math.floor(Date.now() / 1000)
   if (typeof payload.exp !== 'number' || payload.exp + CLOCK_SKEW_SECONDS < now) {

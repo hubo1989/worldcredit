@@ -18,7 +18,10 @@
     {
       "binding": "DB",
       "database_name": "worldcredit",
-      "database_id": "6ce5f678-e5bb-46cc-88d7-a316f1a209cb"
+      "database_id": "6ce5f678-e5bb-46cc-88d7-a316f1a209cb",
+      // 真正的 D1（SQLite）迁移树。migrations/ 顶层那几个 2026*.sql 是
+      // InsForge/Postgres 时代残留，语法不兼容 D1，不要让 wrangler 读到。
+      "migrations_dir": "migrations/d1"
     }
   ],
   "r2_buckets": [
@@ -38,6 +41,11 @@
     // /api/auth/google/callback；改这里必须同步改 Google Console 的已授权重定向 URI。
     "APP_ORIGIN": "https://app.all-bill.com",
     "GOOGLE_CLIENT_ID": "490117963106-31ss52gua36fa8i231ss074ed61rn330.apps.googleusercontent.com",
+    // iOS 原生 Google Sign-In 用的 OAuth Client ID（应用类型 = iOS，Bundle ID
+    // 必须是 com.chunfenshijie.worldcredit）。/api/auth/token 的 grant_type=google
+    // 会把 web 与 iOS 两个 client id 都当作合法 audience，ID token 的 aud 命中其一即可。
+    // Client ID 不是密钥，与 GOOGLE_CLIENT_ID 一样放在 vars。
+    "GOOGLE_IOS_CLIENT_ID": "752531640450-l3h029onesb3u51t3s40jok1j5stgnoc.apps.googleusercontent.com",
     "VAPID_SUBJECT": "mailto:hubo@worldcredit.app",
     "VAPID_PUBLIC_KEY": "BBtXBsGVcB6xC80wd33dTZmCtSDVesZZvI-X4kbMNL_Bdt-dsjY15Xxld-1WJ97nxvUzKjGq6EsGHB2vSRIrP7M"
   }
