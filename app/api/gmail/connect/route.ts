@@ -35,10 +35,7 @@ export async function POST(request: Request) {
         id_token_invalid: "Google 身份校验失败",
         no_session_secret: "服务端未配置 SESSION_SECRET",
       };
-      return Response.json(
-        { error: messages[result.reason] ?? result.reason },
-        { status: 400 },
-      );
+      return Response.json({ error: messages[result.reason] ?? result.reason }, { status: 400 });
     }
     return Response.json({ ok: true, email: result.email });
   } catch (err) {

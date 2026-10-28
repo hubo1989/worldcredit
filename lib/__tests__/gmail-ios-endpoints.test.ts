@@ -46,7 +46,9 @@ describe("iOS /api/gmail/* endpoints", () => {
     db = createOpportunityDb();
     setDb(db as unknown as D1Database);
     await db
-      .prepare("INSERT INTO users (id, email, password_hash) VALUES ('u_ios_gmail', 'ios@example.com', 'x')")
+      .prepare(
+        "INSERT INTO users (id, email, password_hash) VALUES ('u_ios_gmail', 'ios@example.com', 'x')",
+      )
       .run();
   });
 
@@ -64,7 +66,9 @@ describe("iOS /api/gmail/* endpoints", () => {
       (await connectHandler(new Request(`${base}/connect`, { method: "POST", body: "{}" }))).status,
     ).toBe(401);
     expect((await syncHandler(new Request(`${base}/sync`, { method: "POST" }))).status).toBe(401);
-    expect((await disconnectHandler(new Request(`${base}/disconnect`, { method: "POST" }))).status).toBe(401);
+    expect(
+      (await disconnectHandler(new Request(`${base}/disconnect`, { method: "POST" }))).status,
+    ).toBe(401);
   });
 
   it("status 未连接时返回 fail-safe 形状", async () => {
@@ -73,8 +77,12 @@ describe("iOS /api/gmail/* endpoints", () => {
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
-      connected: false, email: null, status: null,
-      last_sync_at: null, last_sync_summary: null, last_error: null,
+      connected: false,
+      email: null,
+      status: null,
+      last_sync_at: null,
+      last_sync_summary: null,
+      last_error: null,
     });
   });
 
@@ -96,11 +104,14 @@ describe("iOS /api/gmail/* endpoints", () => {
 
   it("connect 缺 serverAuthCode 400", async () => {
     const res = await connectHandler(
-      new Request("https://app.all-bill.com/api/gmail/connect", authed({
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      })),
+      new Request(
+        "https://app.all-bill.com/api/gmail/connect",
+        authed({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }),
+      ),
     );
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toContain("serverAuthCode");
@@ -108,18 +119,25 @@ describe("iOS /api/gmail/* endpoints", () => {
 
   it("connect 坏授权码走 token_exchange 失败路径", async () => {
     // 注入 fetch：Google 对坏 code 返回 400，路由应透传 token_exchange 而不是打真实网络
-    __setGmailConnectDeps((async () => new Response("invalid_grant", { status: 400 })) as typeof fetch);
+    __setGmailConnectDeps(
+      (async () => new Response("invalid_grant", { status: 400 })) as typeof fetch,
+    );
     const res = await connectHandler(
-      new Request("https://app.all-bill.com/api/gmail/connect", authed({
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverAuthCode: "4/0bad-code" }),
-      })),
+      new Request(
+        "https://app.all-bill.com/api/gmail/connect",
+        authed({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serverAuthCode: "4/0bad-code" }),
+        }),
+      ),
     );
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toContain("token");
     // 失败不落库
-    const rows = await db.prepare("SELECT COUNT(*) c FROM gmail_connections").first<{ c: number }>();
+    const rows = await db
+      .prepare("SELECT COUNT(*) c FROM gmail_connections")
+      .first<{ c: number }>();
     expect(rows?.c).toBe(0);
   });
 
