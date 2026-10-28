@@ -19,6 +19,7 @@ import * as billsServer from './bills.server'
 import * as cardsServer from './cards.server'
 import * as dashboardServer from './dashboard.server'
 import * as emailBillsServer from './emailBills.server'
+import * as gmailServer from './gmail.server'
 import * as gmailLedgerServer from './gmail-ledger.server'
 import * as holdersServer from './holders.server'
 import * as payablesServer from './payables.server'
@@ -157,6 +158,21 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     createBillImportDraft: { impl: billDraftsServer.createBillImportDraft, bindField: { arg: 0, field: "created_by" }, memberGuard: guardObjField(0, "card_id", async (cardId, ctx) => { if (cardId) await assertCardAccess(cardId, ctx) }) },
     confirmBillImportDraft: { impl: billDraftsServer.confirmBillImportDraft, memberGuard: (args, ctx) => assertDraftAccess(args[0], ctx) },
     discardBillImportDraft: { impl: billDraftsServer.discardBillImportDraft, memberGuard: (args, ctx) => assertDraftAccess(args[0], ctx) },
+    getBillImportDrafts: { impl: billDraftsServer.getBillImportDrafts, bindUser: 0 },
+    updateBillImportDraft: {
+      impl: billDraftsServer.updateBillImportDraft,
+      memberGuard: async (args, ctx) => {
+        // member 只能把草稿改绑到自己有权的卡
+        await assertDraftAccess(args[0], ctx)
+        const updates = args[1] as { card_id?: string } | undefined
+        if (updates?.card_id) await assertCardAccess(updates.card_id, ctx)
+      },
+    },
+  },
+  gmail: {
+    getGmailConnection: { impl: gmailServer.getGmailConnection, bindUser: 0 },
+    syncGmailNow: { impl: gmailServer.syncGmailNow, bindUser: 0 },
+    disconnectGmail: { impl: gmailServer.disconnectGmail, bindUser: 0 },
   },
   bills: {
     getBillDashboardItems: { impl: billsServer.getBillDashboardItems, bindUser: 1 },

@@ -13,3 +13,9 @@ export function confirmBillImportDraft(...args: Parameters<typeof Server.confirm
 export function discardBillImportDraft(...args: Parameters<typeof Server.discardBillImportDraft>) {
   return callRpc<typeof Server.discardBillImportDraft>('billDrafts', 'discardBillImportDraft', ...args)
 }
+export function getBillImportDrafts(...args: Parameters<typeof Server.getBillImportDrafts>) {
+  return callRpc<typeof Server.getBillImportDrafts>('billDrafts', 'getBillImportDrafts', ...args)
+}
+export function updateBillImportDraft(...args: Parameters<typeof Server.updateBillImportDraft>) {
+  return callRpc<typeof Server.updateBillImportDraft>('billDrafts', 'updateBillImportDraft', ...args)
+}
