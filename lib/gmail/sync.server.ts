@@ -5,8 +5,8 @@
 //   其余（认不出人、卡对不上、字段缺）→ parkBillAsDraft 预填草稿，账单页手改
 // 每个 Gmail message 必写 gmail_sync_messages 一行做去重与审计。
 
-import { getDb, getWorkerEnv } from '../db/client'
-import { query, queryOne, execute } from '../db/helpers'
+import { getDb, getWorkerEnv } from "../db/client";
+import { query, queryOne, execute } from "../db/helpers";
 import {
   loadAiConfig,
   parseBillWithAI,
@@ -20,101 +20,114 @@ import {
   parkBillAsDraft,
   syncBillingDayFromBill,
   type BillParseResult,
-} from '../email-core'
-import { decryptToken } from './token-crypto'
-import { refreshAccessToken, listMessageRefs, getRawMessage, type GmailClientOptions } from './api'
+} from "../email-core";
+import { decryptToken } from "./token-crypto";
+import { refreshAccessToken, listMessageRefs, getRawMessage, type GmailClientOptions } from "./api";
 
 export interface GmailSyncSummary {
-  scanned: number
-  written: number
-  drafted: number
-  skipped: number
-  failed: number
-  errors: string[]
+  scanned: number;
+  written: number;
+  drafted: number;
+  skipped: number;
+  failed: number;
+  errors: string[];
 }
 
 /** 预筛查询：宁可多拉几封让 AI 用 email_kind 门禁过滤，也不要漏账单。 */
 const DEFAULT_QUERY =
-  'newer_than:30d (账单 OR 对账单 OR 月结单 OR statement OR "payment due" OR "e-statement")'
+  'newer_than:30d (账单 OR 对账单 OR 月结单 OR statement OR "payment due" OR "e-statement")';
 
 interface SyncDeps {
-  parse: (text: string) => Promise<BillParseResult>
-  fetchImpl?: typeof fetch
-  clientId?: string
-  clientSecret?: string
-  sessionSecret?: string
-  bucket?: R2Bucket | null
+  parse: (text: string) => Promise<BillParseResult>;
+  fetchImpl?: typeof fetch;
+  clientId?: string;
+  clientSecret?: string;
+  sessionSecret?: string;
+  bucket?: R2Bucket | null;
 }
 
-let depsOverride: SyncDeps | null = null
+let depsOverride: SyncDeps | null = null;
 /** 仅测试用：注入 AI 解析、fetch 与 R2。 */
 export function __setGmailSyncDeps(deps: SyncDeps | null) {
-  depsOverride = deps
+  depsOverride = deps;
 }
 
 function resolveSecret(override?: string): string {
-  if (override) return override
-  const env = getWorkerEnv() as { SESSION_SECRET?: string }
-  return env.SESSION_SECRET
-    ?? (typeof process !== 'undefined' ? process.env?.SESSION_SECRET ?? '' : '')
+  if (override) return override;
+  const env = getWorkerEnv() as { SESSION_SECRET?: string };
+  return (
+    env.SESSION_SECRET ??
+    (typeof process !== "undefined" ? (process.env?.SESSION_SECRET ?? "") : "")
+  );
 }
 
 /** parseRawMessage 不单独留 message-id，这里从原始字节头部取，用于审计对账。 */
 function extractRfcMessageId(raw: Uint8Array): string | null {
-  const head = new TextDecoder('utf-8', { fatal: false }).decode(raw.subarray(0, 2048))
-  const m = head.match(/^message-id:\s*(.+)$/im)
-  return m ? m[1].trim() : null
+  const head = new TextDecoder("utf-8", { fatal: false }).decode(raw.subarray(0, 2048));
+  const m = head.match(/^message-id:\s*(.+)$/im);
+  return m ? m[1].trim() : null;
 }
 
 export async function syncUserGmail(userId: string): Promise<GmailSyncSummary> {
-  const summary: GmailSyncSummary = { scanned: 0, written: 0, drafted: 0, skipped: 0, failed: 0, errors: [] }
-  const db = getDb()
+  const summary: GmailSyncSummary = {
+    scanned: 0,
+    written: 0,
+    drafted: 0,
+    skipped: 0,
+    failed: 0,
+    errors: [],
+  };
+  const db = getDb();
 
   const conn = await queryOne<{ user_id: string; refresh_token_enc: string }>(
     "SELECT user_id, refresh_token_enc FROM gmail_connections WHERE user_id = ? AND status = 'active'",
-    [userId]
-  )
-  if (conn.error) throw new Error(conn.error.message)
-  if (!conn.data) throw new Error('未连接 Gmail 或连接已停用')
+    [userId],
+  );
+  if (conn.error) throw new Error(conn.error.message);
+  if (!conn.data) throw new Error("未连接 Gmail 或连接已停用");
 
   const deps: SyncDeps = depsOverride ?? {
     parse: async (text) => parseBillWithAI(await loadAiConfig(db), text),
-  }
-  const secret = resolveSecret(deps.sessionSecret)
+  };
+  const secret = resolveSecret(deps.sessionSecret);
   const env = getWorkerEnv() as {
-    GOOGLE_CLIENT_ID?: string; GOOGLE_CLIENT_SECRET?: string; ATTACHMENTS?: R2Bucket
-  }
+    GOOGLE_CLIENT_ID?: string;
+    GOOGLE_CLIENT_SECRET?: string;
+    ATTACHMENTS?: R2Bucket;
+  };
   const clientOpts: GmailClientOptions = {
     fetchImpl: deps.fetchImpl,
     clientId: deps.clientId ?? env.GOOGLE_CLIENT_ID ?? process.env?.GOOGLE_CLIENT_ID,
-    clientSecret: deps.clientSecret ?? env.GOOGLE_CLIENT_SECRET ?? process.env?.GOOGLE_CLIENT_SECRET,
-  }
+    clientSecret:
+      deps.clientSecret ?? env.GOOGLE_CLIENT_SECRET ?? process.env?.GOOGLE_CLIENT_SECRET,
+  };
 
-  const refreshToken = await decryptToken(conn.data.refresh_token_enc, secret)
-  const tokens = await refreshAccessToken(refreshToken, clientOpts)
+  const refreshToken = await decryptToken(conn.data.refresh_token_enc, secret);
+  const tokens = await refreshAccessToken(refreshToken, clientOpts);
   await execute(
     "UPDATE gmail_connections SET access_token_expires_at = ?, updated_at = datetime('now') WHERE user_id = ?",
-    [new Date(Date.now() + tokens.expiresIn * 1000).toISOString(), userId]
-  )
+    [new Date(Date.now() + tokens.expiresIn * 1000).toISOString(), userId],
+  );
 
-  const { refs } = await listMessageRefs(tokens.accessToken, DEFAULT_QUERY, clientOpts)
-  summary.scanned = refs.length
+  const { refs } = await listMessageRefs(tokens.accessToken, DEFAULT_QUERY, clientOpts);
+  summary.scanned = refs.length;
 
   for (const ref of refs) {
     const seen = await queryOne(
-      'SELECT gmail_message_id FROM gmail_sync_messages WHERE gmail_message_id = ?', [ref.id]
-    )
-    if (seen.data) continue
+      "SELECT gmail_message_id FROM gmail_sync_messages WHERE gmail_message_id = ?",
+      [ref.id],
+    );
+    if (seen.data) continue;
 
     try {
-      const raw = await getRawMessage(tokens.accessToken, ref.id, clientOpts)
-      const parsedTop = parseRawMessage(raw)
-      const r2Key = `gmail-raw/${userId}/${ref.id}.eml`
-      const bucket = deps.bucket !== undefined ? deps.bucket : (env.ATTACHMENTS ?? null)
-      if (bucket) await bucket.put(r2Key, raw as unknown as ArrayBuffer)
+      const raw = await getRawMessage(tokens.accessToken, ref.id, clientOpts);
+      const parsedTop = parseRawMessage(raw);
+      const r2Key = `gmail-raw/${userId}/${ref.id}.eml`;
+      const bucket = deps.bucket !== undefined ? deps.bucket : (env.ATTACHMENTS ?? null);
+      if (bucket) await bucket.put(r2Key, raw as unknown as ArrayBuffer);
 
-      const aiResult = await deps.parse(parsedTop.text)
-      const outcome = await routeParsedMessage({ db, userId, top: parsedTop, aiResult })
+      const aiResult = await deps.parse(parsedTop.text);
+      const outcome = await routeParsedMessage({ db, userId, top: parsedTop, aiResult });
 
       await execute(
         `INSERT INTO gmail_sync_messages
@@ -122,45 +135,49 @@ export async function syncUserGmail(userId: string): Promise<GmailSyncSummary> {
             raw_r2_key, status, bill_id, draft_id, parse_confidence, error_msg)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
-          ref.id, userId, ref.threadId,
+          ref.id,
+          userId,
+          ref.threadId,
           extractRfcMessageId(raw),
           parsedTop.headers.from ?? null,
           parsedTop.headers.subject ?? null,
           parsedTop.headers.date ?? null,
-          r2Key, outcome.status, outcome.billId ?? null, outcome.draftId ?? null,
-          typeof aiResult.confidence === 'number' ? aiResult.confidence : null,
+          r2Key,
+          outcome.status,
+          outcome.billId ?? null,
+          outcome.draftId ?? null,
+          typeof aiResult.confidence === "number" ? aiResult.confidence : null,
           outcome.reason ?? null,
-        ]
-      )
-      if (outcome.status === 'bill_written') summary.written++
-      else if (outcome.status === 'draft_parked') summary.drafted++
-      else if (outcome.status === 'skipped') summary.skipped++
-      else summary.failed++
+        ],
+      );
+      if (outcome.status === "bill_written") summary.written++;
+      else if (outcome.status === "draft_parked") summary.drafted++;
+      else if (outcome.status === "skipped") summary.skipped++;
+      else summary.failed++;
     } catch (err) {
-      summary.failed++
-      const msg = err instanceof Error ? err.message : String(err)
-      summary.errors.push(`${ref.id}: ${msg}`)
+      summary.failed++;
+      const msg = err instanceof Error ? err.message : String(err);
+      summary.errors.push(`${ref.id}: ${msg}`);
       await execute(
         "INSERT INTO gmail_sync_messages (gmail_message_id, user_id, status, error_msg) VALUES (?,?, 'failed', ?)",
-        [ref.id, userId, msg]
-      )
+        [ref.id, userId, msg],
+      );
     }
   }
 
-  const summaryText =
-    `扫描 ${summary.scanned}｜落账单 ${summary.written}｜草稿 ${summary.drafted}｜跳过 ${summary.skipped}｜失败 ${summary.failed}`
+  const summaryText = `扫描 ${summary.scanned}｜落账单 ${summary.written}｜草稿 ${summary.drafted}｜跳过 ${summary.skipped}｜失败 ${summary.failed}`;
   await execute(
     "UPDATE gmail_connections SET last_sync_at = datetime('now'), last_sync_summary = ?, last_error = ?, updated_at = datetime('now') WHERE user_id = ?",
-    [summaryText, summary.errors[0] ?? null, userId]
-  )
-  return summary
+    [summaryText, summary.errors[0] ?? null, userId],
+  );
+  return summary;
 }
 
 interface RouteOutcome {
-  status: 'bill_written' | 'draft_parked' | 'skipped' | 'failed'
-  billId?: string | null
-  draftId?: string | null
-  reason?: string | null
+  status: "bill_written" | "draft_parked" | "skipped" | "failed";
+  billId?: string | null;
+  draftId?: string | null;
+  reason?: string | null;
 }
 
 /**
@@ -170,41 +187,42 @@ interface RouteOutcome {
  *   其余一切「解析出了账单但自动落不下去」→ 预填草稿
  */
 async function routeParsedMessage(params: {
-  db: D1Database
-  userId: string
-  top: ReturnType<typeof parseRawMessage>
-  aiResult: BillParseResult
+  db: D1Database;
+  userId: string;
+  top: ReturnType<typeof parseRawMessage>;
+  aiResult: BillParseResult;
 }): Promise<RouteOutcome> {
-  const { db, userId, top, aiResult } = params
+  const { db, userId, top, aiResult } = params;
 
-  if (aiResult.email_kind && aiResult.email_kind !== 'statement') {
-    return { status: 'skipped', reason: `非账单邮件（email_kind=${aiResult.email_kind}）` }
+  if (aiResult.email_kind && aiResult.email_kind !== "statement") {
+    return { status: "skipped", reason: `非账单邮件（email_kind=${aiResult.email_kind}）` };
   }
-  const zeroBill = Number(aiResult.bill_amount) === 0
+  const zeroBill = Number(aiResult.bill_amount) === 0;
   if (
     aiResult.is_bill === false ||
     !aiResult.bill_month ||
-    aiResult.bill_amount == null || Number.isNaN(Number(aiResult.bill_amount)) ||
+    aiResult.bill_amount == null ||
+    Number.isNaN(Number(aiResult.bill_amount)) ||
     (!zeroBill && !aiResult.due_date)
   ) {
-    return { status: 'skipped', reason: 'Not a bill email or missing required fields' }
+    return { status: "skipped", reason: "Not a bill email or missing required fields" };
   }
 
-  const scope = await loadHolderScope(db, userId)
-  const toHeader = top.headers.to ?? ''
+  const scope = await loadHolderScope(db, userId);
+  const toHeader = top.headers.to ?? "";
   const resolution = resolveHolder({
     holders: scope.holders,
     defaultHolderId: scope.defaultHolderId,
     headerName: extractHeaderDisplayName(toHeader),
     bodyName: extractNameFromBody(top.text),
-  })
-  const trusted = resolution.source === 'header_name' || resolution.source === 'body_honorific'
+  });
+  const trusted = resolution.source === "header_name" || resolution.source === "body_honorific";
 
-  const prefill = { ...aiResult, raw_text: top.text.slice(0, 2000) }
+  const prefill = { ...aiResult, raw_text: top.text.slice(0, 2000) };
 
   if (!resolution.holderId) {
-    const draftId = await parkBillAsDraft(db, userId, prefill)
-    return { status: 'draft_parked', draftId, reason: '未找到持卡人，预填草稿待人工确认' }
+    const draftId = await parkBillAsDraft(db, userId, prefill);
+    return { status: "draft_parked", draftId, reason: "未找到持卡人，预填草稿待人工确认" };
   }
 
   const created = await findOrCreateCardForHolder(db, {
@@ -217,38 +235,38 @@ async function routeParsedMessage(params: {
     dueDate: aiResult.due_date ?? null,
     receivedDate: top.headers.date ?? null,
     allowCreate: trusted,
-  })
+  });
   if (!created.ok) {
-    const draftId = await parkBillAsDraft(db, userId, prefill)
-    return { status: 'draft_parked', draftId, reason: `${created.reason}｜草稿已预填` }
+    const draftId = await parkBillAsDraft(db, userId, prefill);
+    return { status: "draft_parked", draftId, reason: `${created.reason}｜草稿已预填` };
   }
 
-  const outcome = await upsertBillForCard(db, created.cardId, aiResult, { trusted })
-  await syncBillingDayFromBill(db, created.cardId, aiResult)
+  const outcome = await upsertBillForCard(db, created.cardId, aiResult, { trusted });
+  await syncBillingDayFromBill(db, created.cardId, aiResult);
   return {
-    status: 'bill_written',
+    status: "bill_written",
     billId: outcome.billId,
-    reason: outcome.action === 'preserved' ? outcome.reason : null,
-  }
+    reason: outcome.action === "preserved" ? outcome.reason : null,
+  };
 }
 
 /** cron 用：同步全部 active 连接，单用户失败不影响其他用户。 */
 export async function syncAllGmailConnections(): Promise<{ users: number; failures: number }> {
   const rows = await query<{ user_id: string }>(
-    "SELECT user_id FROM gmail_connections WHERE status = 'active'"
-  )
-  let failures = 0
+    "SELECT user_id FROM gmail_connections WHERE status = 'active'",
+  );
+  let failures = 0;
   for (const row of rows.data ?? []) {
     try {
-      await syncUserGmail(row.user_id)
+      await syncUserGmail(row.user_id);
     } catch (err) {
-      failures++
-      const msg = err instanceof Error ? err.message : String(err)
+      failures++;
+      const msg = err instanceof Error ? err.message : String(err);
       await execute(
         "UPDATE gmail_connections SET status = 'error', last_error = ?, updated_at = datetime('now') WHERE user_id = ?",
-        [msg.slice(0, 300), row.user_id]
-      )
+        [msg.slice(0, 300), row.user_id],
+      );
     }
   }
-  return { users: rows.data?.length ?? 0, failures }
+  return { users: rows.data?.length ?? 0, failures };
 }

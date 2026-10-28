@@ -7,36 +7,38 @@
  * key，'ai_config' 保留为兼容兜底。
  */
 
-import type { AiConfig, BillParseResult } from './types'
+import type { AiConfig, BillParseResult } from "./types";
 
 export async function loadAiConfig(db: D1Database): Promise<AiConfig> {
-  const rows = await db.prepare(
-    "SELECT key, value FROM system_settings WHERE key IN ('ai_api_key', 'ai_base_url', 'ai_model', 'ai_config')"
-  ).all<{ key: string; value: string }>()
+  const rows = await db
+    .prepare(
+      "SELECT key, value FROM system_settings WHERE key IN ('ai_api_key', 'ai_base_url', 'ai_model', 'ai_config')",
+    )
+    .all<{ key: string; value: string }>();
 
-  const settings = new Map<string, unknown>()
+  const settings = new Map<string, unknown>();
   for (const row of rows.results || []) {
     try {
-      settings.set(row.key, JSON.parse(row.value))
+      settings.set(row.key, JSON.parse(row.value));
     } catch {
-      settings.set(row.key, row.value)
+      settings.set(row.key, row.value);
     }
   }
 
-  const legacy = settings.get('ai_config')
+  const legacy = settings.get("ai_config");
   const legacyConfig =
-    legacy && typeof legacy === 'object' ? (legacy as Partial<AiConfig>) : undefined
+    legacy && typeof legacy === "object" ? (legacy as Partial<AiConfig>) : undefined;
 
   const pick = (key: string, legacyValue?: string): string => {
-    const value = settings.get(key)
-    return (typeof value === 'string' && value) || legacyValue || ''
-  }
+    const value = settings.get(key);
+    return (typeof value === "string" && value) || legacyValue || "";
+  };
 
   return {
-    apiKey: pick('ai_api_key', legacyConfig?.apiKey),
-    baseURL: pick('ai_base_url', legacyConfig?.baseURL) || 'https://api.openai.com/v1',
-    model: pick('ai_model', legacyConfig?.model) || 'gpt-4o',
-  }
+    apiKey: pick("ai_api_key", legacyConfig?.apiKey),
+    baseURL: pick("ai_base_url", legacyConfig?.baseURL) || "https://api.openai.com/v1",
+    model: pick("ai_model", legacyConfig?.model) || "gpt-4o",
+  };
 }
 
 // ─── OpenAI bill parser ───────────────────────────────────────────────────────
@@ -57,26 +59,33 @@ email_kind 是邮件类型，按实际内容选：
 statement_date 只在邮件明确给出本期出账日/Statement Date（完整日期）时填写。注意：自动扣款通知里的 "Statement balance as of Oct 16" 不是出账日，不要填进 statement_date。
 statement_day 只在邮件正文明确写出「账单日」及其数值（如「账单日 09」「账单日：每月21日」「Statement day: 22」）时填 1-31 的整数。不要从账期起止日期、还款日或 statement_date 推算；没有就填 null。
 如果不是账单邮件，返回 {"is_bill": false}
-只返回 JSON。`
+只返回 JSON。`;
 
-export async function parseBillWithAI(config: AiConfig, emailBody: string): Promise<BillParseResult> {
-  const endpoint = config.baseURL.replace(/\/$/, '') + '/chat/completions'
+export async function parseBillWithAI(
+  config: AiConfig,
+  emailBody: string,
+): Promise<BillParseResult> {
+  const endpoint = config.baseURL.replace(/\/$/, "") + "/chat/completions";
   const res = await fetch(endpoint, {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`,
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify({
-      model: config.model, temperature: 0,
-      messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: emailBody }],
-      response_format: { type: 'json_object' },
+      model: config.model,
+      temperature: 0,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: emailBody },
+      ],
+      response_format: { type: "json_object" },
     }),
-  })
+  });
   if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`OpenAI API error (${res.status}): ${text.slice(0, 500)}`)
+    const text = await res.text();
+    throw new Error(`OpenAI API error (${res.status}): ${text.slice(0, 500)}`);
   }
-  const json = await res.json() as { choices: Array<{ message: { content: string } }> }
-  return JSON.parse(json.choices?.[0]?.message?.content ?? '{}') as BillParseResult
+  const json = (await res.json()) as { choices: Array<{ message: { content: string } }> };
+  return JSON.parse(json.choices?.[0]?.message?.content ?? "{}") as BillParseResult;
 }

@@ -19,7 +19,7 @@ function mockFetch(handler: (url: string) => Promise<Response>) {
 describe("gmail api client", () => {
   it("refreshes access token with client credentials", async () => {
     const fetchImpl = mockFetch(async () =>
-      jsonResponse({ access_token: "at-1", expires_in: 3600, scope: "x" })
+      jsonResponse({ access_token: "at-1", expires_in: 3600, scope: "x" }),
     );
     const tokens = await refreshAccessToken("rt-1", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -34,7 +34,7 @@ describe("gmail api client", () => {
 
   it("lists message refs with page token", async () => {
     const fetchImpl = mockFetch(async () =>
-      jsonResponse({ messages: [{ id: "m1", threadId: "t1" }, { id: "m2" }], nextPageToken: "t2" })
+      jsonResponse({ messages: [{ id: "m1", threadId: "t1" }, { id: "m2" }], nextPageToken: "t2" }),
     );
     const page = await listMessageRefs("at", "newer_than:30d 账单", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -49,16 +49,21 @@ describe("gmail api client", () => {
 
   it("returns raw message bytes decoded from base64url", async () => {
     const raw = new TextEncoder().encode("From: bank@example\r\n\r\nbody");
-    const b64 = btoa(String.fromCharCode(...raw)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const b64 = btoa(String.fromCharCode(...raw))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
     const fetchImpl = mockFetch(async () => jsonResponse({ raw: b64, id: "m1" }));
-    const bytes = await getRawMessage("at", "m1", { fetchImpl: fetchImpl as unknown as typeof fetch });
+    const bytes = await getRawMessage("at", "m1", {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
     expect(new TextDecoder().decode(bytes)).toContain("body");
   });
 
   it("surfaces API errors with status and snippet", async () => {
     const fetchImpl = mockFetch(async () => new Response("quota exceeded", { status: 429 }));
     await expect(
-      getRawMessage("at", "m1", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      getRawMessage("at", "m1", { fetchImpl: fetchImpl as unknown as typeof fetch }),
     ).rejects.toThrow(/429/);
   });
 });

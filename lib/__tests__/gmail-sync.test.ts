@@ -18,18 +18,23 @@ let db: SqliteD1;
 const SECRET = "test-gmail-sync-secret";
 
 const RAW_EML = new TextEncoder().encode(
-  "From: statements@chase.example\r\nTo: Hubo <hubo@example.com>\r\nSubject: Your statement\r\nDate: Wed, 28 Oct 2026 09:00:00 +0000\r\n\r\n尊敬的Hubo先生，本期应还 1234.56"
+  "From: statements@chase.example\r\nTo: Hubo <hubo@example.com>\r\nSubject: Your statement\r\nDate: Wed, 28 Oct 2026 09:00:00 +0000\r\n\r\n尊敬的Hubo先生，本期应还 1234.56",
 );
 
 function toRawB64(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
 function gmailFetch(handlers: { list: unknown; raw: unknown; token?: unknown }) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/token")) {
-      return new Response(JSON.stringify(handlers.token ?? { access_token: "at", expires_in: 3600 }));
+      return new Response(
+        JSON.stringify(handlers.token ?? { access_token: "at", expires_in: 3600 }),
+      );
     }
     if (url.includes("/messages?")) return new Response(JSON.stringify(handlers.list));
     return new Response(JSON.stringify(handlers.raw));
@@ -47,7 +52,7 @@ async function seedConnection(userId: string) {
   const enc = await encryptToken("rt-1", SECRET);
   await db
     .prepare(
-      "INSERT INTO gmail_connections (user_id,google_sub,email,refresh_token_enc,scopes,status) VALUES (?,?,?,?,?,?)"
+      "INSERT INTO gmail_connections (user_id,google_sub,email,refresh_token_enc,scopes,status) VALUES (?,?,?,?,?,?)",
     )
     .bind(userId, `sub-${userId}`, `${userId}@example.test`, enc, "gmail.readonly", "active")
     .run();
@@ -55,11 +60,15 @@ async function seedConnection(userId: string) {
 
 async function seedHolderAndProduct() {
   await db
-    .prepare("INSERT INTO card_holders (id,created_by,managed_by,name,created_at) VALUES (?,?,?,?,?)")
+    .prepare(
+      "INSERT INTO card_holders (id,created_by,managed_by,name,created_at) VALUES (?,?,?,?,?)",
+    )
     .bind("h1", "u1", "u1", "Hubo", "2026-10-01T00:00:00Z")
     .run();
   await db
-    .prepare("INSERT INTO card_products (id,bank_name,card_name,currency,created_at) VALUES (?,?,?,?,?)")
+    .prepare(
+      "INSERT INTO card_products (id,bank_name,card_name,currency,created_at) VALUES (?,?,?,?,?)",
+    )
     .bind("p1", "Chase Bank", "Sapphire", "USD", "2026-10-01T00:00:00Z")
     .run();
 }
@@ -191,7 +200,9 @@ describe("syncAllGmailConnections", () => {
     await seedConnection("u2");
     await seedHolderAndProduct();
     await db
-      .prepare("INSERT INTO card_holders (id,created_by,managed_by,name,created_at) VALUES (?,?,?,?,?)")
+      .prepare(
+        "INSERT INTO card_holders (id,created_by,managed_by,name,created_at) VALUES (?,?,?,?,?)",
+      )
       .bind("h2", "u2", "u2", "Hubo", "2026-10-02T00:00:00Z")
       .run();
 

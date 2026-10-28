@@ -18,7 +18,9 @@ describe("gmail token crypto", () => {
 
   it("fails closed on wrong key or tampered ciphertext", async () => {
     const enc = await encryptToken("secret-value", SECRET);
-    await expect(decryptToken(enc, "other-secret-xxxxxxxx")).rejects.toBeInstanceOf(GmailCryptoError);
+    await expect(decryptToken(enc, "other-secret-xxxxxxxx")).rejects.toBeInstanceOf(
+      GmailCryptoError,
+    );
     const tampered = enc.slice(0, -4) + (enc.endsWith("AAAA") ? "BBBB" : "AAAA");
     await expect(decryptToken(tampered, SECRET)).rejects.toBeInstanceOf(GmailCryptoError);
   });
