@@ -81,3 +81,11 @@ export function resolveAuthOrigin(request: Request): string {
 export function googleRedirectUri(request: Request): string {
   return `${resolveAuthOrigin(request)}${GOOGLE_CALLBACK_PATH}`
 }
+
+/** Gmail 增量授权回调路径。与登录回调分开：登录走 /api/auth/google/callback，
+ *  连接邮箱走这里；两者都要在 Google Console 已授权重定向 URI 里登记。 */
+export const GMAIL_CALLBACK_PATH = '/api/auth/gmail/callback'
+
+export function gmailRedirectUri(request: Request): string {
+  return `${resolveAuthOrigin(request)}${GMAIL_CALLBACK_PATH}`
+}
