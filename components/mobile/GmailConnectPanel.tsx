@@ -25,11 +25,25 @@ export function GmailConnectPanel() {
 
   const sync = async () => {
     setBusy(true)
-    setNotice(null)
+    setNotice('同步中…')
     try {
-      const summary = await syncGmailNow()
+      // 每封账单邮件要过一遍 LLM 解析（5–15s/封），一次性同步几十封会超过
+      // Cloudflare ~100s 代理超时（首次回填实测 9 分钟）→ 请求被 524 掐断、
+      // 界面报「同步失败」但后台其实还在跑。分轮拉取：每轮 6 封，看
+      // remaining 续拉，单请求稳在超时线以内。
+      const acc = { written: 0, drafted: 0, skipped: 0, failed: 0 }
+      let remaining = 1
+      for (let round = 0; remaining > 0 && round < 30; round++) {
+        const s = await syncGmailNow(undefined, { maxMessages: 6 })
+        acc.written += s.written
+        acc.drafted += s.drafted
+        acc.skipped += s.skipped
+        acc.failed += s.failed
+        remaining = s.remaining
+        setNotice(`同步中… 落账单 ${acc.written}｜草稿 ${acc.drafted}｜剩余 ${remaining} 封`)
+      }
       setNotice(
-        `同步完成：扫描 ${summary.scanned}，落账单 ${summary.written}，草稿 ${summary.drafted}，跳过 ${summary.skipped}，失败 ${summary.failed}`
+        `同步完成：落账单 ${acc.written}，草稿 ${acc.drafted}，跳过 ${acc.skipped}，失败 ${acc.failed}`
       )
       await reload()
     } catch (err) {

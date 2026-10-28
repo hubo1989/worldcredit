@@ -36,9 +36,12 @@ export async function getGmailConnection(userId?: string): Promise<GmailConnecti
   }
 }
 
-export async function syncGmailNow(userId?: string): Promise<GmailSyncSummary> {
+export async function syncGmailNow(
+  userId?: string,
+  opts?: { maxMessages?: number },
+): Promise<GmailSyncSummary> {
   if (!userId) throw new Error('未登录，无法同步 Gmail')
-  return syncUserGmail(userId)
+  return syncUserGmail(userId, opts)
 }
 
 /**
