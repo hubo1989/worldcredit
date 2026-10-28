@@ -36,6 +36,11 @@
       "*/15 * * * *"
     ]
   },
+  // Workers 日志留存（排障用）：console.* 与未捕获异常保留 7 天，可在
+  // dashboard / wrangler tail 查询。2026-10-29 为排查 Gmail 同步静默失败启用。
+  "observability": {
+    "enabled": true
+  },
   "vars": {
     // OAuth 回调的规范域名。Google Console 里登记的 redirect_uri 对应该域名的
     // /api/auth/google/callback；改这里必须同步改 Google Console 的已授权重定向 URI。
