@@ -509,21 +509,10 @@ export async function createBill(
   const { items: _items, ...billRow } = bill;
   void _items;
   const { error } = await execute(
-    `INSERT INTO bills (id, created_by, card_id, bill_month, statement_start, statement_end, statement_date, bill_amount, min_payment, due_date, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      (billRow as { created_by?: string }).created_by || null,
-      billRow.card_id,
-      billRow.bill_month,
-      billRow.statement_start || null,
-      billRow.statement_end || null,
-      billRow.statement_date || null,
-      billRow.bill_amount,
-      billRow.min_payment || 0,
-      billRow.due_date,
-      billRow.status || "unpaid",
-    ],
+    `INSERT INTO bills (id, card_id, bill_month, statement_start, statement_end, statement_date, bill_amount, min_payment, due_date, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, billRow.card_id, billRow.bill_month, billRow.statement_start || null, billRow.statement_end || null,
+     billRow.statement_date || null, billRow.bill_amount, billRow.min_payment || 0, billRow.due_date, billRow.status || "unpaid"]
   );
   if (error) throw new Error(error.message);
   const created = await getBillById(id);

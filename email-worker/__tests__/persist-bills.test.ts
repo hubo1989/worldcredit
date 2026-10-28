@@ -7,8 +7,8 @@ import {
   keepPaidStatus,
   persistNestedBills,
   upsertBillForCard,
-} from '../src/bills'
-import type { BillParseResult, NestedBillMessage } from '../src/types'
+} from '../../lib/email-core/bills'
+import type { BillParseResult, NestedBillMessage } from '../../lib/email-core/types'
 
 const PRODUCT = { id: 'p1', bank_name: '招商银行', currency: 'CNY', is_active: 1, created_at: '2026-01-01' }
 

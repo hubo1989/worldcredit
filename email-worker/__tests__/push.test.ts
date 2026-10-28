@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import worker from '../src/index'
 import { createFakeD1 } from './fakeD1'
-import type { BillParseResult, Env } from '../src/types'
+import type { BillParseResult, Env } from '../../lib/email-core/types'
 
 const USER_ID = '11111111-1111-1111-1111-111111111111'
 const RECIPIENT = `bills+${USER_ID}@20160325.xyz`

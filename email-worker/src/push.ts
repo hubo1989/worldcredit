@@ -1,6 +1,6 @@
 import type { ApnsConfig } from '../../lib/apns-client'
 import { broadcastSilentSync } from '../../lib/apns-broadcast'
-import type { Env } from './types'
+import type { Env } from '../../lib/email-core/types'
 
 /** Keep notification delivery outside the bill import transaction and response path. */
 export function scheduleBillSync(env: Env, ctx: ExecutionContext, userId: string): void {
