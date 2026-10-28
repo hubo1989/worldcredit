@@ -66,6 +66,16 @@ enum UITestConfiguration {
 #if DEBUG
 struct OfflineUITestNetworkSession: NetworkSession {
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        // 唯一例外：设置页的 Gmail 连接状态。离线基线是未连接；UI 测试可用
+        // WORLDCREDIT_UI_TEST_GMAIL=connected 注入已连接契约样例验证另一套布局。
+        if request.url?.path == "/api/gmail/status", request.httpMethod == "GET" {
+            let connected = ProcessInfo.processInfo.environment["WORLDCREDIT_UI_TEST_GMAIL"] == "connected"
+            let json = connected
+                ? #"{"connected":true,"email":"hubo@20160325.xyz","status":"active","last_sync_at":"2026-10-28 12:57:32","last_sync_summary":"扫描 5｜落账单 2｜草稿 1｜跳过 2｜失败 0","last_error":null}"#
+                : #"{"connected":false,"email":null,"status":null,"last_sync_at":null,"last_sync_summary":null,"last_error":null}"#
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+            return (Data(json.utf8), response)
+        }
         // No URLSession exists in this fixture, including when an unexpected URL is passed.
         throw URLError(.notConnectedToInternet)
     }

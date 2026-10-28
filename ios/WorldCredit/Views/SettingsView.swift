@@ -70,6 +70,8 @@ struct SettingsView: View {
                     .disabled(appState.isSyncing)
                 }
 
+                GmailSyncSection()
+
                 Section("安全与隐私") {
                     Toggle("启用 \(BiometricAuthManager.shared.biometryName) 锁定", isOn: Binding(
                         get: { appState.isBiometricsEnabled },
