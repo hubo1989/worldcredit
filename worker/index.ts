@@ -1,6 +1,7 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { handleScheduled } from "./cron";
+import { syncAllGmailConnections } from "../lib/gmail/sync.server";
 import { routeOpportunityCron, scanOpportunityNotifications, webPushSender } from "./opportunity-cron";
 import { setDb, setWorkerEnv } from "../lib/db/client";
 
@@ -57,6 +58,16 @@ export default {
     }
     if (route === "bills") {
       ctx.waitUntil(handleScheduled(event, env, ctx));
+      // Gmail 拉取：只在每日账单 cron（0 9）跑，*/15 的权益扫描不掺和。
+      // 放在 handleScheduled 旁边而不是其内部——那边有「无订阅/无账单即 return」
+      // 的提前退出，插在尾部会让拉取在这些日子里静默跳过。
+      // 单用户失败由 syncAllGmailConnections 内部隔离（置 status='error'）。
+      ctx.waitUntil(
+        syncAllGmailConnections().then(
+          (r) => console.log(`[cron] gmail sync done: users=${r.users} failures=${r.failures}`),
+          (err) => console.error("[cron] gmail sync failed:", err),
+        ),
+      );
       return;
     }
     console.log(`[scheduled] unhandled cron ${event.cron}`);

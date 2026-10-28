@@ -8,6 +8,8 @@
 //   4) 非账单邮件记 skipped 且不建账单
 //   5) syncAllGmailConnections 单用户失败不影响其他用户
 import { beforeAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { setDb, setWorkerEnv } from "../db/client";
 import { createOpportunityDb, type SqliteD1 } from "./helpers/sqlite-d1";
 import { encryptToken } from "../gmail/token-crypto";
@@ -240,5 +242,14 @@ describe("syncAllGmailConnections", () => {
       .prepare("SELECT status FROM gmail_sync_messages WHERE gmail_message_id='u2m1'")
       .first<{ status: string }>();
     expect(u2msg?.status).toBe("bill_written");
+  });
+
+  it("每日账单 cron（0 9）挂载了 Gmail 拉取，且不在 */15 权益扫描分支里", () => {
+    // 挂载点在 worker/index.ts 的 route === "bills" 分支（worker/cron.ts 内部有
+    // 「无订阅/无账单即 return」的提前退出，插在 cron.ts 尾部会被静默跳过）。
+    const src = readFileSync(join(__dirname, "../../worker/index.ts"), "utf8");
+    expect(src).toMatch(/import \{ syncAllGmailConnections \}/);
+    const billsBranch = src.split('route === "bills"')[1]?.split("return;")[0] ?? "";
+    expect(billsBranch).toContain("syncAllGmailConnections");
   });
 });
