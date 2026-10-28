@@ -178,14 +178,14 @@ describe("RPC registry contract", () => {
     expect(RPC_REGISTRY.benefits.recordBenefitUsage.memberGuard).toBeDefined();
   });
 
-  it('exposes the gmail connection surface, always session-bound', () => {
+  it("exposes the gmail connection surface, always session-bound", () => {
     // Gmail 连接是用户私产：状态/同步/断开全部 bindUser，不接受客户端传入 userId。
     expect(RPC_REGISTRY.gmail.getGmailConnection.bindUser).toBe(0);
     expect(RPC_REGISTRY.gmail.syncGmailNow.bindUser).toBe(0);
     expect(RPC_REGISTRY.gmail.disconnectGmail.bindUser).toBe(0);
   });
 
-  it('registers draft list and card rebinding for the email-import flow', () => {
+  it("registers draft list and card rebinding for the email-import flow", () => {
     expect(RPC_REGISTRY.billDrafts.getBillImportDrafts.bindUser).toBe(0);
     expect(RPC_REGISTRY.billDrafts.updateBillImportDraft.memberGuard).toBeDefined();
   });
