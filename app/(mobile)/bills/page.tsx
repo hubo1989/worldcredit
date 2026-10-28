@@ -15,6 +15,7 @@ import { syncGmailLedgerToCardsAndBills } from '@/lib/api/sync-gmail'
 import { getHolders } from '@/lib/api/holders'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
+import { BillDraftsPanel } from '@/components/mobile/BillDraftsPanel'
 import { ManualBillAmountDialog } from '@/components/mobile/ManualBillAmountDialog'
 import { PayableForm } from '@/components/mobile/PayableForm'
 import {
@@ -400,6 +401,8 @@ export default function BillsPage() {
 
   return (
     <>
+      {/* 邮件导入的待确认草稿：有草稿才渲染，确认后刷新账单列表 */}
+      <BillDraftsPanel onChanged={() => void loadData()} />
       <BillsView
         syncing={syncing}
         onSync={handleSync}
