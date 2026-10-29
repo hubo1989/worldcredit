@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import GoogleSignIn
 import WorldCreditCore
 
 final class AppDelegate: NSObject, UIApplicationDelegate {
@@ -39,6 +40,8 @@ struct WorldCreditApp: App {
 
     init() {
         // App-wide configuration
+        // 登出时同步清除 GoogleSignIn SDK 保存的身份；SDK 依赖留在 App 入口，AppState 不链接它。
+        appState.sessionIdentityCleanup = { GIDSignIn.sharedInstance.signOut() }
     }
 
     var body: some Scene {

@@ -276,6 +276,39 @@ final class WorldCreditUITests: XCTestCase {
         assertPendingChanges(1, in: app)
     }
 
+    /// Gmail 账单同步卡片：契约 mock 验证未连接/已连接两套布局与断开确认。
+    func test11SettingsGmailSyncCardLayouts() {
+        let app = launchScenario()
+        tab("设置", in: app)
+        let connect = app.buttons["gmail.connect"]
+        scrollTo(connect, in: app)
+        XCTAssertTrue(connect.waitForExistence(timeout: 5), "未连接时应展示「连接 Gmail（只读）」")
+        XCTAssertFalse(app.buttons["gmail.sync"].exists, "未连接时不提供手动同步入口")
+        attachScreenshot(app, name: "11-gmail-disconnected")
+
+        app.launchEnvironment["WORLDCREDIT_UI_TEST_GMAIL"] = "connected"
+        relaunch(app)
+        tab("设置", in: app)
+        let sync = app.buttons["gmail.sync"]
+        scrollTo(sync, in: app)
+        XCTAssertTrue(sync.waitForExistence(timeout: 5), "已连接时应展示「立即同步」")
+        XCTAssertTrue(app.buttons["gmail.disconnect"].exists, "已连接时应展示「断开 Gmail」")
+        let emailRow = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "test-user@example.com")).firstMatch
+        XCTAssertTrue(emailRow.waitForExistence(timeout: 5), "已连接时应展示授权邮箱")
+        attachScreenshot(app, name: "12-gmail-connected")
+
+        app.buttons["gmail.disconnect"].tap()
+        let confirmDisconnect = app.buttons["断开"].firstMatch
+        XCTAssertTrue(confirmDisconnect.waitForExistence(timeout: 5), "断开前必须出现确认弹窗")
+        attachScreenshot(app, name: "13-gmail-disconnect-confirm")
+        confirmDisconnect.tap()
+        // UI 测试夹具网络对 disconnect 直接失败：断言错误以 alert 呈现而不是静默。
+        let failureText = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "断开失败")).firstMatch
+        XCTAssertTrue(failureText.waitForExistence(timeout: 10), "断开请求失败时应弹出提示")
+        let dismiss = app.buttons["好"].firstMatch
+        if dismiss.waitForExistence(timeout: 2) { dismiss.tap() }
+    }
+
     /// 状态筛选收进菜单：打开筛选菜单 → 选状态 → 断言列表切换完成。
     private func setBillStatus(_ status: String, in app: XCUIApplication) {
         app.buttons["bills.holderBankFilter"].tap()
