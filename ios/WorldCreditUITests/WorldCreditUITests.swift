@@ -7,10 +7,24 @@ final class WorldCreditUITests: XCTestCase {
     nonisolated static func screenshotSaveDir() -> String {
         let dir = ProcessInfo.processInfo.environment["WORLDREDIT_UITEST_SCREENSHOT_DIR"]
             ?? NSTemporaryDirectory() + "/worldcredit-uitest-screenshots"
-        try? FileManager.default.createDirectory(
-            atPath: dir, withIntermediateDirectories: true, attributes: nil
-        )
+        do {
+            try FileManager.default.createDirectory(
+                atPath: dir, withIntermediateDirectories: true, attributes: nil
+            )
+        } catch {
+            XCTFail("截图目录创建失败：\(error.localizedDescription)（dir=\(dir)）")
+        }
         return dir
+    }
+
+    /// 保存失败不再静默吞掉：写入异常时记 XCTFail，保证「跑完必有截图」可验证。
+    nonisolated static func saveScreenshot(_ app: XCUIApplication, to dir: String, name: String) {
+        let path = "\(dir)/\(name).png"
+        do {
+            try app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: path))
+        } catch {
+            XCTFail("截图写入失败：\(error.localizedDescription)（path=\(path)）")
+        }
     }
 
     override func tearDownWithError() throws {
@@ -430,9 +444,7 @@ final class WorldCreditUITests: XCTestCase {
     func test99CaptureVerificationScreenshots() {
         let saveDir = Self.screenshotSaveDir()
         let save: (XCUIApplication, String) -> Void = { app, name in
-            let path = "\(saveDir)/\(name).png"
-            let png = app.screenshot().pngRepresentation
-            try? png.write(to: URL(fileURLWithPath: path))
+            Self.saveScreenshot(app, to: saveDir, name: name)
         }
 
         let app = launchScenario()
@@ -589,9 +601,7 @@ final class WorldCreditUITests: XCTestCase {
     func testVisualCheckBillsTabsAndDetails() {
         let saveDir = Self.screenshotSaveDir()
         let save: (XCUIApplication, String) -> Void = { app, name in
-            let path = "\(saveDir)/\(name).png"
-            let png = app.screenshot().pngRepresentation
-            try? png.write(to: URL(fileURLWithPath: path))
+            Self.saveScreenshot(app, to: saveDir, name: name)
         }
 
         let app = launchScenario()

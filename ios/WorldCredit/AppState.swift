@@ -515,6 +515,26 @@ public final class AppState {
         return count
     }
 
+    /// Gmail 账单分轮拉取（与 GmailSyncSection.syncNow 同款流程）：每轮 6 封、按 remaining 续拉。
+    /// 「查看邮箱」入口专用：拉完 Gmail 后刷新本地账单，让缺账单卡片真正检查到邮箱。
+    /// 带 sessionEpoch 守卫：登出/换号期间慢请求返回不会写入新会话。
+    public func syncGmailBills(maxRounds: Int = 6) async {
+        guard isLoggedIn else { return }
+        let epoch = sessionEpoch
+        for round in 1...maxRounds {
+            do {
+                let result = try await apiClient.gmailSync(maxMessages: 6)
+                guard sessionEpoch == epoch, isLoggedIn else { return }
+                guard let remaining = result.remaining, remaining > 0, round < maxRounds else { break }
+            } catch {
+                guard sessionEpoch == epoch, isLoggedIn else { return }
+                lastSyncError = "Gmail 账单同步失败：\(error.localizedDescription)"
+                break
+            }
+        }
+        await reloadData()
+    }
+
     @discardableResult
     public func sync() async -> Bool {
         guard isLoggedIn else { return false }

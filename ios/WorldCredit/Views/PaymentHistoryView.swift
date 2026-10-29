@@ -10,6 +10,7 @@ struct PaymentHistoryView: View {
 
     @State private var payments: [Payment] = []
     @State private var isLoading: Bool = true
+    @State private var loadError: String?
     @State private var showingRecordPaymentSheet: Bool = false
     /// 「继续登记还款」点击标记：sheet 内容 onDisappear（dismiss 完成）后再通知父层换 sheet
     @State private var continueToRecordPayment: Bool = false
@@ -94,8 +95,15 @@ struct PaymentHistoryView: View {
 
     private func loadPayments() async {
         isLoading = true
-        let summary = try? await appState.paymentService.getPaymentSummary(billId: item.bill.id)
-        payments = summary?.payments ?? []
+        loadError = nil
+        do {
+            let summary = try await appState.paymentService.getPaymentSummary(billId: item.bill.id)
+            payments = summary.payments
+        } catch {
+            // 区分「确实没有记录」与「加载失败」：失败可见可重试，不伪装成空态
+            payments = []
+            loadError = "还款记录加载失败：\(error.localizedDescription)"
+        }
         isLoading = false
     }
 
@@ -214,6 +222,24 @@ struct PaymentHistoryView: View {
             ProgressView()
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
+        } else if let loadError {
+            VStack(spacing: 10) {
+                Image(systemName: "wifi.exclamationmark")
+                    .font(.largeTitle)
+                    .foregroundStyle(WCColors.warningInk)
+                Text(loadError)
+                    .font(.footnote)
+                    .foregroundStyle(WCColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                Button("重试") {
+                    Task { await loadPayments() }
+                }
+                .font(.subheadline.bold())
+                .foregroundStyle(WCColors.primaryAccent)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 36)
+            .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 12))
         } else if historyEntries.isEmpty {
             VStack(spacing: 8) {
                 Image(systemName: "tray")

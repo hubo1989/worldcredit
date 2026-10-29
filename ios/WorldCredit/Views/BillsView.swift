@@ -1,6 +1,31 @@
 import SwiftUI
 import WorldCreditCore
 
+/// 渲染路径共享的 DateFormatter（DateFormatter 创建成本高，body 内不新建；
+/// 统一 Asia/Shanghai 业务时区，日期口径与 diffInCalendarDays 一致）
+enum BillsFormatters {
+    static let mmdd: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MM/dd"
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        return f
+    }()
+
+    static let yyyymmdd: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        return f
+    }()
+
+    static let mmddCn: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MM月dd日"
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        return f
+    }()
+}
+
 /// 账单与固定支出统一项：在“最近需还款”下按到期日/紧迫程度混合排列
 enum UnifiedBillEntry: Identifiable {
     case cardBill(item: BillDisplayItem, group: CardBillsGroup)
@@ -25,9 +50,7 @@ enum UnifiedBillEntry: Identifiable {
         case .payable(let payable):
             return payable.dueDate
         case .unbilledCard(let card):
-            let f = DateFormatter()
-            f.dateFormat = "yyyy-MM-dd"
-            return f.string(from: card.nextDueDate)
+            return BillsFormatters.yyyymmdd.string(from: card.nextDueDate)
         }
     }
 
@@ -120,21 +143,6 @@ struct BillsView: View {
     @State private var holderFilterId: String?
     @State private var bankFilterName: String?
     @State private var isFilterDrawerPresented: Bool = false
-
-    // MARK: - Static Date Formatters (性能优化，复用实例避免渲染循环频繁创建)
-    private static let mmddFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MM/dd"
-        f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
-        return f
-    }()
-
-    private static let yyyymmddFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
-        return f
-    }()
 
     /// 列表数据源：最近需还款走状态过滤后的账单；最大免息期是选卡视角，从全量账单取
     private var listBills: [BillDisplayItem] {
@@ -550,7 +558,7 @@ struct BillsView: View {
                 }
             }
             .confirmationDialog(
-                "一键结清 \(overdueItems.count) 笔逾期账单？",
+                "一键结清 \(overdueItems.count) 笔逾期信用卡账单？",
                 isPresented: $showPayAllConfirm,
                 titleVisibility: .visible
             ) {
@@ -559,7 +567,9 @@ struct BillsView: View {
                 }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("按原币种全额结清，待还合计 \(overdueTotalLabel)")
+                // 口径说明：hero 区逾期标签含固定支出，此处一键结清仅覆盖信用卡账单；
+                // 固定支出请在固定支出条目上单独登记还款。
+                Text("按原币种全额结清信用卡逾期账单，待还合计 \(overdueTotalLabel)。固定支出请单独登记。")
             }
             .alert("登记固定支出还款", isPresented: Binding(
                 get: { payingPayable != nil },
@@ -892,6 +902,13 @@ struct BillsView: View {
     private var cardsListView: some View {
         if unifiedEntries.isEmpty {
             VStack(spacing: 12) {
+                // 固定支出是在线数据：刷新失败且无缓存时明确降级提示，避免固定支出凭空消失无解释
+                if let payablesError = appState.payablesError {
+                    Label(payablesError, systemImage: "wifi.exclamationmark")
+                        .font(.footnote)
+                        .foregroundStyle(WCColors.warningInk)
+                        .padding(.horizontal, 12)
+                }
                 Image(systemName: "line.3.horizontal.decrease.circle")
                     .font(.largeTitle)
                     .foregroundStyle(WCColors.textSecondary)
@@ -1043,8 +1060,7 @@ struct BillsView: View {
 
                     if let nextBilling = group.nextBillingDate(today: Date()),
                        let nextDue = group.nextDueDate(today: Date()) {
-                        let f = DateFormatter()
-                        let _ = { f.dateFormat = "MM/dd" }()
+                        let f = BillsFormatters.mmdd
                         Text("下期账单 \(f.string(from: nextBilling)) · 还款 \(f.string(from: nextDue))")
                             .font(.caption2)
                             .foregroundStyle(WCColors.textSecondary)
@@ -1145,7 +1161,9 @@ struct BillsView: View {
                 }
                 Spacer()
                 Button(action: {
-                    Task { await appState.sync() }
+                    // 缺账单的场景需要真正检查邮箱：走 Gmail 拉取流程（含本地账单刷新），
+                    // 而非仅触发原生 SyncEngine 同步。
+                    Task { await appState.syncGmailBills() }
                 }) {
                     Text("查看邮箱")
                         .font(.caption.bold())
@@ -1350,10 +1368,8 @@ struct BillsView: View {
                 .font(.title3.bold())
                 .foregroundStyle(WCColors.textPrimary)
             Spacer()
-            let f = DateFormatter()
-            let _ = { f.dateFormat = "MM月dd日" }()
             HStack(spacing: 4) {
-                Text("\(f.string(from: Date())) · 估算")
+                Text("\(BillsFormatters.mmddCn.string(from: Date())) · 估算")
                     .font(.caption.bold())
                     .foregroundStyle(WCColors.primaryAccent)
             }
@@ -1423,8 +1439,7 @@ struct BillsView: View {
                 // Purchase to repayment flow
                 let today = Date()
                 let nextDue = group.nextDueDate(today: today) ?? today
-                let f = DateFormatter()
-                let _ = { f.dateFormat = "MM月dd日" }()
+                let f = BillsFormatters.mmddCn
 
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -1458,9 +1473,7 @@ struct BillsView: View {
                 // Next billing and debt status
                 HStack {
                     if let nextBilling = group.nextBillingDate(today: today) {
-                        let df = DateFormatter()
-                        let _ = { df.dateFormat = "MM/dd" }()
-                        Text("下次出账 \(df.string(from: nextBilling)) · 新消费还款日")
+                        Text("下次出账 \(BillsFormatters.mmdd.string(from: nextBilling)) · 新消费还款日")
                             .font(.caption2)
                             .foregroundStyle(WCColors.textSecondary)
                     }
@@ -1592,20 +1605,21 @@ struct BillsView: View {
     // MARK: - Animation Triggers
 
     /// 标签切换动画：边缘高亮 -> 凝聚正圆圈 -> 带动面板位移 -> 释放边缘
-    /// 使用可取消 Task 驱动延时步骤：页面退出或快速连点时旧动画链被取消，
-    /// 不会在 onDisappear 后继续改状态或触发多余网络请求。
+    /// 使用可取消 Task 驱动延时步骤：页面退出时 onDisappear 取消，
+    /// 不会在离开页面后继续改状态或触发多余网络请求；
+    /// 快速连点时取消旧链、以最新点击为准重启（避免最终切到旧目标）。
     private func triggerTabAnimation(to mode: BillsSortMode) {
-        guard appState.billsSortMode != mode, !isTabMorphing else { return }
+        guard appState.billsSortMode != mode || isTabMorphing else { return }
+        // 提交前校验目标未变：动画窗口内模式已被切到其他值时不重复提交
+        tabAnimationTask?.cancel()
         isTabMorphing = true
         morphingTargetMode = mode
-        tabEdgeHighlightMode = mode
 
         // Step 1: 按钮边缘高亮
         withAnimation(.easeIn(duration: 0.08)) {
             tabEdgeHighlightMode = mode
         }
 
-        tabAnimationTask?.cancel()
         tabAnimationTask = Task { @MainActor in
             // Step 2: 聚成正圆圈后，带动整个面板上下移动
             try? await Task.sleep(nanoseconds: 80_000_000)
@@ -1628,8 +1642,10 @@ struct BillsView: View {
 
             try? await Task.sleep(nanoseconds: 180_000_000)
             guard !Task.isCancelled else { return }
-            isTabMorphing = false
-            morphingTargetMode = nil
+            if morphingTargetMode == mode {
+                isTabMorphing = false
+                morphingTargetMode = nil
+            }
         }
     }
 
@@ -1659,7 +1675,9 @@ struct BillsView: View {
     }
 
     nonisolated public static func daysUntilNextBilling(billingDay: Int, today: Date = Date()) -> Int {
-        let cal = Calendar.current
+        // 统一 Asia/Shanghai 业务时区口径：diffInCalendarDays 内部固定此时区，
+        // 此处拆解「今天」也必须同口径，否则非东八区设备有 ±1 天漂移。
+        let cal = BillingDateCalculator.businessCalendar
         let currentYear = cal.component(.year, from: today)
         let currentMonth = cal.component(.month, from: today)
         let currentDay = cal.component(.day, from: today)

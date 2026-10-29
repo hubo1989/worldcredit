@@ -392,7 +392,8 @@ public final class ApiClient: @unchecked Sendable {
     private struct RPCErrorEnvelope: Decodable { let error: String? }
     private struct RPCEnvelope<Value: Decodable>: Decodable { let data: Value }
 
-    private func authenticatedRequest(path: String, method: String, timeoutInterval: TimeInterval = 60) throws -> URLRequest {
+    private func authenticatedRequest(path: String, method: String, timeoutInterval: TimeInterval = 20) throws -> URLRequest {
+        // 默认 20s；确实耗时的慢端点（如 gmail/sync）在调用点显式传更长超时
         guard let token = self.token, !token.isEmpty else {
             throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
         }
