@@ -135,8 +135,10 @@ export async function syncUserGmail(
   let processed = 0;
 
   for (const ref of refs) {
+    // failed 不算「已处理」：子请求超限这类瞬态错误不该永久挡住重试，
+    // 只有 bill_written/draft_parked/skipped 才走去重跳过。
     const seen = await queryOne(
-      "SELECT gmail_message_id FROM gmail_sync_messages WHERE gmail_message_id = ?",
+      "SELECT gmail_message_id FROM gmail_sync_messages WHERE gmail_message_id = ? AND status != 'failed'",
       [ref.id],
     );
     if (seen.data) {
@@ -156,11 +158,25 @@ export async function syncUserGmail(
       const aiResult = await deps.parse(parsedTop.text);
       const outcome = await routeParsedMessage({ db, userId, top: parsedTop, aiResult });
 
+      // gmail_message_id 是主键：重试命中旧 failed 行时用 upsert 原地覆盖，
+      // 而不是让主键冲突把整封邮件再打成 failed。
       await execute(
         `INSERT INTO gmail_sync_messages
            (gmail_message_id, user_id, thread_id, rfc_message_id, from_email, subject, internal_date,
             raw_r2_key, status, bill_id, draft_id, parse_confidence, error_msg)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(gmail_message_id) DO UPDATE SET
+           thread_id = excluded.thread_id,
+           rfc_message_id = excluded.rfc_message_id,
+           from_email = excluded.from_email,
+           subject = excluded.subject,
+           internal_date = excluded.internal_date,
+           raw_r2_key = excluded.raw_r2_key,
+           status = excluded.status,
+           bill_id = excluded.bill_id,
+           draft_id = excluded.draft_id,
+           parse_confidence = excluded.parse_confidence,
+           error_msg = excluded.error_msg`,
         [
           ref.id,
           userId,
@@ -187,7 +203,7 @@ export async function syncUserGmail(
       const msg = err instanceof Error ? err.message : String(err);
       summary.errors.push(`${ref.id}: ${msg}`);
       await execute(
-        "INSERT INTO gmail_sync_messages (gmail_message_id, user_id, status, error_msg) VALUES (?,?, 'failed', ?)",
+        "INSERT INTO gmail_sync_messages (gmail_message_id, user_id, status, error_msg) VALUES (?,?, 'failed', ?) ON CONFLICT(gmail_message_id) DO UPDATE SET status = 'failed', error_msg = excluded.error_msg",
         [ref.id, userId, msg],
       );
       processed++;

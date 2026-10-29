@@ -175,6 +175,64 @@ describe("syncUserGmail", () => {
     expect(bills?.c).toBe(1);
   });
 
+  it("failed 行不挡去重：重试成功后原地覆盖为 bill_written", async () => {
+    await seedHolderAndProduct();
+    // 预置一条 failed 记录（模拟子请求超限这类瞬态失败）
+    await db
+      .prepare(
+        "INSERT INTO gmail_sync_messages (gmail_message_id, user_id, status, error_msg) VALUES (?,?, 'failed', ?)",
+      )
+      .bind("m-retry", "u1", "Too many subrequests")
+      .run();
+    __setGmailSyncDeps({
+      parse: async () => ({ ...parseOk }),
+      fetchImpl: gmailFetch({
+        list: { messages: [{ id: "m-retry" }] },
+        raw: { raw: toRawB64(RAW_EML), id: "m-retry" },
+      }) as unknown as typeof fetch,
+      bucket: null,
+    });
+
+    const summary = await syncUserGmail("u1");
+    expect(summary.written).toBe(1);
+    // 原地覆盖：仍是 1 行，状态已改写
+    const cnt = await db
+      .prepare("SELECT COUNT(*) c FROM gmail_sync_messages WHERE gmail_message_id='m-retry'")
+      .first<{ c: number }>();
+    expect(cnt?.c).toBe(1);
+    const msg = await db
+      .prepare("SELECT status FROM gmail_sync_messages WHERE gmail_message_id='m-retry'")
+      .first<{ status: string }>();
+    expect(msg?.status).toBe("bill_written");
+  });
+
+  it("重试再败：failed 行原地更新错误信息，不插新行", async () => {
+    __setGmailSyncDeps({
+      parse: async () => {
+        throw new Error("AI timeout");
+      },
+      fetchImpl: gmailFetch({
+        list: { messages: [{ id: "m-retry2" }] },
+        raw: { raw: toRawB64(RAW_EML), id: "m-retry2" },
+      }) as unknown as typeof fetch,
+      bucket: null,
+    });
+    await db
+      .prepare(
+        "INSERT INTO gmail_sync_messages (gmail_message_id, user_id, status, error_msg) VALUES (?,?, 'failed', ?)",
+      )
+      .bind("m-retry2", "u1", "Too many subrequests")
+      .run();
+
+    const summary = await syncUserGmail("u1");
+    expect(summary.failed).toBe(1);
+    const row = await db
+      .prepare("SELECT COUNT(*) c, MAX(error_msg) e FROM gmail_sync_messages WHERE gmail_message_id='m-retry2'")
+      .first<{ c: number; e: string }>();
+    expect(row?.c).toBe(1);
+    expect(row?.e).toContain("AI timeout");
+  });
+
   it("maxMessages 分批：单轮只处理 N 封并报 remaining，续轮跑完", async () => {
     await seedHolderAndProduct();
     __setGmailSyncDeps({
