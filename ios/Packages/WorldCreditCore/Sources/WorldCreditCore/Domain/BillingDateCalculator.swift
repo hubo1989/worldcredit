@@ -11,6 +11,11 @@ public struct DueConfig: Equatable, Sendable {
 }
 
 public enum BillingDateCalculator {
+    /// 统一业务时区（Asia/Shanghai）的公历日历，供上层复用同一口径。
+    public static var businessCalendar: Calendar {
+        calendar
+    }
+
     private static var calendar: Calendar {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!

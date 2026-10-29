@@ -2,6 +2,17 @@ import XCTest
 
 @MainActor
 final class WorldCreditUITests: XCTestCase {
+    /// 截图保存目录：优先读环境变量 WORLDREDIT_UITEST_SCREENSHOT_DIR，
+    /// 未设置时落到自动创建的临时目录，避免硬编码个人绝对路径在 CI/其他机器上不可写。
+    nonisolated static func screenshotSaveDir() -> String {
+        let dir = ProcessInfo.processInfo.environment["WORLDREDIT_UITEST_SCREENSHOT_DIR"]
+            ?? NSTemporaryDirectory() + "/worldcredit-uitest-screenshots"
+        try? FileManager.default.createDirectory(
+            atPath: dir, withIntermediateDirectories: true, attributes: nil
+        )
+        return dir
+    }
+
     override func tearDownWithError() throws {
         if let testRun, testRun.totalFailureCount > 0 {
             let app = XCUIApplication()
@@ -417,7 +428,7 @@ final class WorldCreditUITests: XCTestCase {
 
     /// 自动化截取各页面在深浅主题下的真实渲染效果，供人工验收
     func test99CaptureVerificationScreenshots() {
-        let saveDir = "/Users/hubo/Library/Application Support/orca/antigravity-chat/antigravity-acp/brain/60870495-2682-4845-b33b-77a0404c83ee/screenshots"
+        let saveDir = Self.screenshotSaveDir()
         let save: (XCUIApplication, String) -> Void = { app, name in
             let path = "\(saveDir)/\(name).png"
             let png = app.screenshot().pngRepresentation
@@ -576,7 +587,7 @@ final class WorldCreditUITests: XCTestCase {
 
     /// 专供人工视觉检查的截图采集用例（验证高度44pt双tab、三币种待还、真实三笔固定支出、未出账单Tier2与详情联动）
     func testVisualCheckBillsTabsAndDetails() {
-        let saveDir = "/Users/hubo/Library/Application Support/orca/antigravity-chat/antigravity-acp/brain/60870495-2682-4845-b33b-77a0404c83ee/screenshots"
+        let saveDir = Self.screenshotSaveDir()
         let save: (XCUIApplication, String) -> Void = { app, name in
             let path = "\(saveDir)/\(name).png"
             let png = app.screenshot().pngRepresentation

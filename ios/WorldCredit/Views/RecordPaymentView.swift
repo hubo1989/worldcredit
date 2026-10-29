@@ -399,8 +399,10 @@ struct RecordPaymentView: View {
         isSubmitting = true
         errorMessage = nil
 
-        let f = DateFormatter()
+        // 统一业务时区 Asia/Shanghai：非东八区设备上提交的日历日不能漂移 ±1 天
+        var f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
         let dateStr = f.string(from: paidAt)
 
         do {

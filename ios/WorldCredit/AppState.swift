@@ -72,13 +72,12 @@ public final class AppState {
     public var dbInitWarning: String?
 
     // MARK: - Theme Mode
-    public var themeMode: AppThemeMode {
-        get {
-            let saved = UserDefaults.standard.string(forKey: "worldcredit_theme_mode") ?? AppThemeMode.system.rawValue
-            return AppThemeMode(rawValue: saved) ?? .system
-        }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: "worldcredit_theme_mode")
+    public var themeMode: AppThemeMode = {
+        let saved = UserDefaults.standard.string(forKey: "worldcredit_theme_mode") ?? AppThemeMode.system.rawValue
+        return AppThemeMode(rawValue: saved) ?? .system
+    }() {
+        didSet {
+            UserDefaults.standard.set(themeMode.rawValue, forKey: "worldcredit_theme_mode")
         }
     }
 
@@ -156,14 +155,13 @@ public final class AppState {
             self.isLocked = true
         }
 
-        if let data = UserDefaults.standard.data(forKey: "worldcredit_cached_payables"),
-           let cached = try? JSONDecoder().decode([PayableItem].self, from: data),
-           !cached.isEmpty,
-           !cached.contains(where: { $0.id.contains("payable-car-loan") || $0.name.contains("车辆分期") || $0.id.contains("payable-rent") || $0.name.contains("房屋租金") }) {
-            self.payables = cached
+        // 清除旧版本全局未隔离的遗留缓存 key
+        UserDefaults.standard.removeObject(forKey: "worldcredit_cached_payables")
+
+        if UITestConfiguration.isEnabled {
+            self.payables = Self.generateDemoPayables()
         } else {
-            UserDefaults.standard.removeObject(forKey: "worldcredit_cached_payables")
-            self.payables = Self.generateFallbackPayables()
+            self.payables = []
         }
     }
 
@@ -312,41 +310,86 @@ public final class AppState {
     }
 
     /// 拉取固定支出列表；失败降级为缓存或兜底数据，不抛出异常阻塞界面。
+    // MARK: - Payables Cache & Recalculation Helpers
+    public static func payablesCacheKey(userId: String) -> String {
+        "worldcredit_cached_payables_\(userId)"
+    }
+
+    public static func recalculatePayableStatus(_ item: PayableItem, today: Date = Date()) -> PayableItem {
+        let cal = BillingDateCalculator.businessCalendar
+        let parts = item.dueDate.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return item }
+        let comp = DateComponents(year: parts[0], month: parts[1], day: parts[2])
+        guard let targetDate = cal.date(from: comp) else { return item }
+        let diff = BillingDateCalculator.diffInCalendarDays(target: targetDate, today: today)
+        let status: PayableStatus
+        if item.isSettled {
+            status = .paid
+        } else if diff < 0 {
+            status = .overdue
+        } else {
+            status = .unpaid
+        }
+        return PayableItem(
+            id: item.id,
+            createdBy: item.createdBy,
+            name: item.name,
+            category: item.category,
+            amount: item.amount,
+            currency: item.currency,
+            dueDay: item.dueDay,
+            holderId: item.holderId,
+            note: item.note,
+            bankAccount: item.bankAccount,
+            period: item.period,
+            dueDate: item.dueDate,
+            daysUntilDue: diff,
+            paidAmount: item.paidAmount,
+            status: status
+        )
+    }
+
     public func refreshPayables() async {
         guard isLoggedIn, !UITestConfiguration.isEnabled else { return }
+        let epoch = sessionEpoch
+        let token = apiClient.token
         do {
             let user: SessionUser
             if let currentUser { user = currentUser }
             else { user = try await apiClient.fetchSessionUser() }
+            guard sessionEpoch == epoch, apiClient.token == token else { return }
+
             let items = try await payablesService.fetchPayables(userId: user.id)
+            guard sessionEpoch == epoch, apiClient.token == token else { return }
+
             payables = items
             payablesError = nil
+
+            let key = Self.payablesCacheKey(userId: user.id)
             if let data = try? JSONEncoder().encode(items) {
-                UserDefaults.standard.set(data, forKey: "worldcredit_cached_payables")
+                UserDefaults.standard.set(data, forKey: key)
             }
+        } catch is CancellationError {
+            return
         } catch {
-            // 网络超时或失败时，优先使用本地缓存，若无缓存则使用兜底数据，避免出现阻断界面的"request time out"
-            if let data = UserDefaults.standard.data(forKey: "worldcredit_cached_payables"),
-               let cached = try? JSONDecoder().decode([PayableItem].self, from: data),
-               !cached.isEmpty,
-               !cached.contains(where: { $0.id.contains("payable-car-loan") || $0.name.contains("车辆分期") || $0.id.contains("payable-rent") || $0.name.contains("房屋租金") }) {
-                payables = cached
-                payablesError = nil
-            } else if payables.isEmpty || payables.contains(where: { $0.name.contains("车辆分期") || $0.name.contains("房屋租金") }) {
-                payables = Self.generateFallbackPayables()
-                payablesError = nil
-            } else {
-                payablesError = nil
+            guard sessionEpoch == epoch, apiClient.token == token else { return }
+            self.payablesError = error.localizedDescription
+
+            // 网络失败时优先保留内存中已有的数据；若内存为空则尝试读取本用户的有效本地快照并重算倒计时
+            if payables.isEmpty, let userId = currentUser?.id {
+                let key = Self.payablesCacheKey(userId: userId)
+                if let data = UserDefaults.standard.data(forKey: key),
+                   let cached = try? JSONDecoder().decode([PayableItem].self, from: data),
+                   !cached.isEmpty {
+                    payables = cached.map { Self.recalculatePayableStatus($0) }
+                }
             }
         }
     }
 
-    /// 对齐线上 Cloudflare D1 真实数据库 recurring_payables 表中的 3 条记录：
-    /// 1. 房贷: 3500 CNY, due_day: 2, category: loan
-    /// 2. 闪电贷: 800 CNY, due_day: 3, category: loan
-    /// 3. 高敏宁波白领通: 900 CNY, due_day: 21, category: loan
-    public static func generateFallbackPayables(today: Date = Date()) -> [PayableItem] {
-        let cal = Calendar.current
+    /// 仅供演示模式和 UI 测试使用的虚拟示例数据（杜绝真实生产数据和内部真实持卡人信息泄露）
+    public static func generateDemoPayables(today: Date = Date()) -> [PayableItem] {
+        let cal = BillingDateCalculator.businessCalendar
         let currentYear = cal.component(.year, from: today)
         let currentMonth = cal.component(.month, from: today)
         let currentDay = cal.component(.day, from: today)
@@ -363,7 +406,6 @@ public final class AppState {
         ) -> PayableItem {
             var targetYear = currentYear
             var targetMonth = currentMonth
-            // 当月如果已过应付日（例如 29 号对于 2/3/21 号），滚动到下期待还
             if currentDay > dueDay {
                 targetMonth += 1
                 if targetMonth > 12 {
@@ -380,7 +422,7 @@ public final class AppState {
 
             return PayableItem(
                 id: id,
-                createdBy: "ea04e4d4-6571-4ddb-a208-a54ad4aafe9e",
+                createdBy: "demo-user-id",
                 name: name,
                 category: category,
                 amount: amount,
@@ -398,39 +440,35 @@ public final class AppState {
         }
 
         let mortgage = makeItem(
-            id: "f62afaf3-f2e5-4d65-8047-85cc84dd587e",
+            id: "demo-payable-mortgage",
             name: "房贷",
             category: .loan,
             amount: 3500.0,
             dueDay: 2,
-            holderId: "c5449849-d651-5256-b70f-f038ac2fd25e",
+            holderId: "demo-holder-c544",
             note: "房贷按月还款"
         )
 
         let lightning = makeItem(
-            id: "51101673-367c-4ca5-9248-5b7939a4b6c8",
+            id: "demo-payable-lightning",
             name: "闪电贷",
             category: .loan,
             amount: 800.0,
             dueDay: 3,
-            holderId: "3fb244a1-b4e9-4bf5-9ac8-05f63db336c5",
-            note: "招行闪电贷"
+            holderId: "demo-holder-3fb2",
+            note: "按期应还借款"
         )
 
-        let bailingtong = makeItem(
-            id: "376b9df5-d0ea-40fd-9408-a1c176331dfa",
-            name: "高敏宁波白领通",
+        let creditLoan = makeItem(
+            id: "demo-payable-credit-loan",
+            name: "个人信用贷",
             category: .loan,
             amount: 900.0,
             dueDay: 21,
-            note: "宁波银行白领通"
+            note: "按期应还借款"
         )
 
-        return [mortgage, lightning, bailingtong]
-    }
-
-    public static func generateDemoPayables(today: Date = Date()) -> [PayableItem] {
-        generateFallbackPayables(today: today)
+        return [mortgage, lightning, creditLoan]
     }
 
     /// 登记固定支出当期还款，返回成功后刷新列表。
@@ -598,8 +636,10 @@ public final class AppState {
         syncEngine = SyncEngine(dbManager: dbManager, apiClient: apiClient)
 
         if let oldUserID {
+            UserDefaults.standard.removeObject(forKey: Self.payablesCacheKey(userId: oldUserID))
             await dashboardRemote.clearCache(userId: oldUserID)
         }
+        UserDefaults.standard.removeObject(forKey: "worldcredit_cached_payables")
     }
 
     public enum LoginError: LocalizedError {

@@ -11,6 +11,8 @@ struct PaymentHistoryView: View {
     @State private var payments: [Payment] = []
     @State private var isLoading: Bool = true
     @State private var showingRecordPaymentSheet: Bool = false
+    /// 「继续登记还款」点击标记：sheet 内容 onDisappear（dismiss 完成）后再通知父层换 sheet
+    @State private var continueToRecordPayment: Bool = false
 
     private var billCurrency: String { item.currency }
 
@@ -65,6 +67,14 @@ struct PaymentHistoryView: View {
             }
             .task {
                 await loadPayments()
+            }
+            // sheet 完全 dismiss 后再回调父层拉起新 sheet：
+            // 同帧 dismiss+present 会被 SwiftUI 忽略，导致「继续登记还款」点击无响应
+            .onDisappear {
+                if let onOpenRecordPayment, continueToRecordPayment {
+                    continueToRecordPayment = false
+                    onOpenRecordPayment()
+                }
             }
             .sheet(isPresented: $showingRecordPaymentSheet) {
                 RecordPaymentView(item: item) { amount, date, channel, note in
@@ -316,8 +326,9 @@ struct PaymentHistoryView: View {
                     Spacer()
                     Button(action: {
                         if let onOpenRecordPayment {
+                            // 先 dismiss 当前 sheet；完全退场后由 onDisappear 回调父层拉起新 sheet
+                            continueToRecordPayment = true
                             dismiss()
-                            onOpenRecordPayment()
                         } else {
                             showingRecordPaymentSheet = true
                         }
