@@ -21,6 +21,121 @@
   },
   "screens": [
     {
+      "id": "ios.bills",
+      "key": "screen.ios.bills",
+      "requiredRoles": ["candidate"],
+      "fields": [
+        { "id": "summary", "kind": "field", "markers": [{ "node": "hero / total pending" }] },
+        { "id": "currency", "kind": "field", "markers": [{ "node": "currency scope" }] },
+        { "id": "cards", "kind": "field", "markers": [{ "nodePrefix": "bill card /", "min": 3 }] },
+        { "id": "identity", "kind": "field", "allMarkers": [{ "node": "bank name" }, { "node": "card title" }, { "node": "holder and period" }] },
+        { "id": "amount", "kind": "field", "allMarkers": [{ "node": "amount value", "min": 3 }, { "node": "amount / billed", "min": 3 }, { "node": "amount / paid", "min": 3 }] },
+        { "id": "risk", "kind": "field", "allMarkers": [{ "node": "status / overdue" }, { "node": "status / due-soon" }, { "node": "status / normal" }] },
+        { "id": "dates", "kind": "field", "allMarkers": [{ "node": "due date" }, { "node": "next cycle" }] },
+        { "id": "navigation", "kind": "field", "allMarkers": [{ "node": "tab / 概览" }, { "node": "tab / 账单" }, { "node": "tab / 卡片" }, { "node": "tab / 设置" }] }
+      ],
+      "actions": [
+        { "id": "sort", "kind": "action", "allMarkers": [{ "node": "tab / 最近需还款" }, { "node": "tab / 最大免息期" }] },
+        { "id": "filter", "kind": "action", "markers": [{ "node": "btn / filter" }] },
+        { "id": "payment", "kind": "action", "markers": [{ "node": "btn / record payment", "min": 3 }] },
+        { "id": "details", "kind": "action", "markers": [{ "node": "details affordance", "min": 3 }] }
+      ]
+    },
+    {
+      "id": "ios.bills-interest",
+      "key": "screen.ios.bills-interest",
+      "requiredRoles": ["candidate"],
+      "fields": [
+        { "id": "interest", "kind": "field", "markers": [{ "node": "interest explanation" }] },
+        { "id": "estimate", "kind": "field", "markers": [{ "within": "interest explanation", "label": ["估算"] }] },
+        { "id": "cards", "kind": "field", "markers": [{ "nodePrefix": "interest card /", "min": 3 }] },
+        { "id": "dates", "kind": "field", "allMarkers": [{ "node": "purchase date", "min": 3 }, { "node": "expected repayment date", "min": 3 }, { "node": "interest days", "min": 3 }] },
+        { "id": "current-debt", "kind": "field", "allMarkers": [{ "node": "remaining current bill", "min": 3 }, { "node": "amount / paid", "min": 3 }] }
+      ],
+      "actions": [
+        { "id": "sort", "kind": "action", "allMarkers": [{ "node": "tab / 最近需还款" }, { "node": "tab / 最大免息期" }] },
+        { "id": "filter", "kind": "action", "markers": [{ "node": "btn / filter" }] },
+        { "id": "details", "kind": "action", "markers": [{ "node": "details affordance", "min": 3 }] }
+      ]
+    },
+    {
+      "id": "ios.bills-filter",
+      "key": "screen.ios.bills-filter",
+      "requiredRoles": ["candidate"],
+      "fields": [
+        { "id": "drawer", "kind": "field", "markers": [{ "node": "filter drawer" }] },
+        { "id": "scope", "kind": "field", "markers": [{ "node": "single dimension note" }] },
+        { "id": "holders", "kind": "field", "markers": [{ "node": "holder options" }] }
+      ],
+      "actions": [
+        { "id": "status", "kind": "action", "allMarkers": [{ "node": "filter status / 待还" }, { "node": "filter status / 已还" }, { "node": "filter status / 全部" }] },
+        { "id": "scope", "kind": "action", "allMarkers": [{ "node": "filter scope / 全部" }, { "node": "filter scope / 持卡人" }, { "node": "filter scope / 银行" }] },
+        { "id": "close", "kind": "action", "markers": [{ "node": "btn / close" }] },
+        { "id": "reset", "kind": "action", "markers": [{ "node": "btn / reset filters" }] },
+        { "id": "apply", "kind": "action", "markers": [{ "node": "btn / apply filters" }] }
+      ]
+    },
+    {
+      "id": "ios.bills-states",
+      "key": "screen.ios.bills-states",
+      "requiredRoles": ["candidate"],
+      "fields": [
+        { "id": "paid", "kind": "field", "allMarkers": [{ "node": "status / paid" }, { "node": "amount / paid" }] },
+        { "id": "missing", "kind": "field", "allMarkers": [{ "node": "status / statement-missing" }, { "node": "missing amount" }, { "node": "missing exclusion" }, { "node": "missing statement days" }] },
+        { "id": "expenses", "kind": "field", "allMarkers": [{ "nodePrefix": "fixed expense /", "min": 2 }, { "node": "expense paid", "min": 2 }, { "node": "expense remaining value", "min": 2 }] }
+      ],
+      "actions": [
+        { "id": "history", "kind": "action", "markers": [{ "node": "btn / payment history" }] },
+        { "id": "mailbox", "kind": "action", "markers": [{ "node": "btn / check mailbox" }] },
+        { "id": "expense-payment", "kind": "action", "markers": [{ "node": "btn / expense payment", "min": 2 }] }
+      ]
+    },
+    {
+      "id": "ios.bills-filter-bank",
+      "key": "screen.ios.bills-filter-bank",
+      "requiredRoles": ["candidate"],
+      "fields": [
+        { "id": "drawer", "kind": "field", "markers": [{ "node": "filter drawer" }] },
+        { "id": "scope", "kind": "field", "markers": [{ "node": "single dimension note" }] },
+        { "id": "banks", "kind": "field", "markers": [{ "node": "bank options" }] }
+      ],
+      "actions": [
+        { "id": "search", "kind": "action", "markers": [{ "node": "bank search" }] },
+        { "id": "select", "kind": "action", "markers": [{ "nodePrefix": "bank option /", "min": 4 }] },
+        { "id": "close", "kind": "action", "markers": [{ "node": "btn / close" }] },
+        { "id": "reset", "kind": "action", "markers": [{ "node": "btn / reset filters" }] },
+        { "id": "apply", "kind": "action", "markers": [{ "node": "btn / apply filters" }] }
+      ]
+    },
+    {
+      "id": "ios.bills-payment-history",
+      "key": "screen.ios.bills-payment-history",
+      "requiredRoles": ["candidate"],
+      "fields": [
+        { "id": "summary", "kind": "field", "allMarkers": [{ "node": "original value" }, { "node": "paid value" }, { "node": "remaining value" }] },
+        { "id": "entries", "kind": "field", "allMarkers": [{ "nodePrefix": "payment entry /", "min": 2 }, { "node": "payment date", "min": 2 }, { "node": "payment amount", "min": 2 }, { "node": "payment channel", "min": 2 }, { "node": "payment note", "min": 2 }] }
+      ],
+      "actions": [
+        { "id": "back", "kind": "action", "markers": [{ "node": "btn / back" }] },
+        { "id": "payment", "kind": "action", "markers": [{ "node": "btn / record payment" }] }
+      ]
+    },
+    {
+      "id": "ios.bills-record-payment",
+      "key": "screen.ios.bills-record-payment",
+      "requiredRoles": ["candidate"],
+      "fields": [
+        { "id": "summary", "kind": "field", "allMarkers": [{ "node": "original value" }, { "node": "paid value" }, { "node": "remaining value" }] },
+        { "id": "input", "kind": "field", "allMarkers": [{ "node": "input amount" }, { "node": "input constraint" }, { "node": "field / date" }, { "node": "field / channel" }, { "node": "field / note" }] },
+        { "id": "preview", "kind": "field", "allMarkers": [{ "node": "after payment paid" }, { "node": "after payment remaining" }, { "node": "after payment status" }] }
+      ],
+      "actions": [
+        { "id": "back", "kind": "action", "markers": [{ "node": "btn / back" }] },
+        { "id": "types", "kind": "action", "markers": [{ "nodePrefix": "payment type /", "min": 3 }] },
+        { "id": "submit", "kind": "action", "markers": [{ "node": "btn / confirm payment" }] }
+      ]
+    },
+    {
       "id": "mobile.dashboard",
       "key": "screen.mobile.dashboard",
       "registryKey": "screen.mobile.dashboard",

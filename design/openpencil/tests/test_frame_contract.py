@@ -524,9 +524,16 @@ class RealSourceIntegration(unittest.TestCase):
         self.assertEqual(code, 0, failure_text(summary))
         self.assertGreater(summary["frameCount"], 0)
         ok_entries = [e for e in summary["screens"] if e["status"] == "OK"]
-        # B0-2 起真实源含 candidate.mobile.dashboard 与 candidate.mobile.bills；
-        # B5（WC-BEN-12）新增六个机会候选屏。Current 两屏 + Candidate 两屏
-        # + B5 候选六屏按同一契约通过。
+        # Current 两屏、移动候选两屏、B5 与 iOS 账单候选按同一契约通过。
+        ios_heads = [
+            "candidate.ios.bills",
+            "candidate.ios.bills-filter",
+            "candidate.ios.bills-filter-bank",
+            "candidate.ios.bills-interest",
+            "candidate.ios.bills-payment-history",
+            "candidate.ios.bills-record-payment",
+            "candidate.ios.bills-states",
+        ]
         b5_heads = sorted(
             "candidate." + s["key"][len("screen."):]
             for s in real_contract()["screens"]
@@ -535,6 +542,7 @@ class RealSourceIntegration(unittest.TestCase):
         self.assertEqual(
             sorted((e["head"], e["role"]) for e in ok_entries),
             [
+                *[(h, "candidate") for h in ios_heads],
                 ("candidate.mobile.bills", "candidate"),
                 ("candidate.mobile.dashboard", "candidate"),
                 *[(h, "candidate") for h in b5_heads],
@@ -552,15 +560,28 @@ class RealSourceIntegration(unittest.TestCase):
                 n for n in page.get("children") or []
                 if not str(n.get("name") or "").startswith("candidate.")
             ]
-        code, _, summary = CHK.check_doc(doc, real_contract(), None)
-        self.assertEqual(code, 0)
+        contract = real_contract()
+        # 本用例只验证默认行为；显式 requiredRoles 另测，不能当作默认可缺省。
+        for screen in contract["screens"]:
+            if "requiredRoles" in screen:
+                screen["requiredRoles"] = [
+                    role for role in screen["requiredRoles"] if role != "candidate"
+                ]
+        code, _, summary = CHK.check_doc(doc, contract, None)
+        self.assertEqual(code, 0, failure_text(summary))
         skipped = [e for e in summary["screens"] if e["status"] == "SKIP"]
-        # dashboard/bills 的 current 帧仍在（OK）；其余角色 SKIP。
-        # B5 机会屏尚未有 current 帧：三角色全 SKIP。按契约屏数推导期望值。
-        b5_count = sum(
-            1 for s in real_contract()["screens"] if s["key"].startswith("screen.opportunities.")
-        )
-        self.assertEqual(len(skipped), 4 + 3 * b5_count, summary["screens"])
+        self.assertEqual(len(skipped), 3 * len(contract["screens"]) - 2, summary["screens"])
+
+    def test_required_ios_candidate_absence_fails(self):
+        doc = real_doc()
+        for page in doc["pages"]:
+            page["children"] = [
+                n for n in page.get("children") or []
+                if not str(n.get("name") or "").startswith("candidate.ios.bills ·")
+            ]
+        code, _, summary = CHK.check_doc(doc, real_contract(), None)
+        self.assertEqual(code, 1)
+        self.assertIn("missing-frame candidate.ios.bills", failure_text(summary))
 
     def test_main_cli_exit_zero_on_repo(self):
         self.assertEqual(
@@ -577,6 +598,85 @@ class RealSourceIntegration(unittest.TestCase):
             # 声明了的（Current 屏）必须能在 registry 中找到。
             if "registryKey" in screen:
                 self.assertIn(screen["registryKey"], registry_keys)
+
+
+class IOSBillsDesignStates(unittest.TestCase):
+    def node(self, frame, name):
+        return next(n for n in CHK.iter_nodes(frame) if n.get("name") == name)
+
+    def amount(self, node):
+        from decimal import Decimal
+        return Decimal(re.search(r"[\d,]+\.\d{2}", node["content"])[0].replace(",", ""))
+
+    def test_partial_payments_balance_and_total(self):
+        frame = frame_by_head(real_doc(), "candidate.ios.bills")
+        cards = [n for n in frame["children"] if n.get("name", "").startswith("bill card /")]
+        total = 0
+        for card in cards:
+            remaining = self.amount(self.node(card, "amount value"))
+            paid = self.amount(self.node(card, "amount / paid"))
+            billed = self.amount(self.node(card, "amount / billed"))
+            self.assertEqual(billed - paid, remaining)
+            total += remaining
+        self.assertEqual(total, self.amount(self.node(frame, "total value")))
+        self.assertIn("逾期", CHK.node_texts(self.node(frame, "status / overdue")))
+        self.assertIn("2天后到期", CHK.node_texts(self.node(frame, "status / due-soon")))
+
+    def test_paid_missing_and_fixed_expenses_stay_distinct(self):
+        frame = frame_by_head(real_doc(), "candidate.ios.bills-states")
+        paid = self.node(frame, "bill card / 中国邮政储蓄银行")
+        self.assertEqual(self.amount(self.node(paid, "amount value")), 0)
+        self.assertEqual(self.amount(self.node(paid, "amount / paid")),
+                         self.amount(self.node(paid, "amount / billed")))
+        self.assertNotIn("btn / record payment", CHK.node_names(paid))
+        missing = self.node(frame, "bill card / 广发银行")
+        self.assertEqual(self.node(missing, "missing amount")["content"], "金额待确认")
+        self.assertIn("未计入", self.node(missing, "missing exclusion")["content"])
+        expenses = [n for n in frame["children"] if n.get("name", "").startswith("fixed expense /")]
+        for expense in expenses:
+            self.assertEqual(self.amount(self.node(expense, "expense billed"))
+                             - self.amount(self.node(expense, "expense paid")),
+                             self.amount(self.node(expense, "expense remaining value")))
+        self.assertEqual(sum(self.amount(self.node(e, "expense remaining value")) for e in expenses),
+                         self.amount(self.node(frame, "fixed expense total")))
+
+    def test_filter_drawers_are_right_aligned(self):
+        for head in ("candidate.ios.bills-filter", "candidate.ios.bills-filter-bank"):
+            frame = frame_by_head(real_doc(), head)
+            drawer = self.node(frame, "filter drawer")
+            self.assertGreater(drawer["x"], 0)
+            self.assertEqual(drawer["x"] + drawer["width"], frame["width"])
+            self.assertEqual(drawer["y"] + drawer["height"], frame["height"])
+            self.assertNotIn("filter sheet", CHK.node_names(frame))
+
+    def test_interest_list_uses_future_purchase_dates(self):
+        from datetime import date
+        frame = frame_by_head(real_doc(), "candidate.ios.bills-interest")
+        self.assertFalse(any(n.get("name", "").startswith("fixed expense /")
+                             for n in CHK.iter_nodes(frame)))
+        cards = [n for n in frame["children"] if n.get("name", "").startswith("interest card /")]
+        durations = []
+        for card in cards:
+            value = self.node(card, "expected repayment date")["content"]
+            month, day = map(int, re.findall(r"\d+", value))
+            days = int(self.node(card, "interest days")["content"])
+            self.assertGreater(days, 0)
+            self.assertEqual(days, (date(2026, month, day) - date(2026, 10, 29)).days)
+            durations.append(days)
+        self.assertEqual(durations, sorted(durations, reverse=True))
+        self.assertIn("已还清", CHK.node_texts(frame))
+
+    def test_payment_history_and_form_preview_balance(self):
+        history = frame_by_head(real_doc(), "candidate.ios.bills-payment-history")
+        amounts = [self.amount(n) for n in CHK.iter_nodes(history) if n.get("name") == "payment amount"]
+        self.assertEqual(sum(amounts), self.amount(self.node(history, "paid value")))
+        form = frame_by_head(real_doc(), "candidate.ios.bills-record-payment")
+        current = self.amount(self.node(form, "input amount"))
+        self.assertEqual(self.amount(self.node(form, "paid value")) + current,
+                         self.amount(self.node(form, "after payment paid")))
+        self.assertEqual(self.amount(self.node(form, "remaining value")) - current,
+                         self.amount(self.node(form, "after payment remaining")))
+        self.assertIn("逾期状态保留", self.node(form, "after payment status")["content"])
 
 
 class MobileDesignSourceContracts(unittest.TestCase):

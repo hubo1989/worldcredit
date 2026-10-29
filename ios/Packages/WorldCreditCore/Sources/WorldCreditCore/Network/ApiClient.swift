@@ -392,7 +392,7 @@ public final class ApiClient: @unchecked Sendable {
     private struct RPCErrorEnvelope: Decodable { let error: String? }
     private struct RPCEnvelope<Value: Decodable>: Decodable { let data: Value }
 
-    private func authenticatedRequest(path: String, method: String, timeoutInterval: TimeInterval = 20) throws -> URLRequest {
+    private func authenticatedRequest(path: String, method: String, timeoutInterval: TimeInterval = 60) throws -> URLRequest {
         guard let token = self.token, !token.isEmpty else {
             throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
         }

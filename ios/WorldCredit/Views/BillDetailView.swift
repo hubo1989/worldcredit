@@ -13,11 +13,30 @@ struct BillDetailView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var item: BillDisplayItem
     @State private var showingPaymentSheet: Bool = false
+    @State private var showingPaymentHistorySheet: Bool = false
     @State private var showingAmountOverrideSheet: Bool = false
+    @State private var showingCardEditSheet: Bool = false
     @State private var payments: [Payment] = []
 
     init(item: BillDisplayItem) {
         _item = State(initialValue: item)
+    }
+
+    private var matchedCard: CardDisplayItem? {
+        appState.cards.first(where: { $0.id == item.card.id })
+    }
+
+    private var fallbackCard: CardDisplayItem {
+        CardDisplayItem(
+            card: item.card,
+            product: item.product,
+            bank: item.bank,
+            holder: item.holder,
+            latestBill: item.bill,
+            remainingAmount: item.remainingAmount,
+            interestFreeDaysToday: item.interestFreeDaysToday,
+            nextDueDate: Date()
+        )
     }
 
     /// 账单以原币结算，不能固定写 ¥。
@@ -27,6 +46,41 @@ struct BillDetailView: View {
 
     var body: some View {
         List {
+            // 关联卡片与信息修改（对齐 Web 版卡片详情入口）
+            Section("关联卡片") {
+                Button(action: {
+                    showingCardEditSheet = true
+                }) {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.cardTitle)
+                                .font(.headline)
+                                .foregroundStyle(WCColors.textPrimary)
+                            Text("\(item.bankName) · \(item.holderName) · 尾号 \(item.last4.isEmpty ? "-" : item.last4)")
+                                .font(.caption)
+                                .foregroundStyle(WCColors.textSecondary)
+                        }
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Text("修改卡片信息")
+                                .font(.footnote.weight(.medium))
+                            Image(systemName: "chevron.right")
+                                .font(.caption.bold())
+                        }
+                        .foregroundStyle(WCColors.primaryAccent)
+                    }
+                    .padding(.vertical, 2)
+                }
+                .accessibilityIdentifier("bill.detail.editCard")
+
+                if let card = matchedCard {
+                    let billingDay = card.card.overrideBillingDay ?? card.card.billingDay
+                    LabeledContent("信用额度", value: "¥\(String(format: "%.0f", card.card.creditLimit))")
+                    LabeledContent("每月账单日", value: "\(billingDay) 日")
+                    LabeledContent("今日刷卡免息", value: "\(card.interestFreeDaysToday) 天")
+                }
+            }
+
             // 账单基本信息
             Section("账单信息") {
                 LabeledContent("银行/卡片", value: "\(item.bankName) · \(item.cardTitle)")
@@ -58,21 +112,21 @@ struct BillDetailView: View {
                 LabeledContent("剩余应还") {
                     Text(money(item.remainingAmount))
                         .bold()
-                        .foregroundStyle(item.isOverdue ? .red : (item.remainingAmount <= 0.01 ? .green : .primary))
+                        .foregroundStyle(item.isOverdue ? WCColors.dangerInk : (item.remainingAmount <= 0.01 ? WCColors.successInk : WCColors.textPrimary))
                         .accessibilityIdentifier("bill.detail.remaining")
                 }
                 LabeledContent("状态") {
                     Text(item.displayStatus)
-                        .font(.caption)
+                        .font(.caption.bold())
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(
-                            item.remainingAmount <= 0.01 ? Color.green.opacity(0.15) :
-                            (item.isOverdue ? Color.red.opacity(0.15) : Color.blue.opacity(0.15))
+                            item.remainingAmount <= 0.01 ? WCColors.successSoft :
+                            (item.isOverdue ? WCColors.dangerSoft : (item.daysUntilDue <= 3 ? WCColors.warningSoft : WCColors.subtle))
                         )
                         .foregroundStyle(
-                            item.remainingAmount <= 0.01 ? .green :
-                            (item.isOverdue ? .red : .blue)
+                            item.remainingAmount <= 0.01 ? WCColors.successInk :
+                            (item.isOverdue ? WCColors.dangerInk : (item.daysUntilDue <= 3 ? WCColors.warningInk : WCColors.primaryAccent))
                         )
                         .clipShape(Capsule())
                         .accessibilityIdentifier("bill.detail.status")
@@ -91,6 +145,21 @@ struct BillDetailView: View {
                     Text("暂无还款记录")
                         .foregroundStyle(.secondary)
                 } else {
+                    Button(action: {
+                        showingPaymentHistorySheet = true
+                    }) {
+                        HStack {
+                            Text("查看完整还款记录（\(payments.count) 笔）")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(WCColors.primaryAccent)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.bold())
+                                .foregroundStyle(WCColors.textSecondary)
+                        }
+                    }
+                    .accessibilityIdentifier("bill.detail.viewHistory")
+
                     ForEach(payments) { p in
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
@@ -122,6 +191,11 @@ struct BillDetailView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingPaymentHistorySheet) {
+            PaymentHistoryView(item: item) {
+                showingPaymentSheet = true
+            }
+        }
         .sheet(isPresented: $showingPaymentSheet) {
             PaymentSheetView(item: item) { amount, date, channel, note in
                 try await appState.recordPayment(
@@ -140,6 +214,13 @@ struct BillDetailView: View {
             // 阻塞弹窗 dismiss()，表现为「提交转圈永不结束」。
             BillAmountOverrideSheetView(item: item) { newAmount in
                 try await appState.setBillAmountOverride(billId: item.bill.id, amount: newAmount)
+            }
+        }
+        .sheet(isPresented: $showingCardEditSheet) {
+            CardEditSheetView(card: matchedCard ?? fallbackCard) { input in
+                try await appState.updateCard(cardId: item.card.id, input: input)
+                await appState.reloadData()
+                await loadDetails()
             }
         }
         .task {

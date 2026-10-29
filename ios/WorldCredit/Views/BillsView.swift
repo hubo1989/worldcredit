@@ -1,9 +1,98 @@
 import SwiftUI
 import WorldCreditCore
 
+/// 账单与固定支出统一项：在“最近需还款”下按到期日/紧迫程度混合排列
+enum UnifiedBillEntry: Identifiable {
+    case cardBill(item: BillDisplayItem, group: CardBillsGroup)
+    case payable(PayableItem)
+    case unbilledCard(CardDisplayItem)
+
+    var id: String {
+        switch self {
+        case .cardBill(let item, _):
+            return "bill-\(item.id)"
+        case .payable(let payable):
+            return "payable-\(payable.id)"
+        case .unbilledCard(let card):
+            return "unbilled-card-\(card.id)"
+        }
+    }
+
+    var dueDate: String {
+        switch self {
+        case .cardBill(let item, _):
+            return item.bill.dueDate
+        case .payable(let payable):
+            return payable.dueDate
+        case .unbilledCard(let card):
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd"
+            return f.string(from: card.nextDueDate)
+        }
+    }
+
+    var daysUntilDue: Int {
+        switch self {
+        case .cardBill(let item, _):
+            return item.daysUntilDue
+        case .payable(let payable):
+            return payable.daysUntilDue
+        case .unbilledCard(let card):
+            let billingDay = card.card.overrideBillingDay ?? card.card.billingDay
+            return BillsView.daysUntilNextBilling(billingDay: billingDay)
+        }
+    }
+
+    var isOverdue: Bool {
+        switch self {
+        case .cardBill(let item, _):
+            return item.isOverdue
+        case .payable(let payable):
+            return payable.status == .overdue || (payable.daysUntilDue < 0 && payable.remainingAmount > 0.01)
+        case .unbilledCard:
+            return false
+        }
+    }
+
+    var isSettled: Bool {
+        switch self {
+        case .cardBill(let item, _):
+            return item.remainingAmount <= 0.01
+        case .payable(let payable):
+            return payable.isSettled || payable.remainingAmount <= 0.01
+        case .unbilledCard:
+            return true
+        }
+    }
+
+    var remainingAmount: Double {
+        switch self {
+        case .cardBill(let item, _):
+            return item.remainingAmount
+        case .payable(let payable):
+            return payable.remainingAmount
+        case .unbilledCard:
+            return 0.0
+        }
+    }
+
+    var currency: String {
+        switch self {
+        case .cardBill(let item, _):
+            return item.currency
+        case .payable(let payable):
+            return payable.currency
+        case .unbilledCard(let card):
+            return card.product?.currency ?? "CNY"
+        }
+    }
+}
+
 struct BillsView: View {
     @Environment(AppState.self) private var appState
+
     @State private var payingItem: BillDisplayItem?
+    @State private var viewingHistoryItem: BillDisplayItem?
     @State private var adjustingItem: BillDisplayItem?
     @State private var editingPayable: PayableItem?
     @State private var creatingPayable = false
@@ -12,12 +101,26 @@ struct BillsView: View {
     @State private var showPayAllConfirm = false
     @State private var isPayingAll = false
     @State private var payAllError: String?
-    // 单维度筛选（与 Web 口径一致）：选持卡人时清除银行选择，反之亦然。
+    @State private var selectedCardForEdit: CardDisplayItem?
+
+    // 交互与动画状态：标签边缘高亮 -> 凝聚正圆圈 -> 带动面板位移 -> 释放边缘
+    @State private var isTabMorphing: Bool = false
+    @State private var morphingTargetMode: BillsSortMode? = nil
+    @State private var tabEdgeHighlightMode: BillsSortMode? = nil
+    @State private var tabCirclePhase: Double = 0.0
+    @State private var panelDisplacement: CGFloat = 0.0
+
+    // 筛选光环凝聚与拽出面板动画
+    @State private var isFilterAuraCondensing: Bool = false
+    @State private var filterHaloScale: CGFloat = 1.0
+    @State private var filterHaloOpacity: Double = 0.0
+
+    // 单维度筛选（持卡人与银行互斥）
     @State private var holderFilterId: String?
     @State private var bankFilterName: String?
+    @State private var isFilterDrawerPresented: Bool = false
 
-    /// 列表数据源：最近需还款走状态过滤后的账单；最大免息期是选卡视角，
-    /// 从全量账单取（已结清卡的免息期同样参与排序），持卡人/银行筛选仍然生效。
+    /// 列表数据源：最近需还款走状态过滤后的账单；最大免息期是选卡视角，从全量账单取
     private var listBills: [BillDisplayItem] {
         let source = appState.billsSortMode == .maxInterestFree ? appState.allBills : appState.bills
         return source.filter { item in
@@ -40,11 +143,169 @@ struct BillsView: View {
         )
     }
 
+    /// 筛选后的固定支出列表（若按银行筛选则不显示固定支出；免息期模式下无免息概念不显示）
+    private var filteredPayables: [PayableItem] {
+        guard appState.billsSortMode == .nearestDue else { return [] }
+        if bankFilterName != nil { return [] }
+
+        return appState.payables.filter { payable in
+            if let holderFilterId, payable.holderId != holderFilterId {
+                return false
+            }
+            switch appState.selectedBillFilter {
+            case .unpaid:
+                return payable.remainingAmount > 0.01 && !payable.isSettled
+            case .paid:
+                return payable.remainingAmount <= 0.01 || payable.isSettled
+            case .all:
+                return true
+            }
+        }
+    }
+
+    /// 账单与固定支出混合列表：按逾期优先(Tier 0)、待还款由近及远(Tier 1)、未出账单/已结清(Tier 2)排序
+    private var unifiedEntries: [UnifiedBillEntry] {
+        var entries: [UnifiedBillEntry] = []
+        for group in visibleGroups {
+            for item in group.bills {
+                entries.append(.cardBill(item: item, group: group))
+            }
+        }
+        for payable in filteredPayables {
+            entries.append(.payable(payable))
+        }
+
+        // 最近需还款模式下，把未出账单卡片作为 Tier 2 展示，满足全量卡片感知
+        if appState.billsSortMode == .nearestDue {
+            let activeBilledCardIds = Set(visibleGroups.map(\.cardId))
+            for card in appState.cards {
+                if let holderFilterId, card.card.holderId != holderFilterId {
+                    continue
+                }
+                if let bankFilterName, card.bankName != bankFilterName {
+                    continue
+                }
+                if !activeBilledCardIds.contains(card.id) {
+                    entries.append(.unbilledCard(card))
+                }
+            }
+        }
+
+        return entries.sorted { a, b in
+            let tierA = entryUrgencyTier(a)
+            let tierB = entryUrgencyTier(b)
+            if tierA != tierB {
+                return tierA < tierB
+            }
+            if a.daysUntilDue != b.daysUntilDue {
+                return a.daysUntilDue < b.daysUntilDue
+            }
+            return a.dueDate < b.dueDate
+        }
+    }
+
+    private func entryUrgencyTier(_ entry: UnifiedBillEntry) -> Int {
+        if entry.isOverdue { return 0 }
+        if !entry.isSettled { return 1 }
+        return 2
+    }
+
     private var overdueItems: [BillDisplayItem] {
         filteredBills.filter(\.isOverdue)
     }
 
-    /// 逾期合计按币种折算到展示币种；缺汇率的币种不计入并明确提示。
+    private var dueSoonItems: [BillDisplayItem] {
+        filteredBills.filter { !$0.isOverdue && $0.remainingAmount > 0.01 && $0.daysUntilDue <= 3 }
+    }
+
+    private var overduePayables: [PayableItem] {
+        filteredPayables.filter { ($0.status == .overdue || ($0.daysUntilDue < 0 && $0.remainingAmount > 0.01)) && $0.remainingAmount > 0.01 }
+    }
+
+    private var dueSoonPayables: [PayableItem] {
+        filteredPayables.filter { $0.status != .overdue && $0.daysUntilDue >= 0 && $0.daysUntilDue <= 3 && $0.remainingAmount > 0.01 }
+    }
+
+    private var overdueTotalAmount: Double {
+        overdueItems.reduce(0.0) { $0 + $1.remainingAmount } + overduePayables.reduce(0.0) { $0 + $1.remainingAmount }
+    }
+
+    private var dueSoonTotalAmount: Double {
+        dueSoonItems.reduce(0.0) { $0 + $1.remainingAmount } + dueSoonPayables.reduce(0.0) { $0 + $1.remainingAmount }
+    }
+
+    // MARK: - Multi-currency & Converted Totals
+    private var allUnpaidBills: [BillDisplayItem] {
+        filteredBills.filter { $0.remainingAmount > 0.01 }
+    }
+
+    private var allUnpaidPayables: [PayableItem] {
+        filteredPayables.filter { $0.remainingAmount > 0.01 && !$0.isSettled }
+    }
+
+    /// 人民币待还款（信用卡 + 固定支出）
+    private var cnyUnpaidTotal: Double {
+        let billsSum = allUnpaidBills.filter {
+            let c = $0.currency.uppercased()
+            return c == "CNY" || c == "RMB"
+        }.reduce(0.0) { $0 + $1.remainingAmount }
+
+        let payablesSum = allUnpaidPayables.filter {
+            let c = $0.currency.uppercased()
+            return c == "CNY" || c == "RMB"
+        }.reduce(0.0) { $0 + $1.remainingAmount }
+
+        return billsSum + payablesSum
+    }
+
+    /// 港币待还款（信用卡 + 固定支出）
+    private var hkdUnpaidTotal: Double {
+        let billsSum = allUnpaidBills.filter { $0.currency.uppercased() == "HKD" }
+            .reduce(0.0) { $0 + $1.remainingAmount }
+        let payablesSum = allUnpaidPayables.filter { $0.currency.uppercased() == "HKD" }
+            .reduce(0.0) { $0 + $1.remainingAmount }
+        return billsSum + payablesSum
+    }
+
+    /// 美元待还款（信用卡 + 固定支出）
+    private var usdUnpaidTotal: Double {
+        let billsSum = allUnpaidBills.filter { $0.currency.uppercased() == "USD" }
+            .reduce(0.0) { $0 + $1.remainingAmount }
+        let payablesSum = allUnpaidPayables.filter { $0.currency.uppercased() == "USD" }
+            .reduce(0.0) { $0 + $1.remainingAmount }
+        return billsSum + payablesSum
+    }
+
+    /// 折算人民币总额（包含人民币、港币、美元及其他外币）
+    private var convertedTotalAmount: Double {
+        let rates = appState.dashboardRates ?? FxRates(
+            base: "USD",
+            rates: ["USD": 1.0, "CNY": 7.23, "HKD": 7.78],
+            timestamp: Date().timeIntervalSince1970,
+            fetchedAt: Date().timeIntervalSince1970 * 1000
+        )
+
+        var totalCNY = 0.0
+
+        for bill in allUnpaidBills {
+            if let converted = DashboardFx.convert(bill.remainingAmount, from: bill.currency, to: "CNY", rates: rates) {
+                totalCNY += converted
+            } else {
+                totalCNY += bill.remainingAmount
+            }
+        }
+
+        for payable in allUnpaidPayables {
+            if let converted = DashboardFx.convert(payable.remainingAmount, from: payable.currency, to: "CNY", rates: rates) {
+                totalCNY += converted
+            } else {
+                totalCNY += payable.remainingAmount
+            }
+        }
+
+        return totalCNY
+    }
+
     private var overdueTotalLabel: String {
         let total = BillsGrouping.total(
             of: BillsGrouping.groups(from: overdueItems),
@@ -58,8 +319,6 @@ struct BillsView: View {
         return label
     }
 
-    /// 筛选选项从全部活跃卡推导（appState.cards），不从当前 tab 的账单推导——
-    /// 否则「待还」tab 下，只有已还账单的持卡人/银行会整组从筛选里消失。
     private var holderOptions: [(id: String, name: String)] {
         var seen = Set<String>()
         return appState.cards.compactMap { card in
@@ -90,17 +349,6 @@ struct BillsView: View {
         return "筛选"
     }
 
-    private var convertedTotal: BillsTotal? {
-        guard !visibleGroups.isEmpty else { return nil }
-        return BillsGrouping.total(
-            of: visibleGroups,
-            rates: appState.dashboardRates,
-            displayCurrency: appState.dashboardCurrency
-        )
-    }
-
-    /// 缺账单提醒的最新期基线：必须取全量账单（allBills），
-    /// 「待还」tab 里被过滤掉的已还最新期不能让基线退期、造成误报。
     private var latestBillMonthByCard: [String: String] {
         var map: [String: String] = [:]
         for item in appState.allBills {
@@ -114,113 +362,94 @@ struct BillsView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // 排序双 tab（对齐 Web 快捷切换栏）：最近需还款 / 最大免息期
-                sortTabs
-                    .padding(.horizontal)
-                    .padding(.top, 8)
-                    .padding(.bottom, 4)
+            ZStack {
+                WCColors.canvas
+                    .ignoresSafeArea()
 
-                // 筛选（状态 + 持卡人/银行统一收进菜单，状态切换不再占据独立分段控件）
-                HStack(spacing: 16) {
-                    Menu {
-                        Picker("账单状态", selection: Binding(
-                            get: { appState.selectedBillFilter },
-                            set: { newFilter in
-                                appState.selectedBillFilter = newFilter
-                                Task { await appState.reloadData() }
-                            }
-                        )) {
-                            ForEach(BillFilter.allCases) { filter in
-                                Text(filter.rawValue).tag(filter)
-                            }
-                        }
-                        Divider()
-                        Picker("持卡人", selection: Binding(
-                            get: { holderFilterId },
-                            set: { newValue in
-                                holderFilterId = newValue
-                                bankFilterName = nil
-                            }
-                        )) {
-                            Text("全部").tag(String?.none)
-                            ForEach(holderOptions, id: \.id) { option in
-                                Text(option.name).tag(String?.some(option.id))
-                            }
-                        }
-                        Picker("银行", selection: Binding(
-                            get: { bankFilterName },
-                            set: { newValue in
-                                bankFilterName = newValue
-                                holderFilterId = nil
-                            }
-                        )) {
-                            Text("全部").tag(String?.none)
-                            ForEach(bankOptions, id: \.self) { name in
-                                Text(name).tag(String?.some(name))
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "line.3.horizontal.decrease.circle")
-                            Text(filterSummary)
-                        }
-                        .font(.footnote)
-                        .foregroundStyle(
-                            holderFilterId == nil && bankFilterName == nil
-                                && appState.selectedBillFilter == .unpaid
-                                ? Color.secondary : Color.blue
-                        )
+                VStack(spacing: 0) {
+                    pageHeader
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                        .padding(.bottom, 6)
+
+                    if appState.billsSortMode == .nearestDue {
+                        heroSummary
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 10)
                     }
-                    .accessibilityIdentifier("bills.holderBankFilter")
 
-                    Spacer()
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 4)
+                    sortTabs
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 10)
 
-                // 多币种合计（按展示币种折算；缺汇率的币种不计入并提示）
-                if let total = convertedTotal {
-                    HStack {
-                        Text("待还合计（\(appState.dashboardCurrency)）")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        if total.unconvertedCurrencies.isEmpty {
-                            Text(DashboardMoney.format(total.amount, currency: appState.dashboardCurrency))
-                                .font(.footnote.bold())
-                        } else {
-                            VStack(alignment: .trailing, spacing: 1) {
-                                Text(DashboardMoney.format(total.amount, currency: appState.dashboardCurrency))
-                                    .font(.footnote.bold())
-                                Text("\(total.unconvertedCurrencies.joined(separator: "、")) 未折算")
-                                    .font(.caption2)
-                                    .foregroundStyle(.orange)
+                    overdueBanner
+
+                    ScrollView {
+                        VStack(spacing: 14) {
+                            if appState.billsSortMode == .nearestDue {
+                                listHeading
+                                    .padding(.horizontal, 16)
+
+                                cardsListView
+                                    .padding(.horizontal, 16)
+                            } else {
+                                interestExplanationHeader
+                                    .padding(.horizontal, 16)
+
+                                interestCardsList
+                                    .padding(.horizontal, 16)
+
+                                interestDisclaimer
+                                    .padding(.horizontal, 16)
+                                    .padding(.top, 4)
                             }
                         }
+                        .padding(.bottom, 32)
                     }
-                    .padding(.horizontal)
-                    .padding(.bottom, 4)
-                    .accessibilityIdentifier("bills.total")
+                    .offset(y: panelDisplacement)
+                    .refreshable {
+                        await appState.sync()
+                        await appState.refreshPayables()
+                    }
                 }
 
-                overdueBanner
-
-                billsList
+                // 右侧筛选抽屉
+                if isFilterDrawerPresented {
+                    BillsFilterDrawerView(
+                        isPresented: $isFilterDrawerPresented,
+                        currentFilter: appState.selectedBillFilter,
+                        currentHolderId: holderFilterId,
+                        currentBankName: bankFilterName,
+                        holderOptions: holderOptions,
+                        bankOptions: bankOptions
+                    ) { newFilter, newHolderId, newBankName in
+                        appState.selectedBillFilter = newFilter
+                        holderFilterId = newHolderId
+                        bankFilterName = newBankName
+                        Task { await appState.reloadData() }
+                    }
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .move(edge: .trailing)
+                    ))
+                    .zIndex(100)
+                }
             }
-            .navigationTitle("账单")
+            .animation(.spring(response: 0.35, dampingFraction: 0.78), value: isFilterDrawerPresented)
             .navigationDestination(for: BillDetailRoute.self) { route in
                 BillDetailView(item: route.item)
-            }
-            .refreshable {
-                await appState.sync()
-                await appState.refreshPayables()
             }
             .task {
                 await appState.refreshPayables()
             }
+            .sheet(item: $selectedCardForEdit) { card in
+                CardEditSheetView(card: card) { input in
+                    try await appState.updateCard(cardId: card.id, input: input)
+                    await appState.reloadData()
+                }
+            }
             .sheet(item: $payingItem) { item in
-                PaymentSheetView(item: item) { amount, date, channel, note in
+                RecordPaymentView(item: item) { amount, date, channel, note in
                     try await appState.recordPayment(
                         billId: item.bill.id,
                         amount: amount,
@@ -228,6 +457,12 @@ struct BillsView: View {
                         channel: channel,
                         note: note
                     )
+                    await appState.reloadData()
+                }
+            }
+            .sheet(item: $viewingHistoryItem) { item in
+                PaymentHistoryView(item: item) {
+                    payingItem = item
                 }
             }
             .sheet(isPresented: $creatingPayable) {
@@ -246,7 +481,6 @@ struct BillsView: View {
                 isPresented: $showPayAllConfirm,
                 titleVisibility: .visible
             ) {
-                // 与首页一键结清一致：dialog 按钮按 label 定位（identifier 会匹配到多个元素）
                 Button("一键结清", role: .destructive) {
                     Task { await payAllOverdue() }
                 }
@@ -278,78 +512,275 @@ struct BillsView: View {
         }
     }
 
-    // MARK: - 排序双 tab（Web 快捷切换栏同款语义）
+    // MARK: - Page Header
+    private var pageHeader: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text("账单")
+                .font(.system(size: 28, weight: .bold))
+                .foregroundStyle(WCColors.textPrimary)
 
+            Spacer()
+
+            if appState.billsSortMode == .nearestDue {
+                Button(action: {
+                    creatingPayable = true
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus.circle")
+                            .font(.footnote.weight(.semibold))
+                        Text("固定支出")
+                            .font(.footnote.weight(.medium))
+                    }
+                    .foregroundStyle(WCColors.primaryAccent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(WCColors.surface, in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(WCColors.border, lineWidth: 1)
+                    )
+                }
+                .accessibilityIdentifier("bills.addPayable")
+            }
+
+            Button(action: {
+                openFilterDrawerWithAnimation()
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .font(.subheadline)
+                    Text(filterSummary)
+                        .font(.footnote.weight(.medium))
+                }
+                .foregroundStyle(
+                    holderFilterId == nil && bankFilterName == nil && appState.selectedBillFilter == .unpaid
+                        ? WCColors.textSecondary : WCColors.primaryAccent
+                )
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(WCColors.surface, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(WCColors.border, lineWidth: 1)
+                )
+                .overlay(
+                    // 按钮本身光环凝聚动效：凝聚聚敛至按钮中心，随后拖拽面板滑出
+                    Capsule()
+                        .stroke(WCColors.primaryAccent, lineWidth: 2)
+                        .scaleEffect(filterHaloScale)
+                        .opacity(filterHaloOpacity)
+                )
+            }
+            .accessibilityIdentifier("bills.holderBankFilter")
+        }
+    }
+
+    // MARK: - Hero Summary
+    private var heroSummary: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("待还汇总")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(WCColors.textSecondary)
+                Spacer()
+                Text("折算基准 · 人民币 (CNY)")
+                    .font(.caption2)
+                    .foregroundStyle(WCColors.textSecondary)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("折算人民币总额")
+                    .font(.caption2)
+                    .foregroundStyle(WCColors.textSecondary)
+                Text(DashboardMoney.format(convertedTotalAmount, currency: "CNY"))
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .foregroundStyle(WCColors.textPrimary)
+                    .accessibilityIdentifier("bills.total")
+            }
+
+            Divider()
+                .background(WCColors.border)
+
+            // 三大币种待还：人民币、港币、美元
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("人民币 (CNY)")
+                        .font(.caption2)
+                        .foregroundStyle(WCColors.textSecondary)
+                    Text(DashboardMoney.format(cnyUnpaidTotal, currency: "CNY"))
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(WCColors.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("港币 (HKD)")
+                        .font(.caption2)
+                        .foregroundStyle(WCColors.textSecondary)
+                    Text(DashboardMoney.format(hkdUnpaidTotal, currency: "HKD"))
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(WCColors.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("美元 (USD)")
+                        .font(.caption2)
+                        .foregroundStyle(WCColors.textSecondary)
+                    Text(DashboardMoney.format(usdUnpaidTotal, currency: "USD"))
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(WCColors.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if overdueTotalAmount > 0.01 || dueSoonTotalAmount > 0.01 {
+                HStack(spacing: 8) {
+                    if overdueTotalAmount > 0.01 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.caption2)
+                            Text("逾期 ¥\(overdueTotalAmount, format: .number.precision(.fractionLength(2)))")
+                                .font(.caption.bold())
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(WCColors.dangerSoft, in: Capsule())
+                        .foregroundStyle(WCColors.dangerInk)
+                    }
+
+                    if dueSoonTotalAmount > 0.01 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock.fill")
+                                .font(.caption2)
+                            Text("3天内 ¥\(dueSoonTotalAmount, format: .number.precision(.fractionLength(2)))")
+                                .font(.caption.bold())
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(WCColors.warningSoft, in: Capsule())
+                        .foregroundStyle(WCColors.warningInk)
+                    }
+
+                    Spacer()
+                }
+            }
+        }
+        .padding(16)
+        .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(WCColors.border, lineWidth: 1)
+        )
+    }
+
+    // MARK: - Sort Tabs
     private var sortTabs: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             sortTab(.nearestDue, label: "最近需还款", identifier: "bills.sort.nearestDue")
             sortTab(.maxInterestFree, label: "最大免息期", identifier: "bills.sort.maxInterestFree")
         }
+        .frame(height: 44)
         .padding(4)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-        // 注意：容器上不能加 accessibilityIdentifier——SwiftUI 会把它下传并覆盖
-        // 子按钮自己的标识符（bills.sort.*），UI 测试将无法定位。
+        .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func sortTab(_ mode: BillsSortMode, label: String, identifier: String) -> some View {
-        let selected = appState.billsSortMode == mode
+        let isSelected = appState.billsSortMode == mode
+        let isEdgeHighlighted = tabEdgeHighlightMode == mode
+        let isTarget = morphingTargetMode == mode
+
         return Button {
-            setSortMode(mode)
+            triggerTabAnimation(to: mode)
         } label: {
-            Text(label)
-                .font(.footnote.weight(.semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 7)
+            ZStack {
+                // Background & Morphing Shape: 边缘高亮 -> 聚成正圆圈 -> 释放边缘
+                if isSelected || isTarget {
+                    if isTabMorphing && tabCirclePhase > 0 {
+                        Circle()
+                            .fill(WCColors.primaryAccent)
+                            .frame(width: 32, height: 32)
+                            .shadow(color: WCColors.primaryAccent.opacity(0.45), radius: 6)
+                    } else if isSelected {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(WCColors.primaryAccent)
+                    }
+                }
+
+                Text(label)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(
+                        (isSelected && tabCirclePhase == 0)
+                            ? Color.white
+                            : (isSelected ? Color.white.opacity(0.9) : WCColors.textSecondary)
+                    )
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 38)
+            .contentShape(Rectangle())
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(
+                        isEdgeHighlighted ? WCColors.primaryAccent : Color.clear,
+                        lineWidth: isEdgeHighlighted ? 2.0 : 0
+                    )
+                    .shadow(color: isEdgeHighlighted ? WCColors.primaryAccent.opacity(0.6) : Color.clear, radius: 4)
+            )
         }
         .buttonStyle(.plain)
-        .foregroundStyle(selected ? Color.white : Color.secondary)
-        .background(
-            selected ? Color.accentColor : Color.clear,
-            in: RoundedRectangle(cornerRadius: 9)
-        )
         .accessibilityIdentifier(identifier)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
-    // MARK: - 逾期横幅
-
+    // MARK: - Overdue Banner
     @ViewBuilder
     private var overdueBanner: some View {
-        if !overdueItems.isEmpty {
+        if !overdueItems.isEmpty && appState.billsSortMode == .nearestDue {
             VStack(spacing: 4) {
                 HStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(WCColors.dangerInk)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("存在 \(overdueItems.count) 笔逾期账单未结清")
                             .font(.footnote.weight(.semibold))
+                            .foregroundStyle(WCColors.textPrimary)
                         Text("待还合计 \(overdueTotalLabel)")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(WCColors.textSecondary)
                     }
                     Spacer(minLength: 8)
                     Button("一键还清") {
                         showPayAllConfirm = true
                     }
                     .font(.caption.bold())
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
-                    .controlSize(.small)
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(WCColors.dangerInk, in: RoundedRectangle(cornerRadius: 6))
                     .disabled(isPayingAll)
                     .accessibilityIdentifier("bills.payAllOverdue")
                 }
                 if let payAllError {
                     Text(payAllError)
                         .font(.caption2)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(WCColors.dangerInk)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(10)
-            .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-            // 容器不加 accessibilityIdentifier：会覆盖子按钮的 bills.payAllOverdue（见 sortTabs 注释）。
-            .padding(.horizontal)
-            .padding(.bottom, 4)
+            .padding(12)
+            .background(WCColors.dangerSoft, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(WCColors.dangerInk.opacity(0.3), lineWidth: 1)
+            )
+            .padding(.horizontal, 16)
+            .padding(.bottom, 6)
         }
     }
 
@@ -358,7 +789,6 @@ struct BillsView: View {
         isPayingAll = true
         payAllError = nil
         do {
-            // recordFullPayments 事务内逐笔重读余额，幂等且整批回滚（与首页一键结清同一服务）
             _ = try await appState.payDashboardBills(overdueItems.map { $0.bill.id })
         } catch {
             payAllError = "一键结清失败：\(error.localizedDescription)"
@@ -366,400 +796,796 @@ struct BillsView: View {
         isPayingAll = false
     }
 
-    // MARK: - 列表
+    // MARK: - List Heading
+    private var listHeading: some View {
+        HStack {
+            Text("信用卡账单")
+                .font(.subheadline.bold())
+                .foregroundStyle(WCColors.textPrimary)
+            Spacer()
+            Text(appState.selectedBillFilter == .unpaid ? "待还状态 · 按到期日" : "\(appState.selectedBillFilter.rawValue) · 按到期日")
+                .font(.caption)
+                .foregroundStyle(WCColors.textSecondary)
+        }
+    }
 
+    // MARK: - Cards List View
     @ViewBuilder
-    private var billsList: some View {
-        // 固定支出是在线数据且独立于账单 tab：只要它还有内容/错误要展示，
-        // 就不用整页空态把它挡住。
-        // 最大免息期回答「现在刷哪张卡最划算」，固定支出无免息概念，不出现在该排序里。
-        let payablesVisible = appState.billsSortMode != .maxInterestFree
-            && (!appState.payables.isEmpty || appState.payablesError != nil)
-        if appState.bills.isEmpty && !payablesVisible {
-            ContentUnavailableView(
-                "没有\(appState.selectedBillFilter.rawValue)账单",
-                systemImage: "doc.text",
-                description: Text("下拉可同步最新账单数据")
-            )
+    private var cardsListView: some View {
+        if unifiedEntries.isEmpty {
+            VStack(spacing: 12) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .font(.largeTitle)
+                    .foregroundStyle(WCColors.textSecondary)
+                Text("没有\(appState.selectedBillFilter.rawValue)账单或应付")
+                    .font(.subheadline)
+                    .foregroundStyle(WCColors.textSecondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 36)
+            .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 16))
         } else {
-            List {
-                if appState.billsSortMode != .maxInterestFree {
-                    payablesSection
-                }
-
-                if filteredBills.isEmpty {
-                    Section {
-                        Label(
-                            appState.bills.isEmpty
-                                ? "没有\(appState.selectedBillFilter.rawValue)账单，下拉可同步最新数据"
-                                : "没有\(appState.selectedBillFilter.rawValue)账单，换个筛选条件试试",
-                            systemImage: "line.3.horizontal.decrease.circle"
-                        )
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    }
-                }
-
+            VStack(spacing: 12) {
+                // 缺账单卡片提示
                 ForEach(visibleGroups) { group in
-                    Section {
-                        // 一张卡的所有账单信息收进同一张自绘卡片（组头 + 各期 + 周期 footer），
-                        // 对齐 Web 聚合卡；不用 Section header/footer 拆层。
-                        BillCardView(
-                            group: group,
-                            showsInterestFree: appState.billsSortMode == .maxInterestFree,
-                            latestBillMonth: latestBillMonthByCard[group.cardId],
-                            onOpenPayment: { payingItem = $0 },
-                            onAdjustAmount: { adjustingItem = $0 }
-                        )
-                        .listRowInsets(EdgeInsets())
-                        .listRowSeparator(.hidden)
-                        // 容器不能加 accessibilityIdentifier：会下传覆盖行内 bill.row.* 标识符
+                    if let missing = group.missingStatementDays(latestBillMonth: latestBillMonthByCard[group.cardId]) {
+                        missingStatementCard(group: group, missingDays: missing)
+                    }
+                }
+
+                // 账单与固定支出统一混合展示（按还款日排序）
+                ForEach(unifiedEntries) { entry in
+                    switch entry {
+                    case .cardBill(let item, let group):
+                        billCard(item: item, group: group)
+                    case .payable(let payable):
+                        payableCard(payable)
+                    case .unbilledCard(let card):
+                        unbilledCardView(card)
                     }
                 }
             }
-            .listStyle(.insetGrouped)
         }
     }
 
-    @ViewBuilder
-    private var payablesSection: some View {
-        Section("固定支出") {
-            if let error = appState.payablesError {
-                Label(error, systemImage: "wifi.exclamationmark")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else if appState.payables.isEmpty {
-                Button {
-                    creatingPayable = true
-                } label: {
-                    Label("添加固定支出（房租/贷款等）", systemImage: "plus.circle")
-                        .font(.footnote)
-                }
-            } else {
-                ForEach(appState.payables) { payable in
-                    PayableRowView(item: payable) {
-                        payingPayable = payable
-                        payablePayAmount = String(format: "%.2f", payable.remainingAmount)
-                    } onEdit: {
-                        editingPayable = payable
-                    }
-                }
-                Button {
-                    creatingPayable = true
-                } label: {
-                    Label("添加固定支出", systemImage: "plus.circle")
-                        .font(.footnote)
-                }
-            }
-        }
-    }
-
-    private func setSortMode(_ mode: BillsSortMode) {
-        guard appState.billsSortMode != mode else { return }
-        appState.billsSortMode = mode
-        Task { await appState.reloadData() }
-    }
-}
-
-// MARK: - 单卡聚合卡片（组头 + 各期账单 + 周期 footer 同卡展示，对齐 Web BillCard）
-
-struct BillCardView: View {
-    let group: CardBillsGroup
-    let showsInterestFree: Bool
-    let latestBillMonth: String?
-    var onOpenPayment: (BillDisplayItem) -> Void
-    var onAdjustAmount: (BillDisplayItem) -> Void
-
-    /// 展示的账单期次：免息模式只看当前期（bill_month 最新的一期），
-    /// 历史账单对选卡是噪音；其余模式按原样全展示。
-    private var displayBills: [BillDisplayItem] {
-        guard showsInterestFree else { return group.bills }
-        guard let latest = group.bills.max(by: { $0.bill.billMonth < $1.bill.billMonth }) else {
-            return []
-        }
-        return [latest]
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // 卡头：银行 + 卡名 + 期数 + 待还合计
-            HStack(alignment: .firstTextBaseline) {
-                HStack(spacing: 6) {
-                    Text(group.bankName)
-                        .font(.caption2)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Color.secondary.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                    Text(group.cardTitle)
-                        .font(.subheadline.weight(.semibold))
-                    // 免息模式只展示当前期，不再报历史期数
-                    Text(showsInterestFree
-                         ? group.holderName
-                         : "\(group.holderName) · \(group.bills.count) 期")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if group.unpaidAmount > 0.01 {
-                    Text(DashboardMoney.format(group.unpaidAmount, currency: group.currency))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(group.hasOverdue ? .red : .primary)
-                } else {
-                    Text("已结清")
-                        .font(.caption2)
-                        .foregroundStyle(.green)
-                }
-            }
-
-            // 各期账单（免息模式仅当前期）
-            VStack(spacing: 8) {
-                ForEach(displayBills) { item in
-                    billRow(item)
-                }
-            }
-
-            // 周期 footer：下期账单日/还款日 + 缺账提醒
-            CardGroupFooterView(group: group, latestBillMonth: latestBillMonth)
-        }
-        .padding(14)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
-    }
-
-    @ViewBuilder
-    private func billRow(_ item: BillDisplayItem) -> some View {
-        // 整行为 NavigationLink（标识符解析为 button，UI 测试按 bill.row.* 查找）；
-        // 行内「还款」按钮嵌在 label 里，与旧结构一致。
+    // MARK: - Bill Card
+    private func billCard(item: BillDisplayItem, group: CardBillsGroup) -> some View {
         NavigationLink(value: BillDetailRoute(item: item)) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\(item.bill.billMonth) 期账单")
-                        .font(.subheadline.weight(.semibold))
-                    Text("到期日 \(item.bill.dueDate)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(rowCaption(item))
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(rowCaptionColor(item))
+            VStack(alignment: .leading, spacing: 10) {
+                // Card Identity Row
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(group.bankName)
+                                .font(.headline.bold())
+                                .foregroundStyle(WCColors.textPrimary)
+                            Text(group.holderName)
+                                .font(.subheadline)
+                                .foregroundStyle(WCColors.textSecondary)
+                        }
+
+                        HStack(spacing: 6) {
+                            Text(group.cardTitle)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(WCColors.textSecondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.bold())
+                                .foregroundStyle(WCColors.textSecondary)
+                            Text("· \(item.bill.billMonth)期账单")
+                                .font(.caption)
+                                .foregroundStyle(WCColors.textSecondary)
+                        }
+                    }
+
+                    Spacer()
+
+                    billStatusBadge(item: item)
                 }
 
-                Spacer(minLength: 8)
-
-                VStack(alignment: .trailing, spacing: 5) {
-                    Text(DashboardMoney.format(item.remainingAmount, currency: item.currency))
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(item.isOverdue ? .red : .primary)
-                    if item.totalPaid > 0 && item.remainingAmount > 0.01 {
-                        Text("已还 " + DashboardMoney.format(item.totalPaid, currency: item.currency))
+                // Payment Row
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("剩余应还")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(WCColors.textSecondary)
+                        Text(DashboardMoney.format(item.remainingAmount, currency: item.currency))
+                            .font(.system(size: 24, weight: .bold, design: .rounded))
+                            .foregroundStyle(
+                                item.remainingAmount <= 0.01 ? WCColors.successInk :
+                                    (item.isOverdue ? WCColors.dangerInk : (item.daysUntilDue <= 3 ? WCColors.warningInk : WCColors.textPrimary))
+                            )
                     }
+
+                    Spacer()
+
                     if item.remainingAmount > 0.01 {
-                        Button("还款") {
-                            onOpenPayment(item)
+                        Button(action: {
+                            payingItem = item
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "pencil.line")
+                                    .font(.caption.bold())
+                                Text("登记还款")
+                                    .font(.caption.bold())
+                            }
+                            .foregroundStyle(item.isOverdue ? Color.white : WCColors.primaryAccent)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(
+                                item.isOverdue ? WCColors.primaryAccent : WCColors.subtle,
+                                in: RoundedRectangle(cornerRadius: 8)
+                            )
                         }
-                        .font(.caption.bold())
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("bill.row.pay.\(item.bill.id)")
+                    } else {
+                        Button(action: {
+                            viewingHistoryItem = item
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "doc.text")
+                                    .font(.caption)
+                                Text("查看记录")
+                                    .font(.caption.bold())
+                            }
+                            .foregroundStyle(WCColors.primaryAccent)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.borderless)
                         .accessibilityIdentifier("bill.row.pay.\(item.bill.id)")
                     }
                 }
-            }
-        }
-        .padding(10)
-        .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
-        .contextMenu {
-            if item.remainingAmount > 0.01 {
-                Button {
-                    onOpenPayment(item)
-                } label: {
-                    Label("登记还款", systemImage: "yensign.circle")
+
+                // Payment Amounts Row
+                HStack(spacing: 16) {
+                    Text("应还 \(DashboardMoney.format(item.bill.effectiveAmount, currency: item.currency))")
+                        .font(.caption)
+                        .foregroundStyle(WCColors.textSecondary)
+
+                    if item.totalPaid > 0 {
+                        Text("已还 \(DashboardMoney.format(item.totalPaid, currency: item.currency))")
+                            .font(.caption.bold())
+                            .foregroundStyle(WCColors.successInk)
+                    }
+                    Spacer()
+                }
+
+                Divider()
+                    .background(WCColors.border)
+
+                // Cycle Footer Row
+                HStack {
+                    Text("\(item.bill.dueDate)到期 · \(item.distanceLabel)")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(rowCaptionColor(item))
+
+                    Spacer()
+
+                    if let nextBilling = group.nextBillingDate(today: Date()),
+                       let nextDue = group.nextDueDate(today: Date()) {
+                        let f = DateFormatter()
+                        let _ = { f.dateFormat = "MM/dd" }()
+                        Text("下期账单 \(f.string(from: nextBilling)) · 还款 \(f.string(from: nextDue))")
+                            .font(.caption2)
+                            .foregroundStyle(WCColors.textSecondary)
+                    }
                 }
             }
-            Button {
-                onAdjustAmount(item)
-            } label: {
-                Label("调整账单金额", systemImage: "pencil")
-            }
+            .padding(16)
+            .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(WCColors.border, lineWidth: 1)
+            )
         }
+        .buttonStyle(.plain)
         .accessibilityIdentifier("bill.row.\(item.id)")
     }
 
-    private func rowCaption(_ item: BillDisplayItem) -> String {
-        showsInterestFree ? "今日刷卡免息 \(group.interestFreeDaysToday) 日" : item.distanceLabel
+    private func billStatusBadge(item: BillDisplayItem) -> some View {
+        HStack(spacing: 4) {
+            if item.remainingAmount <= 0.01 {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.caption2)
+                Text("已结清")
+                    .font(.caption.bold())
+            } else if item.isOverdue {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.caption2)
+                Text(item.daysUntilDue < 0 ? "逾期 \(-item.daysUntilDue) 天" : "逾期")
+                    .font(.caption.bold())
+            } else if item.daysUntilDue <= 3 {
+                Image(systemName: "clock.fill")
+                    .font(.caption2)
+                Text(item.daysUntilDue == 0 ? "今天到期" : "\(item.daysUntilDue)天后到期")
+                    .font(.caption.bold())
+            } else {
+                Image(systemName: "clock.fill")
+                    .font(.caption2)
+                Text("\(item.daysUntilDue)天后到期")
+                    .font(.caption.weight(.medium))
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            item.remainingAmount <= 0.01 ? WCColors.successSoft :
+                (item.isOverdue ? WCColors.dangerSoft : (item.daysUntilDue <= 3 ? WCColors.warningSoft : WCColors.subtle)),
+            in: Capsule()
+        )
+        .foregroundStyle(
+            item.remainingAmount <= 0.01 ? WCColors.successInk :
+                (item.isOverdue ? WCColors.dangerInk : (item.daysUntilDue <= 3 ? WCColors.warningInk : WCColors.textSecondary))
+        )
     }
 
     private func rowCaptionColor(_ item: BillDisplayItem) -> Color {
-        if showsInterestFree { return .green }
-        return item.isOverdue ? .red : (item.daysUntilDue <= 3 ? .orange : .secondary)
+        if item.remainingAmount <= 0.01 { return WCColors.successInk }
+        return item.isOverdue ? WCColors.dangerInk : (item.daysUntilDue <= 3 ? WCColors.warningInk : WCColors.textSecondary)
     }
-}
 
-// MARK: - 卡组 footer：下期周期信息 + 缺账单提醒（对齐 Web 卡片周期块）
-
-struct CardGroupFooterView: View {
-    let group: CardBillsGroup
-    let latestBillMonth: String?
-
-    private static let mmdd: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MM-dd"
-        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
-        return formatter
-    }()
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if let nextBilling = group.nextBillingDate(today: Date()),
-               let nextDue = group.nextDueDate(today: Date()) {
-                Text("下期账单日 \(Self.mmdd.string(from: nextBilling)) · 下期还款日 \(Self.mmdd.string(from: nextDue))")
-            }
-            if let missing = group.missingStatementDays(
-                latestBillMonth: latestBillMonth, today: Date()
-            ) {
-                Text("已过账单日 \(missing) 日，未接收到新的账单，请检查")
-                    .foregroundStyle(.orange)
-            }
-        }
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-// MARK: - 固定支出行
-
-struct PayableRowView: View {
-    let item: PayableItem
-    let onPay: () -> Void
-    let onEdit: () -> Void
-
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(item.name)
+    // MARK: - Missing Statement Card
+    private func missingStatementCard(group: CardBillsGroup, missingDays: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(group.bankName)
+                            .font(.headline.bold())
+                            .foregroundStyle(WCColors.textPrimary)
+                        Text(group.holderName)
+                            .font(.subheadline)
+                            .foregroundStyle(WCColors.textSecondary)
+                    }
+                    Text("\(group.cardTitle) · 信用卡")
                         .font(.subheadline.weight(.medium))
-                    Text(item.category.label)
-                        .font(.caption2)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Color.secondary.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .foregroundStyle(WCColors.textSecondary)
                 }
-                Text(item.distanceLabel)
-                    .font(.caption)
-                    .foregroundStyle(distanceColor)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 4) {
-                Text("\(item.currency) \(item.amount, format: .number.precision(.fractionLength(2)))")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(item.status == .overdue ? .red : .primary)
-                if item.status != .paid {
-                    Button("登记付款", action: onPay)
-                        .font(.caption.bold())
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-                }
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onEdit)
-        .accessibilityIdentifier("payable.row.\(item.id)")
-    }
-
-    private var distanceColor: Color {
-        switch item.status {
-        case .paid: return .secondary
-        case .overdue: return .red
-        case .unpaid: return item.daysUntilDue <= 3 ? .orange : .secondary
-        }
-    }
-}
-
-// MARK: - 平铺行（兼容旧 UI 测试与首页近期列表）
-
-struct BillRowView: View {
-    let item: BillDisplayItem
-    let showsInterestFree: Bool
-    let onQuickPay: () -> Void
-
-    init(item: BillDisplayItem, showsInterestFree: Bool = false, onQuickPay: @escaping () -> Void) {
-        self.item = item
-        self.showsInterestFree = showsInterestFree
-        self.onQuickPay = onQuickPay
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(item.bankName)
-                            .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.secondary.opacity(0.12))
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-
-                        Text(item.cardTitle)
-                            .font(.headline)
-                    }
-
-                    HStack(spacing: 6) {
-                        Text(item.holderName)
-                        if !item.last4.isEmpty {
-                            Text("(\(item.last4))")
-                        }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-
                 Spacer()
-
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(DashboardMoney.format(item.remainingAmount, currency: item.currency))
-                        .font(.headline)
-                        .foregroundStyle(item.isOverdue ? .red : .primary)
-
-                    if item.totalPaid > 0 && item.remainingAmount > 0.01 {
-                        Text("已还 " + DashboardMoney.format(item.totalPaid, currency: item.currency))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.caption2)
+                    Text("缺账单")
+                        .font(.caption.bold())
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(WCColors.warningSoft, in: Capsule())
+                .foregroundStyle(WCColors.warningInk)
             }
 
             HStack {
-                if showsInterestFree {
-                    Text("今日刷卡免息 \(item.interestFreeDaysToday) 日")
-                        .font(.footnote)
-                        .foregroundStyle(.green)
-                } else {
-                    Text(item.distanceLabel)
-                        .font(.footnote)
-                        .foregroundStyle(item.isOverdue ? .red : (item.daysUntilDue <= 3 ? .orange : .secondary))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("账单日已过 \(missingDays) 天，仍未收到新账单")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(WCColors.warningInk)
+                    Text("金额待确认 · 不计入待还合计")
+                        .font(.caption2)
+                        .foregroundStyle(WCColors.textSecondary)
+                }
+                Spacer()
+                Button(action: {
+                    Task { await appState.sync() }
+                }) {
+                    Text("查看邮箱")
+                        .font(.caption.bold())
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(WCColors.primaryAccent, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .accessibilityIdentifier("bills.checkMailbox")
+            }
+        }
+        .padding(16)
+        .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(WCColors.warningInk.opacity(0.4), lineWidth: 1)
+        )
+    }
+
+    // MARK: - Payable Card (固定支出卡片)
+    private func payableCard(_ payable: PayableItem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Identity Row: Name + Category & Status badge
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(payable.name)
+                            .font(.headline.bold())
+                            .foregroundStyle(WCColors.textPrimary)
+                        Text(payable.category.label)
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 4))
+                            .foregroundStyle(WCColors.textSecondary)
+                    }
+
+                    HStack(spacing: 6) {
+                        if let bankAccount = payable.bankAccount, !bankAccount.isEmpty {
+                            Text(bankAccount)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(WCColors.textSecondary)
+                        } else {
+                            Text("固定支出 · 周期应付")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(WCColors.textSecondary)
+                        }
+                        Text("· \(payable.period)期")
+                            .font(.caption)
+                            .foregroundStyle(WCColors.textSecondary)
+                    }
                 }
 
                 Spacer()
 
-                Text(item.displayStatus)
-                    .font(.caption2.bold())
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(
-                        item.remainingAmount <= 0.01 ? Color.green.opacity(0.12) :
-                        (item.isOverdue ? Color.red.opacity(0.12) : Color.blue.opacity(0.12))
-                    )
-                    .foregroundStyle(
-                        item.remainingAmount <= 0.01 ? .green :
-                        (item.isOverdue ? .red : .blue)
-                    )
-                    .clipShape(Capsule())
+                payableStatusBadge(payable)
+            }
+
+            // Payment Row: Remaining Amount & Action Button
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("剩余应付")
+                        .font(.caption2)
+                        .foregroundStyle(WCColors.textSecondary)
+                    Text(DashboardMoney.format(payable.remainingAmount, currency: payable.currency))
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                        .foregroundStyle(
+                            payable.isSettled ? WCColors.successInk :
+                                (payable.status == .overdue || (payable.daysUntilDue < 0 && payable.remainingAmount > 0.01) ? WCColors.dangerInk : (payable.daysUntilDue <= 3 ? WCColors.warningInk : WCColors.textPrimary))
+                        )
+                }
+
+                Spacer()
+
+                if !payable.isSettled && payable.remainingAmount > 0.01 {
+                    Button(action: {
+                        payingPayable = payable
+                        payablePayAmount = String(format: "%.2f", payable.remainingAmount)
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "pencil.line")
+                                .font(.caption.bold())
+                            Text("登记还款")
+                                .font(.caption.bold())
+                        }
+                        .foregroundStyle(payable.status == .overdue ? Color.white : WCColors.primaryAccent)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(
+                            payable.status == .overdue ? WCColors.primaryAccent : WCColors.subtle,
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("bills.payable.pay.\(payable.id)")
+                } else {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle")
+                            .font(.caption)
+                        Text("已结清")
+                            .font(.caption.bold())
+                    }
+                    .foregroundStyle(WCColors.successInk)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(WCColors.successSoft, in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+
+            // Payment Amounts Row
+            HStack(spacing: 16) {
+                Text("本期应付 \(DashboardMoney.format(payable.amount, currency: payable.currency))")
+                    .font(.caption)
+                    .foregroundStyle(WCColors.textSecondary)
+
+                if payable.paidAmount > 0 {
+                    Text("已付 \(DashboardMoney.format(payable.paidAmount, currency: payable.currency))")
+                        .font(.caption.bold())
+                        .foregroundStyle(WCColors.successInk)
+                }
+                Spacer()
+            }
+
+            Divider()
+                .background(WCColors.border)
+
+            // Cycle Footer Row
+            HStack {
+                Text("\(payable.dueDate)到期 · \(payable.distanceLabel)")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(payableCaptionColor(payable))
+
+                Spacer()
+
+                if let note = payable.note, !note.isEmpty {
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundStyle(WCColors.textSecondary)
+                        .lineLimit(1)
+                } else {
+                    Text("每月\(payable.dueDay)日到期")
+                        .font(.caption2)
+                        .foregroundStyle(WCColors.textSecondary)
+                }
             }
         }
+        .padding(16)
+        .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(WCColors.border, lineWidth: 1)
+        )
+        .accessibilityIdentifier("bills.payable.row.\(payable.id)")
+    }
+
+    private func payableStatusBadge(_ payable: PayableItem) -> some View {
+        HStack(spacing: 4) {
+            if payable.isSettled || payable.remainingAmount <= 0.01 {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.caption2)
+                Text("已结清")
+                    .font(.caption.bold())
+            } else if payable.status == .overdue || (payable.daysUntilDue < 0 && payable.remainingAmount > 0.01) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.caption2)
+                Text(payable.daysUntilDue < 0 ? "逾期 \(-payable.daysUntilDue) 天" : "逾期")
+                    .font(.caption.bold())
+            } else if payable.daysUntilDue <= 3 {
+                Image(systemName: "clock.fill")
+                    .font(.caption2)
+                Text(payable.daysUntilDue == 0 ? "今天到期" : "\(payable.daysUntilDue)天后到期")
+                    .font(.caption.bold())
+            } else {
+                Image(systemName: "clock.fill")
+                    .font(.caption2)
+                Text("\(payable.daysUntilDue)天后到期")
+                    .font(.caption.weight(.medium))
+            }
+        }
+        .padding(.horizontal, 8)
         .padding(.vertical, 4)
+        .background(
+            (payable.isSettled || payable.remainingAmount <= 0.01) ? WCColors.successSoft :
+                (payable.status == .overdue || (payable.daysUntilDue < 0 && payable.remainingAmount > 0.01) ? WCColors.dangerSoft : (payable.daysUntilDue <= 3 ? WCColors.warningSoft : WCColors.subtle)),
+            in: Capsule()
+        )
+        .foregroundStyle(
+            (payable.isSettled || payable.remainingAmount <= 0.01) ? WCColors.successInk :
+                (payable.status == .overdue || (payable.daysUntilDue < 0 && payable.remainingAmount > 0.01) ? WCColors.dangerInk : (payable.daysUntilDue <= 3 ? WCColors.warningInk : WCColors.textSecondary))
+        )
+    }
+
+    private func payableCaptionColor(_ payable: PayableItem) -> Color {
+        if payable.isSettled || payable.remainingAmount <= 0.01 { return WCColors.successInk }
+        return (payable.status == .overdue || (payable.daysUntilDue < 0 && payable.remainingAmount > 0.01)) ? WCColors.dangerInk : (payable.daysUntilDue <= 3 ? WCColors.warningInk : WCColors.textSecondary)
+    }
+
+    // MARK: - Max Interest Free Mode Views
+    private var interestExplanationHeader: some View {
+        HStack {
+            Text("今日消费，多久后还款？")
+                .font(.title3.bold())
+                .foregroundStyle(WCColors.textPrimary)
+            Spacer()
+            let f = DateFormatter()
+            let _ = { f.dateFormat = "MM月dd日" }()
+            HStack(spacing: 4) {
+                Text("\(f.string(from: Date())) · 估算")
+                    .font(.caption.bold())
+                    .foregroundStyle(WCColors.primaryAccent)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(WCColors.subtle, in: Capsule())
+        }
+    }
+
+    private var interestCardsList: some View {
+        VStack(spacing: 12) {
+            ForEach(visibleGroups) { group in
+                if let firstBill = group.bills.first {
+                    interestCard(group: group, item: firstBill)
+                }
+            }
+        }
+    }
+
+    private func interestCard(group: CardBillsGroup, item: BillDisplayItem) -> some View {
+        NavigationLink(value: BillDetailRoute(item: item)) {
+            VStack(alignment: .leading, spacing: 10) {
+                // Identity & duration
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(group.bankName)
+                                .font(.headline.bold())
+                                .foregroundStyle(WCColors.textPrimary)
+                            Text(group.holderName)
+                                .font(.subheadline)
+                                .foregroundStyle(WCColors.textSecondary)
+                        }
+                        HStack(spacing: 6) {
+                            Text(group.cardTitle)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(WCColors.textSecondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.bold())
+                                .foregroundStyle(WCColors.textSecondary)
+                        }
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("\(group.interestFreeDaysToday) 天")
+                            .font(.system(size: 26, weight: .bold, design: .rounded))
+                            .foregroundStyle(WCColors.primaryAccent)
+                        Text("今日刷卡免息 \(group.interestFreeDaysToday) 日")
+                            .font(.caption2)
+                            .foregroundStyle(WCColors.textSecondary)
+                    }
+                }
+
+                Divider()
+                    .background(WCColors.border)
+
+                // Purchase to repayment flow
+                let today = Date()
+                let nextDue = group.nextDueDate(today: today) ?? today
+                let f = DateFormatter()
+                let _ = { f.dateFormat = "MM月dd日" }()
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("今日消费")
+                            .font(.caption2)
+                            .foregroundStyle(WCColors.textSecondary)
+                        Text(f.string(from: today))
+                            .font(.subheadline.bold())
+                            .foregroundStyle(WCColors.textPrimary)
+                    }
+
+                    Image(systemName: "arrow.right")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(WCColors.primaryAccent)
+                        .padding(.horizontal, 4)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("预计还款日")
+                            .font(.caption2)
+                            .foregroundStyle(WCColors.textSecondary)
+                        Text(f.string(from: nextDue))
+                            .font(.subheadline.bold())
+                            .foregroundStyle(WCColors.textPrimary)
+                    }
+
+                    Spacer()
+                }
+                .padding(10)
+                .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 10))
+
+                // Next billing and debt status
+                HStack {
+                    if let nextBilling = group.nextBillingDate(today: today) {
+                        let df = DateFormatter()
+                        let _ = { df.dateFormat = "MM/dd" }()
+                        Text("下次出账 \(df.string(from: nextBilling)) · 新消费还款日")
+                            .font(.caption2)
+                            .foregroundStyle(WCColors.textSecondary)
+                    }
+                    Spacer()
+                    if group.unpaidAmount <= 0.01 {
+                        Text("已结清")
+                            .font(.caption2.bold())
+                            .foregroundStyle(WCColors.successInk)
+                    } else {
+                        Text("本期待还 \(DashboardMoney.format(group.unpaidAmount, currency: group.currency))")
+                            .font(.caption2.bold())
+                            .foregroundStyle(WCColors.textPrimary)
+                    }
+                }
+            }
+            .padding(16)
+            .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(WCColors.border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("bill.row.\(item.id)")
+    }
+
+    private var interestDisclaimer: some View {
+        Text("按当前账单周期估算；实际免息期以银行出账为准。")
+            .font(.caption2)
+            .foregroundStyle(WCColors.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    // MARK: - Unbilled Card View (未出账单卡片)
+    private func unbilledCardView(_ card: CardDisplayItem) -> some View {
+        Button(action: {
+            selectedCardForEdit = card
+        }) {
+            VStack(alignment: .leading, spacing: 10) {
+                // Card Identity Row
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(card.bankName)
+                                .font(.headline.bold())
+                                .foregroundStyle(WCColors.textPrimary)
+                            Text(card.holderName)
+                                .font(.subheadline)
+                                .foregroundStyle(WCColors.textSecondary)
+                        }
+
+                        HStack(spacing: 6) {
+                            Text(card.displayName)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(WCColors.textSecondary)
+                            if !card.last4.isEmpty {
+                                Text("(\(card.last4))")
+                                    .font(.caption)
+                                    .foregroundStyle(WCColors.textSecondary)
+                            }
+                        }
+                    }
+
+                    Spacer()
+
+                    Text("未出账单")
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(WCColors.subtle, in: Capsule())
+                        .foregroundStyle(WCColors.textSecondary)
+                }
+
+                // Amount Row
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("当前待还")
+                            .font(.caption2)
+                            .foregroundStyle(WCColors.textSecondary)
+                        Text(DashboardMoney.format(0.0, currency: card.product?.currency ?? "CNY"))
+                            .font(.system(size: 24, weight: .bold, design: .rounded))
+                            .foregroundStyle(WCColors.textSecondary)
+                    }
+
+                    Spacer()
+
+                    HStack(spacing: 4) {
+                        Text("卡片详情")
+                            .font(.caption.bold())
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.bold())
+                    }
+                    .foregroundStyle(WCColors.primaryAccent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 8))
+                }
+
+                let effectiveBillingDay = card.card.overrideBillingDay ?? card.card.billingDay
+                let daysToBilling = Self.daysUntilNextBilling(billingDay: effectiveBillingDay)
+
+                Divider()
+                    .background(WCColors.border)
+
+                // Footer Row
+                HStack {
+                    Text("距账单日 \(daysToBilling) 天 · 每月 \(effectiveBillingDay) 日出账")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(WCColors.textSecondary)
+
+                    Spacer()
+
+                    Text("今日免息 \(card.interestFreeDaysToday) 天")
+                        .font(.caption2.bold())
+                        .foregroundStyle(WCColors.primaryAccent)
+                }
+            }
+            .padding(16)
+            .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(WCColors.border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("card.unbilled.row.\(card.id)")
+    }
+
+    // MARK: - Animation Triggers
+
+    /// 标签切换动画：边缘高亮 -> 凝聚正圆圈 -> 带动面板位移 -> 释放边缘
+    private func triggerTabAnimation(to mode: BillsSortMode) {
+        guard appState.billsSortMode != mode, !isTabMorphing else { return }
+        isTabMorphing = true
+        morphingTargetMode = mode
+        tabEdgeHighlightMode = mode
+
+        // Step 1: 按钮边缘高亮
+        withAnimation(.easeIn(duration: 0.08)) {
+            tabEdgeHighlightMode = mode
+        }
+
+        // Step 2: 聚成正圆圈后，带动整个面板上下移动
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.65)) {
+                tabCirclePhase = 1.0
+                panelDisplacement = (mode == .maxInterestFree ? 14 : -14)
+            }
+        }
+
+        // Step 3: 面板带动位移后，释放到按钮边缘效果
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+            appState.billsSortMode = mode
+            Task { await appState.reloadData() }
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                tabCirclePhase = 0.0
+                panelDisplacement = 0.0
+                tabEdgeHighlightMode = nil
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.40) {
+            isTabMorphing = false
+            morphingTargetMode = nil
+        }
+    }
+
+    /// 筛选按钮光环凝聚动效，凝聚后拽着面板滑出
+    private func openFilterDrawerWithAnimation() {
+        guard !isFilterDrawerPresented else { return }
+        isFilterAuraCondensing = true
+        filterHaloScale = 1.6
+        filterHaloOpacity = 0.85
+
+        withAnimation(.easeOut(duration: 0.15)) {
+            filterHaloScale = 0.85
+            filterHaloOpacity = 0.0
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.76)) {
+                isFilterDrawerPresented = true
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
+            isFilterAuraCondensing = false
+            filterHaloScale = 1.0
+            filterHaloOpacity = 0.0
+        }
+    }
+
+    nonisolated public static func daysUntilNextBilling(billingDay: Int, today: Date = Date()) -> Int {
+        let cal = Calendar.current
+        let currentYear = cal.component(.year, from: today)
+        let currentMonth = cal.component(.month, from: today)
+        let currentDay = cal.component(.day, from: today)
+
+        var targetYear = currentYear
+        var targetMonth = currentMonth
+        if currentDay >= billingDay {
+            targetMonth += 1
+            if targetMonth > 12 {
+                targetMonth = 1
+                targetYear += 1
+            }
+        }
+        let comp = DateComponents(year: targetYear, month: targetMonth, day: billingDay)
+        let targetDate = cal.date(from: comp) ?? today
+        return max(0, BillingDateCalculator.diffInCalendarDays(target: targetDate, today: today))
+    }
+
+    private func setSortMode(_ mode: BillsSortMode) {
+        triggerTabAnimation(to: mode)
     }
 }

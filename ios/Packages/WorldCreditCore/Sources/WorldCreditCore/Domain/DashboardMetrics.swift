@@ -40,9 +40,9 @@ public struct FxRates: Codable, Equatable, Sendable {
 /// 按币种分组折算的纯函数集合，对齐 Web `lib/fx.ts` 的语义：
 /// 绝不把「拿不到汇率」当成 1:1 静默换算，缺汇率时该币种保留原币小计、
 /// 排除在折算合计之外，并记录到 `unconvertedCurrencies`。
-enum DashboardFx {
+public enum DashboardFx {
     /// 归一化币种代码；非法输入返回 nil（绝不猜一个默认币种）。
-    static func normalizeCurrency(_ raw: String?) -> String? {
+    public static func normalizeCurrency(_ raw: String?) -> String? {
         guard let raw else { return nil }
         let code = raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard code.count == 3, code.allSatisfy({ $0.isASCII && $0.isLetter }) else { return nil }
@@ -50,14 +50,14 @@ enum DashboardFx {
     }
 
     /// 归一化币种代码，非法时回落到给定默认值（默认值也非法则回落 CNY）。
-    static func normalizeCurrencyOrDefault(_ raw: String?, _ fallback: String) -> String {
+    public static func normalizeCurrencyOrDefault(_ raw: String?, _ fallback: String) -> String {
         normalizeCurrency(raw) ?? normalizeCurrency(fallback) ?? "CNY"
     }
 
     /// 把 amount 从 from 折算到 to，经基准币中转（amount / rates[from] * rates[to]）。
     /// 同币种直接返回原值；任何跨币种失败（无汇率、币种不在 rates 里、汇率非正数、
     /// 金额非有限数）都返回 nil，绝不猜。
-    static func convert(_ amount: Double, from: String, to: String, rates: FxRates?) -> Double? {
+    public static func convert(_ amount: Double, from: String, to: String, rates: FxRates?) -> Double? {
         guard amount.isFinite else { return nil }
         guard let source = normalizeCurrency(from), let target = normalizeCurrency(to) else { return nil }
         if source == target { return amount }

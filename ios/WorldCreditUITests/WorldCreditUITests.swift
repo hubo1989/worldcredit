@@ -309,12 +309,16 @@ final class WorldCreditUITests: XCTestCase {
         if dismiss.waitForExistence(timeout: 2) { dismiss.tap() }
     }
 
-    /// 状态筛选收进菜单：打开筛选菜单 → 选状态 → 断言列表切换完成。
+    /// 状态筛选：打开筛选抽屉 → 选状态 → 点击查看账单（应用） → 断言列表切换完成。
     private func setBillStatus(_ status: String, in app: XCUIApplication) {
         app.buttons["bills.holderBankFilter"].tap()
         let item = app.buttons[status].firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 5), "筛选菜单里应提供状态项「\(status)」")
         item.tap()
+        let apply = app.buttons["bills.filter.apply"]
+        if apply.waitForExistence(timeout: 2) {
+            apply.tap()
+        }
     }
 
     private func launchScenario() -> XCUIApplication {        continueAfterFailure = false
@@ -409,5 +413,212 @@ final class WorldCreditUITests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    /// 自动化截取各页面在深浅主题下的真实渲染效果，供人工验收
+    func test99CaptureVerificationScreenshots() {
+        let saveDir = "/Users/hubo/Library/Application Support/orca/antigravity-chat/antigravity-acp/brain/60870495-2682-4845-b33b-77a0404c83ee/screenshots"
+        let save: (XCUIApplication, String) -> Void = { app, name in
+            let path = "\(saveDir)/\(name).png"
+            let png = app.screenshot().pngRepresentation
+            try? png.write(to: URL(fileURLWithPath: path))
+        }
+
+        let app = launchScenario()
+
+        // 1. 设置页切换到深色模式
+        tab("设置", in: app)
+        let themePicker = app.segmentedControls["settings.themePicker"]
+        if themePicker.waitForExistence(timeout: 5) {
+            themePicker.buttons["深色"].tap()
+            Thread.sleep(forTimeInterval: 0.8)
+            save(app, "01_settings_dark_mode")
+        }
+
+        // 2. 账单列表（深色模式）
+        tab("账单", in: app)
+        Thread.sleep(forTimeInterval: 0.8)
+        save(app, "02_bills_dark")
+
+        // 3. 右侧持卡人/银行筛选抽屉（深色模式）
+        app.buttons["bills.holderBankFilter"].tap()
+        Thread.sleep(forTimeInterval: 0.8)
+        save(app, "03_bills_filter_drawer_dark")
+
+        // 关闭抽屉
+        let closeDrawer = app.buttons["bills.filter.close"]
+        if closeDrawer.waitForExistence(timeout: 3) {
+            closeDrawer.tap()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        // 4. 最大免息期（深色模式）
+        app.buttons["bills.sort.maxInterestFree"].tap()
+        Thread.sleep(forTimeInterval: 0.8)
+        save(app, "04_max_interest_free_dark")
+
+        // 切回最近需还款
+        app.buttons["bills.sort.nearestDue"].tap()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // 5. 登记还款页面（深色模式）
+        let quickPay = app.buttons["bill.row.pay.bill-cmb-202610"]
+        if quickPay.waitForExistence(timeout: 5) {
+            quickPay.tap()
+            Thread.sleep(forTimeInterval: 0.8)
+            save(app, "05_record_payment_dark")
+
+            // 切换为自定义金额，唤起键盘输入
+            let customType = app.segmentedControls["payment.type"].buttons["自定义"]
+            if customType.waitForExistence(timeout: 3) {
+                customType.tap()
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+            let amountField = app.textFields["payment.amountInput"]
+            if amountField.waitForExistence(timeout: 3) {
+                amountField.tap()
+                amountField.typeText("1500")
+                Thread.sleep(forTimeInterval: 0.8)
+                save(app, "06_record_payment_keyboard_dark")
+            }
+
+            // 取消还款弹窗
+            let cancelPayment = app.buttons["取消"]
+            if cancelPayment.waitForExistence(timeout: 3) {
+                cancelPayment.tap()
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+        }
+
+        // 6. 还款记录页面（深色模式）
+        setBillStatus("已还", in: app)
+        Thread.sleep(forTimeInterval: 0.5)
+        let viewHistoryDark = app.buttons["bill.row.pay.bill-boc-202609"]
+        if viewHistoryDark.waitForExistence(timeout: 5) {
+            viewHistoryDark.tap()
+            Thread.sleep(forTimeInterval: 0.8)
+            save(app, "07_payment_history_dark")
+            let closeHist = app.buttons["关闭"]
+            if closeHist.waitForExistence(timeout: 3) {
+                closeHist.tap()
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+        }
+        setBillStatus("待还", in: app)
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // 7. 设置页切换到浅色模式
+        tab("设置", in: app)
+        if themePicker.waitForExistence(timeout: 5) {
+            themePicker.buttons["浅色"].tap()
+            Thread.sleep(forTimeInterval: 0.8)
+            save(app, "08_settings_light_mode")
+        }
+
+        // 8. 账单列表（浅色模式）
+        tab("账单", in: app)
+        Thread.sleep(forTimeInterval: 0.8)
+        save(app, "09_bills_light")
+
+        // 9. 右侧持卡人/银行筛选抽屉（浅色模式）
+        app.buttons["bills.holderBankFilter"].tap()
+        Thread.sleep(forTimeInterval: 0.8)
+        save(app, "10_bills_filter_drawer_light")
+        let closeDrawerLight = app.buttons["bills.filter.close"]
+        if closeDrawerLight.waitForExistence(timeout: 3) {
+            closeDrawerLight.tap()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        // 10. 最大免息期（浅色模式）
+        app.buttons["bills.sort.maxInterestFree"].tap()
+        Thread.sleep(forTimeInterval: 0.8)
+        save(app, "11_max_interest_free_light")
+        app.buttons["bills.sort.nearestDue"].tap()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // 11. 登记还款页面（浅色模式）
+        if quickPay.waitForExistence(timeout: 5) {
+            quickPay.tap()
+            Thread.sleep(forTimeInterval: 0.8)
+            save(app, "12_record_payment_light")
+            let cancelPayment = app.buttons["取消"]
+            if cancelPayment.waitForExistence(timeout: 3) {
+                cancelPayment.tap()
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+        }
+
+        // 12. 还款记录页面（浅色模式）
+        setBillStatus("已还", in: app)
+        Thread.sleep(forTimeInterval: 0.5)
+        let viewHistoryLight = app.buttons["bill.row.pay.bill-boc-202609"]
+        if viewHistoryLight.waitForExistence(timeout: 5) {
+            viewHistoryLight.tap()
+            Thread.sleep(forTimeInterval: 0.8)
+            save(app, "13_payment_history_light")
+            let closeHist = app.buttons["关闭"]
+            if closeHist.waitForExistence(timeout: 3) {
+                closeHist.tap()
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+        }
+        setBillStatus("待还", in: app)
+
+        // 13. 设置页切换回跟随系统并截图
+        tab("设置", in: app)
+        if themePicker.waitForExistence(timeout: 5) {
+            themePicker.buttons["跟随系统"].tap()
+            Thread.sleep(forTimeInterval: 0.8)
+            save(app, "14_settings_system_theme")
+        }
+    }
+
+    /// 专供人工视觉检查的截图采集用例（验证高度44pt双tab、三币种待还、真实三笔固定支出、未出账单Tier2与详情联动）
+    func testVisualCheckBillsTabsAndDetails() {
+        let saveDir = "/Users/hubo/Library/Application Support/orca/antigravity-chat/antigravity-acp/brain/60870495-2682-4845-b33b-77a0404c83ee/screenshots"
+        let save: (XCUIApplication, String) -> Void = { app, name in
+            let path = "\(saveDir)/\(name).png"
+            let png = app.screenshot().pngRepresentation
+            try? png.write(to: URL(fileURLWithPath: path))
+        }
+
+        let app = launchScenario()
+        tab("账单", in: app)
+        Thread.sleep(forTimeInterval: 1.2)
+        save(app, "visual_check_bills_nearest_due")
+
+        // 切换到最大免息期
+        let maxFree = app.buttons["bills.sort.maxInterestFree"]
+        if maxFree.waitForExistence(timeout: 5) {
+            maxFree.tap()
+            Thread.sleep(forTimeInterval: 1.0)
+            save(app, "visual_check_bills_max_interest_free")
+        }
+
+        // 切回最近需还款
+        let nearest = app.buttons["bills.sort.nearestDue"]
+        if nearest.waitForExistence(timeout: 5) {
+            nearest.tap()
+            Thread.sleep(forTimeInterval: 0.8)
+        }
+
+        // 打开筛选抽屉
+        app.buttons["bills.holderBankFilter"].tap()
+        Thread.sleep(forTimeInterval: 0.8)
+        save(app, "visual_check_bills_filter_drawer")
+        let closeDrawer = app.buttons["bills.filter.close"]
+        if closeDrawer.waitForExistence(timeout: 3) {
+            closeDrawer.tap()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        // 点击第一笔账单进入账单详情
+        let firstBill = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "bill.row.")).firstMatch
+        if firstBill.waitForExistence(timeout: 5) {
+            firstBill.tap()
+            Thread.sleep(forTimeInterval: 1.0)
+            save(app, "visual_check_bill_detail")
+        }
     }
 }
