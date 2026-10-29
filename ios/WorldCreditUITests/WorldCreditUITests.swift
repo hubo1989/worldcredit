@@ -293,7 +293,7 @@ final class WorldCreditUITests: XCTestCase {
         scrollTo(sync, in: app)
         XCTAssertTrue(sync.waitForExistence(timeout: 5), "已连接时应展示「立即同步」")
         XCTAssertTrue(app.buttons["gmail.disconnect"].exists, "已连接时应展示「断开 Gmail」")
-        let emailRow = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "hubo@20160325.xyz")).firstMatch
+        let emailRow = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "test-user@example.com")).firstMatch
         XCTAssertTrue(emailRow.waitForExistence(timeout: 5), "已连接时应展示授权邮箱")
         attachScreenshot(app, name: "12-gmail-connected")
 

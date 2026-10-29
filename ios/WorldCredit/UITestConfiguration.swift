@@ -71,7 +71,7 @@ struct OfflineUITestNetworkSession: NetworkSession {
         if request.url?.path == "/api/gmail/status", request.httpMethod == "GET" {
             let connected = ProcessInfo.processInfo.environment["WORLDCREDIT_UI_TEST_GMAIL"] == "connected"
             let json = connected
-                ? #"{"connected":true,"email":"hubo@20160325.xyz","status":"active","last_sync_at":"2026-10-28 12:57:32","last_sync_summary":"扫描 5｜落账单 2｜草稿 1｜跳过 2｜失败 0","last_error":null}"#
+                ? #"{"connected":true,"email":"test-user@example.com","status":"active","last_sync_at":"2026-10-28 12:57:32","last_sync_summary":"扫描 5｜落账单 2｜草稿 1｜跳过 2｜失败 0","last_error":null}"#
                 : #"{"connected":false,"email":null,"status":null,"last_sync_at":null,"last_sync_summary":null,"last_error":null}"#
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
             return (Data(json.utf8), response)

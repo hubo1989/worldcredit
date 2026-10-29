@@ -123,6 +123,16 @@ public struct GmailSyncStatus: Codable, Sendable, Equatable {
         case lastSyncSummary = "last_sync_summary"
         case lastError = "last_error"
     }
+
+    public init(connected: Bool, email: String? = nil, status: String? = nil,
+                lastSyncAt: String? = nil, lastSyncSummary: String? = nil, lastError: String? = nil) {
+        self.connected = connected
+        self.email = email
+        self.status = status
+        self.lastSyncAt = lastSyncAt
+        self.lastSyncSummary = lastSyncSummary
+        self.lastError = lastError
+    }
 }
 
 /// `POST /api/gmail/connect`。
@@ -131,7 +141,7 @@ public struct GmailConnectResponse: Codable, Sendable, Equatable {
     public var email: String?
 }
 
-/// `POST /api/gmail/sync`。
+/// `POST /api/gmail/sync`。`remaining` 为服务端剩余待扫描邮件数，客户端据此分轮续拉。
 public struct GmailSyncResult: Codable, Sendable, Equatable {
     public var scanned: Int
     public var written: Int
@@ -139,9 +149,34 @@ public struct GmailSyncResult: Codable, Sendable, Equatable {
     public var skipped: Int
     public var failed: Int
     public var errors: [String]
+    public var remaining: Int?
+
+    public init(scanned: Int, written: Int, drafted: Int, skipped: Int, failed: Int,
+                errors: [String] = [], remaining: Int? = nil) {
+        self.scanned = scanned
+        self.written = written
+        self.drafted = drafted
+        self.skipped = skipped
+        self.failed = failed
+        self.errors = errors
+        self.remaining = remaining
+    }
 
     public var summaryText: String {
         "扫描 \(scanned)｜落账单 \(written)｜草稿 \(drafted)｜跳过 \(skipped)｜失败 \(failed)"
+    }
+
+    /// 分轮同步时把各轮计数合并为一个汇总。
+    public func merged(with other: GmailSyncResult) -> GmailSyncResult {
+        GmailSyncResult(
+            scanned: scanned + other.scanned,
+            written: written + other.written,
+            drafted: drafted + other.drafted,
+            skipped: skipped + other.skipped,
+            failed: failed + other.failed,
+            errors: errors + other.errors,
+            remaining: other.remaining
+        )
     }
 }
 
@@ -467,9 +502,13 @@ public final class ApiClient: @unchecked Sendable {
         return try JSONDecoder().decode(GmailConnectResponse.self, from: data)
     }
 
-    /// 手动触发一次拉取。服务端要逐封扫邮件，放宽超时。
-    public func gmailSync() async throws -> GmailSyncResult {
+    /// 手动触发一次拉取。`maxMessages` 限制单轮扫描封数（UI 按轮续拉时传 6）；
+    /// 服务端要逐封扫邮件，120s 超时作为单轮兜底。
+    public func gmailSync(maxMessages: Int? = nil) async throws -> GmailSyncResult {
         var request = try authenticatedRequest(path: "api/gmail/sync", method: "POST", timeoutInterval: 120)
+        if let maxMessages {
+            request.httpBody = try JSONEncoder().encode(["maxMessages": maxMessages])
+        }
         let (data, response) = try await session.data(for: request)
         try validateHTTP(response, data: data)
         return try JSONDecoder().decode(GmailSyncResult.self, from: data)

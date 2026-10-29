@@ -16,6 +16,7 @@ struct GmailSyncSection: View {
     @State private var isDisconnecting = false
     @State private var showingDisconnectAlert = false
     @State private var alertMessage: String?
+    @State private var progressMessage: String?
 
     var body: some View {
         Section("Gmail 账单同步") {
@@ -64,7 +65,7 @@ struct GmailSyncSection: View {
             LabeledContent("上次同步", value: at)
         } else {
             LabeledContent("上次同步") {
-                Text("尚未同步（服务端每日 09:00 自动拉取）")
+                Text("尚未同步；服务端每日自动拉取（北京时间约 17:00）")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -98,6 +99,12 @@ struct GmailSyncSection: View {
         }
         .disabled(isSyncing || isConnecting || isDisconnecting)
         .accessibilityIdentifier("gmail.sync")
+
+        if isSyncing, let progressMessage {
+            Text(progressMessage)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
 
         Button(role: .destructive, action: { showingDisconnectAlert = true }) {
             HStack {
@@ -157,6 +164,17 @@ struct GmailSyncSection: View {
         }
     }
 
+    /// 已发生连接状态变更（连接/断开成功）后的刷新：失败不能回滚到旧状态误导用户，
+    /// 乐观值已先行落位，这里只在失败时提示状态可能过期。
+    private func reloadStatusAfterMutation() async {
+        do {
+            status = try await appState.apiClient.gmailStatus()
+            statusError = nil
+        } catch {
+            alertMessage = "状态可能未刷新：\(error.localizedDescription)"
+        }
+    }
+
     private func connect() async {
         guard let presenter = Self.presentingViewController() else {
             alertMessage = "无法获取当前窗口，请稍后重试"
@@ -165,10 +183,16 @@ struct GmailSyncSection: View {
         isConnecting = true
         defer { isConnecting = false }
         do {
+            // 防跨账号污染：清除 SDK 里保存的 Google 身份，强制每次弹账号选择；
+            // 同时保证 addScopes 不会复用缺 serverClientID 的旧配置（拿不到 serverAuthCode）。
+            GIDSignIn.sharedInstance.signOut()
             let code = try await Self.authorizeGmail(presenting: presenter)
             let result = try await appState.apiClient.gmailConnect(serverAuthCode: code)
-            await refreshStatus()
-            alertMessage = "已连接 \(result.email ?? status?.email ?? "Gmail")，服务端将每日自动拉取账单。"
+            // 乐观更新：服务端已入库连接；随后的刷新失败不回滚此状态。
+            status = GmailSyncStatus(connected: true, email: result.email, status: "active")
+            statusError = nil
+            alertMessage = "已连接 \(result.email ?? "Gmail")，服务端将每日自动拉取账单。"
+            await reloadStatusAfterMutation()
         } catch let error as GIDSignInError where error.code == .canceled {
             // 用户在授权页主动返回，静默即可。
         } catch {
@@ -176,13 +200,22 @@ struct GmailSyncSection: View {
         }
     }
 
+    /// 与 Web 面板同款的分轮拉取：每轮 6 封、按 remaining 续拉、最多 30 轮，
+    /// 过程中实时展示进度，结束后一次性汇总。
     private func syncNow() async {
         isSyncing = true
+        progressMessage = nil
         defer { isSyncing = false }
         do {
-            let result = try await appState.apiClient.gmailSync()
-            await refreshStatus()
-            alertMessage = "同步完成：\(result.summaryText)"
+            var total = GmailSyncResult(scanned: 0, written: 0, drafted: 0, skipped: 0, failed: 0)
+            for round in 1...30 {
+                let result = try await appState.apiClient.gmailSync(maxMessages: 6)
+                total = total.merged(with: result)
+                progressMessage = "同步中（第 \(round) 轮）… 落账单 \(total.written)｜草稿 \(total.drafted)｜剩余 \(result.remaining ?? 0) 封"
+                guard let remaining = result.remaining, remaining > 0, round < 30 else { break }
+            }
+            await reloadStatusAfterMutation()
+            alertMessage = "同步完成：\(total.summaryText)"
         } catch {
             alertMessage = "同步失败：\(error.localizedDescription)"
         }
@@ -193,7 +226,12 @@ struct GmailSyncSection: View {
         defer { isDisconnecting = false }
         do {
             try await appState.apiClient.gmailDisconnect()
-            await refreshStatus()
+            // 乐观更新：断开成功即视为未连接，刷新失败不回滚。
+            status = GmailSyncStatus(connected: false)
+            // 清掉 SDK 里 grantedScopes 残留，否则重连走 addScopes 会因
+            // scopesAlreadyGranted 产不出新的 serverAuthCode。
+            GIDSignIn.sharedInstance.signOut()
+            await reloadStatusAfterMutation()
         } catch {
             alertMessage = "断开失败：\(error.localizedDescription)"
         }
@@ -220,8 +258,11 @@ struct GmailSyncSection: View {
         }
     }
 
-    /// 已登录 Google 时增量加 scope；否则走完整 signIn。两者都要求 config 带 serverClientID，
-    /// 否则结果里不会有 serverAuthCode。结束后恢复原配置，不影响默认登录路径。
+    /// 优先完整 signIn 取 serverAuthCode。仅当现有 currentUser 的 configuration 自带
+    /// 本 Web serverClientID（即它当初就是带 serverClientID 登录的）时才允许走增量
+    /// addScopes——addScopes 用的是 user 登录时缓存的旧配置，而不是 signIn.configuration
+    /// 新赋的值（GIDGoogleUser.m 对 configuration 做了缓存），旧配置缺 serverClientID
+    /// 时结果里不会出现 serverAuthCode。connect() 已先行 signOut，正常路径都走完整 signIn。
     @MainActor
     private static func authorizeGmail(presenting: UIViewController) async throws -> String {
         let signIn = GIDSignIn.sharedInstance
@@ -235,9 +276,13 @@ struct GmailSyncSection: View {
         defer { signIn.configuration = previousConfig }
 
         let result: GIDSignInResult
-        if let currentUser = signIn.currentUser {
+        if let currentUser = signIn.currentUser,
+           currentUser.configuration.serverClientID == webServerClientID {
             result = try await currentUser.addScopes([gmailReadonlyScope], presenting: presenting)
         } else {
+            if signIn.currentUser != nil {
+                signIn.signOut() // 旧配置产不出 code，必须完整重登。
+            }
             result = try await signIn.signIn(withPresenting: presenting)
         }
         guard let code = result.serverAuthCode, !code.isEmpty else {

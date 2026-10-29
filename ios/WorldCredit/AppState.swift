@@ -9,6 +9,9 @@ public final class AppState {
     public let dbManager: DatabaseManager
     /// 仅测试构造器注入 mock 会替换实例；生产路径构造后不变。
     @ObservationIgnored public private(set) var apiClient: ApiClient
+    /// 登出时的附加清理钩子。GoogleSignIn 依赖不能进 AppState（见 loginWithGoogle 注释），
+    /// 由 App 入口注入 `GIDSignIn.sharedInstance.signOut()`，防止 Google 身份跨 app 会话存活。
+    @ObservationIgnored public var sessionIdentityCleanup: (@Sendable () -> Void)?
     public private(set) var syncEngine: SyncEngine
     public let paymentService: PaymentService
     public let billEditService: BillEditService
@@ -416,6 +419,7 @@ public final class AppState {
         syncEngine.invalidateSession()
 
         PushNotificationManager.shared.unregisterCurrentToken()
+        sessionIdentityCleanup?()
         apiClient.token = nil
         isLoggedIn = false
         currentUser = nil
