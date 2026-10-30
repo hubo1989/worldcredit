@@ -158,7 +158,15 @@ struct GmailSyncSection: View {
         do {
             status = try await appState.apiClient.gmailStatus()
             statusError = nil
+        } catch is CancellationError {
+            // 视图离页/下拉刷新取消：静默
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            // 同上：URLError 形态的取消
         } catch {
+            // 会话未就绪（401）与取消都不是连接故障：保留上次状态，不打断设置页
+            let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain && nsError.code == 401 { return }
+            if nsError.code == 401 { return }
             // 服务端未部署或网络异常时保留上次状态，不打断设置页。
             if status == nil { statusError = error.localizedDescription }
         }

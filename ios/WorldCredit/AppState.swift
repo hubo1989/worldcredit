@@ -390,11 +390,15 @@ public final class AppState {
             }
         } catch is CancellationError {
             return
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            // 下拉刷新松手/离页时系统取消任务：不是故障，不写降级横幅
+            return
         } catch {
             guard sessionEpoch == epoch, apiClient.token == token else { return }
             // 401 = 会话未就绪/已过期：非网络故障，不写入降级错误横幅；
             // 若确实已登出，guard isLoggedIn 已拦，这里只剩冷启动窗口的竞态误报
             if let nsError = error as NSError?, nsError.code == 401 { return }
+            if let urlError = error as? URLError, urlError.code == .cancelled { return }
             self.payablesError = error.localizedDescription
 
             // 网络失败时优先保留内存中已有的数据；若内存为空则尝试读取本用户的有效本地快照并重算倒计时
@@ -550,8 +554,14 @@ public final class AppState {
                 // 成功后清空历史错误：否则一次失败的「Gmail 同步异常」会永久滞留设置页
                 lastSyncError = nil
                 guard let remaining = result.remaining, remaining > 0, round < maxRounds else { break }
+            } catch is CancellationError {
+                break
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                break
             } catch {
                 guard sessionEpoch == epoch, isLoggedIn else { return }
+                // 401 会话未就绪：不是同步故障，不写 lastSyncError 误报
+                if let nsError = error as NSError?, nsError.code == 401 { break }
                 lastSyncError = "Gmail 账单同步失败：\(error.localizedDescription)"
                 break
             }
