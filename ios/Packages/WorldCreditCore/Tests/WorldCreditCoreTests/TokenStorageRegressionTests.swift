@@ -23,8 +23,12 @@ private final class KeychainProbe: TokenKeychain, @unchecked Sendable {
         }
     }
     func delete(_ query: [String: Any]) -> OSStatus {
-        deleteEntered?.signal()
-        if let releaseDelete { _ = releaseDelete.wait(timeout: .now() + 3) }
+        // 只对 access-token 条目挂起探针：logout 现在会额外删 refresh-token 条目，
+        // 不能让两次删除共享同一个信号量（第二次会等不到 release 超时）
+        if query[kSecAttrAccount as String] as? String == "com.chunfenshijie.worldcredit.sessionToken" {
+            deleteEntered?.signal()
+            if let releaseDelete { _ = releaseDelete.wait(timeout: .now() + 3) }
+        }
         return lock.withLock {
             if deleteStatus == errSecSuccess { stored = nil }
             return deleteStatus

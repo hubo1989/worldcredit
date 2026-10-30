@@ -384,6 +384,25 @@ public final class AppState {
         syncEngine = SyncEngine(dbManager: dbManager, apiClient: apiClient)
     }
 
+    /// access token 过期（401）时的处理：先尝试静默续期（refresh token 一次性轮换），
+    /// 成功则重放原操作；refresh token 也失效才落地到登录页。
+    /// 返回 true = 已续期可重试，false = 已切回登录态。
+    private func trySilentRefresh() async -> Bool {
+        guard apiClient.refreshToken != nil else {
+            handleSessionExpired()
+            return false
+        }
+        do {
+            let user = try await apiClient.refreshSession()
+            currentUser = user
+            isLoggedIn = true
+            return true
+        } catch {
+            handleSessionExpired()
+            return false
+        }
+    }
+
     public func refreshPayables() async {
         // 演示模式（--demo-mode）与 UI 测试都不拉在线固定支出：
         // 演示下 fetchSessionUser 必然失败，会污染特意清空的干净演示状态
@@ -424,10 +443,11 @@ public final class AppState {
             return
         } catch {
             guard sessionEpoch == epoch, apiClient.token == token else { return }
-            // 401 = token 已失效（服务端 session 7 天 TTL）：落地到未登录态回登录页，
-            // 重新登录后 sync 自动恢复数据；本地 DB 保留不清。
+            // 401 = access token 过期：先静默续期，成功则重拉；续期失败回登录页
             if let nsError = error as NSError?, nsError.code == 401 {
-                handleSessionExpired()
+                if await trySilentRefresh() {
+                    await refreshPayables()
+                }
                 return
             }
             self.payablesError = error.localizedDescription
@@ -591,9 +611,9 @@ public final class AppState {
                 break
             } catch {
                 guard sessionEpoch == epoch, isLoggedIn else { return }
-                // 401 = token 已失效：落地到未登录态回登录页，不作为同步故障误报
+                // 401 = access token 过期：静默续期；失败回登录页
                 if let nsError = error as NSError?, nsError.code == 401 {
-                    handleSessionExpired()
+                    _ = await trySilentRefresh()
                     break
                 }
                 lastSyncError = "Gmail 账单同步失败：\(error.localizedDescription)"
@@ -625,10 +645,11 @@ public final class AppState {
                     }
                 } catch {
                     guard sessionEpoch == epoch else { return }
-                    // 401 = token 已失效：落地到未登录态回登录页，本地 DB 保留，
-                    // 重新登录后 sync 恢复；不作为同步故障滞留设置页
+                    // 401 = access token 过期：静默续期后重跑本次 sync；失败回登录页
                     if let nsError = error as NSError?, nsError.code == 401 {
-                        handleSessionExpired()
+                        if await trySilentRefresh() {
+                            _ = await sync()
+                        }
                         throw error
                     }
                     lastSyncError = error.localizedDescription
