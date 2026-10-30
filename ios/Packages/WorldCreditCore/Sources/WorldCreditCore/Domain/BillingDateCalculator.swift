@@ -25,6 +25,13 @@ public enum BillingDateCalculator {
         return businessDayStart(for: lastLoadedDay) != businessDayStart(for: now)
     }
 
+    public static func secondsUntilNextBusinessMidnight(from now: Date = Date()) -> TimeInterval {
+        guard let midnight = calendar.date(byAdding: .day, value: 1, to: businessDayStart(for: now)) else {
+            return 60
+        }
+        return max(1, midnight.timeIntervalSince(now))
+    }
+
     private static var calendar: Calendar {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!
@@ -199,5 +206,93 @@ public enum BillingDateCalculator {
         let diffDays = max(1, diffInCalendarDays(target: nextDueDate, today: d))
 
         return (nextBillingDate, nextDueDate, diffDays)
+    }
+}
+
+/// 统一首载去重、跨自然日刷新与会话翻转清理，供 App 层和宿主无关单测共用。
+@MainActor
+public final class SessionDataRefreshState {
+    public private(set) var sessionEpoch = UUID()
+    public private(set) var loadedBusinessDay: Date?
+    private var initialLoadEpoch: UUID?
+    private var initialLoadTask: Task<Void, Never>?
+    private var businessDayEpoch: UUID?
+    private var businessDayTask: Task<Void, Never>?
+
+    public init() {}
+
+    @discardableResult
+    public func advanceSession() -> UUID {
+        initialLoadTask?.cancel()
+        initialLoadTask = nil
+        initialLoadEpoch = nil
+        businessDayTask?.cancel()
+        businessDayTask = nil
+        businessDayEpoch = nil
+        loadedBusinessDay = nil
+        sessionEpoch = UUID()
+        return sessionEpoch
+    }
+
+    public func isCurrent(_ epoch: UUID, isLoggedIn: Bool) -> Bool {
+        isLoggedIn && sessionEpoch == epoch && !Task.isCancelled
+    }
+
+    public func markLoaded(today: Date) {
+        loadedBusinessDay = BillingDateCalculator.businessDayStart(for: today)
+    }
+
+    public func loadInitialIfNeeded(
+        isLoggedIn: @escaping @MainActor () -> Bool,
+        now: Date = Date(),
+        initialLoad: @escaping @MainActor (UUID) async -> Bool,
+        dayRefresh: @escaping @MainActor (UUID, Date) async -> Void
+    ) async {
+        guard isLoggedIn(), !Task.isCancelled else { return }
+        let epoch = sessionEpoch
+        if initialLoadEpoch == epoch {
+            await initialLoadTask?.value
+            guard isCurrent(epoch, isLoggedIn: isLoggedIn()) else { return }
+            await refreshBusinessDayIfNeeded(isLoggedIn: isLoggedIn, now: now, refresh: dayRefresh)
+            return
+        }
+        initialLoadTask?.cancel()
+        initialLoadEpoch = epoch
+        let task = Task { @MainActor in
+            guard isCurrent(epoch, isLoggedIn: isLoggedIn()) else { return }
+            _ = await initialLoad(epoch)
+        }
+        initialLoadTask = task
+        await task.value
+        if sessionEpoch == epoch { initialLoadTask = nil }
+    }
+
+    public func refreshBusinessDayIfNeeded(
+        isLoggedIn: @escaping @MainActor () -> Bool,
+        now: Date = Date(),
+        refresh: @escaping @MainActor (UUID, Date) async -> Void
+    ) async {
+        guard isLoggedIn(), !Task.isCancelled else { return }
+        let epoch = sessionEpoch
+        if initialLoadEpoch == epoch { await initialLoadTask?.value }
+        guard isCurrent(epoch, isLoggedIn: isLoggedIn()),
+              BillingDateCalculator.needsBusinessDayRefresh(lastLoadedDay: loadedBusinessDay, now: now)
+        else { return }
+        if businessDayEpoch == epoch, let businessDayTask {
+            await businessDayTask.value
+            return
+        }
+        businessDayTask?.cancel()
+        businessDayEpoch = epoch
+        let task = Task { @MainActor in
+            guard isCurrent(epoch, isLoggedIn: isLoggedIn()) else { return }
+            await refresh(epoch, now)
+        }
+        businessDayTask = task
+        await task.value
+        if sessionEpoch == epoch {
+            businessDayTask = nil
+            businessDayEpoch = nil
+        }
     }
 }

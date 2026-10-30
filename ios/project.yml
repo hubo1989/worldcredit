@@ -25,6 +25,19 @@ settings:
     CODE_SIGN_STYLE: Automatic
 
 targets:
+  WorldCreditTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: WorldCreditTests
+    dependencies:
+      - target: WorldCredit
+      - package: WorldCreditCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chunfenshijie.worldcredit.tests
+        GENERATE_INFOPLIST_FILE: YES
+
   WorldCreditUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -176,6 +189,9 @@ schemes:
     test:
       config: Debug
       targets:
+        - name: WorldCreditTests
+          parallelizable: false
+          randomExecutionOrder: false
         - name: WorldCreditUITests
           parallelizable: false
           randomExecutionOrder: false

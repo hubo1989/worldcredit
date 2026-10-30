@@ -3,6 +3,31 @@ import Testing
 import GRDB
 @testable import WorldCreditCore
 
+@MainActor
+final class Gate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isReleased = false
+    private(set) var isEntered = false
+
+    func wait() async {
+        isEntered = true
+        if isReleased { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func waitUntilEntered() async {
+        for _ in 0..<500 where !isEntered {
+            await Task.yield()
+        }
+    }
+
+    func release() {
+        isReleased = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 /// 卡分组、组间排序与多币种合计折算 —— 对齐 Web bills 页的卡组语义。
 @Suite("Bills grouping, group sort and converted totals")
 struct BillsGroupingTests {
@@ -216,6 +241,102 @@ struct BillsGroupingTests {
                               filter: filter, today: afterMidnight)
         }
         #expect(Set(second.overdueBills.map(\.id)) == Set(["b1", "b3"]))
+    }
+
+    @MainActor
+    @Test("session refresh gate dedupes initial load, stops stale work and recovers after epoch change")
+    func sessionRefreshGate() async {
+        let calendar = BillingDateCalculator.businessCalendar
+        let dayOne = calendar.date(from: DateComponents(year: 2026, month: 10, day: 30, hour: 23))!
+        let dayTwo = calendar.date(from: DateComponents(year: 2026, month: 10, day: 31, hour: 1))!
+        let state = SessionDataRefreshState()
+        var initialLoads = 0
+        var dayRefreshes = 0
+        let initialGate = Gate()
+        let first = Task { @MainActor in
+            await state.loadInitialIfNeeded(
+                isLoggedIn: { true },
+                now: dayOne,
+                initialLoad: { _ in
+                    initialLoads += 1
+                    await initialGate.wait()
+                    state.markLoaded(today: dayOne)
+                    return true
+                },
+                dayRefresh: { _, now in
+                    dayRefreshes += 1
+                    state.markLoaded(today: now)
+                }
+            )
+        }
+        await initialGate.waitUntilEntered()
+        let second = Task { @MainActor in
+            await state.loadInitialIfNeeded(
+                isLoggedIn: { true },
+                now: dayOne,
+                initialLoad: { _ in
+                    initialLoads += 1
+                    state.markLoaded(today: dayOne)
+                    return true
+                },
+                dayRefresh: { _, now in
+                    dayRefreshes += 1
+                    state.markLoaded(today: now)
+                }
+            )
+        }
+        await Task.yield()
+        #expect(initialLoads == 1, "初次加载未结束时不得启动第二次")
+        initialGate.release()
+        await first.value
+        await second.value
+        #expect(initialLoads == 1)
+        await state.refreshBusinessDayIfNeeded(isLoggedIn: { true }, now: dayOne.addingTimeInterval(60)) { _, now in
+            dayRefreshes += 1
+            state.markLoaded(today: now)
+        }
+        #expect(dayRefreshes == 0, "同一业务日不应重复刷新")
+        await state.refreshBusinessDayIfNeeded(isLoggedIn: { true }, now: dayTwo) { _, now in
+            dayRefreshes += 1
+            state.markLoaded(today: now)
+        }
+        #expect(dayRefreshes == 1)
+
+        let gate = Gate()
+        let stale = Task { @MainActor in
+            await state.refreshBusinessDayIfNeeded(isLoggedIn: { true }, now: dayTwo.addingTimeInterval(86_400)) { epoch, _ in
+                await gate.wait()
+                guard state.isCurrent(epoch, isLoggedIn: true) else { return }
+                dayRefreshes += 1
+            }
+        }
+        await gate.waitUntilEntered()
+        state.advanceSession()
+        gate.release()
+        await stale.value
+        #expect(dayRefreshes == 1, "换号后旧任务不得写入新会话")
+
+        state.markLoaded(today: dayTwo)
+        await state.refreshBusinessDayIfNeeded(isLoggedIn: { true }, now: dayTwo.addingTimeInterval(86_400)) { _, now in
+            dayRefreshes += 1
+            state.markLoaded(today: now)
+        }
+        #expect(dayRefreshes == 2, "新会话必须能继续跨日刷新，不能被旧任务永久短路")
+    }
+
+    @MainActor
+    @Test("logged-out gate performs no work")
+    func sessionRefreshGateLoggedOut() async {
+        let state = SessionDataRefreshState()
+        var work = 0
+        await state.loadInitialIfNeeded(
+            isLoggedIn: { false },
+            initialLoad: { _ in work += 1; return true },
+            dayRefresh: { _, _ in work += 1 }
+        )
+        await state.refreshBusinessDayIfNeeded(isLoggedIn: { false }) { _, _ in work += 1 }
+        #expect(work == 0)
+        #expect(!state.isCurrent(state.sessionEpoch, isLoggedIn: false))
     }
 
     @Test("next billing countdown clamps short months and stays in the business timezone")

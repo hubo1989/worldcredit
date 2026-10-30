@@ -22,9 +22,16 @@ public final class AppState {
     @ObservationIgnored private var accountCleanupTask: Task<Void, Error>?
     @ObservationIgnored private var accountTransitionTask: Task<Void, Error>?
     @ObservationIgnored private var watchSnapshots: WatchSnapshotManager = .shared
+    @ObservationIgnored private var saveWatchSnapshot: @MainActor (WatchSnapshot) throws -> Void = {
+        try WatchSnapshotManager.shared.save($0)
+    }
     @ObservationIgnored private var sendWatchSnapshot: @MainActor (WatchSnapshot) throws -> Void = {
         WatchSyncCoordinator.shared.sendSnapshotToWatch($0)
     }
+    #if DEBUG
+    /// 用于在读库开始前暂停任务，验证换号与取消的竞态。
+    @ObservationIgnored var beforeLocalReload: (@MainActor () async -> Void)?
+    #endif
     /// 测试注入点：替换清库行为验证登出链路；生产路径为 nil 时走 dbManager.clearUserData()。
     @ObservationIgnored private var clearUserDataHandler: (@Sendable () async throws -> Void)?
 
@@ -57,7 +64,11 @@ public final class AppState {
     public var dashboardLoadError: String?
     @ObservationIgnored private var dashboardRemoteTask: Task<Void, Never>?
     @ObservationIgnored private var dashboardRequestID = UUID()
-    @ObservationIgnored private var sessionEpoch = UUID()
+    @ObservationIgnored private let refreshState = SessionDataRefreshState()
+    @ObservationIgnored private var sessionEpoch: UUID {
+        get { refreshState.sessionEpoch }
+        set { _ = refreshState.advanceSession() }
+    }
     @ObservationIgnored private lazy var dashboardRemote = DashboardRemoteService(apiClient: apiClient)
     @ObservationIgnored private lazy var payablesService = PayablesRemoteService(apiClient: apiClient)
 
@@ -78,10 +89,6 @@ public final class AppState {
         didSet { invalidateBillsPresentation() }
     }
     @ObservationIgnored private var billsPresentationCache = BillsPresentationCache()
-    @ObservationIgnored private var initialLoadTask: Task<Void, Never>?
-    @ObservationIgnored private var initialLoadEpoch: UUID?
-    @ObservationIgnored private var businessDayTask: Task<Void, Never>?
-    @ObservationIgnored private var loadedBusinessDay: Date?
     private var billsDataRevision = UUID()
 
     private func invalidateBillsPresentation() {
@@ -131,7 +138,8 @@ public final class AppState {
 
     public init(
         dbManager: DatabaseManager? = nil,
-        baseURL: URL = URL(string: "https://app.all-bill.com")!
+        baseURL: URL = URL(string: "https://app.all-bill.com")!,
+        apiClient injectedClient: ApiClient? = nil
     ) {
         let db: DatabaseManager
         #if DEBUG
@@ -166,16 +174,20 @@ public final class AppState {
         #endif
         self.dbManager = db
         let client: ApiClient
-        #if DEBUG
-        if UITestConfiguration.isEnabled {
-            client = ApiClient(baseURL: URL(string: "https://ui-tests.invalid")!,
-                               session: OfflineUITestNetworkSession(), token: "ui-test-session", useKeychain: false)
+        if let injectedClient {
+            client = injectedClient
         } else {
+            #if DEBUG
+            if UITestConfiguration.isEnabled {
+                client = ApiClient(baseURL: URL(string: "https://ui-tests.invalid")!,
+                                   session: OfflineUITestNetworkSession(), token: "ui-test-session", useKeychain: false)
+            } else {
+                client = ApiClient(baseURL: baseURL)
+            }
+            #else
             client = ApiClient(baseURL: baseURL)
+            #endif
         }
-        #else
-        client = ApiClient(baseURL: baseURL)
-        #endif
         self.apiClient = client
         self.syncEngine = SyncEngine(dbManager: db, apiClient: client)
         self.paymentService = PaymentService(dbManager: db)
@@ -205,15 +217,27 @@ public final class AppState {
     /// 用于端到端验证 logout/login 会话切换安全。
     #if DEBUG
     public convenience init(
+        dbManager: DatabaseManager,
+        apiClient: ApiClient,
+        watchSnapshots: WatchSnapshotManager = .shared,
+        sendWatchSnapshot: @escaping @MainActor (WatchSnapshot) throws -> Void = { _ in },
+        clearUserData: (@Sendable () async throws -> Void)? = nil
+    ) {
+        self.init(dbManager: dbManager, apiClient: apiClient)
+        self.watchSnapshots = watchSnapshots
+        self.saveWatchSnapshot = { _ in }
+        self.sendWatchSnapshot = sendWatchSnapshot
+        if let clearUserData { self.clearUserDataHandler = clearUserData }
+    }
+
+    public convenience init(
         dbURL: URL,
         networkSession: some NetworkSession,
         baseURL: URL = URL(string: "https://app.all-bill.com")!
     ) throws {
         let db = try DatabaseManager.file(at: dbURL)
         let client = ApiClient(baseURL: baseURL, session: networkSession, token: nil, useKeychain: false)
-        self.init(dbManager: db, baseURL: baseURL)
-        self.apiClient = client
-        self.syncEngine = SyncEngine(dbManager: db, apiClient: client)
+        self.init(dbManager: db, baseURL: baseURL, apiClient: client)
     }
     #endif
 
@@ -243,50 +267,57 @@ public final class AppState {
 
     /// 一次会话只做一次首屏加载；切页和回到前台都复用内存快照。
     public func loadInitialDataIfNeeded() async {
-        let epoch = sessionEpoch
-        if initialLoadEpoch == epoch {
-            await initialLoadTask?.value
-            await refreshForBusinessDayIfNeeded()
-            return
-        }
-        initialLoadTask?.cancel()
-        initialLoadEpoch = epoch
-        let task = Task { [self] in
-            await reloadData()
-            guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return }
-            restorePayablesSnapshotIfNeeded()
-            guard !UITestConfiguration.isEnabled,
-                  !CommandLine.arguments.contains("--demo-mode") else { return }
-            await sync()
-            guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return }
-            await refreshPayables()
-            await refreshDashboardRemote()
-        }
-        initialLoadTask = task
-        await task.value
-        if sessionEpoch == epoch { initialLoadTask = nil }
+        await refreshState.loadInitialIfNeeded(
+            isLoggedIn: { self.isLoggedIn },
+            initialLoad: { epoch in
+                guard await self.reloadData() else { return false }
+                guard self.refreshState.isCurrent(epoch, isLoggedIn: self.isLoggedIn) else { return false }
+                self.restorePayablesSnapshotIfNeeded()
+                guard !UITestConfiguration.isEnabled,
+                      !CommandLine.arguments.contains("--demo-mode") else { return true }
+                await self.sync()
+                guard self.refreshState.isCurrent(epoch, isLoggedIn: self.isLoggedIn) else { return false }
+                await self.refreshPayables()
+                guard self.refreshState.isCurrent(epoch, isLoggedIn: self.isLoggedIn) else { return false }
+                await self.refreshDashboardRemote()
+                return true
+            },
+            dayRefresh: { epoch, now in
+                await self.performBusinessDayRefresh(epoch: epoch, now: now)
+            }
+        )
     }
 
     /// 跨上海自然日时只刷新本地日期派生值和应付倒计时，不发起服务器同步。
     public func refreshForBusinessDayIfNeeded(now: Date = Date()) async {
-        guard BillingDateCalculator.needsBusinessDayRefresh(
-            lastLoadedDay: loadedBusinessDay, now: now
-        ) else { return }
-        if let businessDayTask {
-            await businessDayTask.value
-            return
+        await refreshState.refreshBusinessDayIfNeeded(
+            isLoggedIn: { self.isLoggedIn },
+            now: now
+        ) { epoch, day in
+            await self.performBusinessDayRefresh(epoch: epoch, now: day)
         }
+    }
+
+    private func performBusinessDayRefresh(epoch: UUID, now: Date) async {
+        guard await reloadData(today: now),
+              refreshState.isCurrent(epoch, isLoggedIn: isLoggedIn) else { return }
+        if !payables.isEmpty {
+            payables = payables.map { Self.recalculatePayableStatus($0, today: now) }
+        }
+    }
+
+    /// 按上海午夜唤醒；设备本地午夜通知无法覆盖海外时区。
+    public func observeBusinessDayChanges() async {
+        guard isLoggedIn else { return }
         let epoch = sessionEpoch
-        let task = Task { [self] in
-            _ = await reloadData(today: now)
-            guard sessionEpoch == epoch else { return }
-            if !payables.isEmpty {
-                payables = payables.map { Self.recalculatePayableStatus($0, today: now) }
-            }
+        await loadInitialDataIfNeeded()
+        while refreshState.isCurrent(epoch, isLoggedIn: isLoggedIn) {
+            await refreshForBusinessDayIfNeeded()
+            guard refreshState.isCurrent(epoch, isLoggedIn: isLoggedIn) else { return }
+            do {
+                try await Task.sleep(for: .seconds(BillingDateCalculator.secondsUntilNextBusinessMidnight()))
+            } catch { return }
         }
-        businessDayTask = task
-        await task.value
-        if sessionEpoch == epoch { businessDayTask = nil }
     }
 
     private func restorePayablesSnapshotIfNeeded() {
@@ -300,7 +331,12 @@ public final class AppState {
 
     @discardableResult
     public func reloadData(today: Date = Date()) async -> Bool {
+        guard isLoggedIn, !Task.isCancelled else { return false }
         let epoch = sessionEpoch
+        #if DEBUG
+        await beforeLocalReload?()
+        #endif
+        guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return false }
         do {
             let sum = try await queryService.fetchDashboardSummary(today: today)
             // 只读一次全量账单，筛选与模式切换在内存完成。
@@ -323,7 +359,7 @@ public final class AppState {
                     try MutationOutbox.fetchCount(db)
                 )
             }
-            guard sessionEpoch == epoch else { return false }
+            guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return false }
 
             self.summary = sum
             self.bills = bList
@@ -332,17 +368,19 @@ public final class AppState {
             self.dashboardBills = dashboardList
             self.dashboardHolders = holders
             self.dashboardLoadError = nil
-            self.loadedBusinessDay = BillingDateCalculator.businessDayStart(for: today)
+            self.refreshState.markLoaded(today: today)
             if let meta {
                 self.lastSyncedAt = meta.0
                 self.pendingSyncCount = meta.1
             }
 
             // 生成并更新 Apple Watch 快照（复用本次已查数据，避免重复查询）
-            if let snapshot = try? await WatchSnapshotManager.shared.buildSnapshot(
-                summary: sum, bills: bList, cards: cList) {
-                try? WatchSnapshotManager.shared.save(snapshot)
-                WatchSyncCoordinator.shared.sendSnapshotToWatch(snapshot)
+            if let snapshot = try? await watchSnapshots.buildSnapshot(
+                summary: sum, bills: bList, cards: cList, today: today) {
+                // buildSnapshot 是 await 边界；换号后不可把前账号快照写盘或发给手表。
+                guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return false }
+                try? saveWatchSnapshot(snapshot)
+                try? sendWatchSnapshot(snapshot)
             }
             #if DEBUG
             // 证据采集不得阻塞业务链路：放后台，失败也不影响 UI 测试主流程。
@@ -350,6 +388,7 @@ public final class AppState {
             #endif
             return true
         } catch {
+            guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return false }
             dashboardLoadError = "本地数据加载失败：\(error.localizedDescription)"
             print("Failed to reload local data: \(error)")
             return false
