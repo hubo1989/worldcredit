@@ -362,6 +362,9 @@ public final class AppState {
               !CommandLine.arguments.contains("--demo-mode") else { return }
         let epoch = sessionEpoch
         let token = apiClient.token
+        // 会话级 401（Keychain 恢复中/token 过期）不是网络降级：不进入 payablesError
+        // 降级横幅误导用户；静默跳过，待 sync()/重新登录后自然恢复
+        guard token != nil else { return }
         // catch 分支的缓存兑底 key 依赖 userId；冷启动 currentUser 尚为 nil 时
         // 用 fetchSessionUser 解析到的 id 兑底（否则按用户隔离的缓存永不生效）
         var fallbackUserId = currentUser?.id
@@ -389,6 +392,9 @@ public final class AppState {
             return
         } catch {
             guard sessionEpoch == epoch, apiClient.token == token else { return }
+            // 401 = 会话未就绪/已过期：非网络故障，不写入降级错误横幅；
+            // 若确实已登出，guard isLoggedIn 已拦，这里只剩冷启动窗口的竞态误报
+            if let nsError = error as NSError?, nsError.code == 401 { return }
             self.payablesError = error.localizedDescription
 
             // 网络失败时优先保留内存中已有的数据；若内存为空则尝试读取本用户的有效本地快照并重算倒计时
@@ -575,6 +581,12 @@ public final class AppState {
                     }
                 } catch {
                     guard sessionEpoch == epoch else { return }
+                    // 401（未登录/token 过期）不是同步故障：冷启动会话恢复窗口的竞态
+                    // 误报不应长期滞留设置页；待重新登录或 sync 重跑后自清
+                    if let nsError = error as NSError?, nsError.code == 401 {
+                        await reloadData()
+                        throw error
+                    }
                     lastSyncError = error.localizedDescription
                     await reloadData()
                     throw error
