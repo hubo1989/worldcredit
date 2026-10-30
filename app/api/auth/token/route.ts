@@ -3,17 +3,21 @@ import { createSessionValue, SESSION_TTL_SECONDS, type SessionUser } from "@/lib
 import { isAdminEmail } from "@/lib/admin-emails";
 import { verifyGoogleIdToken } from "@/lib/google-id-token";
 import { passwordLoginFailure, verifyPasswordLogin } from "@/lib/password-login";
+import { issueRefreshToken } from "@/lib/refresh-tokens.server";
 
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 
 async function issueTokenResponse(user: SessionUser): Promise<Response> {
   const token = await createSessionValue(user);
+  // App 端静默续期凭据：原文仅此一次下发（库内只存哈希）
+  const refresh = await issueRefreshToken(user.id);
   return Response.json(
     {
       token,
       token_type: "Bearer",
       expires_in: SESSION_TTL_SECONDS,
       user,
+      refresh_token: refresh.token,
     },
     { headers: NO_STORE_HEADERS },
   );

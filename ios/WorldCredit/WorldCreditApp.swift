@@ -56,6 +56,7 @@ struct WorldCreditApp: App {
                         .transition(.opacity)
                 }
             }
+            .preferredColorScheme(appState.themeMode == .light ? .light : (appState.themeMode == .dark ? .dark : nil))
             .animation(.easeInOut(duration: 0.25), value: appState.isLocked)
             .onChange(of: appState.isLoggedIn) { _, isLoggedIn in
                 if isLoggedIn {

@@ -43,6 +43,40 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
     public let paidAmount: Double
     public let status: PayableStatus
 
+    public init(
+        id: String,
+        createdBy: String,
+        name: String,
+        category: PayableCategory,
+        amount: Double,
+        currency: String,
+        dueDay: Int,
+        holderId: String? = nil,
+        note: String? = nil,
+        bankAccount: String? = nil,
+        period: String,
+        dueDate: String,
+        daysUntilDue: Int,
+        paidAmount: Double,
+        status: PayableStatus
+    ) {
+        self.id = id
+        self.createdBy = createdBy
+        self.name = name
+        self.category = category
+        self.amount = amount
+        self.currency = currency
+        self.dueDay = dueDay
+        self.holderId = holderId
+        self.note = note
+        self.bankAccount = bankAccount
+        self.period = period
+        self.dueDate = dueDate
+        self.daysUntilDue = daysUntilDue
+        self.paidAmount = paidAmount
+        self.status = status
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case createdBy = "created_by"

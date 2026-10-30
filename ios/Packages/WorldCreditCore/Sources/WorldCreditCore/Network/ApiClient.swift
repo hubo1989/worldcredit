@@ -28,11 +28,14 @@ public struct TokenResponse: Codable, Sendable {
     public var tokenType: String
     public var expiresIn: Int
     public var user: SessionUser
+    /// 静默续期凭据：一次性轮换，服务端只存哈希；旧版服务端不返回时为 nil
+    public var refreshToken: String?
 
     enum CodingKeys: String, CodingKey {
         case token, user
         case tokenType = "token_type"
         case expiresIn = "expires_in"
+        case refreshToken = "refresh_token"
     }
 }
 
@@ -253,11 +256,23 @@ public final class ApiClient: @unchecked Sendable {
             stateLock.withLock {
                 hasExplicitToken = true
                 inMemoryToken = newValue
+                if newValue == nil {
+                    // 登出：内存态直接丢弃 refresh 凭据（两种模式一致），
+                    // Keychain 条目仅在启用时额外清理
+                    inMemoryRefreshToken = nil
+                }
                 guard useKeychain else { return }
                 if let newValue {
                     saveKeychainToken(newValue)
                 } else {
                     deleteKeychainToken()
+                    // 登出同时丢弃 refresh 凭据，防止换号后旧凭据被复用
+                    let refreshQuery: [String: Any] = [
+                        kSecClass as String: kSecClassGenericPassword,
+                        kSecAttrService as String: keychainService,
+                        kSecAttrAccount as String: keychainRefreshAccount,
+                    ]
+                    checkKeychainStatus(keychain.delete(refreshQuery), operation: .delete, allowsMissing: true)
                 }
             }
         }
@@ -299,7 +314,21 @@ public final class ApiClient: @unchecked Sendable {
 
         let tokenRes = try JSONDecoder().decode(TokenResponse.self, from: data)
         self.token = tokenRes.token
+        if let refresh = tokenRes.refreshToken {
+            storeRefreshToken(refresh)
+        }
         return tokenRes.user
+    }
+
+    /// 登出吊销：凭 refresh_token 吊销本设备凭据（会话失效时服务端也接受）。
+    public func requestLogoutRevoke(refreshToken: String) async throws {
+        let url = baseURL.appendingPathComponent("api/auth/logout")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 10
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["refresh_token": refreshToken])
+        _ = try await session.data(for: req)
     }
 
     public func pull(cursor: Int, limit: Int = 500, reconcile: [SyncReconcileTarget] = []) async throws -> PullResponse {
@@ -393,6 +422,7 @@ public final class ApiClient: @unchecked Sendable {
     private struct RPCEnvelope<Value: Decodable>: Decodable { let data: Value }
 
     private func authenticatedRequest(path: String, method: String, timeoutInterval: TimeInterval = 20) throws -> URLRequest {
+        // 默认 20s；确实耗时的慢端点（如 gmail/sync）在调用点显式传更长超时
         guard let token = self.token, !token.isEmpty else {
             throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
         }
@@ -524,6 +554,7 @@ public final class ApiClient: @unchecked Sendable {
     // MARK: - Keychain Helpers
 
     private let keychainAccount = "com.chunfenshijie.worldcredit.sessionToken"
+    private let keychainRefreshAccount = "com.chunfenshijie.worldcredit.refreshToken"
     private let keychainService = "com.chunfenshijie.worldcredit"
 
     private func saveKeychainToken(_ token: String) {
@@ -565,6 +596,108 @@ public final class ApiClient: @unchecked Sendable {
             kSecAttrAccount as String: keychainAccount,
         ]
         checkKeychainStatus(keychain.delete(query), operation: .delete, allowsMissing: true)
+    }
+
+    // MARK: - Refresh Token (Keychain-backed)
+
+    private func saveKeychainRefreshToken(_ token: String) {
+        let data = Data(token.utf8)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainRefreshAccount,
+        ]
+        let deletion = keychain.delete(query)
+        guard checkKeychainStatus(deletion, operation: .delete, allowsMissing: true) else { return }
+        var newQuery = query
+        newQuery[kSecValueData as String] = data
+        newQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        checkKeychainStatus(keychain.add(newQuery), operation: .add)
+    }
+
+    public var refreshToken: String? {
+        stateLock.withLock {
+            if let inMemoryRefreshToken { return inMemoryRefreshToken }
+            guard useKeychain else { return nil }
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: keychainService,
+                kSecAttrAccount as String: keychainRefreshAccount,
+                kSecReturnData as String: true,
+                kSecMatchLimit as String: kSecMatchLimitOne,
+            ]
+            let (status, item) = keychain.read(query)
+            guard status == errSecSuccess, let data = item,
+                  let token = String(data: data, encoding: .utf8) else { return nil }
+            return token
+        }
+    }
+
+    private func storeRefreshToken(_ token: String?) {
+        stateLock.withLock {
+            inMemoryRefreshToken = token
+            guard useKeychain else { return }
+            if let token {
+                saveKeychainRefreshToken(token)
+            } else {
+                let query: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: keychainService,
+                    kSecAttrAccount as String: keychainRefreshAccount,
+                ]
+                checkKeychainStatus(keychain.delete(query), operation: .delete, allowsMissing: true)
+            }
+        }
+    }
+
+    /// 静默续期：用 refresh token 换新 access token（服务端一次性轮换 refresh token）。
+    /// 成功返回新用户会话；refresh token 也失效时抛 401，由调用方落地到登录页。
+    /// refreshTask 合并并发触发：多个 401 同时到达只续一次，后来者复用结果。
+    private let refreshStateLock = NSLock()
+    private var refreshTask: Task<SessionUser, Error>?
+    private var inMemoryRefreshToken: String?
+
+    public func refreshSession() async throws -> SessionUser {
+        let existing: Task<SessionUser, Error>? = refreshStateLock.withLock { refreshTask }
+        if let existing {
+            return try await existing.value
+        }
+        let task = Task<SessionUser, Error> { [self] in
+            defer { refreshStateLock.withLock { refreshTask = nil } }
+            guard let current = refreshToken else {
+                throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
+            }
+            let url = baseURL.appendingPathComponent("api/auth/refresh")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.timeoutInterval = 20
+            req.httpBody = try JSONSerialization.data(withJSONObject: ["refresh_token": current])
+
+            let (data, response) = try await session.data(for: req)
+            guard let httpRes = response as? HTTPURLResponse else {
+                throw URLError(.badServerResponse)
+            }
+            guard httpRes.statusCode == 200 else {
+                // refresh token 失效：彻底登出（清两套凭据），抛 401 由调用方回登录页
+                storeRefreshToken(nil)
+                self.token = nil
+                throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "登录已过期"])
+            }
+            let tokenRes = try JSONDecoder().decode(TokenResponse.self, from: data)
+            self.token = tokenRes.token
+            if let newRefresh = tokenRes.refreshToken {
+                storeRefreshToken(newRefresh)
+            }
+            return tokenRes.user
+        }
+        let stored: Task<SessionUser, Error>? = refreshStateLock.withLock {
+            if let existing = refreshTask { return existing }
+            refreshTask = task
+            return nil
+        }
+        if let stored { return try await stored.value }
+        return try await task.value
     }
 
     /// Called only while stateLock is held. Preserve failures until a later successful persistence operation.

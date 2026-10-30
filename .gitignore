@@ -46,6 +46,7 @@ DerivedData/
 .swiftpm/
 ios/Packages/GRDB/
 ios/build/
+/build/
 
 # Node.js
 node_modules

@@ -102,6 +102,7 @@ export default tseslint.config(
       "out/**",
       "dist/**",
       ".vinext/**",
+      "build/**",
       "**/*.config.{js,mjs}",
       // Generated ambient files
       "next-env.d.ts",

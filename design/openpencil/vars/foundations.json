@@ -1,4 +1,18 @@
 {
+  "color.obsidian.canvas": { "type": "color", "value": "#0A0F1E" },
+  "color.obsidian.surface": { "type": "color", "value": "#131A2A" },
+  "color.obsidian.subtle": { "type": "color", "value": "#1A2334" },
+  "color.obsidian.border": { "type": "color", "value": "#26304A" },
+  "color.obsidian.text": { "type": "color", "value": "#F5F7FA" },
+  "color.obsidian.muted": { "type": "color", "value": "#9AA6BC" },
+  "color.obsidian.accent": { "type": "color", "value": "#3B6FE0" },
+  "color.obsidian.gold": { "type": "color", "value": "#F0C75E" },
+  "color.obsidian.goldSoft": { "type": "color", "value": "#3A3320" },
+  "color.obsidian.warningInk": { "type": "color", "value": "#FFC46B" },
+  "color.obsidian.dangerInk": { "type": "color", "value": "#FF8A8A" },
+  "color.obsidian.dangerSoft": { "type": "color", "value": "#3A222A" },
+  "color.obsidian.successInk": { "type": "color", "value": "#6EE7A0" },
+  "color.obsidian.successSoft": { "type": "color", "value": "#1A332A" },
   "color.brand.navy800": {
     "type": "color",
     "value": "#0A1F44"

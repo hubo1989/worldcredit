@@ -72,6 +72,19 @@ struct SettingsView: View {
 
                 GmailSyncSection()
 
+                Section("外观与主题") {
+                    Picker("主题模式", selection: Binding(
+                        get: { appState.themeMode },
+                        set: { appState.themeMode = $0 }
+                    )) {
+                        ForEach(AppThemeMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("settings.themePicker")
+                }
+
                 Section("安全与隐私") {
                     Toggle("启用 \(BiometricAuthManager.shared.biometryName) 锁定", isOn: Binding(
                         get: { appState.isBiometricsEnabled },
