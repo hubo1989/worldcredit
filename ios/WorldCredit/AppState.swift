@@ -47,7 +47,9 @@ public final class AppState {
     public var dashboardHolders: [CardHolder] = []
     public var dashboardCurrency = "CNY"
     public var dashboardPrivacy = true
-    public var dashboardRates: FxRates?
+    public var dashboardRates: FxRates? {
+        didSet { invalidateBillsPresentation() }
+    }
     public var dashboardAvailableCount: Int?
     public var dashboardReminders: [DashboardReminder] = []
     public var dashboardRemoteErrors: [String] = []
@@ -63,12 +65,42 @@ public final class AppState {
     public var bills: [BillDisplayItem] = []
     /// 全量账单（不受状态 tab 过滤）：账单页「缺账单提醒」的最新期基线必须用它，
     /// 否则「待还」tab 里被过滤掉的已还最新期会让提醒误报。
-    public var allBills: [BillDisplayItem] = []
-    public var cards: [CardDisplayItem] = []
+    public var allBills: [BillDisplayItem] = [] {
+        didSet { invalidateBillsPresentation() }
+    }
+    public var cards: [CardDisplayItem] = [] {
+        didSet { invalidateBillsPresentation() }
+    }
     public var selectedBillFilter: BillFilter = .unpaid
     public var billsSortMode: BillsSortMode = .nearestDue
     // 固定支出(周期应付)为在线数据：失败只降级提示，不影响本地账单。
-    public var payables: [PayableItem] = []
+    public var payables: [PayableItem] = [] {
+        didSet { invalidateBillsPresentation() }
+    }
+    @ObservationIgnored private var billsPresentationCache = BillsPresentationCache()
+    @ObservationIgnored private var initialLoadTask: Task<Void, Never>?
+    @ObservationIgnored private var initialLoadEpoch: UUID?
+    private var billsDataRevision = UUID()
+
+    private func invalidateBillsPresentation() {
+        billsPresentationCache.invalidate()
+        billsDataRevision = UUID()
+    }
+
+    public func billsPresentation(holderId: String?, bankName: String?) -> BillsPresentation {
+        // 观察 revision，缓存本身不发布状态，避免在 body 求值时反向触发更新。
+        _ = billsDataRevision
+        let filter = BillsPresentationFilter(status: selectedBillFilter, holderId: holderId, bankName: bankName)
+        let today = Date()
+        let bills = allBills
+        let cards = cards
+        let payables = payables
+        let rates = dashboardRates
+        return billsPresentationCache.value(for: filter, today: today) {
+            BillsPresentation(bills: bills, cards: cards, payables: payables,
+                              rates: rates, filter: filter, today: today)
+        }
+    }
     public var payablesError: String?
     /// 盘库打不开、退到内存库时的可恢复提示（数据不持久化），由 UI 展示。
     public var dbInitWarning: String?
@@ -207,17 +239,52 @@ public final class AppState {
         }
     }
 
+    /// 一次会话只做一次首屏加载；切页和回到前台都复用内存快照。
+    public func loadInitialDataIfNeeded() async {
+        let epoch = sessionEpoch
+        if initialLoadEpoch == epoch {
+            await initialLoadTask?.value
+            return
+        }
+        initialLoadTask?.cancel()
+        initialLoadEpoch = epoch
+        let task = Task { [self] in
+            await reloadData()
+            guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return }
+            restorePayablesSnapshotIfNeeded()
+            guard !UITestConfiguration.isEnabled,
+                  !CommandLine.arguments.contains("--demo-mode") else { return }
+            await sync()
+            guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return }
+            await refreshPayables()
+            await refreshDashboardRemote()
+        }
+        initialLoadTask = task
+        await task.value
+        if sessionEpoch == epoch { initialLoadTask = nil }
+    }
+
+    private func restorePayablesSnapshotIfNeeded() {
+        guard payables.isEmpty,
+              let userId = currentUser?.id ?? UserDefaults.standard.string(forKey: Self.payablesOwnerKey),
+              let cached = Self.loadPayablesSnapshot(userId: userId) else { return }
+        payables = cached.map { Self.recalculatePayableStatus($0) }
+    }
+
     @discardableResult
     public func reloadData() async -> Bool {
         let epoch = sessionEpoch
         do {
             let sum = try await queryService.fetchDashboardSummary()
-            let bList = try await queryService.fetchBills(
-                filter: selectedBillFilter,
-                sortMode: billsSortMode
-            )
-            // 缺账单提醒的全量基线：多一次本地查询（SQLite、小数据），失败随外层 catch。
-            let allBillsList = try await queryService.fetchBills(filter: .all, sortMode: billsSortMode)
+            // 只读一次全量账单，筛选与模式切换在内存完成。
+            let allBillsList = try await queryService.fetchBills(filter: .all)
+            let bList = allBillsList.filter { item in
+                switch selectedBillFilter {
+                case .unpaid: return item.bill.status != "paid" && item.remainingAmount > 0.01
+                case .paid: return item.bill.status == "paid" && item.remainingAmount <= 0.01
+                case .all: return true
+                }
+            }
             let cList = try await queryService.fetchCards()
             let dashboardList = try await queryService.fetchDashboardBills()
             let holders = try await queryService.fetchHolders()

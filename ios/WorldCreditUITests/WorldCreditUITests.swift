@@ -81,6 +81,7 @@ final class WorldCreditUITests: XCTestCase {
         app.buttons["payment.confirm"].tap()
         XCTAssertTrue(app.buttons["payment.confirm"].waitForNonExistence(timeout: 10), "Payment must finish and dismiss its sheet before checking the detail")
 
+        scrollTo(app.staticTexts["bill.detail.remaining"], in: app)
         assertLabel(app.staticTexts["bill.detail.remaining"], equals: "¥0", field: "剩余应还")
         assertLabel(app.staticTexts["bill.detail.status"], equals: "已结清", field: "状态")
         XCTAssertFalse(app.buttons["bill.detail.pay"].exists, "A paid bill must close its payment entry immediately")
@@ -101,6 +102,7 @@ final class WorldCreditUITests: XCTestCase {
         let paidBill = app.buttons["bill.row.bill-cmb-202610"]
         XCTAssertTrue(paidBill.waitForExistence(timeout: 5))
         paidBill.tap()
+        scrollTo(app.staticTexts["bill.detail.status"], in: app)
         assertLabel(app.staticTexts["bill.detail.status"], equals: "已结清", field: "状态")
         XCTAssertFalse(app.buttons["bill.detail.pay"].exists)
         attachScreenshot(app, name: "08-paid-after-relaunch")
@@ -115,6 +117,7 @@ final class WorldCreditUITests: XCTestCase {
         replaceText(in: amount, with: "6000")
         app.buttons["bill.adjust.save"].tap()
         XCTAssertTrue(app.buttons["bill.adjust.save"].waitForNonExistence(timeout: 10), "Amount edit must finish and dismiss its sheet before checking the detail")
+        scrollTo(app.staticTexts["bill.detail.remaining"], in: app)
         assertLabel(app.staticTexts["bill.detail.remaining"], equals: "¥6,000", field: "剩余应还")
         XCTAssertTrue(app.buttons["bill.detail.pay"].exists)
         attachScreenshot(app, name: "09-adjusted-current-detail")
@@ -126,6 +129,7 @@ final class WorldCreditUITests: XCTestCase {
         relaunch(app)
         assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥18,800.5")
         openBill("bill-icbc-202609", in: app)
+        scrollTo(app.staticTexts["bill.detail.remaining"], in: app)
         assertLabel(app.staticTexts["bill.detail.remaining"], equals: "¥6,000", field: "剩余应还")
         attachScreenshot(app, name: "10-adjusted-after-relaunch")
     }
@@ -255,6 +259,37 @@ final class WorldCreditUITests: XCTestCase {
 
         nearest.tap()
         XCTAssertTrue(distanceText.waitForExistence(timeout: 5), "最近需还款模式下行内应恢复距还款日")
+    }
+
+    /// 缓存支持反复切换，且状态筛选不会污染免息模式或在切回时丢失。
+    func test08bBillsModesKeepCachedFilterAndSelection() {
+        let app = launchScenario()
+        tab("账单", in: app)
+        let nearest = app.buttons["bills.sort.nearestDue"]
+        let maxFree = app.buttons["bills.sort.maxInterestFree"]
+        XCTAssertTrue(nearest.waitForExistence(timeout: 5))
+        for _ in 0..<3 {
+            maxFree.tap()
+            XCTAssertTrue(maxFree.isSelected)
+            XCTAssertFalse(app.staticTexts["待还汇总"].exists)
+            XCTAssertTrue(app.staticTexts.matching(
+                NSPredicate(format: "label CONTAINS %@", "今日刷卡免息")
+            ).firstMatch.exists)
+            nearest.tap()
+            XCTAssertTrue(nearest.isSelected)
+            XCTAssertTrue(app.staticTexts["待还汇总"].exists)
+        }
+        setBillStatus("已还", in: app)
+        let paid = app.buttons["bill.row.bill-boc-202609"]
+        scrollTo(paid, in: app)
+        XCTAssertTrue(paid.exists)
+        maxFree.tap()
+        XCTAssertTrue(maxFree.isSelected)
+        nearest.tap()
+        XCTAssertTrue(nearest.isSelected)
+        scrollTo(paid, in: app)
+        XCTAssertTrue(paid.exists, "切回最近还款后应沿用已还筛选的缓存结果")
+        attachScreenshot(app, name: "18b-bills-cached-paid-filter")
     }
 
     /// 账单页逾期横幅一键结清：默认「待还」tab 出现横幅，结清后只剩未逾期账单，

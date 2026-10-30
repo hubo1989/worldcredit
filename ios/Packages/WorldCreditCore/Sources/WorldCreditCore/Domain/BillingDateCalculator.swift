@@ -37,6 +37,17 @@ public enum BillingDateCalculator {
         return cal.date(from: components) ?? month
     }
 
+    /// 今天恰为账单日时取下一期；小月账单日钳制到月底。
+    public static func daysUntilNextBilling(billingDay: Int, today: Date = Date()) -> Int {
+        let cal = calendar
+        let currentDay = cal.component(.day, from: today)
+        let month = currentDay >= billingDay
+            ? cal.date(byAdding: .month, value: 1, to: today) ?? today
+            : today
+        let target = getActualBillingDate(billingDay: billingDay, month: month)
+        return diffInCalendarDays(target: target, today: today)
+    }
+
     public static func getEffectiveBillingDay(card: CreditCard) -> Int {
         card.overrideBillingDay ?? card.billingDay
     }

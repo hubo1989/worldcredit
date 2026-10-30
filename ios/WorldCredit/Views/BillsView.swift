@@ -29,94 +29,6 @@ enum BillsFormatters {
     }()
 }
 
-/// 账单与固定支出统一项：在“最近需还款”下按到期日/紧迫程度混合排列
-enum UnifiedBillEntry: Identifiable {
-    case cardBill(item: BillDisplayItem, group: CardBillsGroup)
-    case payable(PayableItem)
-    case unbilledCard(CardDisplayItem)
-
-    var id: String {
-        switch self {
-        case .cardBill(let item, _):
-            return "bill-\(item.id)"
-        case .payable(let payable):
-            return "payable-\(payable.id)"
-        case .unbilledCard(let card):
-            return "unbilled-card-\(card.id)"
-        }
-    }
-
-    var dueDate: String {
-        switch self {
-        case .cardBill(let item, _):
-            return item.bill.dueDate
-        case .payable(let payable):
-            return payable.dueDate
-        case .unbilledCard(let card):
-            return BillsFormatters.yyyymmdd.string(from: card.nextDueDate)
-        }
-    }
-
-    var daysUntilDue: Int {
-        switch self {
-        case .cardBill(let item, _):
-            return item.daysUntilDue
-        case .payable(let payable):
-            return payable.daysUntilDue
-        case .unbilledCard(let card):
-            let billingDay = card.card.overrideBillingDay ?? card.card.billingDay
-            return BillsView.daysUntilNextBilling(billingDay: billingDay)
-        }
-    }
-
-    var isOverdue: Bool {
-        switch self {
-        case .cardBill(let item, _):
-            return item.isOverdue
-        case .payable(let payable):
-            // 已结清项不判逾期：status 与 paidAmount 是服务端独立字段，
-            // 「已付清但 status 仍为 overdue」的数据不应被置顶渲染成逾期
-            return !payable.isSettled && payable.remainingAmount > 0.01
-                && (payable.status == .overdue || payable.daysUntilDue < 0)
-        case .unbilledCard:
-            return false
-        }
-    }
-
-    var isSettled: Bool {
-        switch self {
-        case .cardBill(let item, _):
-            return item.remainingAmount <= 0.01
-        case .payable(let payable):
-            return payable.isSettled || payable.remainingAmount <= 0.01
-        case .unbilledCard:
-            return true
-        }
-    }
-
-    var remainingAmount: Double {
-        switch self {
-        case .cardBill(let item, _):
-            return item.remainingAmount
-        case .payable(let payable):
-            return payable.remainingAmount
-        case .unbilledCard:
-            return 0.0
-        }
-    }
-
-    var currency: String {
-        switch self {
-        case .cardBill(let item, _):
-            return item.currency
-        case .payable(let payable):
-            return payable.currency
-        case .unbilledCard(let card):
-            return card.product?.currency ?? "CNY"
-        }
-    }
-}
-
 struct BillsView: View {
     @Environment(AppState.self) private var appState
 
@@ -132,16 +44,6 @@ struct BillsView: View {
     @State private var payAllError: String?
     @State private var selectedCardForEdit: CardDisplayItem?
 
-    // 交互与动画状态：标签边缘高亮 -> 凝聚正圆圈 -> 带动面板位移 -> 释放边缘
-    @State private var isTabMorphing: Bool = false
-    @State private var morphingTargetMode: BillsSortMode? = nil
-    @State private var tabEdgeHighlightMode: BillsSortMode? = nil
-    @State private var tabCirclePhase: Double = 0.0
-    @State private var panelDisplacement: CGFloat = 0.0
-    @State private var tabAnimationTask: Task<Void, Never>?
-    /// 当前动画链的目标模式：onDisappear 补提交用，避免取消后点击被丢弃
-    @State private var tabAnimationTaskingTarget: BillsSortMode?
-
     // 筛选光环凝聚与拽出面板动画
     @State private var isFilterAuraCondensing: Bool = false
     @State private var filterHaloScale: CGFloat = 1.0
@@ -152,226 +54,20 @@ struct BillsView: View {
     @State private var bankFilterName: String?
     @State private var isFilterDrawerPresented: Bool = false
 
-    /// 列表数据源：最近需还款走状态过滤后的账单；最大免息期是选卡视角，从全量账单取
-    private var listBills: [BillDisplayItem] {
-        let source = appState.billsSortMode == .maxInterestFree ? appState.allBills : appState.bills
-        return source.filter { item in
-            (holderFilterId == nil || item.holderId == holderFilterId)
-                && (bankFilterName == nil || item.bankName == bankFilterName)
-        }
+    private var presentation: BillsPresentation {
+        appState.billsPresentation(holderId: holderFilterId, bankName: bankFilterName)
     }
 
-    private var filteredBills: [BillDisplayItem] {
-        appState.bills.filter { item in
-            (holderFilterId == nil || item.holderId == holderFilterId)
-                && (bankFilterName == nil || item.bankName == bankFilterName)
-        }
-    }
-
-    private var visibleGroups: [CardBillsGroup] {
-        BillsGrouping.sorted(
-            BillsGrouping.groups(from: listBills),
-            by: appState.billsSortMode
-        )
-    }
-
-    /// 筛选后的固定支出列表（若按银行筛选则不显示固定支出；免息期模式下无免息概念不显示）
-    private var filteredPayables: [PayableItem] {
-        guard appState.billsSortMode == .nearestDue else { return [] }
-        if bankFilterName != nil { return [] }
-
-        return appState.payables.filter { payable in
-            if let holderFilterId, payable.holderId != holderFilterId {
-                return false
-            }
-            switch appState.selectedBillFilter {
-            case .unpaid:
-                return payable.remainingAmount > 0.01 && !payable.isSettled
-            case .paid:
-                return payable.remainingAmount <= 0.01 || payable.isSettled
-            case .all:
-                return true
-            }
-        }
-    }
-
-    /// 账单与固定支出混合列表：按逾期优先(Tier 0)、待还款由近及远(Tier 1)、未出账单/已结清(Tier 2)排序
-    private var unifiedEntries: [UnifiedBillEntry] {
-        var entries: [UnifiedBillEntry] = []
-        for group in visibleGroups {
-            for item in group.bills {
-                entries.append(.cardBill(item: item, group: group))
-            }
-        }
-        for payable in filteredPayables {
-            entries.append(.payable(payable))
-        }
-
-        // 最近需还款模式下，把真正无任何出账记录的卡片作为 Tier 2 展示
-        // 注意：有历史/结清账单的卡片属于出账卡片，不应在待还过滤下误判为“未出账单”
-        if appState.billsSortMode == .nearestDue {
-            let cardIdsWithAnyBills = Set(appState.allBills.map(\.card.id))
-            for card in appState.cards {
-                if let holderFilterId, card.card.holderId != holderFilterId {
-                    continue
-                }
-                if let bankFilterName, card.bankName != bankFilterName {
-                    continue
-                }
-                if !cardIdsWithAnyBills.contains(card.id) {
-                    entries.append(.unbilledCard(card))
-                }
-            }
-        }
-
-        return entries.sorted { a, b in
-            let tierA = entryUrgencyTier(a)
-            let tierB = entryUrgencyTier(b)
-            if tierA != tierB {
-                return tierA < tierB
-            }
-            if a.daysUntilDue != b.daysUntilDue {
-                return a.daysUntilDue < b.daysUntilDue
-            }
-            return a.dueDate < b.dueDate
-        }
-    }
-
-    private func entryUrgencyTier(_ entry: UnifiedBillEntry) -> Int {
-        if entry.isOverdue { return 0 }
-        if !entry.isSettled { return 1 }
-        return 2
-    }
-
-    private var overdueItems: [BillDisplayItem] {
-        filteredBills.filter(\.isOverdue)
-    }
-
-    private var dueSoonItems: [BillDisplayItem] {
-        filteredBills.filter { !$0.isOverdue && $0.remainingAmount > 0.01 && $0.daysUntilDue <= 3 }
-    }
-
-    private var overduePayables: [PayableItem] {
-        filteredPayables.filter { ($0.status == .overdue || ($0.daysUntilDue < 0 && $0.remainingAmount > 0.01)) && $0.remainingAmount > 0.01 }
-    }
-
-    private var dueSoonPayables: [PayableItem] {
-        filteredPayables.filter { $0.status != .overdue && $0.daysUntilDue >= 0 && $0.daysUntilDue <= 3 && $0.remainingAmount > 0.01 }
-    }
-
-    // MARK: - Multi-currency & Converted Totals
-    public struct ConvertedResult {
-        public var totalAmount: Double
-        public var unconvertedCurrencies: [String]
-        public var hasUnconverted: Bool { !unconvertedCurrencies.isEmpty }
-    }
-
-    private func calculateConvertedTotal(items: [(amount: Double, currency: String)]) -> ConvertedResult {
-        let rates = appState.dashboardRates
-        var totalCNY: Double = 0.0
-        var unconverted = Set<String>()
-
-        for item in items {
-            let curr = DashboardFx.normalizeCurrencyOrDefault(item.currency, "CNY")
-            if curr == "CNY" || curr == "RMB" {
-                totalCNY += item.amount
-            } else if let rates, let converted = DashboardFx.convert(item.amount, from: curr, to: "CNY", rates: rates) {
-                totalCNY += converted
-            } else {
-                unconverted.insert(curr)
-            }
-        }
-        return ConvertedResult(totalAmount: totalCNY, unconvertedCurrencies: unconverted.sorted())
-    }
-
-    private var allUnpaidBills: [BillDisplayItem] {
-        filteredBills.filter { $0.remainingAmount > 0.01 }
-    }
-
-    private var allUnpaidPayables: [PayableItem] {
-        filteredPayables.filter { $0.remainingAmount > 0.01 && !$0.isSettled }
-    }
-
-    /// 人民币待还款（信用卡 + 固定支出）
-    private var cnyUnpaidTotal: Double {
-        let billsSum = allUnpaidBills.filter {
-            let c = $0.currency.uppercased()
-            return c == "CNY" || c == "RMB"
-        }.reduce(0.0) { $0 + $1.remainingAmount }
-
-        let payablesSum = allUnpaidPayables.filter {
-            let c = $0.currency.uppercased()
-            return c == "CNY" || c == "RMB"
-        }.reduce(0.0) { $0 + $1.remainingAmount }
-
-        return billsSum + payablesSum
-    }
-
-    /// 港币待还款（信用卡 + 固定支出）
-    private var hkdUnpaidTotal: Double {
-        let billsSum = allUnpaidBills.filter { $0.currency.uppercased() == "HKD" }
-            .reduce(0.0) { $0 + $1.remainingAmount }
-        let payablesSum = allUnpaidPayables.filter { $0.currency.uppercased() == "HKD" }
-            .reduce(0.0) { $0 + $1.remainingAmount }
-        return billsSum + payablesSum
-    }
-
-    /// 美元待还款（信用卡 + 固定支出）
-    private var usdUnpaidTotal: Double {
-        let billsSum = allUnpaidBills.filter { $0.currency.uppercased() == "USD" }
-            .reduce(0.0) { $0 + $1.remainingAmount }
-        let payablesSum = allUnpaidPayables.filter { $0.currency.uppercased() == "USD" }
-            .reduce(0.0) { $0 + $1.remainingAmount }
-        return billsSum + payablesSum
-    }
-
-    /// 折算人民币总额（对齐 DashboardFx：绝不凭空伪造汇率，缺汇率不静默1:1混算，明确标记未折算币种）
-    private var convertedSummary: ConvertedResult {
-        var items: [(amount: Double, currency: String)] = []
-        for bill in allUnpaidBills {
-            items.append((bill.remainingAmount, bill.currency))
-        }
-        for payable in allUnpaidPayables {
-            items.append((payable.remainingAmount, payable.currency))
-        }
-        return calculateConvertedTotal(items: items)
-    }
-
-    private var convertedTotalAmount: Double {
-        convertedSummary.totalAmount
-    }
-
-    /// 逾期折算汇总（包含信用卡与固定支出）
-    private var overdueConvertedSummary: ConvertedResult {
-        var items: [(amount: Double, currency: String)] = []
-        for bill in overdueItems {
-            items.append((bill.remainingAmount, bill.currency))
-        }
-        for payable in overduePayables {
-            items.append((payable.remainingAmount, payable.currency))
-        }
-        return calculateConvertedTotal(items: items)
-    }
-
-    private var overdueTotalAmount: Double {
-        overdueConvertedSummary.totalAmount
-    }
-
-    /// 3天内到期折算汇总
-    private var dueSoonConvertedSummary: ConvertedResult {
-        var items: [(amount: Double, currency: String)] = []
-        for bill in dueSoonItems {
-            items.append((bill.remainingAmount, bill.currency))
-        }
-        for payable in dueSoonPayables {
-            items.append((payable.remainingAmount, payable.currency))
-        }
-        return calculateConvertedTotal(items: items)
-    }
-
-    private var dueSoonTotalAmount: Double {
-        dueSoonConvertedSummary.totalAmount
-    }
+    private var overdueItems: [BillDisplayItem] { presentation.overdueBills }
+    private var convertedSummary: BillsAmountSummary { presentation.convertedSummary }
+    private var convertedTotalAmount: Double { convertedSummary.totalAmount }
+    private var overdueConvertedSummary: BillsAmountSummary { presentation.overdueSummary }
+    private var overdueTotalAmount: Double { overdueConvertedSummary.totalAmount }
+    private var dueSoonConvertedSummary: BillsAmountSummary { presentation.dueSoonSummary }
+    private var dueSoonTotalAmount: Double { dueSoonConvertedSummary.totalAmount }
+    private var cnyUnpaidTotal: Double { presentation.currencyTotals["CNY", default: 0] }
+    private var hkdUnpaidTotal: Double { presentation.currencyTotals["HKD", default: 0] }
+    private var usdUnpaidTotal: Double { presentation.currencyTotals["USD", default: 0] }
 
     private var overdueTotalLabel: String {
         let total = BillsGrouping.total(
@@ -416,17 +112,6 @@ struct BillsView: View {
         return "筛选"
     }
 
-    private var latestBillMonthByCard: [String: String] {
-        var map: [String: String] = [:]
-        for item in appState.allBills {
-            let month = item.bill.billMonth
-            if (map[item.card.id] ?? "") < month {
-                map[item.card.id] = month
-            }
-        }
-        return map
-    }
-
     var body: some View {
         NavigationStack {
             ZStack {
@@ -452,7 +137,7 @@ struct BillsView: View {
                     overdueBanner
 
                     ScrollView {
-                        VStack(spacing: 14) {
+                        LazyVStack(spacing: 14) {
                             if let error = appState.payablesError {
                                 HStack(spacing: 8) {
                                     Image(systemName: "wifi.exclamationmark")
@@ -492,10 +177,10 @@ struct BillsView: View {
                         }
                         .padding(.bottom, 32)
                     }
-                    .offset(y: panelDisplacement)
                     .refreshable {
                         await appState.sync()
                         await appState.refreshPayables()
+                        await appState.refreshDashboardRemote()
                     }
                 }
 
@@ -512,7 +197,6 @@ struct BillsView: View {
                         appState.selectedBillFilter = newFilter
                         holderFilterId = newHolderId
                         bankFilterName = newBankName
-                        Task { await appState.reloadData() }
                     }
                     .transition(.asymmetric(
                         insertion: .move(edge: .trailing).combined(with: .opacity),
@@ -524,27 +208,6 @@ struct BillsView: View {
             .animation(.spring(response: 0.35, dampingFraction: 0.78), value: isFilterDrawerPresented)
             .navigationDestination(for: BillDetailRoute.self) { route in
                 BillDetailView(item: route.item)
-            }
-            .task {
-                await appState.refreshPayables()
-            }
-            .onDisappear {
-                // 取消后同步复位动画状态：否则返回本页时残留 ±14 偏移与圆圈高亮；
-                // 若已过 Step 3 提交点则排序已切换，未到则补提交，不让点击被静默丢弃
-                if let target = tabAnimationTaskingTarget, appState.billsSortMode != target {
-                    appState.billsSortMode = target
-                    Task { await appState.reloadData() }
-                }
-                tabAnimationTask?.cancel()
-                tabAnimationTask = nil
-                tabAnimationTaskingTarget = nil
-                isTabMorphing = false
-                morphingTargetMode = nil
-                tabEdgeHighlightMode = nil
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    tabCirclePhase = 0.0
-                    panelDisplacement = 0.0
-                }
             }
             .sheet(item: $selectedCardForEdit) { card in
                 CardEditSheetView(card: card) { input in
@@ -793,60 +456,10 @@ struct BillsView: View {
 
     // MARK: - Sort Tabs
     private var sortTabs: some View {
-        HStack(spacing: 6) {
-            sortTab(.nearestDue, label: "最近需还款", identifier: "bills.sort.nearestDue")
-            sortTab(.maxInterestFree, label: "最大免息期", identifier: "bills.sort.maxInterestFree")
-        }
-        .frame(height: 44)
-        .padding(4)
-        .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private func sortTab(_ mode: BillsSortMode, label: String, identifier: String) -> some View {
-        let isSelected = appState.billsSortMode == mode
-        let isEdgeHighlighted = tabEdgeHighlightMode == mode
-        let isTarget = morphingTargetMode == mode
-
-        return Button {
-            triggerTabAnimation(to: mode)
-        } label: {
-            ZStack {
-                // Background & Morphing Shape: 边缘高亮 -> 聚成正圆圈 -> 释放边缘
-                if isSelected || isTarget {
-                    if isTabMorphing && tabCirclePhase > 0 {
-                        Circle()
-                            .fill(WCColors.primaryAccent)
-                            .frame(width: 32, height: 32)
-                            .shadow(color: WCColors.primaryAccent.opacity(0.45), radius: 6)
-                    } else if isSelected {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(WCColors.primaryAccent)
-                    }
-                }
-
-                Text(label)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(
-                        (isSelected && tabCirclePhase == 0)
-                            ? Color.white
-                            : (isSelected ? Color.white.opacity(0.9) : WCColors.textSecondary)
-                    )
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 38)
-            .contentShape(Rectangle())
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(
-                        isEdgeHighlighted ? WCColors.primaryAccent : Color.clear,
-                        lineWidth: isEdgeHighlighted ? 2.0 : 0
-                    )
-                    .shadow(color: isEdgeHighlighted ? WCColors.primaryAccent.opacity(0.6) : Color.clear, radius: 4)
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier(identifier)
-        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        BillsSortTabs(selection: Binding(
+            get: { appState.billsSortMode },
+            set: { appState.billsSortMode = $0 }
+        ))
     }
 
     // MARK: - Overdue Banner
@@ -923,7 +536,7 @@ struct BillsView: View {
     // MARK: - Cards List View
     @ViewBuilder
     private var cardsListView: some View {
-        if unifiedEntries.isEmpty {
+        if presentation.entries.isEmpty {
             VStack(spacing: 12) {
                 // 固定支出是在线数据：刷新失败且无缓存时明确降级提示，避免固定支出凭空消失无解释
                 if let payablesError = appState.payablesError {
@@ -943,16 +556,13 @@ struct BillsView: View {
             .padding(.vertical, 36)
             .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 16))
         } else {
-            VStack(spacing: 12) {
-                // 缺账单卡片提示
-                ForEach(visibleGroups) { group in
-                    if let missing = group.missingStatementDays(latestBillMonth: latestBillMonthByCard[group.cardId]) {
-                        missingStatementCard(group: group, missingDays: missing)
-                    }
+            LazyVStack(spacing: 12) {
+                ForEach(presentation.missingStatements) { missing in
+                    missingStatementCard(group: missing.group, missingDays: missing.days)
                 }
 
                 // 账单与固定支出统一混合展示（按还款日排序）
-                ForEach(unifiedEntries) { entry in
+                ForEach(presentation.entries) { entry in
                     switch entry {
                     case .cardBill(let item, let group):
                         billCard(item: item, group: group)
@@ -1418,23 +1028,11 @@ struct BillsView: View {
     }
 
     private var interestCardsList: some View {
-        VStack(spacing: 12) {
-            ForEach(visibleGroups) { group in
-                // 取 billMonth 最新的一期，避免把用户带进历史老账单
-                if let latest = Self.latestBillByMonth(in: group.bills) {
-                    interestCard(group: group, item: latest)
-                }
+        LazyVStack(spacing: 12) {
+            ForEach(presentation.interestRows) { row in
+                interestCard(group: row.group, item: row.item)
             }
         }
-    }
-
-    /// 按 billMonth 取最新一期账单（YYYY-MM 字典序即时间序）；同月多笔时退回首笔。
-    nonisolated static func latestBillByMonth(in bills: [BillDisplayItem]) -> BillDisplayItem? {
-        guard var best = bills.first else { return nil }
-        for item in bills.dropFirst() where item.bill.billMonth > best.bill.billMonth {
-            best = item
-        }
-        return best
     }
 
     private func interestCard(group: CardBillsGroup, item: BillDisplayItem) -> some View {
@@ -1614,7 +1212,7 @@ struct BillsView: View {
                 }
 
                 let effectiveBillingDay = card.card.overrideBillingDay ?? card.card.billingDay
-                let daysToBilling = Self.daysUntilNextBilling(billingDay: effectiveBillingDay)
+                let daysToBilling = BillingDateCalculator.daysUntilNextBilling(billingDay: effectiveBillingDay)
 
                 Divider()
                     .background(WCColors.border)
@@ -1643,54 +1241,7 @@ struct BillsView: View {
         .accessibilityIdentifier("card.unbilled.row.\(card.id)")
     }
 
-    // MARK: - Animation Triggers
-
-    /// 标签切换动画：边缘高亮 -> 凝聚正圆圈 -> 带动面板位移 -> 释放边缘
-    /// 使用可取消 Task 驱动延时步骤：页面退出时 onDisappear 取消，
-    /// 不会在离开页面后继续改状态或触发多余网络请求；
-    /// 快速连点时取消旧链、以最新点击为准重启（避免最终切到旧目标）。
-    private func triggerTabAnimation(to mode: BillsSortMode) {
-        guard appState.billsSortMode != mode || isTabMorphing else { return }
-        // 提交前校验目标未变：动画窗口内模式已被切到其他值时不重复提交
-        tabAnimationTask?.cancel()
-        tabAnimationTaskingTarget = mode
-        isTabMorphing = true
-        morphingTargetMode = mode
-
-        // Step 1: 按钮边缘高亮
-        withAnimation(.easeIn(duration: 0.08)) {
-            tabEdgeHighlightMode = mode
-        }
-
-        tabAnimationTask = Task { @MainActor in
-            // Step 2: 聚成正圆圈后，带动整个面板上下移动
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            guard !Task.isCancelled else { return }
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.65)) {
-                tabCirclePhase = 1.0
-                panelDisplacement = (mode == .maxInterestFree ? 14 : -14)
-            }
-
-            // Step 3: 面板带动位移后，释放到按钮边缘效果
-            try? await Task.sleep(nanoseconds: 140_000_000)
-            guard !Task.isCancelled else { return }
-            appState.billsSortMode = mode
-            Task { await appState.reloadData() }
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
-                tabCirclePhase = 0.0
-                panelDisplacement = 0.0
-                tabEdgeHighlightMode = nil
-            }
-
-            try? await Task.sleep(nanoseconds: 180_000_000)
-            guard !Task.isCancelled else { return }
-            if morphingTargetMode == mode {
-                isTabMorphing = false
-                morphingTargetMode = nil
-                tabAnimationTaskingTarget = nil
-            }
-        }
-    }
+    // MARK: - Filter Animation
 
     /// 筛选按钮光环凝聚动效，凝聚后拽着面板滑出
     private func openFilterDrawerWithAnimation() {
@@ -1716,35 +1267,81 @@ struct BillsView: View {
             filterHaloOpacity = 0.0
         }
     }
+}
 
-    nonisolated public static func daysUntilNextBilling(billingDay: Int, today: Date = Date()) -> Int {
-        // 统一 Asia/Shanghai 业务时区口径：diffInCalendarDays 内部固定此时区，
-        // 此处拆解「今天」也必须同口径，否则非东八区设备有 ±1 天漂移。
-        let cal = BillingDateCalculator.businessCalendar
-        let currentYear = cal.component(.year, from: today)
-        let currentMonth = cal.component(.month, from: today)
-        let currentDay = cal.component(.day, from: today)
+/// 动画状态留在按钮内，凝聚和回弹不会使列表重新求值。
+private struct BillsSortTabs: View {
+    @Binding var selection: BillsSortMode
 
-        var targetYear = currentYear
-        var targetMonth = currentMonth
-        if currentDay >= billingDay {
-            targetMonth += 1
-            if targetMonth > 12 {
-                targetMonth = 1
-                targetYear += 1
+    var body: some View {
+        HStack(spacing: 6) {
+            BillsSortButton(selection: $selection, mode: .nearestDue,
+                            label: "最近需还款", identifier: "bills.sort.nearestDue")
+            BillsSortButton(selection: $selection, mode: .maxInterestFree,
+                            label: "最大免息期", identifier: "bills.sort.maxInterestFree")
+        }
+        .frame(height: 44)
+        .padding(4)
+        .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private struct BillsSortButton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Binding var selection: BillsSortMode
+    let mode: BillsSortMode
+    let label: String
+    let identifier: String
+    @State private var isCondensed = false
+    @State private var animationTask: Task<Void, Never>?
+
+    var body: some View {
+        let isSelected = selection == mode
+        Button {
+            guard selection != mode else { return }
+            animationTask?.cancel()
+            // 先提交内容样式，不让装饰动画 transaction 传到列表与汇总布局。
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { selection = mode }
+            guard !reduceMotion else { return }
+            withAnimation(.easeIn(duration: 0.08)) { isCondensed = true }
+            animationTask = Task { @MainActor in
+                do { try await Task.sleep(for: .milliseconds(80)) }
+                catch { return }
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.72)) {
+                    isCondensed = false
+                }
+            }
+        } label: {
+            ZStack {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: isCondensed ? 16 : 8)
+                        .fill(WCColors.primaryAccent)
+                        .frame(width: isCondensed ? 32 : nil, height: isCondensed ? 32 : nil)
+                        .shadow(color: WCColors.primaryAccent.opacity(isCondensed ? 0.45 : 0), radius: 6)
+                }
+                Text(label)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(isSelected ? WCColors.onDark : WCColors.textSecondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .onChange(of: selection) { _, value in
+            if value != mode {
+                animationTask?.cancel()
+                isCondensed = false
             }
         }
-        // 小月钳制：目标月无 29/30/31 日时截断到当月最后一天，
-        // 避免 date(from:) 滚到下个月或返回 nil 造成「距账单日 0 天」。
-        let probe = cal.date(from: DateComponents(year: targetYear, month: targetMonth, day: 1)) ?? today
-        let lastDay = cal.range(of: .day, in: .month, for: probe)?.count ?? 30
-        let clampedDay = min(billingDay, lastDay)
-        let comp = DateComponents(year: targetYear, month: targetMonth, day: clampedDay)
-        let targetDate = cal.date(from: comp) ?? today
-        return max(0, BillingDateCalculator.diffInCalendarDays(target: targetDate, today: today))
-    }
-
-    private func setSortMode(_ mode: BillsSortMode) {
-        triggerTabAnimation(to: mode)
+        .onDisappear {
+            animationTask?.cancel()
+            animationTask = nil
+            isCondensed = false
+        }
     }
 }

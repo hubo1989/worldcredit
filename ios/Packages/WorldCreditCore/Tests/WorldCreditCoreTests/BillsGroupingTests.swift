@@ -72,6 +72,131 @@ struct BillsGroupingTests {
         #expect(Set(sorted.map(\.cardId).prefix(2)) == Set(["c1", "c2"]))
     }
 
+    @Test("two list styles share a snapshot without changing status or currency semantics")
+    func presentationModes() async throws {
+        let bills = try await allBills()
+        let payable = PayableItem(id: "rent", createdBy: "user", name: "测试房租", category: .rent,
+                                  amount: 200, currency: "CNY", dueDay: 25, period: "2026-10",
+                                  dueDate: "2026-10-25", daysUntilDue: 2, paidAmount: 50, status: .unpaid)
+        let result = BillsPresentation(bills: bills, cards: [], payables: [payable], rates: nil,
+                                       filter: BillsPresentationFilter(), today: testDay)
+        #expect(result.entries.map(\.id) == ["bill-b1", "payable-rent", "bill-b3", "bill-b2"])
+        #expect(result.interestRows.count == 3)
+        #expect(result.interestRows.first(where: { $0.id == "c1" })?.item.id == "b1")
+        #expect(result.unpaidBillCount == 3)
+        #expect(result.currencyTotals["CNY"] == 500)
+        #expect(result.currencyTotals["USD"] == 100)
+        #expect(result.convertedSummary.totalAmount == 500)
+        #expect(result.convertedSummary.unconvertedCurrencies == ["USD"])
+        #expect(result.overdueSummary.totalAmount == 300)
+        #expect(result.dueSoonSummary.totalAmount == 200)
+
+        let paid = BillsPresentation(bills: bills, cards: [], payables: [payable], rates: nil,
+                                     filter: BillsPresentationFilter(status: .paid), today: testDay)
+        #expect(paid.entries.map(\.id) == ["bill-b4"])
+        #expect(paid.interestRows.count == 3, "免息模式不受账单状态筛选影响")
+        #expect(paid.interestRows.first(where: { $0.id == "c1" })?.item.id == "b1")
+
+        let bank = BillsPresentation(bills: bills, cards: [], payables: [payable], rates: nil,
+                                     filter: BillsPresentationFilter(bankName: "测试银行"), today: testDay)
+        #expect(!bank.entries.contains { $0.id == "payable-rent" })
+        let holder = BillsPresentation(bills: bills, cards: [], payables: [payable], rates: nil,
+                                       filter: BillsPresentationFilter(holderId: "h2"), today: testDay)
+        #expect(holder.entries.map(\.id) == ["bill-b2"])
+        #expect(holder.interestRows.map(\.id) == ["c2"])
+    }
+
+    @Test("presentation cache reuses both styles and invalidates for source, filter and business day")
+    func presentationCache() async throws {
+        let bills = try await allBills()
+        var cache = BillsPresentationCache()
+        var builds = 0
+        func build(_ bills: [BillDisplayItem], filter: BillsPresentationFilter) -> BillsPresentation {
+            builds += 1
+            return BillsPresentation(bills: bills, cards: [], payables: [], rates: nil,
+                                     filter: filter, today: testDay)
+        }
+        let filter = BillsPresentationFilter()
+        let first = cache.value(for: filter, today: testDay) { build(bills, filter: filter) }
+        for _ in 0..<20 {
+            let cached = cache.value(for: filter, today: testDay.addingTimeInterval(1)) {
+                build([], filter: filter)
+            }
+            #expect(cached.entries.map(\.id) == first.entries.map(\.id))
+            #expect(cached.interestRows.map(\.id) == first.interestRows.map(\.id))
+        }
+        #expect(builds == 1)
+        cache.invalidate()
+        let cleared = cache.value(for: filter, today: testDay) { build([], filter: filter) }
+        #expect(cleared.entries.isEmpty)
+        #expect(cleared.interestRows.isEmpty, "账户清理后不可保留旧卡片")
+        #expect(builds == 2)
+        let paid = BillsPresentationFilter(status: .paid)
+        _ = cache.value(for: paid, today: testDay) { build(bills, filter: paid) }
+        #expect(builds == 3)
+        _ = cache.value(for: paid, today: testDay.addingTimeInterval(86_400)) { build(bills, filter: paid) }
+        #expect(builds == 4)
+    }
+
+    @Test("payment and FX updates produce fresh totals after cache invalidation")
+    func presentationAfterPayment() async throws {
+        let db = try database()
+        let query = QueryService(dbManager: db)
+        let bills = try await query.fetchBills(filter: .all, today: testDay)
+        var cache = BillsPresentationCache()
+        let filter = BillsPresentationFilter()
+        let before = cache.value(for: filter, today: testDay) {
+            BillsPresentation(bills: bills, cards: [], payables: [], rates: nil, filter: filter, today: testDay)
+        }
+        #expect(before.overdueBills.map(\.id) == ["b1"])
+        _ = try await PaymentService(dbManager: db).recordPayment(
+            billId: "b1", amount: 300, paidAt: "2026-10-23", idempotencyKey: "settle-b1"
+        )
+        let updated = try await query.fetchBills(filter: .all, today: testDay)
+        let rates = FxRates(base: "USD", rates: ["USD": 1, "CNY": 7.1], timestamp: 0, fetchedAt: 0)
+        cache.invalidate()
+        let after = cache.value(for: filter, today: testDay) {
+            BillsPresentation(bills: updated, cards: [], payables: [], rates: rates, filter: filter, today: testDay)
+        }
+        #expect(after.overdueBills.isEmpty)
+        #expect(after.entries.map(\.id) == ["bill-b3", "bill-b2"])
+        #expect(after.interestRows.count == 3)
+        #expect(abs(after.convertedSummary.totalAmount - 760) < 0.001)
+        #expect(after.convertedSummary.unconvertedCurrencies.isEmpty)
+    }
+
+    @Test("RMB remains a CNY alias and settled stale payable status never creates overdue debt")
+    func presentationPayableCompatibility() {
+        let payable = PayableItem(id: "rmb", createdBy: "user", name: "人民币支出", category: .other,
+                                  amount: 100, currency: "RMB", dueDay: 25, period: "2026-10",
+                                  dueDate: "2026-10-25", daysUntilDue: 2, paidAmount: 0, status: .unpaid)
+        let settled = PayableItem(id: "settled", createdBy: "user", name: "已结清支出", category: .other,
+                                  amount: 200, currency: "CNY", dueDay: 20, period: "2026-10",
+                                  dueDate: "2026-10-20", daysUntilDue: -3, paidAmount: 200, status: .overdue)
+        let result = BillsPresentation(bills: [], cards: [], payables: [payable, settled], rates: nil,
+                                       filter: BillsPresentationFilter(status: .all), today: testDay)
+        #expect(result.currencyTotals["CNY"] == 100)
+        #expect(result.convertedSummary.totalAmount == 100)
+        #expect(result.convertedSummary.unconvertedCurrencies.isEmpty)
+        #expect(result.overdueSummary.totalAmount == 0)
+        #expect(result.entries.map(\.id) == ["payable-rmb", "payable-settled"])
+    }
+
+    @Test("next billing countdown clamps short months and stays in the business timezone")
+    func nextBillingCountdown() {
+        let iso = ISO8601DateFormatter()
+        #expect(BillingDateCalculator.daysUntilNextBilling(billingDay: 31,
+                today: iso.date(from: "2026-02-27T16:00:00Z")!) == 0)
+        #expect(BillingDateCalculator.daysUntilNextBilling(billingDay: 10,
+                today: iso.date(from: "2026-10-09T16:00:00Z")!) == 31)
+        #expect(BillingDateCalculator.daysUntilNextBilling(billingDay: 1,
+                today: iso.date(from: "2026-12-30T16:00:00Z")!) == 1)
+    }
+
+    private var testDay: Date {
+        ISO8601DateFormatter().date(from: "2026-10-23T04:00:00Z")!
+    }
+
     @Test("totals convert per-card currency sums and degrade when rates are missing")
     func convertedTotals() async throws {
         let groups = BillsGrouping.groups(from: try await allBills())
