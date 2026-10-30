@@ -261,6 +261,25 @@ struct BillsFilterDrawerView: View {
                                 draftScope = .bank
                             }
                         }
+                        // 「全部」维度只展示前 6 家银行：超出时给出显式指引，
+                        // 避免用户误以为目标银行不存在
+                        if filteredBanks.count > 6 {
+                            Button {
+                                draftScope = .bank
+                            } label: {
+                                HStack {
+                                    Text("更多银行（\(filteredBanks.count - 6) 家）…")
+                                        .font(.subheadline)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                }
+                                .padding(.vertical, 8)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(WCColors.primaryAccent)
+                        }
                     }
                 }
             }

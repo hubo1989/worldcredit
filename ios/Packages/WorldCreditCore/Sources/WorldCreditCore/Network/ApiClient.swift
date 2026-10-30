@@ -320,6 +320,17 @@ public final class ApiClient: @unchecked Sendable {
         return tokenRes.user
     }
 
+    /// 登出吊销：凭 refresh_token 吊销本设备凭据（会话失效时服务端也接受）。
+    public func requestLogoutRevoke(refreshToken: String) async throws {
+        let url = baseURL.appendingPathComponent("api/auth/logout")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 10
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["refresh_token": refreshToken])
+        _ = try await session.data(for: req)
+    }
+
     public func pull(cursor: Int, limit: Int = 500, reconcile: [SyncReconcileTarget] = []) async throws -> PullResponse {
         guard let token = self.token else {
             throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])

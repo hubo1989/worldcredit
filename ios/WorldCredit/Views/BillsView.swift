@@ -7,6 +7,7 @@ enum BillsFormatters {
     static let mmdd: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "MM/dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
         f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
         return f
     }()
@@ -14,6 +15,7 @@ enum BillsFormatters {
     static let yyyymmdd: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
         f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
         return f
     }()
@@ -21,6 +23,7 @@ enum BillsFormatters {
     static let mmddCn: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "MM月dd日"
+        f.locale = Locale(identifier: "zh_CN")
         f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
         return f
     }()
@@ -1182,16 +1185,22 @@ struct BillsView: View {
                 Spacer()
                 Button(action: {
                     // 缺账单的场景需要真正检查邮箱：走 Gmail 拉取流程（含本地账单刷新），
-                    // 而非仅触发原生 SyncEngine 同步。
+                    // 而非仅触发原生 SyncEngine 同步。isGmailSyncing 防连点重入。
                     Task { await appState.syncGmailBills() }
                 }) {
-                    Text("查看邮箱")
+                    HStack(spacing: 4) {
+                        if appState.isGmailSyncing {
+                            ProgressView().controlSize(.mini)
+                        }
+                        Text(appState.isGmailSyncing ? "同步中…" : "查看邮箱")
                         .font(.caption.bold())
                         .foregroundStyle(Color.white)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .background(WCColors.primaryAccent, in: RoundedRectangle(cornerRadius: 8))
+                    }
                 }
+                .disabled(appState.isGmailSyncing)
                 .accessibilityIdentifier("bills.checkMailbox")
             }
         }

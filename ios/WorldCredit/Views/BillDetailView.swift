@@ -220,9 +220,10 @@ struct BillDetailView: View {
         }
         .sheet(isPresented: $showingCardEditSheet) {
             CardEditSheetView(card: matchedCard ?? fallbackCard) { input in
+                // 回调只做写入：reloadData+loadDetails 交给已有的
+                // onChange(of: appState.isSyncing)/.task 路径，避免重载阻塞弹窗 dismiss
                 try await appState.updateCard(cardId: item.card.id, input: input)
-                await appState.reloadData()
-                await loadDetails()
+                Task { await appState.reloadData() }
             }
         }
         .task {

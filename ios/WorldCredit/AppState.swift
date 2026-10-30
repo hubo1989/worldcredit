@@ -31,6 +31,8 @@ public final class AppState {
     public var isLoggedIn: Bool = false
     public var currentUser: SessionUser?
     public var isSyncing: Bool = false
+    /// Gmail 分轮拉取在迹标记：防「查看邮箱」连点重入
+    public var isGmailSyncing: Bool = false
     public var lastSyncError: String?
     public var pendingSyncCount: Int = 0
     public var lastSyncedAt: String?
@@ -311,6 +313,42 @@ public final class AppState {
 
     /// 拉取固定支出列表；失败降级为缓存或兜底数据，不抛出异常阻塞界面。
     // MARK: - Payables Cache & Recalculation Helpers
+    /// 敏感财务快照不用 UserDefaults（未加密 plist 随备份导出）：
+    /// 改存 Application Support 下带 NSFileProtectionComplete 的专属文件。
+    /// 快照归属记录：401 会话过期后直接换号登录不经过 logout（currentUser 已为 nil），
+    /// per-user 文件只能靠 owner 记录定位清理。
+    private static let payablesOwnerKey = "worldcredit_cached_payables_owner"
+
+    private static var payablesCacheDirectory: URL? {
+        let fm = FileManager.default
+        guard let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        let dir = base.appendingPathComponent("PayablesCache", isDirectory: true)
+        do {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        } catch { return nil }
+    }
+
+    private static func payablesCacheURL(userId: String) -> URL? {
+        payablesCacheDirectory?.appendingPathComponent("\(userId).json")
+    }
+
+    /// 快照写入（原子落盘 + .completeFileProtection）。
+    private static func savePayablesSnapshot(_ items: [PayableItem], userId: String) {
+        guard let url = payablesCacheURL(userId: userId),
+              let data = try? JSONEncoder().encode(items) else { return }
+        try? data.write(to: url, options: [.atomic, .completeFileProtection])
+        UserDefaults.standard.set(userId, forKey: payablesOwnerKey)
+    }
+
+    private static func loadPayablesSnapshot(userId: String) -> [PayableItem]? {
+        guard let url = payablesCacheURL(userId: userId),
+              let data = try? Data(contentsOf: url),
+              let items = try? JSONDecoder().decode([PayableItem].self, from: data),
+              !items.isEmpty else { return nil }
+        return items
+    }
+
     public static func payablesCacheKey(userId: String) -> String {
         "worldcredit_cached_payables_\(userId)"
     }
@@ -318,7 +356,22 @@ public final class AppState {
     /// 清理旧版本全局未隔离的遗留缓存 key（混淆 key 与明文 key 都清）。
     /// login/loginWithGoogle/init/logout 共用，保证换号/冷启动路径不残留前任用户快照。
     public static func clearLegacyPayablesCaches() {
-        UserDefaults.standard.removeObject(forKey: "worldcredit_cached_payables")
+        let defaults = UserDefaults.standard
+        // 旧版全局明文/混淆 key
+        defaults.removeObject(forKey: "worldcredit_cached_payables")
+        defaults.removeObject(forKey: "worldcredit_cached_payables")
+        // owner 记录定位：旧版 per-user UserDefaults 快照 + 新版文件快照
+        if let owner = defaults.string(forKey: payablesOwnerKey) {
+            defaults.removeObject(forKey: payablesCacheKey(userId: owner))
+            if let url = payablesCacheURL(userId: owner) {
+                try? FileManager.default.removeItem(at: url)
+            }
+            defaults.removeObject(forKey: payablesOwnerKey)
+        }
+        // 前缀扫清：不依赖 owner 完整性
+        defaults.dictionaryRepresentation().keys
+            .filter { $0.hasPrefix("worldcredit_cached_payables_") }
+            .forEach { defaults.removeObject(forKey: $0) }
     }
 
     public static func recalculatePayableStatus(_ item: PayableItem, today: Date = Date()) -> PayableItem {
@@ -360,6 +413,7 @@ public final class AppState {
     /// 注意不要清 Keychain——token 本身已失效，删除操作无意义且可能与在途请求竞态。
     private func handleSessionExpired() {
         guard isLoggedIn else { return }
+        let expiredUserID = currentUser?.id
         sessionEpoch = UUID()
         dashboardRequestID = UUID()
         dashboardRemoteTask?.cancel()
@@ -379,6 +433,15 @@ public final class AppState {
         payables = []
         payablesError = nil
         lastSyncError = nil
+        // 401 会话过期不走完整 logout：per-user 快照靠 owner 记录在这里补清，
+        // 否则下一个账号直接 login 时前任财务快照残留磁盘
+        if let expiredUserID {
+            if let url = Self.payablesCacheURL(userId: expiredUserID) {
+                try? FileManager.default.removeItem(at: url)
+            }
+            UserDefaults.standard.removeObject(forKey: Self.payablesCacheKey(userId: expiredUserID))
+        }
+        Self.clearLegacyPayablesCaches()
         // 引擎失效防止在途请求以旧会话写回；本地 SQLite 不清（重登后 pull 恢复）。
         syncEngine.invalidateSession()
         syncEngine = SyncEngine(dbManager: dbManager, apiClient: apiClient)
@@ -413,9 +476,10 @@ public final class AppState {
         // 会话级 401（Keychain 恢复中/token 过期）不是网络降级：不进入 payablesError
         // 降级横幅误导用户；静默跳过，待 sync()/重新登录后自然恢复
         guard token != nil else { return }
-        // catch 分支的缓存兑底 key 依赖 userId；冷启动 currentUser 尚为 nil 时
-        // 用 fetchSessionUser 解析到的 id 兑底（否则按用户隔离的缓存永不生效）
+        // catch 分支的缓存兑底 key 依赖 userId；冷启动 currentUser 尚为 nil 且离线时
+        // fetchSessionUser 必败，用持久化的 lastUserId 兑底（否则离线永远看不到本地快照）
         var fallbackUserId = currentUser?.id
+            ?? UserDefaults.standard.string(forKey: Self.payablesOwnerKey)
         do {
             let user: SessionUser
             if let currentUser { user = currentUser }
@@ -430,11 +494,19 @@ public final class AppState {
             payables = items
             payablesError = nil
 
-            // 空结果不覆盖非空快照：服务端瞬时异常返回空列表不会冲掉离线兑底数据；
-            // 真实「删空」场景下次在线刷新内存仍正确显示为空
-            let key = Self.payablesCacheKey(userId: user.id)
-            if !items.isEmpty, let data = try? JSONEncoder().encode(items) {
-                UserDefaults.standard.set(data, forKey: key)
+            // 空结果 = 用户删空了固定支出：移除快照（否则「删空后重启+离线」会复活已删条目）；
+            // 服务端瞬时异常返回空列表的窗口极窄且下次在线刷新即自愈，不值得为它保留陈旧快照。
+            // 变化才写盘：高频路径避免重复序列化与磁盘写入。
+            if items.isEmpty {
+                if let url = Self.payablesCacheURL(userId: user.id) {
+                    try? FileManager.default.removeItem(at: url)
+                }
+                UserDefaults.standard.removeObject(forKey: Self.payablesCacheKey(userId: user.id))
+            } else if let existing = Self.loadPayablesSnapshot(userId: user.id), existing == items {
+                // 内容未变，只刷新 owner 归属
+                UserDefaults.standard.set(user.id, forKey: Self.payablesOwnerKey)
+            } else {
+                Self.savePayablesSnapshot(items, userId: user.id)
             }
         } catch is CancellationError {
             return
@@ -453,13 +525,9 @@ public final class AppState {
             self.payablesError = error.localizedDescription
 
             // 网络失败时优先保留内存中已有的数据；若内存为空则尝试读取本用户的有效本地快照并重算倒计时
-            if payables.isEmpty, let userId = fallbackUserId {
-                let key = Self.payablesCacheKey(userId: userId)
-                if let data = UserDefaults.standard.data(forKey: key),
-                   let cached = try? JSONDecoder().decode([PayableItem].self, from: data),
-                   !cached.isEmpty {
-                    payables = cached.map { Self.recalculatePayableStatus($0) }
-                }
+            if payables.isEmpty, let userId = fallbackUserId,
+               let cached = Self.loadPayablesSnapshot(userId: userId) {
+                payables = cached.map { Self.recalculatePayableStatus($0) }
             }
         }
     }
@@ -596,7 +664,17 @@ public final class AppState {
     /// 「查看邮箱」入口专用：拉完 Gmail 后刷新本地账单，让缺账单卡片真正检查到邮箱。
     /// 带 sessionEpoch 守卫：登出/换号期间慢请求返回不会写入新会话。
     public func syncGmailBills(maxRounds: Int = 6) async {
-        guard isLoggedIn else { return }
+        // 对齐 refreshPayables 守卫：演示模式/UI 测试不发起真实 Gmail 同步
+        //（演示态无 token，401 会触发会话落地、清空特意准备的干净演示状态；
+        // 设备 Keychain 残留真实 token 时甚至会以真实凭证向生产环境发有副作用请求）
+        guard isLoggedIn, !UITestConfiguration.isEnabled,
+              !CommandLine.arguments.contains("--demo-mode") else { return }
+        guard maxRounds > 0 else { return }
+        guard apiClient.token != nil else { return }
+        // 防重入：按钮无 loading 态时用户易连点，每次都会再起最多 6 轮请求
+        guard !isGmailSyncing else { return }
+        isGmailSyncing = true
+        defer { isGmailSyncing = false }
         let epoch = sessionEpoch
         for round in 1...maxRounds {
             do {
@@ -606,9 +684,9 @@ public final class AppState {
                 lastSyncError = nil
                 guard let remaining = result.remaining, remaining > 0, round < maxRounds else { break }
             } catch is CancellationError {
-                break
+                return // 取消不是故障：不落盘错误也不触发重载
             } catch let urlError as URLError where urlError.code == .cancelled {
-                break
+                return
             } catch {
                 guard sessionEpoch == epoch, isLoggedIn else { return }
                 // 401 = access token 过期：静默续期；失败回登录页
@@ -684,6 +762,9 @@ public final class AppState {
 
     public func logout() async throws {
         let oldUserID = currentUser?.id
+        // 先取凭据再清状态：登出请求吊销本设备 refresh token（单设备语义，
+        // 不影响其他设备）；token 失效时服务端也能凭 refresh_token 吊销
+        let deviceRefreshToken = apiClient.refreshToken
         sessionEpoch = UUID()
         dashboardRequestID = UUID()
         dashboardRemoteTask?.cancel()
@@ -756,6 +837,13 @@ public final class AppState {
             }
         } catch {
             throw LoginError.cleanupFailed(reason: error.localizedDescription)
+        }
+        // 吊销本设备 refresh 凭据（fire-and-forget：本地已清理，服务端吊销失败
+        // 只影响该凭据自身的 180 天有效期，不影响登出语义）
+        if let deviceRefreshToken {
+            Task.detached { [apiClient] in
+                try? await apiClient.requestLogoutRevoke(refreshToken: deviceRefreshToken)
+            }
         }
         // 登出后重建引擎：invalidateSession 不可逆，新账号必须用全新引擎同步。
         syncEngine = SyncEngine(dbManager: dbManager, apiClient: apiClient)

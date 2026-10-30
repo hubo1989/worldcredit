@@ -43,13 +43,9 @@ export async function issueRefreshToken(userId: string): Promise<IssuedRefreshTo
   return { token, id };
 }
 
-export interface RefreshResult {
-  ok: boolean;
-  userId?: string;
-  /** ok 时为轮换出的新 token 原文 */
-  rotatedToken?: string;
-  reason?: "invalid" | "expired";
-}
+export type RefreshResult =
+  | { ok: true; userId: string; rotatedToken: string }
+  | { ok: false; reason: "invalid" | "expired" | "replayed" };
 
 /** 校验并一次性轮换：旧 token 命中即吊销，成功时返回新 token。 */
 export async function rotateRefreshToken(token: string): Promise<RefreshResult> {
@@ -62,11 +58,31 @@ export async function rotateRefreshToken(token: string): Promise<RefreshResult> 
     )
     .bind(hash)
     .first<{ id: string; user_id: string; expires_at: string }>();
-  if (!row) return { ok: false, reason: "invalid" };
+  if (!row) {
+    // 墓碑检测：已轮换/已吊销的 token 被重放 ≠ 普通 invalid——
+    // 失窃场景下攻击者与合法持有者各自持有一半轮换，重放命中墓碑即全量吊销该用户
+    const tombstone = await db
+      .prepare("SELECT user_id FROM session_refresh_tombstones WHERE token_hash = ?")
+      .bind(hash)
+      .first<{ user_id: string }>();
+    if (tombstone) {
+      await db
+        .prepare("DELETE FROM session_refresh_tokens WHERE user_id = ?")
+        .bind(tombstone.user_id)
+        .run();
+      return { ok: false, reason: "replayed" };
+    }
+    return { ok: false, reason: "invalid" };
+  }
 
   const nowIso = new Date().toISOString();
-  // 一次性轮换：无论后续判断如何，命中即删除，旧 token 不可二次使用。
-  await db.prepare("DELETE FROM session_refresh_tokens WHERE id = ?").bind(row.id).run();
+  // 一次性轮换：命中即移入墓碑并删除，旧 token 不可二次使用。
+  await db.batch([
+    db.prepare("DELETE FROM session_refresh_tokens WHERE id = ?").bind(row.id),
+    db
+      .prepare("INSERT OR REPLACE INTO session_refresh_tombstones (token_hash, user_id, revoked_at) VALUES (?, ?, ?)")
+      .bind(hash, row.user_id, nowIso),
+  ]);
 
   if (row.expires_at <= nowIso) return { ok: false, reason: "expired" };
 
@@ -78,7 +94,20 @@ export async function rotateRefreshToken(token: string): Promise<RefreshResult> 
   return { ok: true, userId: row.user_id, rotatedToken: next.token };
 }
 
-/** 吊销用户全部 refresh token（登出/改密时调用）。 */
+/** 吊销单个 refresh token（登出单设备时用，不影响其他设备）。 */
+export async function revokeRefreshToken(token: string): Promise<void> {
+  if (!token) return;
+  const hash = await hashToken(token);
+  const db = getDb();
+  await db.batch([
+    db.prepare("DELETE FROM session_refresh_tokens WHERE token_hash = ?").bind(hash),
+    db
+      .prepare("INSERT OR REPLACE INTO session_refresh_tombstones (token_hash, user_id, revoked_at) SELECT ?, user_id, ? FROM session_refresh_tokens WHERE token_hash = ?")
+      .bind(hash, new Date().toISOString(), hash),
+  ]);
+}
+
+/** 吊销用户全部 refresh token（改密/失窃/墓碑命中时调用）。 */
 export async function revokeAllRefreshTokens(userId: string): Promise<void> {
   await getDb()
     .prepare("DELETE FROM session_refresh_tokens WHERE user_id = ?")
