@@ -3,6 +3,7 @@ import WorldCreditCore
 
 struct ContentView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.scenePhase) private var scenePhase
     // TabView 的 selection 必须绑定到稳定的本地 @State。
     // 若每次渲染都新建 Binding(get:set:) 并直读 @Observable 状态，
     // 切 tab 会触发 set → 重渲染 → 新 Binding → TabView 重新协商 selection 的循环，
@@ -62,6 +63,14 @@ struct ContentView: View {
         // 监听登录态翻转：登录完成后必须重新加载/同步，否则首页停留在空数据
         .task(id: appState.isLoggedIn) {
             await appState.loadInitialDataIfNeeded()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                Task { await appState.refreshForBusinessDayIfNeeded() }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            Task { await appState.refreshForBusinessDayIfNeeded() }
         }
         // 盘库退到内存库时的可恢复提示（数据不持久化）
         .overlay(alignment: .top) {

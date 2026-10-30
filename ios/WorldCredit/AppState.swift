@@ -80,6 +80,8 @@ public final class AppState {
     @ObservationIgnored private var billsPresentationCache = BillsPresentationCache()
     @ObservationIgnored private var initialLoadTask: Task<Void, Never>?
     @ObservationIgnored private var initialLoadEpoch: UUID?
+    @ObservationIgnored private var businessDayTask: Task<Void, Never>?
+    @ObservationIgnored private var loadedBusinessDay: Date?
     private var billsDataRevision = UUID()
 
     private func invalidateBillsPresentation() {
@@ -189,8 +191,8 @@ public final class AppState {
             self.isLocked = true
         }
 
-        // 清除旧版本全局未隔离的遗留缓存 key
-        Self.clearLegacyPayablesCaches()
+        // 清除旧版本全局未隔离的遗留缓存 key；已登录冷启动保留当前账号文件快照供离线兜底。
+        Self.clearLegacyPayablesCaches(preserveCurrentOwnerSnapshot: self.isLoggedIn)
 
         if UITestConfiguration.isEnabled {
             self.payables = Self.generateDemoPayables()
@@ -244,6 +246,7 @@ public final class AppState {
         let epoch = sessionEpoch
         if initialLoadEpoch == epoch {
             await initialLoadTask?.value
+            await refreshForBusinessDayIfNeeded()
             return
         }
         initialLoadTask?.cancel()
@@ -264,20 +267,44 @@ public final class AppState {
         if sessionEpoch == epoch { initialLoadTask = nil }
     }
 
+    /// 跨上海自然日时只刷新本地日期派生值和应付倒计时，不发起服务器同步。
+    public func refreshForBusinessDayIfNeeded(now: Date = Date()) async {
+        guard BillingDateCalculator.needsBusinessDayRefresh(
+            lastLoadedDay: loadedBusinessDay, now: now
+        ) else { return }
+        if let businessDayTask {
+            await businessDayTask.value
+            return
+        }
+        let epoch = sessionEpoch
+        let task = Task { [self] in
+            _ = await reloadData(today: now)
+            guard sessionEpoch == epoch else { return }
+            if !payables.isEmpty {
+                payables = payables.map { Self.recalculatePayableStatus($0, today: now) }
+            }
+        }
+        businessDayTask = task
+        await task.value
+        if sessionEpoch == epoch { businessDayTask = nil }
+    }
+
     private func restorePayablesSnapshotIfNeeded() {
         guard payables.isEmpty,
+              !UITestConfiguration.isEnabled,
+              !CommandLine.arguments.contains("--demo-mode"),
               let userId = currentUser?.id ?? UserDefaults.standard.string(forKey: Self.payablesOwnerKey),
               let cached = Self.loadPayablesSnapshot(userId: userId) else { return }
         payables = cached.map { Self.recalculatePayableStatus($0) }
     }
 
     @discardableResult
-    public func reloadData() async -> Bool {
+    public func reloadData(today: Date = Date()) async -> Bool {
         let epoch = sessionEpoch
         do {
-            let sum = try await queryService.fetchDashboardSummary()
+            let sum = try await queryService.fetchDashboardSummary(today: today)
             // 只读一次全量账单，筛选与模式切换在内存完成。
-            let allBillsList = try await queryService.fetchBills(filter: .all)
+            let allBillsList = try await queryService.fetchBills(filter: .all, today: today)
             let bList = allBillsList.filter { item in
                 switch selectedBillFilter {
                 case .unpaid: return item.bill.status != "paid" && item.remainingAmount > 0.01
@@ -285,8 +312,8 @@ public final class AppState {
                 case .all: return true
                 }
             }
-            let cList = try await queryService.fetchCards()
-            let dashboardList = try await queryService.fetchDashboardBills()
+            let cList = try await queryService.fetchCards(today: today)
+            let dashboardList = try await queryService.fetchDashboardBills(today: today)
             let holders = try await queryService.fetchHolders()
 
             // 读失败只保留旧值，不把同步状态静默重置为「0 待同步/从未同步」。
@@ -305,6 +332,7 @@ public final class AppState {
             self.dashboardBills = dashboardList
             self.dashboardHolders = holders
             self.dashboardLoadError = nil
+            self.loadedBusinessDay = BillingDateCalculator.businessDayStart(for: today)
             if let meta {
                 self.lastSyncedAt = meta.0
                 self.pendingSyncCount = meta.1
@@ -422,18 +450,19 @@ public final class AppState {
 
     /// 清理旧版本全局未隔离的遗留缓存 key（混淆 key 与明文 key 都清）。
     /// login/loginWithGoogle/init/logout 共用，保证换号/冷启动路径不残留前任用户快照。
-    public static func clearLegacyPayablesCaches() {
+    public static func clearLegacyPayablesCaches(preserveCurrentOwnerSnapshot: Bool = false) {
         let defaults = UserDefaults.standard
         // 旧版全局明文/混淆 key
         defaults.removeObject(forKey: "worldcredit_cached_payables")
         defaults.removeObject(forKey: "worldcredit_cached_payables")
-        // owner 记录定位：旧版 per-user UserDefaults 快照 + 新版文件快照
         if let owner = defaults.string(forKey: payablesOwnerKey) {
             defaults.removeObject(forKey: payablesCacheKey(userId: owner))
-            if let url = payablesCacheURL(userId: owner) {
-                try? FileManager.default.removeItem(at: url)
+            if !preserveCurrentOwnerSnapshot {
+                if let url = payablesCacheURL(userId: owner) {
+                    try? FileManager.default.removeItem(at: url)
+                }
+                defaults.removeObject(forKey: payablesOwnerKey)
             }
-            defaults.removeObject(forKey: payablesOwnerKey)
         }
         // 前缀扫清：不依赖 owner 完整性
         defaults.dictionaryRepresentation().keys

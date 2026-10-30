@@ -182,6 +182,42 @@ struct BillsGroupingTests {
         #expect(result.entries.map(\.id) == ["payable-rmb", "payable-settled"])
     }
 
+    @Test("Shanghai business day rollover refreshes date-derived bill and summary status")
+    func businessDayRollover() async throws {
+        let iso = ISO8601DateFormatter()
+        let beforeMidnight = iso.date(from: "2026-10-25T15:59:59Z")!
+        let sameDayLater = iso.date(from: "2026-10-25T15:30:00Z")!
+        let afterMidnight = iso.date(from: "2026-10-26T16:00:01Z")!
+        let loadedDay = BillingDateCalculator.businessDayStart(for: beforeMidnight)
+        #expect(BillingDateCalculator.needsBusinessDayRefresh(lastLoadedDay: nil, now: beforeMidnight))
+        #expect(!BillingDateCalculator.needsBusinessDayRefresh(lastLoadedDay: loadedDay, now: sameDayLater))
+        #expect(BillingDateCalculator.needsBusinessDayRefresh(lastLoadedDay: loadedDay, now: afterMidnight))
+
+        let query = QueryService(dbManager: try database())
+        let dayOneBills = try await query.fetchBills(filter: .all, today: beforeMidnight)
+        let dayTwoBills = try await query.fetchBills(filter: .all, today: afterMidnight)
+        let b3Before = try #require(dayOneBills.first(where: { $0.id == "b3" }))
+        let b3After = try #require(dayTwoBills.first(where: { $0.id == "b3" }))
+        #expect(!b3Before.isOverdue)
+        #expect(b3Before.daysUntilDue == 1)
+        #expect(b3After.isOverdue)
+        #expect(b3After.daysUntilDue == -1)
+
+        var cache = BillsPresentationCache()
+        let filter = BillsPresentationFilter()
+        let first = cache.value(for: filter, today: beforeMidnight) {
+            BillsPresentation(bills: dayOneBills, cards: [], payables: [], rates: nil,
+                              filter: filter, today: beforeMidnight)
+        }
+        #expect(first.overdueBills.map(\.id) == ["b1"])
+        cache.invalidate()
+        let second = cache.value(for: filter, today: afterMidnight) {
+            BillsPresentation(bills: dayTwoBills, cards: [], payables: [], rates: nil,
+                              filter: filter, today: afterMidnight)
+        }
+        #expect(Set(second.overdueBills.map(\.id)) == Set(["b1", "b3"]))
+    }
+
     @Test("next billing countdown clamps short months and stays in the business timezone")
     func nextBillingCountdown() {
         let iso = ISO8601DateFormatter()
@@ -189,6 +225,10 @@ struct BillsGroupingTests {
                 today: iso.date(from: "2026-02-27T16:00:00Z")!) == 0)
         #expect(BillingDateCalculator.daysUntilNextBilling(billingDay: 10,
                 today: iso.date(from: "2026-10-09T16:00:00Z")!) == 31)
+        #expect(BillingDateCalculator.daysUntilNextBilling(billingDay: 30,
+                today: iso.date(from: "2026-01-30T04:00:00Z")!) == 29)
+        #expect(BillingDateCalculator.daysUntilNextBilling(billingDay: 31,
+                today: iso.date(from: "2026-01-31T04:00:00Z")!) == 28)
         #expect(BillingDateCalculator.daysUntilNextBilling(billingDay: 1,
                 today: iso.date(from: "2026-12-30T16:00:00Z")!) == 1)
     }

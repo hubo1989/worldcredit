@@ -16,6 +16,15 @@ public enum BillingDateCalculator {
         calendar
     }
 
+    public static func businessDayStart(for date: Date = Date()) -> Date {
+        calendar.startOfDay(for: date)
+    }
+
+    public static func needsBusinessDayRefresh(lastLoadedDay: Date?, now: Date = Date()) -> Bool {
+        guard let lastLoadedDay else { return true }
+        return businessDayStart(for: lastLoadedDay) != businessDayStart(for: now)
+    }
+
     private static var calendar: Calendar {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!
@@ -41,11 +50,16 @@ public enum BillingDateCalculator {
     public static func daysUntilNextBilling(billingDay: Int, today: Date = Date()) -> Int {
         let cal = calendar
         let currentDay = cal.component(.day, from: today)
-        let month = currentDay >= billingDay
-            ? cal.date(byAdding: .month, value: 1, to: today) ?? today
-            : today
+        var month = today
+        if currentDay >= billingDay {
+            // 从当月 1 号加月，避免 1 月 30/31 日 +1 月滚到 3 月。
+            var anchor = cal.dateComponents([.year, .month], from: today)
+            anchor.day = 1
+            let firstOfMonth = cal.date(from: anchor) ?? today
+            month = cal.date(byAdding: .month, value: 1, to: firstOfMonth) ?? today
+        }
         let target = getActualBillingDate(billingDay: billingDay, month: month)
-        return diffInCalendarDays(target: target, today: today)
+        return max(0, diffInCalendarDays(target: target, today: today))
     }
 
     public static func getEffectiveBillingDay(card: CreditCard) -> Int {
