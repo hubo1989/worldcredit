@@ -163,9 +163,9 @@ struct GmailSyncSection: View {
         } catch let urlError as URLError where urlError.code == .cancelled {
             // 同上：URLError 形态的取消
         } catch {
-            // 会话未就绪（401）与取消都不是连接故障：保留上次状态，不打断设置页
+            // 会话未就绪（401）与取消都不是连接故障：保留上次状态，不打断设置页。
+            // 401 由 refreshPayables/sync 负责落地到登录页，这里不重复处理。
             let nsError = error as NSError
-            if nsError.domain == NSURLErrorDomain && nsError.code == 401 { return }
             if nsError.code == 401 { return }
             // 服务端未部署或网络异常时保留上次状态，不打断设置页。
             if status == nil { statusError = error.localizedDescription }

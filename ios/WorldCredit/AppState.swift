@@ -355,6 +355,35 @@ public final class AppState {
         )
     }
 
+    /// 服务端判定会话失效（401）时落地到未登录态：本地 DB 保留，
+    /// 用户重新登录后 sync 自动恢复数据。
+    /// 注意不要清 Keychain——token 本身已失效，删除操作无意义且可能与在途请求竞态。
+    private func handleSessionExpired() {
+        guard isLoggedIn else { return }
+        sessionEpoch = UUID()
+        dashboardRequestID = UUID()
+        dashboardRemoteTask?.cancel()
+        isLoggedIn = false
+        currentUser = nil
+        isSyncing = false
+        summary = nil
+        bills = []
+        allBills = []
+        cards = []
+        dashboardBills = []
+        dashboardHolders = []
+        dashboardRates = nil
+        dashboardAvailableCount = nil
+        dashboardReminders = []
+        dashboardRemoteErrors = []
+        payables = []
+        payablesError = nil
+        lastSyncError = nil
+        // 引擎失效防止在途请求以旧会话写回；本地 SQLite 不清（重登后 pull 恢复）。
+        syncEngine.invalidateSession()
+        syncEngine = SyncEngine(dbManager: dbManager, apiClient: apiClient)
+    }
+
     public func refreshPayables() async {
         // 演示模式（--demo-mode）与 UI 测试都不拉在线固定支出：
         // 演示下 fetchSessionUser 必然失败，会污染特意清空的干净演示状态
@@ -395,10 +424,12 @@ public final class AppState {
             return
         } catch {
             guard sessionEpoch == epoch, apiClient.token == token else { return }
-            // 401 = 会话未就绪/已过期：非网络故障，不写入降级错误横幅；
-            // 若确实已登出，guard isLoggedIn 已拦，这里只剩冷启动窗口的竞态误报
-            if let nsError = error as NSError?, nsError.code == 401 { return }
-            if let urlError = error as? URLError, urlError.code == .cancelled { return }
+            // 401 = token 已失效（服务端 session 7 天 TTL）：落地到未登录态回登录页，
+            // 重新登录后 sync 自动恢复数据；本地 DB 保留不清。
+            if let nsError = error as NSError?, nsError.code == 401 {
+                handleSessionExpired()
+                return
+            }
             self.payablesError = error.localizedDescription
 
             // 网络失败时优先保留内存中已有的数据；若内存为空则尝试读取本用户的有效本地快照并重算倒计时
@@ -560,8 +591,11 @@ public final class AppState {
                 break
             } catch {
                 guard sessionEpoch == epoch, isLoggedIn else { return }
-                // 401 会话未就绪：不是同步故障，不写 lastSyncError 误报
-                if let nsError = error as NSError?, nsError.code == 401 { break }
+                // 401 = token 已失效：落地到未登录态回登录页，不作为同步故障误报
+                if let nsError = error as NSError?, nsError.code == 401 {
+                    handleSessionExpired()
+                    break
+                }
                 lastSyncError = "Gmail 账单同步失败：\(error.localizedDescription)"
                 break
             }
@@ -591,10 +625,10 @@ public final class AppState {
                     }
                 } catch {
                     guard sessionEpoch == epoch else { return }
-                    // 401（未登录/token 过期）不是同步故障：冷启动会话恢复窗口的竞态
-                    // 误报不应长期滞留设置页；待重新登录或 sync 重跑后自清
+                    // 401 = token 已失效：落地到未登录态回登录页，本地 DB 保留，
+                    // 重新登录后 sync 恢复；不作为同步故障滞留设置页
                     if let nsError = error as NSError?, nsError.code == 401 {
-                        await reloadData()
+                        handleSessionExpired()
                         throw error
                     }
                     lastSyncError = error.localizedDescription
