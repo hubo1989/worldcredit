@@ -75,7 +75,9 @@ struct BillDetailView: View {
 
                 if let card = matchedCard {
                     let billingDay = card.card.overrideBillingDay ?? card.card.billingDay
-                    LabeledContent("信用额度", value: "¥\(String(format: "%.0f", card.card.creditLimit))")
+                    // 多币种卡：额度符号按卡片币种（缺产品信息时回落 CNY），不硬编码人民币
+                    let limitSymbol = DashboardMoney.currencySymbol(card.product?.currency ?? "CNY")
+                    LabeledContent("信用额度", value: "\(limitSymbol)\(String(format: "%.0f", card.card.creditLimit))")
                     LabeledContent("每月账单日", value: "\(billingDay) 日")
                     LabeledContent("今日刷卡免息", value: "\(card.interestFreeDaysToday) 天")
                 }

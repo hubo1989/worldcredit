@@ -156,7 +156,7 @@ public final class AppState {
         }
 
         // 清除旧版本全局未隔离的遗留缓存 key
-        UserDefaults.standard.removeObject(forKey: "worldcredit_cached_payables")
+        Self.clearLegacyPayablesCaches()
 
         if UITestConfiguration.isEnabled {
             self.payables = Self.generateDemoPayables()
@@ -315,6 +315,12 @@ public final class AppState {
         "worldcredit_cached_payables_\(userId)"
     }
 
+    /// 清理旧版本全局未隔离的遗留缓存 key（混淆 key 与明文 key 都清）。
+    /// login/loginWithGoogle/init/logout 共用，保证换号/冷启动路径不残留前任用户快照。
+    public static func clearLegacyPayablesCaches() {
+        UserDefaults.standard.removeObject(forKey: "worldcredit_cached_payables")
+    }
+
     public static func recalculatePayableStatus(_ item: PayableItem, today: Date = Date()) -> PayableItem {
         let cal = BillingDateCalculator.businessCalendar
         let parts = item.dueDate.split(separator: "-").compactMap { Int($0) }
@@ -350,14 +356,22 @@ public final class AppState {
     }
 
     public func refreshPayables() async {
-        guard isLoggedIn, !UITestConfiguration.isEnabled else { return }
+        // 演示模式（--demo-mode）与 UI 测试都不拉在线固定支出：
+        // 演示下 fetchSessionUser 必然失败，会污染特意清空的干净演示状态
+        guard isLoggedIn, !UITestConfiguration.isEnabled,
+              !CommandLine.arguments.contains("--demo-mode") else { return }
         let epoch = sessionEpoch
         let token = apiClient.token
+        // catch 分支的缓存兑底 key 依赖 userId；冷启动 currentUser 尚为 nil 时
+        // 用 fetchSessionUser 解析到的 id 兑底（否则按用户隔离的缓存永不生效）
+        var fallbackUserId = currentUser?.id
         do {
             let user: SessionUser
             if let currentUser { user = currentUser }
             else { user = try await apiClient.fetchSessionUser() }
             guard sessionEpoch == epoch, apiClient.token == token else { return }
+            currentUser = user
+            fallbackUserId = user.id
 
             let items = try await payablesService.fetchPayables(userId: user.id)
             guard sessionEpoch == epoch, apiClient.token == token else { return }
@@ -365,8 +379,10 @@ public final class AppState {
             payables = items
             payablesError = nil
 
+            // 空结果不覆盖非空快照：服务端瞬时异常返回空列表不会冲掉离线兑底数据；
+            // 真实「删空」场景下次在线刷新内存仍正确显示为空
             let key = Self.payablesCacheKey(userId: user.id)
-            if let data = try? JSONEncoder().encode(items) {
+            if !items.isEmpty, let data = try? JSONEncoder().encode(items) {
                 UserDefaults.standard.set(data, forKey: key)
             }
         } catch is CancellationError {
@@ -376,7 +392,7 @@ public final class AppState {
             self.payablesError = error.localizedDescription
 
             // 网络失败时优先保留内存中已有的数据；若内存为空则尝试读取本用户的有效本地快照并重算倒计时
-            if payables.isEmpty, let userId = currentUser?.id {
+            if payables.isEmpty, let userId = fallbackUserId {
                 let key = Self.payablesCacheKey(userId: userId)
                 if let data = UserDefaults.standard.data(forKey: key),
                    let cached = try? JSONDecoder().decode([PayableItem].self, from: data),
@@ -525,6 +541,8 @@ public final class AppState {
             do {
                 let result = try await apiClient.gmailSync(maxMessages: 6)
                 guard sessionEpoch == epoch, isLoggedIn else { return }
+                // 成功后清空历史错误：否则一次失败的「Gmail 同步异常」会永久滞留设置页
+                lastSyncError = nil
                 guard let remaining = result.remaining, remaining > 0, round < maxRounds else { break }
             } catch {
                 guard sessionEpoch == epoch, isLoggedIn else { return }
@@ -572,6 +590,7 @@ public final class AppState {
     /// GoogleSignIn SDK 的交互留在 LoginView，此处不引入该依赖。
     public func loginWithGoogle(idToken: String) async throws {
         sessionEpoch = UUID()
+        Self.clearLegacyPayablesCaches()
         accountTransitionTask = Task {
             do { try await dbManager.clearUserData() } catch {
                 throw LoginError.cleanupFailed(reason: error.localizedDescription)
@@ -642,6 +661,15 @@ public final class AppState {
         )
         try? sendWatchSnapshot(emptySnapshot)
 
+        // 先清理 UserDefaults 等非 DB 持久化缓存，再执行可能抛错的 DB 清理：
+        // 若 clearUserData 抛错，前一账号的财务快照也不能残留在磁盘。
+        // 冷启动恢复会话时 currentUser 可能为 nil，需从缓存侧兼清旧全局 key。
+        if let oldUserID {
+            UserDefaults.standard.removeObject(forKey: Self.payablesCacheKey(userId: oldUserID))
+            await dashboardRemote.clearCache(userId: oldUserID)
+        }
+        Self.clearLegacyPayablesCaches()
+
         // 阻塞式清理数据库，失败时抛出异常让 UI 无法继续下一步；这是登出防跨账号泄漏的最后防线。
         do {
             if let clearUserDataHandler {
@@ -654,12 +682,6 @@ public final class AppState {
         }
         // 登出后重建引擎：invalidateSession 不可逆，新账号必须用全新引擎同步。
         syncEngine = SyncEngine(dbManager: dbManager, apiClient: apiClient)
-
-        if let oldUserID {
-            UserDefaults.standard.removeObject(forKey: Self.payablesCacheKey(userId: oldUserID))
-            await dashboardRemote.clearCache(userId: oldUserID)
-        }
-        UserDefaults.standard.removeObject(forKey: "worldcredit_cached_payables")
     }
 
     public enum LoginError: LocalizedError {
@@ -674,6 +696,7 @@ public final class AppState {
     @discardableResult
     public func login(email: String, password: String) async throws -> UserSession {
         sessionEpoch = UUID()
+        Self.clearLegacyPayablesCaches()
         accountTransitionTask = Task {
             do { try await dbManager.clearUserData() } catch {
                 throw LoginError.cleanupFailed(reason: error.localizedDescription)

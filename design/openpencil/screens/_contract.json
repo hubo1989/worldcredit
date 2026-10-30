@@ -29,7 +29,7 @@
         { "id": "currency", "kind": "field", "markers": [{ "node": "currency scope" }] },
         { "id": "cards", "kind": "field", "markers": [{ "nodePrefix": "bill card /", "min": 3 }] },
         { "id": "identity", "kind": "field", "allMarkers": [{ "node": "bank name" }, { "node": "card title" }, { "node": "holder and period" }] },
-        { "id": "amount", "kind": "field", "allMarkers": [{ "node": "amount value", "min": 3 }, { "node": "amount / billed", "min": 3 }, { "node": "amount / paid", "min": 3 }] },
+        { "id": "amount", "kind": "field", "allMarkers": [{ "nodePrefix": "amount value", "min": 3 }, { "nodePrefix": "amount / billed", "min": 3 }, { "nodePrefix": "amount / paid", "min": 3 }] },
         { "id": "risk", "kind": "field", "allMarkers": [{ "node": "status / overdue" }, { "node": "status / due-soon" }, { "node": "status / normal" }] },
         { "id": "dates", "kind": "field", "allMarkers": [{ "node": "due date" }, { "node": "next cycle" }] },
         { "id": "navigation", "kind": "field", "allMarkers": [{ "node": "tab / 概览" }, { "node": "tab / 账单" }, { "node": "tab / 卡片" }, { "node": "tab / 设置" }] }
@@ -37,8 +37,8 @@
       "actions": [
         { "id": "sort", "kind": "action", "allMarkers": [{ "node": "tab / 最近需还款" }, { "node": "tab / 最大免息期" }] },
         { "id": "filter", "kind": "action", "markers": [{ "node": "btn / filter" }] },
-        { "id": "payment", "kind": "action", "markers": [{ "node": "btn / record payment", "min": 3 }] },
-        { "id": "details", "kind": "action", "markers": [{ "node": "details affordance", "min": 3 }] }
+        { "id": "payment", "kind": "action", "markers": [{ "nodePrefix": "btn / record payment", "min": 3 }] },
+        { "id": "details", "kind": "action", "markers": [{ "nodePrefix": "details affordance", "min": 3 }] }
       ]
     },
     {
@@ -49,13 +49,13 @@
         { "id": "interest", "kind": "field", "markers": [{ "node": "interest explanation" }] },
         { "id": "estimate", "kind": "field", "markers": [{ "within": "interest explanation", "label": ["估算"] }] },
         { "id": "cards", "kind": "field", "markers": [{ "nodePrefix": "interest card /", "min": 3 }] },
-        { "id": "dates", "kind": "field", "allMarkers": [{ "node": "purchase date", "min": 3 }, { "node": "expected repayment date", "min": 3 }, { "node": "interest days", "min": 3 }] },
-        { "id": "current-debt", "kind": "field", "allMarkers": [{ "node": "remaining current bill", "min": 3 }, { "node": "amount / paid", "min": 3 }] }
+        { "id": "dates", "kind": "field", "allMarkers": [{ "nodePrefix": "purchase date", "min": 3 }, { "nodePrefix": "expected repayment date", "min": 3 }, { "nodePrefix": "interest days", "min": 3 }] },
+        { "id": "current-debt", "kind": "field", "allMarkers": [{ "nodePrefix": "remaining current bill", "min": 3 }, { "nodePrefix": "amount / paid", "min": 3 }] }
       ],
       "actions": [
         { "id": "sort", "kind": "action", "allMarkers": [{ "node": "tab / 最近需还款" }, { "node": "tab / 最大免息期" }] },
         { "id": "filter", "kind": "action", "markers": [{ "node": "btn / filter" }] },
-        { "id": "details", "kind": "action", "markers": [{ "node": "details affordance", "min": 3 }] }
+        { "id": "details", "kind": "action", "markers": [{ "nodePrefix": "details affordance", "min": 3 }] }
       ]
     },
     {
@@ -82,12 +82,12 @@
       "fields": [
         { "id": "paid", "kind": "field", "allMarkers": [{ "node": "status / paid" }, { "node": "amount / paid" }] },
         { "id": "missing", "kind": "field", "allMarkers": [{ "node": "status / statement-missing" }, { "node": "missing amount" }, { "node": "missing exclusion" }, { "node": "missing statement days" }] },
-        { "id": "expenses", "kind": "field", "allMarkers": [{ "nodePrefix": "fixed expense /", "min": 2 }, { "node": "expense paid", "min": 2 }, { "node": "expense remaining value", "min": 2 }] }
+        { "id": "expenses", "kind": "field", "allMarkers": [{ "nodePrefix": "fixed expense /", "min": 2 }, { "nodePrefix": "expense paid", "min": 2 }, { "nodePrefix": "expense remaining value", "min": 2 }] }
       ],
       "actions": [
         { "id": "history", "kind": "action", "markers": [{ "node": "btn / payment history" }] },
         { "id": "mailbox", "kind": "action", "markers": [{ "node": "btn / check mailbox" }] },
-        { "id": "expense-payment", "kind": "action", "markers": [{ "node": "btn / expense payment", "min": 2 }] }
+        { "id": "expense-payment", "kind": "action", "markers": [{ "nodePrefix": "btn / expense payment", "min": 2 }] }
       ]
     },
     {
@@ -113,7 +113,7 @@
       "requiredRoles": ["candidate"],
       "fields": [
         { "id": "summary", "kind": "field", "allMarkers": [{ "node": "original value" }, { "node": "paid value" }, { "node": "remaining value" }] },
-        { "id": "entries", "kind": "field", "allMarkers": [{ "nodePrefix": "payment entry /", "min": 2 }, { "node": "payment date", "min": 2 }, { "node": "payment amount", "min": 2 }, { "node": "payment channel", "min": 2 }, { "node": "payment note", "min": 2 }] }
+        { "id": "entries", "kind": "field", "allMarkers": [{ "nodePrefix": "payment entry /", "min": 2 }, { "nodePrefix": "payment date", "min": 2 }, { "nodePrefix": "payment amount", "min": 2 }, { "nodePrefix": "payment channel", "min": 2 }, { "nodePrefix": "payment note", "min": 2 }] }
       ],
       "actions": [
         { "id": "back", "kind": "action", "markers": [{ "node": "btn / back" }] },

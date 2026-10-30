@@ -46,7 +46,8 @@ struct RecordPaymentView: View {
             if customAmountText.trimmingCharacters(in: .whitespaces).isEmpty {
                 return "请输入登记金额"
             }
-            guard let amount = Double(customAmountText), amount > 0 else {
+            let trimmed = customAmountText.trimmingCharacters(in: .whitespaces)
+            guard let amount = Double(trimmed), amount > 0 else {
                 return "登记金额必须大于 0"
             }
             if amount > item.remainingAmount + 0.001 {
@@ -111,8 +112,9 @@ struct RecordPaymentView: View {
             .safeAreaInset(edge: .bottom) {
                 footerView
             }
-            .onAppear {
-                if payType == .custom && customAmountText.isEmpty {
+            // payType 初始恒为 .full，onAppear 分支永不达：改响应切换时预填剩余应还
+            .onChange(of: payType) { _, newType in
+                if newType == .custom && customAmountText.isEmpty {
                     customAmountText = String(format: "%.2f", item.remainingAmount)
                 }
             }

@@ -29,7 +29,11 @@ struct PaymentHistoryView: View {
     }
 
     private var historyEntries: [HistoryEntry] {
-        let sortedChronological = payments.sorted { $0.paidAt < $1.paidAt }
+        // paidAt 是 yyyy-MM-dd 日粒度，同日多笔时用 createdAt 恢复登记次序，
+        // 与 DB 查询（paid_at DESC, created_at DESC）确定性一致
+        let sortedChronological = payments.sorted {
+            ($0.paidAt, $0.createdAt) < ($1.paidAt, $1.createdAt)
+        }
         var runningRemaining = item.bill.effectiveAmount
         var resultChronological: [HistoryEntry] = []
         for p in sortedChronological {

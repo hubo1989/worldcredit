@@ -71,7 +71,10 @@ enum UnifiedBillEntry: Identifiable {
         case .cardBill(let item, _):
             return item.isOverdue
         case .payable(let payable):
-            return payable.status == .overdue || (payable.daysUntilDue < 0 && payable.remainingAmount > 0.01)
+            // 已结清项不判逾期：status 与 paidAmount 是服务端独立字段，
+            // 「已付清但 status 仍为 overdue」的数据不应被置顶渲染成逾期
+            return !payable.isSettled && payable.remainingAmount > 0.01
+                && (payable.status == .overdue || payable.daysUntilDue < 0)
         case .unbilledCard:
             return false
         }
@@ -133,6 +136,8 @@ struct BillsView: View {
     @State private var tabCirclePhase: Double = 0.0
     @State private var panelDisplacement: CGFloat = 0.0
     @State private var tabAnimationTask: Task<Void, Never>?
+    /// 当前动画链的目标模式：onDisappear 补提交用，避免取消后点击被丢弃
+    @State private var tabAnimationTaskingTarget: BillsSortMode?
 
     // 筛选光环凝聚与拽出面板动画
     @State private var isFilterAuraCondensing: Bool = false
@@ -521,7 +526,22 @@ struct BillsView: View {
                 await appState.refreshPayables()
             }
             .onDisappear {
+                // 取消后同步复位动画状态：否则返回本页时残留 ±14 偏移与圆圈高亮；
+                // 若已过 Step 3 提交点则排序已切换，未到则补提交，不让点击被静默丢弃
+                if let target = tabAnimationTaskingTarget, appState.billsSortMode != target {
+                    appState.billsSortMode = target
+                    Task { await appState.reloadData() }
+                }
                 tabAnimationTask?.cancel()
+                tabAnimationTask = nil
+                tabAnimationTaskingTarget = nil
+                isTabMorphing = false
+                morphingTargetMode = nil
+                tabEdgeHighlightMode = nil
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    tabCirclePhase = 0.0
+                    panelDisplacement = 0.0
+                }
             }
             .sheet(item: $selectedCardForEdit) { card in
                 CardEditSheetView(card: card) { input in
@@ -1316,6 +1336,15 @@ struct BillsView: View {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(WCColors.border, lineWidth: 1)
         )
+        // 补回重构丢失的编辑入口：iOS 端唯一的固定支出编辑路径（PayableFormView(existing:)），
+        // 与 Web bills 页 onEditPayable 对齐；「编辑」不与登记还款按钮争抢点击区。
+        .contextMenu {
+            Button {
+                editingPayable = payable
+            } label: {
+                Label("编辑固定支出", systemImage: "pencil")
+            }
+        }
         .accessibilityIdentifier("bills.payable.row.\(payable.id)")
     }
 
@@ -1436,9 +1465,10 @@ struct BillsView: View {
                 Divider()
                     .background(WCColors.border)
 
-                // Purchase to repayment flow
+                // Purchase to repayment flow；缺还款规则（无产品/无 loanDueDay）时
+                // nextDueDate 返回 nil，不拿今天充当预计还款日编造财务数据
                 let today = Date()
-                let nextDue = group.nextDueDate(today: today) ?? today
+                let nextDue = group.nextDueDate(today: today)
                 let f = BillsFormatters.mmddCn
 
                 HStack(spacing: 12) {
@@ -1456,13 +1486,15 @@ struct BillsView: View {
                         .foregroundStyle(WCColors.primaryAccent)
                         .padding(.horizontal, 4)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("预计还款日")
-                            .font(.caption2)
-                            .foregroundStyle(WCColors.textSecondary)
-                        Text(f.string(from: nextDue))
-                            .font(.subheadline.bold())
-                            .foregroundStyle(WCColors.textPrimary)
+                    if let nextDue {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("预计还款日")
+                                .font(.caption2)
+                                .foregroundStyle(WCColors.textSecondary)
+                            Text(f.string(from: nextDue))
+                                .font(.subheadline.bold())
+                                .foregroundStyle(WCColors.textPrimary)
+                        }
                     }
 
                     Spacer()
@@ -1612,6 +1644,7 @@ struct BillsView: View {
         guard appState.billsSortMode != mode || isTabMorphing else { return }
         // 提交前校验目标未变：动画窗口内模式已被切到其他值时不重复提交
         tabAnimationTask?.cancel()
+        tabAnimationTaskingTarget = mode
         isTabMorphing = true
         morphingTargetMode = mode
 
@@ -1645,6 +1678,7 @@ struct BillsView: View {
             if morphingTargetMode == mode {
                 isTabMorphing = false
                 morphingTargetMode = nil
+                tabAnimationTaskingTarget = nil
             }
         }
     }
