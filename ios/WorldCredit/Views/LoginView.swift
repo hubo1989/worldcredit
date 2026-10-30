@@ -169,9 +169,22 @@ struct LoginView: View {
                 }
                 try await appState.loginWithGoogle(idToken: idToken)
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = Self.friendlyGoogleError(error)
             }
             isLoading = false
         }
+    }
+
+    /// Google 授权页能打开≠换 token 能通：换 token 是 App 进程直连
+    /// oauth2.googleapis.com，大陆网络/分流代理下会 TLS 失败。
+    /// 识别这种网络错误给出可执行的指引，而不是拋 SDK 原文。
+    private static func friendlyGoogleError(_ error: Error) -> String {
+        let text = error.localizedDescription
+        if text.contains("oauth2.googleapis.com")
+            || text.contains("TLS")
+            || text.contains("network connection was lost") {
+            return "当前网络无法连接 Google 服务器（授权已完成，但换取登录凭证被中断）。\n\n请将代理切换为全局模式后重试，或改用邮箱密码登录（不受影响）。"
+        }
+        return text
     }
 }
