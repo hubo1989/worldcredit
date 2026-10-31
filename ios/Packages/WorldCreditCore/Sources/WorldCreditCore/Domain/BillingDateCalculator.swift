@@ -275,8 +275,13 @@ public final class SessionDataRefreshState {
         }
         initialLoadTask = task
         await task.value
-        if sessionEpoch == epoch { initialLoadTask = nil }
+        // 不在此清理 initialLoadTask：失败重试窗口内并发调用者可能已写入新任务，
+        // 误清会让后续调用绕过「等待首载完成」。已完成任务引用无害，
+        // 由 clearInitialLoad/advanceSession 统一清理。
     }
+
+    /// 测试与并发调用方判断「是否有首载在途/待复用」的最小观测点。
+    public var hasPendingInitialLoad: Bool { initialLoadEpoch != nil }
 
     public func refreshBusinessDayIfNeeded(
         isLoggedIn: @escaping @MainActor () -> Bool,
@@ -301,9 +306,6 @@ public final class SessionDataRefreshState {
         }
         businessDayTask = task
         await task.value
-        if sessionEpoch == epoch {
-            businessDayTask = nil
-            businessDayEpoch = nil
-        }
+        // 同 initialLoad：完成后引用保留，由 advanceSession 统一清理。
     }
 }

@@ -325,6 +325,62 @@ struct BillsGroupingTests {
     }
 
     @MainActor
+    @Test("relaunch during failed-load retry window keeps waiting on the in-flight task")
+    func retryWindowKeepsInFlightTaskReference() async {
+        let state = SessionDataRefreshState()
+        var attempts = 0
+        var dayRefreshes = 0
+        let gate = Gate()
+        var aEntered = false
+        // A：首载失败，任务体清掉首载标记后外层返回。
+        let a = Task { @MainActor in
+            await state.loadInitialIfNeeded(
+                isLoggedIn: { true },
+                initialLoad: { _ in
+                    attempts += 1
+                    aEntered = true
+                    return false
+                },
+                dayRefresh: { _, _ in dayRefreshes += 1 }
+            )
+        }
+        for _ in 0..<500 where !aEntered {
+            await Task.yield()
+        }
+        #expect(aEntered)
+        // B：观察到标记被清后立即重建任务并停在 gate 上（模拟重试窗口内的并发前台事件）。
+        let b = Task { @MainActor in
+            for _ in 0..<20_000 where state.hasPendingInitialLoad {
+                await Task.yield()
+            }
+            await state.loadInitialIfNeeded(
+                isLoggedIn: { true },
+                initialLoad: { _ in
+                    attempts += 1
+                    await gate.wait()
+                    return true
+                },
+                dayRefresh: { _, _ in dayRefreshes += 1 }
+            )
+        }
+        await a.value
+        // C：修复前会看到 initialLoadTask 被误清成 nil，直接绕过 B 的在途任务做日刷新。
+        let c = Task { @MainActor in
+            await state.loadInitialIfNeeded(
+                isLoggedIn: { true },
+                initialLoad: { _ in attempts += 1; return true },
+                dayRefresh: { _, _ in dayRefreshes += 1 }
+            )
+        }
+        await Task.yield()
+        #expect(dayRefreshes == 0, "C 必须等待 B 的在途首载，而不是并发做日刷新")
+        gate.release()
+        await b.value
+        await c.value
+        #expect(attempts == 2, "A 失败一次 + B 重试一次；C 不应再触发完整首载")
+    }
+
+    @MainActor
     @Test("failed initial load clears the gate so the next foreground retries the full chain")
     func failedInitialLoadRetriesFullChain() async {
         let state = SessionDataRefreshState()
