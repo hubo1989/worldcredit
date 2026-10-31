@@ -65,10 +65,11 @@ public final class AppState {
     @ObservationIgnored private var dashboardRemoteTask: Task<Void, Never>?
     @ObservationIgnored private var dashboardRequestID = UUID()
     @ObservationIgnored private let refreshState = SessionDataRefreshState()
-    @ObservationIgnored private var sessionEpoch: UUID {
-        get { refreshState.sessionEpoch }
-        set { _ = refreshState.advanceSession() }
-    }
+    @ObservationIgnored private var sessionEpoch: UUID { refreshState.sessionEpoch }
+    /// 推进会话（登出/换号/登录前调用）：旧 epoch 失效并取消在途首载/跨日刷新。
+    /// 不暴露为可赋值属性，避免「赋值即替换」被误读成普通 setter。
+    @discardableResult
+    private func advanceSession() -> UUID { refreshState.advanceSession() }
     @ObservationIgnored private lazy var dashboardRemote = DashboardRemoteService(apiClient: apiClient)
     @ObservationIgnored private lazy var payablesService = PayablesRemoteService(apiClient: apiClient)
 
@@ -549,7 +550,7 @@ public final class AppState {
     private func handleSessionExpired() {
         guard isLoggedIn else { return }
         let expiredUserID = currentUser?.id
-        sessionEpoch = UUID()
+        advanceSession()
         dashboardRequestID = UUID()
         dashboardRemoteTask?.cancel()
         isLoggedIn = false
@@ -879,7 +880,7 @@ public final class AppState {
     /// 用 Google Sign-In 取到的 ID token 完成登录，状态迁移与密码登录一致。
     /// GoogleSignIn SDK 的交互留在 LoginView，此处不引入该依赖。
     public func loginWithGoogle(idToken: String) async throws {
-        sessionEpoch = UUID()
+        advanceSession()
         Self.clearLegacyPayablesCaches()
         accountTransitionTask = Task {
             do { try await dbManager.clearUserData() } catch {
@@ -900,7 +901,7 @@ public final class AppState {
         // 先取凭据再清状态：登出请求吊销本设备 refresh token（单设备语义，
         // 不影响其他设备）；token 失效时服务端也能凭 refresh_token 吊销
         let deviceRefreshToken = apiClient.refreshToken
-        sessionEpoch = UUID()
+        advanceSession()
         dashboardRequestID = UUID()
         dashboardRemoteTask?.cancel()
 
@@ -995,7 +996,7 @@ public final class AppState {
 
     @discardableResult
     public func login(email: String, password: String) async throws -> UserSession {
-        sessionEpoch = UUID()
+        advanceSession()
         Self.clearLegacyPayablesCaches()
         accountTransitionTask = Task {
             do { try await dbManager.clearUserData() } catch {

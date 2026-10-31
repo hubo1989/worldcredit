@@ -325,6 +325,24 @@ struct BillsGroupingTests {
     }
 
     @MainActor
+    @Test("failed initial load clears the gate so the next foreground retries the full chain")
+    func failedInitialLoadRetriesFullChain() async {
+        let state = SessionDataRefreshState()
+        var attempts = 0
+        await state.loadInitialIfNeeded(
+            isLoggedIn: { true },
+            initialLoad: { _ in attempts += 1; return false },
+            dayRefresh: { _, _ in attempts += 10 }
+        )
+        await state.loadInitialIfNeeded(
+            isLoggedIn: { true },
+            initialLoad: { _ in attempts += 1; return true },
+            dayRefresh: { _, _ in attempts += 10 }
+        )
+        #expect(attempts == 2, "首载失败后下一次必须重走完整链路，而不是只做本地刷新")
+    }
+
+    @MainActor
     @Test("logged-out gate performs no work")
     func sessionRefreshGateLoggedOut() async {
         let state = SessionDataRefreshState()
@@ -352,6 +370,12 @@ struct BillsGroupingTests {
                 today: iso.date(from: "2026-01-31T04:00:00Z")!) == 28)
         #expect(BillingDateCalculator.daysUntilNextBilling(billingDay: 1,
                 today: iso.date(from: "2026-12-30T16:00:00Z")!) == 1)
+        #expect(BillingDateCalculator.daysUntilNextBilling(billingDay: 0,
+                today: iso.date(from: "2026-10-30T04:00:00Z")!) == 2)
+        #expect(BillingDateCalculator.daysUntilNextBilling(billingDay: -3,
+                today: iso.date(from: "2026-10-30T04:00:00Z")!) == 2)
+        #expect(BillingDateCalculator.daysUntilNextBilling(billingDay: 45,
+                today: iso.date(from: "2026-10-30T04:00:00Z")!) == 1)
     }
 
     private var testDay: Date {

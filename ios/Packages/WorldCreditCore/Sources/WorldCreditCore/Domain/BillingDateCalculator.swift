@@ -54,7 +54,10 @@ public enum BillingDateCalculator {
     }
 
     /// 今天恰为账单日时取下一期；小月账单日钳制到月底。
-    public static func daysUntilNextBilling(billingDay: Int, today: Date = Date()) -> Int {
+    /// 同步链路（SyncEngine.applyChange 原样落库）可能带入非法账单日，
+    /// 与 BillsGrouping.missingStatementDays 同口径：小于 1 按 1 号，大于 31 按 31 号。
+    public static func daysUntilNextBilling(billingDay rawBillingDay: Int, today: Date = Date()) -> Int {
+        let billingDay = rawBillingDay >= 1 ? min(rawBillingDay, 31) : 1
         let cal = calendar
         let currentDay = cal.component(.day, from: today)
         var month = today
@@ -234,6 +237,12 @@ public final class SessionDataRefreshState {
         return sessionEpoch
     }
 
+    /// 首载失败自动清除标记：瞬时读库失败不能把本次会话降级为「仅本地数据」。
+    private func clearInitialLoad() {
+        initialLoadEpoch = nil
+        initialLoadTask = nil
+    }
+
     public func isCurrent(_ epoch: UUID, isLoggedIn: Bool) -> Bool {
         isLoggedIn && sessionEpoch == epoch && !Task.isCancelled
     }
@@ -260,7 +269,9 @@ public final class SessionDataRefreshState {
         initialLoadEpoch = epoch
         let task = Task { @MainActor in
             guard isCurrent(epoch, isLoggedIn: isLoggedIn()) else { return }
-            _ = await initialLoad(epoch)
+            let succeeded = await initialLoad(epoch)
+            guard isCurrent(epoch, isLoggedIn: isLoggedIn()) else { return }
+            if !succeeded { clearInitialLoad() }
         }
         initialLoadTask = task
         await task.value
