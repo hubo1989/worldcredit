@@ -62,10 +62,16 @@ struct ContentView: View {
         }
         // 监听登录态翻转：登录完成后必须重新加载/同步，否则首页停留在空数据
         .task(id: appState.isLoggedIn) {
-            await appState.reloadData()
-            if appState.isLoggedIn {
-                await appState.sync()
+            await appState.observeBusinessDayChanges()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active && appState.isLoggedIn {
+                Task { await appState.loadInitialDataIfNeeded() }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            guard appState.isLoggedIn else { return }
+            Task { await appState.loadInitialDataIfNeeded() }
         }
         // 盘库退到内存库时的可恢复提示（数据不持久化）
         .overlay(alignment: .top) {
@@ -76,13 +82,6 @@ struct ContentView: View {
                     .padding(8)
                     .frame(maxWidth: .infinity)
                     .background(Color.orange)
-            }
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active && appState.isLoggedIn {
-                Task {
-                    await appState.sync()
-                }
             }
         }
     }

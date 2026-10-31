@@ -16,6 +16,22 @@ public enum BillingDateCalculator {
         calendar
     }
 
+    public static func businessDayStart(for date: Date = Date()) -> Date {
+        calendar.startOfDay(for: date)
+    }
+
+    public static func needsBusinessDayRefresh(lastLoadedDay: Date?, now: Date = Date()) -> Bool {
+        guard let lastLoadedDay else { return true }
+        return businessDayStart(for: lastLoadedDay) != businessDayStart(for: now)
+    }
+
+    public static func secondsUntilNextBusinessMidnight(from now: Date = Date()) -> TimeInterval {
+        guard let midnight = calendar.date(byAdding: .day, value: 1, to: businessDayStart(for: now)) else {
+            return 60
+        }
+        return max(1, midnight.timeIntervalSince(now))
+    }
+
     private static var calendar: Calendar {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!
@@ -35,6 +51,25 @@ public enum BillingDateCalculator {
         components.minute = 0
         components.second = 0
         return cal.date(from: components) ?? month
+    }
+
+    /// 今天恰为账单日时取下一期；小月账单日钳制到月底。
+    /// 同步链路（SyncEngine.applyChange 原样落库）可能带入非法账单日，
+    /// 与 BillsGrouping.missingStatementDays 同口径：小于 1 按 1 号，大于 31 按 31 号。
+    public static func daysUntilNextBilling(billingDay rawBillingDay: Int, today: Date = Date()) -> Int {
+        let billingDay = rawBillingDay >= 1 ? min(rawBillingDay, 31) : 1
+        let cal = calendar
+        let currentDay = cal.component(.day, from: today)
+        var month = today
+        if currentDay >= billingDay {
+            // 从当月 1 号加月，避免 1 月 30/31 日 +1 月滚到 3 月。
+            var anchor = cal.dateComponents([.year, .month], from: today)
+            anchor.day = 1
+            let firstOfMonth = cal.date(from: anchor) ?? today
+            month = cal.date(byAdding: .month, value: 1, to: firstOfMonth) ?? today
+        }
+        let target = getActualBillingDate(billingDay: billingDay, month: month)
+        return max(0, diffInCalendarDays(target: target, today: today))
     }
 
     public static func getEffectiveBillingDay(card: CreditCard) -> Int {
@@ -174,5 +209,103 @@ public enum BillingDateCalculator {
         let diffDays = max(1, diffInCalendarDays(target: nextDueDate, today: d))
 
         return (nextBillingDate, nextDueDate, diffDays)
+    }
+}
+
+/// 统一首载去重、跨自然日刷新与会话翻转清理，供 App 层和宿主无关单测共用。
+@MainActor
+public final class SessionDataRefreshState {
+    public private(set) var sessionEpoch = UUID()
+    public private(set) var loadedBusinessDay: Date?
+    private var initialLoadEpoch: UUID?
+    private var initialLoadTask: Task<Void, Never>?
+    private var businessDayEpoch: UUID?
+    private var businessDayTask: Task<Void, Never>?
+
+    public init() {}
+
+    @discardableResult
+    public func advanceSession() -> UUID {
+        initialLoadTask?.cancel()
+        initialLoadTask = nil
+        initialLoadEpoch = nil
+        businessDayTask?.cancel()
+        businessDayTask = nil
+        businessDayEpoch = nil
+        loadedBusinessDay = nil
+        sessionEpoch = UUID()
+        return sessionEpoch
+    }
+
+    /// 首载失败自动清除标记：瞬时读库失败不能把本次会话降级为「仅本地数据」。
+    private func clearInitialLoad() {
+        initialLoadEpoch = nil
+        initialLoadTask = nil
+    }
+
+    public func isCurrent(_ epoch: UUID, isLoggedIn: Bool) -> Bool {
+        isLoggedIn && sessionEpoch == epoch && !Task.isCancelled
+    }
+
+    public func markLoaded(today: Date) {
+        loadedBusinessDay = BillingDateCalculator.businessDayStart(for: today)
+    }
+
+    public func loadInitialIfNeeded(
+        isLoggedIn: @escaping @MainActor () -> Bool,
+        now: Date = Date(),
+        initialLoad: @escaping @MainActor (UUID) async -> Bool,
+        dayRefresh: @escaping @MainActor (UUID, Date) async -> Void
+    ) async {
+        guard isLoggedIn(), !Task.isCancelled else { return }
+        let epoch = sessionEpoch
+        if initialLoadEpoch == epoch {
+            await initialLoadTask?.value
+            guard isCurrent(epoch, isLoggedIn: isLoggedIn()) else { return }
+            await refreshBusinessDayIfNeeded(isLoggedIn: isLoggedIn, now: now, refresh: dayRefresh)
+            return
+        }
+        initialLoadTask?.cancel()
+        initialLoadEpoch = epoch
+        let task = Task { @MainActor in
+            guard isCurrent(epoch, isLoggedIn: isLoggedIn()) else { return }
+            let succeeded = await initialLoad(epoch)
+            guard isCurrent(epoch, isLoggedIn: isLoggedIn()) else { return }
+            if !succeeded { clearInitialLoad() }
+        }
+        initialLoadTask = task
+        await task.value
+        // 不在此清理 initialLoadTask：失败重试窗口内并发调用者可能已写入新任务，
+        // 误清会让后续调用绕过「等待首载完成」。已完成任务引用无害，
+        // 由 clearInitialLoad/advanceSession 统一清理。
+    }
+
+    /// 测试与并发调用方判断「是否有首载在途/待复用」的最小观测点。
+    public var hasPendingInitialLoad: Bool { initialLoadEpoch != nil }
+
+    public func refreshBusinessDayIfNeeded(
+        isLoggedIn: @escaping @MainActor () -> Bool,
+        now: Date = Date(),
+        refresh: @escaping @MainActor (UUID, Date) async -> Void
+    ) async {
+        guard isLoggedIn(), !Task.isCancelled else { return }
+        let epoch = sessionEpoch
+        if initialLoadEpoch == epoch { await initialLoadTask?.value }
+        guard isCurrent(epoch, isLoggedIn: isLoggedIn()),
+              BillingDateCalculator.needsBusinessDayRefresh(lastLoadedDay: loadedBusinessDay, now: now)
+        else { return }
+        if businessDayEpoch == epoch, let businessDayTask {
+            await businessDayTask.value
+            return
+        }
+        businessDayTask?.cancel()
+        businessDayEpoch = epoch
+        let task = Task { @MainActor in
+            guard isCurrent(epoch, isLoggedIn: isLoggedIn()) else { return }
+            await refresh(epoch, now)
+        }
+        businessDayTask = task
+        await task.value
+        // 同 initialLoad：完成后引用保留，由 advanceSession 统一清理。
     }
 }

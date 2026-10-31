@@ -22,9 +22,16 @@ public final class AppState {
     @ObservationIgnored private var accountCleanupTask: Task<Void, Error>?
     @ObservationIgnored private var accountTransitionTask: Task<Void, Error>?
     @ObservationIgnored private var watchSnapshots: WatchSnapshotManager = .shared
+    @ObservationIgnored private var saveWatchSnapshot: @MainActor (WatchSnapshot) throws -> Void = {
+        try WatchSnapshotManager.shared.save($0)
+    }
     @ObservationIgnored private var sendWatchSnapshot: @MainActor (WatchSnapshot) throws -> Void = {
         WatchSyncCoordinator.shared.sendSnapshotToWatch($0)
     }
+    #if DEBUG
+    /// 用于在读库开始前暂停任务，验证换号与取消的竞态。
+    @ObservationIgnored var beforeLocalReload: (@MainActor () async -> Void)?
+    #endif
     /// 测试注入点：替换清库行为验证登出链路；生产路径为 nil 时走 dbManager.clearUserData()。
     @ObservationIgnored private var clearUserDataHandler: (@Sendable () async throws -> Void)?
 
@@ -47,7 +54,9 @@ public final class AppState {
     public var dashboardHolders: [CardHolder] = []
     public var dashboardCurrency = "CNY"
     public var dashboardPrivacy = true
-    public var dashboardRates: FxRates?
+    public var dashboardRates: FxRates? {
+        didSet { invalidateBillsPresentation() }
+    }
     public var dashboardAvailableCount: Int?
     public var dashboardReminders: [DashboardReminder] = []
     public var dashboardRemoteErrors: [String] = []
@@ -55,7 +64,12 @@ public final class AppState {
     public var dashboardLoadError: String?
     @ObservationIgnored private var dashboardRemoteTask: Task<Void, Never>?
     @ObservationIgnored private var dashboardRequestID = UUID()
-    @ObservationIgnored private var sessionEpoch = UUID()
+    @ObservationIgnored private let refreshState = SessionDataRefreshState()
+    @ObservationIgnored private var sessionEpoch: UUID { refreshState.sessionEpoch }
+    /// 推进会话（登出/换号/登录前调用）：旧 epoch 失效并取消在途首载/跨日刷新。
+    /// 不暴露为可赋值属性，避免「赋值即替换」被误读成普通 setter。
+    @discardableResult
+    private func advanceSession() -> UUID { refreshState.advanceSession() }
     @ObservationIgnored private lazy var dashboardRemote = DashboardRemoteService(apiClient: apiClient)
     @ObservationIgnored private lazy var payablesService = PayablesRemoteService(apiClient: apiClient)
 
@@ -63,12 +77,40 @@ public final class AppState {
     public var bills: [BillDisplayItem] = []
     /// 全量账单（不受状态 tab 过滤）：账单页「缺账单提醒」的最新期基线必须用它，
     /// 否则「待还」tab 里被过滤掉的已还最新期会让提醒误报。
-    public var allBills: [BillDisplayItem] = []
-    public var cards: [CardDisplayItem] = []
+    public var allBills: [BillDisplayItem] = [] {
+        didSet { invalidateBillsPresentation() }
+    }
+    public var cards: [CardDisplayItem] = [] {
+        didSet { invalidateBillsPresentation() }
+    }
     public var selectedBillFilter: BillFilter = .unpaid
     public var billsSortMode: BillsSortMode = .nearestDue
     // 固定支出(周期应付)为在线数据：失败只降级提示，不影响本地账单。
-    public var payables: [PayableItem] = []
+    public var payables: [PayableItem] = [] {
+        didSet { invalidateBillsPresentation() }
+    }
+    @ObservationIgnored private var billsPresentationCache = BillsPresentationCache()
+    private var billsDataRevision = UUID()
+
+    private func invalidateBillsPresentation() {
+        billsPresentationCache.invalidate()
+        billsDataRevision = UUID()
+    }
+
+    public func billsPresentation(holderId: String?, bankName: String?) -> BillsPresentation {
+        // 观察 revision，缓存本身不发布状态，避免在 body 求值时反向触发更新。
+        _ = billsDataRevision
+        let filter = BillsPresentationFilter(status: selectedBillFilter, holderId: holderId, bankName: bankName)
+        let today = Date()
+        let bills = allBills
+        let cards = cards
+        let payables = payables
+        let rates = dashboardRates
+        return billsPresentationCache.value(for: filter, today: today) {
+            BillsPresentation(bills: bills, cards: cards, payables: payables,
+                              rates: rates, filter: filter, today: today)
+        }
+    }
     public var payablesError: String?
     /// 盘库打不开、退到内存库时的可恢复提示（数据不持久化），由 UI 展示。
     public var dbInitWarning: String?
@@ -97,7 +139,8 @@ public final class AppState {
 
     public init(
         dbManager: DatabaseManager? = nil,
-        baseURL: URL = URL(string: "https://app.all-bill.com")!
+        baseURL: URL = URL(string: "https://app.all-bill.com")!,
+        apiClient injectedClient: ApiClient? = nil
     ) {
         let db: DatabaseManager
         #if DEBUG
@@ -132,16 +175,20 @@ public final class AppState {
         #endif
         self.dbManager = db
         let client: ApiClient
-        #if DEBUG
-        if UITestConfiguration.isEnabled {
-            client = ApiClient(baseURL: URL(string: "https://ui-tests.invalid")!,
-                               session: OfflineUITestNetworkSession(), token: "ui-test-session", useKeychain: false)
+        if let injectedClient {
+            client = injectedClient
         } else {
+            #if DEBUG
+            if UITestConfiguration.isEnabled {
+                client = ApiClient(baseURL: URL(string: "https://ui-tests.invalid")!,
+                                   session: OfflineUITestNetworkSession(), token: "ui-test-session", useKeychain: false)
+            } else {
+                client = ApiClient(baseURL: baseURL)
+            }
+            #else
             client = ApiClient(baseURL: baseURL)
+            #endif
         }
-        #else
-        client = ApiClient(baseURL: baseURL)
-        #endif
         self.apiClient = client
         self.syncEngine = SyncEngine(dbManager: db, apiClient: client)
         self.paymentService = PaymentService(dbManager: db)
@@ -157,8 +204,8 @@ public final class AppState {
             self.isLocked = true
         }
 
-        // 清除旧版本全局未隔离的遗留缓存 key
-        Self.clearLegacyPayablesCaches()
+        // 清除旧版本全局未隔离的遗留缓存 key；已登录冷启动保留当前账号文件快照供离线兜底。
+        Self.clearLegacyPayablesCaches(preserveCurrentOwnerSnapshot: self.isLoggedIn)
 
         if UITestConfiguration.isEnabled {
             self.payables = Self.generateDemoPayables()
@@ -171,15 +218,27 @@ public final class AppState {
     /// 用于端到端验证 logout/login 会话切换安全。
     #if DEBUG
     public convenience init(
+        dbManager: DatabaseManager,
+        apiClient: ApiClient,
+        watchSnapshots: WatchSnapshotManager = .shared,
+        sendWatchSnapshot: @escaping @MainActor (WatchSnapshot) throws -> Void = { _ in },
+        clearUserData: (@Sendable () async throws -> Void)? = nil
+    ) {
+        self.init(dbManager: dbManager, apiClient: apiClient)
+        self.watchSnapshots = watchSnapshots
+        self.saveWatchSnapshot = { _ in }
+        self.sendWatchSnapshot = sendWatchSnapshot
+        if let clearUserData { self.clearUserDataHandler = clearUserData }
+    }
+
+    public convenience init(
         dbURL: URL,
         networkSession: some NetworkSession,
         baseURL: URL = URL(string: "https://app.all-bill.com")!
     ) throws {
         let db = try DatabaseManager.file(at: dbURL)
         let client = ApiClient(baseURL: baseURL, session: networkSession, token: nil, useKeychain: false)
-        self.init(dbManager: db, baseURL: baseURL)
-        self.apiClient = client
-        self.syncEngine = SyncEngine(dbManager: db, apiClient: client)
+        self.init(dbManager: db, baseURL: baseURL, apiClient: client)
     }
     #endif
 
@@ -207,19 +266,91 @@ public final class AppState {
         }
     }
 
-    @discardableResult
-    public func reloadData() async -> Bool {
+    /// 一次会话只做一次首屏加载；切页和回到前台都复用内存快照。
+    public func loadInitialDataIfNeeded() async {
+        await refreshState.loadInitialIfNeeded(
+            isLoggedIn: { self.isLoggedIn },
+            initialLoad: { epoch in
+                guard await self.reloadData() else { return false }
+                guard self.refreshState.isCurrent(epoch, isLoggedIn: self.isLoggedIn) else { return false }
+                self.restorePayablesSnapshotIfNeeded()
+                guard !UITestConfiguration.isEnabled,
+                      !CommandLine.arguments.contains("--demo-mode") else { return true }
+                await self.sync()
+                guard self.refreshState.isCurrent(epoch, isLoggedIn: self.isLoggedIn) else { return false }
+                await self.refreshPayables()
+                guard self.refreshState.isCurrent(epoch, isLoggedIn: self.isLoggedIn) else { return false }
+                await self.refreshDashboardRemote()
+                return true
+            },
+            dayRefresh: { epoch, now in
+                await self.performBusinessDayRefresh(epoch: epoch, now: now)
+            }
+        )
+    }
+
+    /// 跨上海自然日时只刷新本地日期派生值和应付倒计时，不发起服务器同步。
+    public func refreshForBusinessDayIfNeeded(now: Date = Date()) async {
+        await refreshState.refreshBusinessDayIfNeeded(
+            isLoggedIn: { self.isLoggedIn },
+            now: now
+        ) { epoch, day in
+            await self.performBusinessDayRefresh(epoch: epoch, now: day)
+        }
+    }
+
+    private func performBusinessDayRefresh(epoch: UUID, now: Date) async {
+        guard await reloadData(today: now),
+              refreshState.isCurrent(epoch, isLoggedIn: isLoggedIn) else { return }
+        if !payables.isEmpty {
+            payables = payables.map { Self.recalculatePayableStatus($0, today: now) }
+        }
+    }
+
+    /// 按上海午夜唤醒；设备本地午夜通知无法覆盖海外时区。
+    public func observeBusinessDayChanges() async {
+        guard isLoggedIn else { return }
         let epoch = sessionEpoch
+        await loadInitialDataIfNeeded()
+        while refreshState.isCurrent(epoch, isLoggedIn: isLoggedIn) {
+            await refreshForBusinessDayIfNeeded()
+            guard refreshState.isCurrent(epoch, isLoggedIn: isLoggedIn) else { return }
+            do {
+                try await Task.sleep(for: .seconds(BillingDateCalculator.secondsUntilNextBusinessMidnight()))
+            } catch { return }
+        }
+    }
+
+    private func restorePayablesSnapshotIfNeeded() {
+        guard payables.isEmpty,
+              !UITestConfiguration.isEnabled,
+              !CommandLine.arguments.contains("--demo-mode"),
+              let userId = currentUser?.id ?? UserDefaults.standard.string(forKey: Self.payablesOwnerKey),
+              let cached = Self.loadPayablesSnapshot(userId: userId) else { return }
+        payables = cached.map { Self.recalculatePayableStatus($0) }
+    }
+
+    @discardableResult
+    public func reloadData(today: Date = Date()) async -> Bool {
+        guard isLoggedIn, !Task.isCancelled else { return false }
+        let epoch = sessionEpoch
+        #if DEBUG
+        await beforeLocalReload?()
+        #endif
+        guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return false }
         do {
-            let sum = try await queryService.fetchDashboardSummary()
-            let bList = try await queryService.fetchBills(
-                filter: selectedBillFilter,
-                sortMode: billsSortMode
-            )
-            // 缺账单提醒的全量基线：多一次本地查询（SQLite、小数据），失败随外层 catch。
-            let allBillsList = try await queryService.fetchBills(filter: .all, sortMode: billsSortMode)
-            let cList = try await queryService.fetchCards()
-            let dashboardList = try await queryService.fetchDashboardBills()
+            let sum = try await queryService.fetchDashboardSummary(today: today)
+            // 只读一次全量账单，筛选与模式切换在内存完成。
+            let allBillsList = try await queryService.fetchBills(filter: .all, today: today)
+            let bList = allBillsList.filter { item in
+                switch selectedBillFilter {
+                case .unpaid: return item.bill.status != "paid" && item.remainingAmount > 0.01
+                case .paid: return item.bill.status == "paid" && item.remainingAmount <= 0.01
+                case .all: return true
+                }
+            }
+            let cList = try await queryService.fetchCards(today: today)
+            let dashboardList = try await queryService.fetchDashboardBills(today: today)
             let holders = try await queryService.fetchHolders()
 
             // 读失败只保留旧值，不把同步状态静默重置为「0 待同步/从未同步」。
@@ -229,7 +360,7 @@ public final class AppState {
                     try MutationOutbox.fetchCount(db)
                 )
             }
-            guard sessionEpoch == epoch else { return false }
+            guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return false }
 
             self.summary = sum
             self.bills = bList
@@ -238,16 +369,19 @@ public final class AppState {
             self.dashboardBills = dashboardList
             self.dashboardHolders = holders
             self.dashboardLoadError = nil
+            self.refreshState.markLoaded(today: today)
             if let meta {
                 self.lastSyncedAt = meta.0
                 self.pendingSyncCount = meta.1
             }
 
             // 生成并更新 Apple Watch 快照（复用本次已查数据，避免重复查询）
-            if let snapshot = try? await WatchSnapshotManager.shared.buildSnapshot(
-                summary: sum, bills: bList, cards: cList) {
-                try? WatchSnapshotManager.shared.save(snapshot)
-                WatchSyncCoordinator.shared.sendSnapshotToWatch(snapshot)
+            if let snapshot = try? await watchSnapshots.buildSnapshot(
+                summary: sum, bills: bList, cards: cList, today: today) {
+                // buildSnapshot 是 await 边界；换号后不可把前账号快照写盘或发给手表。
+                guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return false }
+                try? saveWatchSnapshot(snapshot)
+                try? sendWatchSnapshot(snapshot)
             }
             #if DEBUG
             // 证据采集不得阻塞业务链路：放后台，失败也不影响 UI 测试主流程。
@@ -255,6 +389,7 @@ public final class AppState {
             #endif
             return true
         } catch {
+            guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return false }
             dashboardLoadError = "本地数据加载失败：\(error.localizedDescription)"
             print("Failed to reload local data: \(error)")
             return false
@@ -355,18 +490,19 @@ public final class AppState {
 
     /// 清理旧版本全局未隔离的遗留缓存 key（混淆 key 与明文 key 都清）。
     /// login/loginWithGoogle/init/logout 共用，保证换号/冷启动路径不残留前任用户快照。
-    public static func clearLegacyPayablesCaches() {
+    public static func clearLegacyPayablesCaches(preserveCurrentOwnerSnapshot: Bool = false) {
         let defaults = UserDefaults.standard
         // 旧版全局明文/混淆 key
         defaults.removeObject(forKey: "worldcredit_cached_payables")
         defaults.removeObject(forKey: "worldcredit_cached_payables")
-        // owner 记录定位：旧版 per-user UserDefaults 快照 + 新版文件快照
         if let owner = defaults.string(forKey: payablesOwnerKey) {
             defaults.removeObject(forKey: payablesCacheKey(userId: owner))
-            if let url = payablesCacheURL(userId: owner) {
-                try? FileManager.default.removeItem(at: url)
+            if !preserveCurrentOwnerSnapshot {
+                if let url = payablesCacheURL(userId: owner) {
+                    try? FileManager.default.removeItem(at: url)
+                }
+                defaults.removeObject(forKey: payablesOwnerKey)
             }
-            defaults.removeObject(forKey: payablesOwnerKey)
         }
         // 前缀扫清：不依赖 owner 完整性
         defaults.dictionaryRepresentation().keys
@@ -414,7 +550,7 @@ public final class AppState {
     private func handleSessionExpired() {
         guard isLoggedIn else { return }
         let expiredUserID = currentUser?.id
-        sessionEpoch = UUID()
+        advanceSession()
         dashboardRequestID = UUID()
         dashboardRemoteTask?.cancel()
         isLoggedIn = false
@@ -744,7 +880,7 @@ public final class AppState {
     /// 用 Google Sign-In 取到的 ID token 完成登录，状态迁移与密码登录一致。
     /// GoogleSignIn SDK 的交互留在 LoginView，此处不引入该依赖。
     public func loginWithGoogle(idToken: String) async throws {
-        sessionEpoch = UUID()
+        advanceSession()
         Self.clearLegacyPayablesCaches()
         accountTransitionTask = Task {
             do { try await dbManager.clearUserData() } catch {
@@ -765,7 +901,7 @@ public final class AppState {
         // 先取凭据再清状态：登出请求吊销本设备 refresh token（单设备语义，
         // 不影响其他设备）；token 失效时服务端也能凭 refresh_token 吊销
         let deviceRefreshToken = apiClient.refreshToken
-        sessionEpoch = UUID()
+        advanceSession()
         dashboardRequestID = UUID()
         dashboardRemoteTask?.cancel()
 
@@ -860,7 +996,7 @@ public final class AppState {
 
     @discardableResult
     public func login(email: String, password: String) async throws -> UserSession {
-        sessionEpoch = UUID()
+        advanceSession()
         Self.clearLegacyPayablesCaches()
         accountTransitionTask = Task {
             do { try await dbManager.clearUserData() } catch {

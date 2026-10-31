@@ -35,7 +35,7 @@ struct DashboardView: View {
                 BillDetailView(item: route.item)
             }
             .refreshable { await appState.refreshDashboard() }
-            .task { await appState.refreshDashboard() }
+            .task { await appState.loadInitialDataIfNeeded() }
             .sheet(item: $payingItem) { item in
                 PaymentSheetView(item: item) { amount, date, channel, note in
                     try await appState.recordPayment(
