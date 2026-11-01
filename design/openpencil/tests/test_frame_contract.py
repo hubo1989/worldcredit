@@ -533,6 +533,11 @@ class RealSourceIntegration(unittest.TestCase):
             "candidate.ios.bills-payment-history",
             "candidate.ios.bills-record-payment",
             "candidate.ios.bills-states",
+            "candidate.ios.bill-editing",
+            "candidate.ios.bill-editing-amount",
+            "candidate.ios.bill-editing-draft",
+            "candidate.ios.bill-editing-history",
+            "candidate.ios.bill-editing-payments",
         ]
         b5_heads = sorted(
             "candidate." + s["key"][len("screen."):]
@@ -541,14 +546,14 @@ class RealSourceIntegration(unittest.TestCase):
         )
         self.assertEqual(
             sorted((e["head"], e["role"]) for e in ok_entries),
-            [
+            sorted([
                 *[(h, "candidate") for h in ios_heads],
                 ("candidate.mobile.bills", "candidate"),
                 ("candidate.mobile.dashboard", "candidate"),
                 *[(h, "candidate") for h in b5_heads],
                 ("screen.mobile.bills", "current"),
                 ("screen.mobile.dashboard", "current"),
-            ],
+            ]),
             lines,
         )
 
