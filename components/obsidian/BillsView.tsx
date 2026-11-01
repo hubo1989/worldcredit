@@ -345,6 +345,13 @@ function BillCard({
                       >
                         {bPaid ? '已结清' : '未结清'}
                       </span>
+                      <button
+                        type='button'
+                        onClick={e => { e.stopPropagation(); router.push('/bills/' + b.id) }}
+                        className='text-[11px] font-semibold text-d-accent-light underline underline-offset-2'
+                      >
+                        编辑
+                      </button>
                       <ChevronRightIcon
                         size={14}
                         className='text-d-muted'

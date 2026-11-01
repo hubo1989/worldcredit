@@ -118,13 +118,13 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
     setSubmitting(true)
     try {
       if (existingBillId) {
-        // 更新已有账单
+        // 更新已有账单。不传 status：编辑金额/日期不该把已还账单重置回
+        // unpaid（spec §5.3 缺陷）；状态由服务端按已还总额重算。
         await updateBill(existingBillId, {
           bill_amount: billAmt,
           min_payment: minPay,
           statement_date: form.statement_date || undefined,
           due_date: form.due_date,
-          status: 'unpaid', // 重置为未还
         })
       } else {
         // 创建新账单（补充账期首末日）
