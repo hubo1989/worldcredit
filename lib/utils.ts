@@ -217,6 +217,39 @@ export function hasManualBillAmount(bill: { bill_amount_override?: number | null
   return bill.bill_amount_override !== null && bill.bill_amount_override !== undefined;
 }
 
+// ── 账单编辑 override 字段族（spec 13 §6.1/§6.2）────────────────────────────
+//
+// 与 effectiveBillAmount 同一合成规则：用户编辑写 *_override 列，导入方只写
+// 原始列，读取时按优先级合成。bill_month / card_id 等身份字段不提供 override——
+// UNIQUE(card_id, bill_month) 约束的一半，换卡/换期等于删旧建新。
+
+/** 生效最低还款额：override 优先于导入值。 */
+export function billEffectiveMinPayment(bill: {
+  min_payment?: number | null;
+  min_payment_override?: number | null;
+}): number | null {
+  const override = bill.min_payment_override;
+  if (override !== null && override !== undefined) return Number(override);
+  if (bill.min_payment === null || bill.min_payment === undefined) return null;
+  return Number(bill.min_payment);
+}
+
+/** 生效还款到期日：override 优先于导入值。 */
+export function billEffectiveDueDate(bill: {
+  due_date: string;
+  due_date_override?: string | null;
+}): string {
+  return bill.due_date_override ?? bill.due_date;
+}
+
+/** 生效账单日（出账日）：override 优先于导入值。 */
+export function billEffectiveStatementDate(bill: {
+  statement_date?: string | null;
+  statement_date_override?: string | null;
+}): string | null {
+  return bill.statement_date_override ?? bill.statement_date ?? null;
+}
+
 // 账单日临近判定：距下一次账单日不足 days 天（含当天）时允许手填金额。
 // 用账单日而非到期日——出账前金额还是空的，正是需要用户先记一笔的时候。
 export function canManuallySetBillAmount(

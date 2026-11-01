@@ -192,6 +192,10 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     recordPayment: { impl: billsServer.recordPayment, memberGuard: guardObjField(0, "bill_id", assertBillAccess) },
     markBillAsPaid: { impl: billsServer.markBillAsPaid, memberGuard: guardBill(0) },
     markAllOverdueBillsAsPaid: { impl: billsServer.markAllOverdueBillsAsPaid, bindUser: 0, memberGuard: (args, ctx) => assertBillListAccess(args[1], ctx) },
+    updateBillFields: { impl: billsServer.updateBillFields, memberGuard: guardBill(0) },
+    clearOverride: { impl: billsServer.clearOverride, memberGuard: guardBill(0) },
+    updateBillStatusChecked: { impl: billsServer.updateBillStatusChecked, memberGuard: guardBill(0) },
+    deleteBill: { impl: billsServer.deleteBill, admin: true },
   },
   cards: {
     getCardsByHolder: { impl: cardsServer.getCardsByHolder, memberGuard: guardHolder(0) },

@@ -86,11 +86,13 @@ describe("导入路径不得触碰手填覆写列", () => {
     expect(read(rel)).not.toMatch(/bill_amount_override\s*=/);
   });
 
-  it("只有「设置手填值」的入口写这一列", () => {
+  it("只有「设置手填值」类入口写这一列", () => {
     const server = read("lib/api/bills.server.ts");
-    // setBillAmountOverride 是唯一写入点
+    // 合法写入点恰好两个：setBillAmountOverride（钉住/撤销）与
+    // updateBillFields（spec 13 §6.2 —— 结构化编辑的 amount 也统一走钉住列）。
+    // 出现第三个写入点说明有人绕过了 override 语义，直接改导入值语义的列。
     expect(server).toMatch(/UPDATE bills SET bill_amount_override = \?/);
-    expect(server.match(/SET bill_amount_override/g)?.length).toBe(1);
+    expect(server.match(/SET bill_amount_override/g)?.length).toBe(2);
   });
 });
 

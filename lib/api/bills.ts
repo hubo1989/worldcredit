@@ -9,6 +9,7 @@ export type {
   UnpaidBillLite,
   BillLiteForForm,
   BillItemInput,
+  BillFieldPatch,
 } from './bills.server'
 
 export function getBillDashboardItems(...args: Parameters<typeof Server.getBillDashboardItems>) {
@@ -116,4 +117,16 @@ export function recordPayment(...args: Parameters<typeof Server.recordPayment>) 
 }
 export function markAllOverdueBillsAsPaid(...args: Parameters<typeof Server.markAllOverdueBillsAsPaid>) {
   return callRpc<typeof Server.markAllOverdueBillsAsPaid>('bills', 'markAllOverdueBillsAsPaid', ...args)
+}
+export function updateBillFields(...args: Parameters<typeof Server.updateBillFields>) {
+  return callRpc<typeof Server.updateBillFields>('bills', 'updateBillFields', ...args)
+}
+export function clearOverride(...args: Parameters<typeof Server.clearOverride>) {
+  return callRpc<typeof Server.clearOverride>('bills', 'clearOverride', ...args)
+}
+export function updateBillStatusChecked(...args: Parameters<typeof Server.updateBillStatusChecked>) {
+  return callRpc<typeof Server.updateBillStatusChecked>('bills', 'updateBillStatusChecked', ...args)
+}
+export function deleteBill(...args: Parameters<typeof Server.deleteBill>) {
+  return callRpc<typeof Server.deleteBill>('bills', 'deleteBill', ...args)
 }
