@@ -212,6 +212,33 @@ export function effectiveBillAmount(bill: {
   return Number(bill.bill_amount || 0);
 }
 
+export type PaymentDrivenStatus = "unpaid" | "partial" | "paid" | "overdue";
+
+/**
+ * 还款变更（增/改/删）后的账单状态重算，全站唯一口径。
+ *
+ * 与展示层 computeStatus 的关键差异：没有 `status === 'paid'` 短路——
+ * 那个短路让「改低账单金额 / 删还款」后状态永久停在 paid 不可自愈
+ * （spec 13 §6.3 的核心缺陷）。这里一律按 Σpayments 与生效金额现场判定：
+ *   - 已还 ≥ 生效金额 − 0.01（浮点容差，与金额列 REAL 精度对齐）→ paid
+ *   - 有还款未还清 → partial
+ *   - 未还清且到期日已过 → overdue
+ *   - 其余 → unpaid
+ */
+export function computePaymentDrivenStatus(
+  bill: {
+    bill_amount?: number | null;
+    bill_amount_override?: number | null;
+    due_date: string;
+  },
+  totalPaid: number,
+): PaymentDrivenStatus {
+  const amount = effectiveBillAmount(bill);
+  if (totalPaid >= amount - 0.01) return "paid";
+  if (totalPaid > 0) return "partial";
+  return diffInCalendarDays(bill.due_date) < 0 ? "overdue" : "unpaid";
+}
+
 // 是否被用户手填值钉住（导入不得覆盖）。
 export function hasManualBillAmount(bill: { bill_amount_override?: number | null }): boolean {
   return bill.bill_amount_override !== null && bill.bill_amount_override !== undefined;
