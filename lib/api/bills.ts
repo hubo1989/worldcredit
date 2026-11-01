@@ -1,5 +1,6 @@
-// lib/api/bills.ts — client-side RPC wrappers (server: bills.server.ts).
+// lib/api/bills.ts — client-side RPC wrappers (server: bills.server.ts / payments.ts).
 import type * as Server from './bills.server'
+import type * as ServerPayments from './payments'
 import { callRpc } from './rpc-client'
 
 export type {
@@ -45,64 +46,6 @@ export function updateBillStatus(...args: Parameters<typeof Server.updateBillSta
 export function setBillAmountOverride(...args: Parameters<typeof Server.setBillAmountOverride>) {
   return callRpc<typeof Server.setBillAmountOverride>('bills', 'setBillAmountOverride', ...args)
 }
-
-// ── spec 13 账单编辑（服务端由独立分支落地；RPC 名收敛在此，合并时一处改名）──
-
-/** spec §6.2：结构化编辑入口。金额/日期类一律写 *_override 列；start/end 直接 UPDATE。 */
-export type BillEditableFields = {
-  amount?: number
-  min_payment?: number
-  due_date?: string
-  statement_date?: string
-  statement_start?: string
-  statement_end?: string
-}
-export function updateBillFields(
-  billId: string,
-  fields: BillEditableFields,
-): Promise<import('@/lib/types').Bill> {
-  return callRpc<(billId: string, fields: BillEditableFields) => Promise<import('@/lib/types').Bill>>(
-    'bills', 'updateBillFields', billId, fields,
-  )
-}
-
-/** spec §6.2：按字段撤销钉住（start/end 不在枚举内）。 */
-export type BillOverrideField = 'amount' | 'min_payment' | 'due_date' | 'statement_date'
-export function clearOverride(
-  billId: string,
-  field: BillOverrideField,
-): Promise<import('@/lib/types').Bill> {
-  return callRpc<(billId: string, field: BillOverrideField) => Promise<import('@/lib/types').Bill>>(
-    'bills', 'clearOverride', billId, field,
-  )
-}
-
-/** spec §6.3：改状态前由服务端按已还总额重算（允许 paid 回退）。 */
-export function updateBillStatusChecked(
-  billId: string,
-  status: import('@/lib/types').Bill['status'],
-): Promise<import('@/lib/types').Bill> {
-  return callRpc<
-    (billId: string, status: import('@/lib/types').Bill['status']) => Promise<import('@/lib/types').Bill>
-  >('bills', 'updateBillStatusChecked', billId, status)
-}
-
-/** spec §6.1：删除账单（admin；级联 payments）。 */
-export function deleteBill(billId: string): Promise<void> {
-  return callRpc<(billId: string) => Promise<void>>('bills', 'deleteBill', billId)
-}
-
-/** spec §6.1：改单笔还款（payment 归属在服务端校验）。签名以协调者确认为准。 */
-export type PaymentPatch = { amount?: number; paid_at?: string; note?: string | null }
-export function updatePayment(paymentId: string, patch: PaymentPatch): Promise<void> {
-  return callRpc<(paymentId: string, patch: PaymentPatch) => Promise<void>>(
-    'payments', 'updatePayment', paymentId, patch,
-  )
-}
-/** spec §6.1：删单笔还款（删后服务端重算所属账单状态）。 */
-export function deletePayment(paymentId: string): Promise<void> {
-  return callRpc<(paymentId: string) => Promise<void>>('payments', 'deletePayment', paymentId)
-}
 export function setCardManualBillAmount(...args: Parameters<typeof Server.setCardManualBillAmount>) {
   return callRpc<typeof Server.setCardManualBillAmount>('bills', 'setCardManualBillAmount', ...args)
 }
@@ -118,15 +61,41 @@ export function recordPayment(...args: Parameters<typeof Server.recordPayment>) 
 export function markAllOverdueBillsAsPaid(...args: Parameters<typeof Server.markAllOverdueBillsAsPaid>) {
   return callRpc<typeof Server.markAllOverdueBillsAsPaid>('bills', 'markAllOverdueBillsAsPaid', ...args)
 }
+
+// ── spec 13 账单编辑（服务端：lib/api/bills.server.ts；签名按服务端派生）──
+
+/** spec §6.2：结构化编辑入口。金额/日期类一律写 *_override 列；start/end 直接 UPDATE。 */
 export function updateBillFields(...args: Parameters<typeof Server.updateBillFields>) {
   return callRpc<typeof Server.updateBillFields>('bills', 'updateBillFields', ...args)
 }
-export function clearOverride(...args: Parameters<typeof Server.clearOverride>) {
-  return callRpc<typeof Server.clearOverride>('bills', 'clearOverride', ...args)
+export type BillEditableFields = Server.BillFieldPatch
+
+/** spec §6.2：按字段撤销钉住（服务端收字段数组，回落导入值）。 */
+export function clearOverride(billId: string, fields: BillOverrideField[]) {
+  return callRpc<typeof Server.clearOverride>('bills', 'clearOverride', billId, fields)
 }
+export type BillOverrideField = Exclude<
+  keyof Server.BillFieldPatch,
+  'statement_start' | 'statement_end'
+>
+
+/** spec §6.3：改状态前由服务端按已还总额重算（允许 paid 回退）。 */
 export function updateBillStatusChecked(...args: Parameters<typeof Server.updateBillStatusChecked>) {
   return callRpc<typeof Server.updateBillStatusChecked>('bills', 'updateBillStatusChecked', ...args)
 }
+
+/** spec §6.1：删除账单（admin；级联 payments，sync_changes 由 0019 触发器记录）。 */
 export function deleteBill(...args: Parameters<typeof Server.deleteBill>) {
   return callRpc<typeof Server.deleteBill>('bills', 'deleteBill', ...args)
+}
+
+// ── spec 13 还款记录改删（服务端：lib/api/payments.ts）──
+
+export type { UpdatePaymentPatch as PaymentPatch } from './payments'
+export function updatePayment(...args: Parameters<typeof ServerPayments.updatePayment>) {
+  return callRpc<typeof ServerPayments.updatePayment>('payments', 'updatePayment', ...args)
+}
+/** 删单笔还款（删后服务端重算所属账单状态）。 */
+export function deletePayment(...args: Parameters<typeof ServerPayments.deletePayment>) {
+  return callRpc<typeof ServerPayments.deletePayment>('payments', 'deletePayment', ...args)
 }

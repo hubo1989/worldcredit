@@ -197,7 +197,7 @@ describe('BillEditForm', () => {
     expect(screen.getByText('请填写账单金额')).toBeInTheDocument()
   })
 
-  it('撤销金额钉住：调 clearOverride(billId, "amount")', async () => {
+  it('撤销金额钉住：调 clearOverride(billId, ["amount"])', async () => {
     const user = userEvent.setup()
     const clearField = vi.fn().mockResolvedValue(makeBill())
     render(
@@ -211,7 +211,7 @@ describe('BillEditForm', () => {
     await user.click(screen.getByRole('button', { name: '撤销账单金额的手动设定' }))
 
     await waitFor(() => {
-      expect(clearField).toHaveBeenCalledWith('bill-1', 'amount')
+      expect(clearField).toHaveBeenCalledWith('bill-1', ['amount'])
     })
   })
 

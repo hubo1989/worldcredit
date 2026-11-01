@@ -310,7 +310,7 @@ const drawStatusDialog = (mode) => {
     ['已结清', 'paid', '已还 ≥ 生效金额，允许从结清回退', 'ok', 'circle-check-big'],
     ['逾期', 'overdue', '到期日已过且未结清', 'danger', 'circle-alert'],
   ];
-  for (const [label, val, desc, kind, iconName] of items) {
+  for (const [label, val, desc, , iconName] of items) {
     const active = val === 'partial';
     const row = I(opts, {
       type: 'frame', name: 'status option / ' + label, width: 'fill_container', layout: 'horizontal',

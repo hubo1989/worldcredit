@@ -75,7 +75,7 @@ interface BillEditFormProps {
   canDelete: boolean
   /** 注入提交函数，测试替换；默认走 lib/api/bills 的 RPC 包装 */
   onSubmitFields?: (billId: string, fields: BillEditableFields) => Promise<Bill>
-  onClearOverrideField?: (billId: string, field: BillOverrideField) => Promise<Bill>
+  onClearOverrideField?: (billId: string, fields: BillOverrideField[]) => Promise<Bill>
   onDeleteBill?: (billId: string) => Promise<void>
 }
 
@@ -114,7 +114,8 @@ export function BillEditForm({
   onDeleteBill,
 }: BillEditFormProps) {
   const submitFields = onSubmitFields ?? updateBillFields
-  const clearField = onClearOverrideField ?? clearOverride
+  const clearField: (billId: string, fields: BillOverrideField[]) => Promise<unknown> =
+    onClearOverrideField ?? clearOverride
   const doDelete = onDeleteBill ?? deleteBill
 
   const [values, setValues] = useState<EditableFieldValues>({
@@ -167,7 +168,7 @@ export function BillEditForm({
     setClearingField(field)
     setSubmitError(null)
     try {
-      await clearField(bill.id, field)
+      await clearField(bill.id, [field])
       await onSaved()
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : '撤销失败，请重试')
