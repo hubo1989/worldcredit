@@ -18,6 +18,7 @@ struct PayableFormView: View {
     @State private var errorMessage: String?
     @State private var confirmDelete = false
     @State private var saving = false
+    @State private var showingDueDayPicker = false
 
     var body: some View {
         NavigationStack {
@@ -34,7 +35,19 @@ struct PayableFormView: View {
                     TextField("币种（如 CNY / USD / HKD）", text: $currency)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.characters)
-                    Stepper("每月应付日：\(dueDay) 日", value: $dueDay, in: 1...31)
+                    // 点击行弹出滚轮选择（替代 Stepper 加减：从 1 按到 31 不现实）
+                    Button {
+                        showingDueDayPicker = true
+                    } label: {
+                        HStack {
+                            Text("每月应付日")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text("\(dueDay) 日")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityIdentifier("payable.form.dueDay")
                 }
 
                 Section("选填") {
@@ -77,6 +90,30 @@ struct PayableFormView: View {
                 Button("删除", role: .destructive) {
                     Task { await deleteExisting() }
                 }
+            }
+            .sheet(isPresented: $showingDueDayPicker) {
+                NavigationStack {
+                    Picker("每月应付日", selection: $dueDay) {
+                        ForEach(1...31, id: \.self) { day in
+                            Text("\(day) 日").tag(day)
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 280)
+                    .padding(.vertical, 40)
+                    .background(WCColors.subtle)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .padding(.horizontal, 16)
+                    .navigationTitle("每月应付日")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("完成") { showingDueDayPicker = false }
+                        }
+                    }
+                }
+                .presentationDetents([.height(480)])
             }
         }
     }
