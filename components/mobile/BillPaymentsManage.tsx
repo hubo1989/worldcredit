@@ -8,7 +8,7 @@ import { Alert } from '@/components/obsidian/feedback'
 import { TrashIcon } from '@/components/icons/WcIcon'
 import { updatePayment, deletePayment, type PaymentPatch } from '@/lib/api/bills'
 import type { Payment } from '@/lib/types'
-import { previewAfterPayments, STATUS_LABELS, type BillStatus } from './bill-editing-shared'
+import { previewAfterPayments, STATUS_LABELS, isValidCalendarDate, type BillStatus } from './bill-editing-shared'
 
 export interface BillPaymentsManageProps {
   open: boolean
@@ -82,8 +82,8 @@ export function BillPaymentsManage({
       setError('还款金额必须是大于 0 的数字')
       return
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(values.paid_at)) {
-      setError('请选择还款日期')
+    if (!isValidCalendarDate(values.paid_at)) {
+      setError('还款日期必须是 YYYY-MM-DD 格式的真实日历日')
       return
     }
     setSubmitting(true)
@@ -226,6 +226,9 @@ export function BillPaymentsManage({
             <p className='mt-2 text-[11px] leading-4 text-d-muted'>
               删改后系统按已还总额自动重算账单状态，允许从已结清回退。
             </p>
+            {/* 列表态也要有错误出口：删除失败回到列表态，Alert 若只在编辑态
+                分支渲染，破坏性操作的失败原因就看不到 */}
+            {error && <Alert severity='error'>{error}</Alert>}
           </>
         )}
 

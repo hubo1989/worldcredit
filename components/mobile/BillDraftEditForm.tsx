@@ -6,6 +6,7 @@ import { Button } from '@/components/obsidian/controls'
 import { TextField, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
 import type { BillImportDraft } from '@/lib/api/billDrafts'
+import { isValidCalendarDate, isValidBillMonth } from './bill-editing-shared'
 
 /** 可编辑的 parsed_payload 字段（其余字段原样保留）。 */
 export interface BillDraftFieldValues {
@@ -17,23 +18,6 @@ export interface BillDraftFieldValues {
 }
 
 type Errors = Partial<Record<keyof BillDraftFieldValues, string>>
-
-const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/
-const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/
-
-/**
- * 真实日历日校验：2026-02-30 这类「格式对但日子不存在」的值必须当场拦下，
- * 否则会写进 parsed_payload，到确认入账时才炸成服务端错误。
- */
-function isValidCalendarDate(value: string): boolean {
-  const m = DATE_RE.exec(value)
-  if (!m) return false
-  const year = Number(m[1])
-  const month = Number(m[2])
-  const day = Number(m[3])
-  const utc = new Date(Date.UTC(year, month - 1, day))
-  return utc.getUTCFullYear() === year && utc.getUTCMonth() === month - 1 && utc.getUTCDate() === day
-}
 
 function toInputValues(draft: BillImportDraft): BillDraftFieldValues {
   const p = draft.parsed_payload
@@ -71,7 +55,7 @@ export function validateDraftFields(values: BillDraftFieldValues): Errors {
   const month = values.bill_month.trim()
   if (!month) {
     errors.bill_month = '请填写账单月份'
-  } else if (!MONTH_RE.test(month)) {
+  } else if (!isValidBillMonth(month)) {
     errors.bill_month = '月份格式应为 YYYY-MM'
   }
 

@@ -1,7 +1,8 @@
 // 16 · Bill Editing — 账单编辑能力全景（docs/specs/13-bill-editing.md 目标设计 §6）
-// 运行（JSON 直插，不经 refine，几何不被引擎重排）:
-//   node scripts/emit-16.mjs > /tmp/boards.json   （或见 screens/BILL-EDITING-REDESIGN.md 的完整命令）
-//   op design @/tmp/boards.json --page <16页ID>
+// 运行（op design 脚本模式：I() 是宿主内置的节点插入函数，同 13-candidates.js；
+//       JSON 直插语义，不经 refine，几何不被引擎重排）:
+//   op design @design/openpencil/scripts/16-bill-editing.js --page <16页ID>
+//   完整说明见 screens/BILL-EDITING-REDESIGN.md
 //
 // 结构约定（与 15 · iOS Bills 同构，过 check-overflow-portable 的平铺规则）:
 //   - 画板 layout:none，440×956，直接子节点是互不重叠的平铺块
@@ -62,8 +63,10 @@ const navHeader = (parent, m, title, trail) => {
   const back = I(header, { type: 'frame', name: 'btn / back', width: 44, height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center' });
   I(back, { type: 'icon_font', name: 'icon / chevron-left', iconFontName: 'chevron-left', width: 22, height: 22, fill: s(m.text) });
   I(header, { type: 'text', name: 'page title', content: title, fontFamily: FONT, fontSize: 21, fontWeight: 600, lineHeight: 1.3, fill: s(m.text) });
-  const trailWrap = I(header, { type: 'frame', name: 'btn / delete bill', width: 44, height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center' });
+  // 仅在传入 trail 时创建尾部按钮容器：无删除动作的屏幕生成同名空节点会
+  // 误导契约（_contract.json 按 node 名匹配标记）与设计工具节点定位。
   if (trail) {
+    const trailWrap = I(header, { type: 'frame', name: 'btn / delete bill', width: 44, height: 44, layout: 'horizontal', justifyContent: 'center', alignItems: 'center' });
     I(trailWrap, { type: 'icon_font', name: 'icon / ' + trail.icon, iconFontName: trail.icon, width: 20, height: 20, fill: s(trail.danger ? m.dangerInk : m.text) });
   }
 };
@@ -155,6 +158,8 @@ const dimmedBackdrop = (scene, m, title, total, context) => {
   I(bg, { type: 'text', name: 'background title', content: title, fontFamily: FONT, fontSize: 17, fontWeight: 600, fill: s(m.scrimText) });
   I(bg, { type: 'text', name: 'background total', content: total, fontFamily: 'Inter Tight', fontSize: 26, fontWeight: 700, fill: s(m.scrimText) });
   I(bg, { type: 'text', name: 'background context', content: context, fontFamily: FONT, fontSize: 12, fill: s(m.scrimText) });
+  // 纯黑遮罩是刻意例外：scrim 需要 darkest-possible 压暗保证对话框对比度，
+  // 两主题共用同一值（不随主题收敛），故不走 $token。
   I(scene, { type: 'frame', name: 'dialog scrim', x: 0, y: 0, width: W, height: SCENE_H, layout: 'none', fill: s('#000000'), opacity: 0.45 });
 };
 
@@ -222,7 +227,7 @@ const drawEditForm = (mode) => {
   fieldRow(fieldsCard, m, { key: 'due-date', label: '还款到期日', value: '11月24日', arrow: true });
 
   sectionTitle(content, m, '账单状态', '修改后按还款记录重算');
-  const statusCard = I(content, { type: 'frame', name: 'fields card', width: 'fill_container', layout: 'vertical', padding: [8, 14], cornerRadius: 12, fill: s(m.surface) });
+  const statusCard = I(content, { type: 'frame', name: 'status card', width: 'fill_container', layout: 'vertical', padding: [8, 14], cornerRadius: 12, fill: s(m.surface) });
   const statusRow = I(statusCard, { type: 'frame', name: 'status options', width: 'fill_container', layout: 'horizontal', gap: 8, alignItems: 'center' });
   for (const [label, active] of [['待还', true], ['部分还款', false], ['已结清', false], ['逾期', false]]) {
     const opt = I(statusRow, {
@@ -304,13 +309,14 @@ const drawStatusDialog = (mode) => {
   const dialog = dialogIn(scene, m, '账单状态', 400, 384);
 
   const opts = I(dialog, { type: 'frame', name: 'status options', width: 'fill_container', layout: 'vertical', gap: 8 });
+  // 选中态由 active 行的描边/填充表达（见下方 row 样式），无需按语义色着色
   const items = [
-    ['待还', 'unpaid', '按到期日与还款记录判定', 'neutral', 'circle-dashed'],
-    ['部分还款', 'partial', '已还 1,600.00，剩余 3,200.00', 'warn', 'circle-half-2'],
-    ['已结清', 'paid', '已还 ≥ 生效金额，允许从结清回退', 'ok', 'circle-check-big'],
-    ['逾期', 'overdue', '到期日已过且未结清', 'danger', 'circle-alert'],
+    ['待还', 'unpaid', '按到期日与还款记录判定', 'circle-dashed'],
+    ['部分还款', 'partial', '已还 1,600.00，剩余 3,200.00', 'circle-half-2'],
+    ['已结清', 'paid', '已还 ≥ 生效金额，允许从结清回退', 'circle-check-big'],
+    ['逾期', 'overdue', '到期日已过且未结清', 'circle-alert'],
   ];
-  for (const [label, val, desc, , iconName] of items) {
+  for (const [label, val, desc, iconName] of items) {
     const active = val === 'partial';
     const row = I(opts, {
       type: 'frame', name: 'status option / ' + label, width: 'fill_container', layout: 'horizontal',
@@ -564,4 +570,5 @@ for (const mode of ['dark', 'light']) {
     drawActionSheet(mode),
   );
 }
-console.log('bill editing set built: ' + boards.length + ' boards (dark/light × 10)');
+  // 摘要走 stderr：头部运行命令把 stdout 重定向为 boards.json，混入日志会破坏 JSON
+  console.error('bill editing set built: ' + boards.length + ' boards (dark/light × 10)');

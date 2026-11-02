@@ -140,8 +140,9 @@ describe('payments.updatePayment / deletePayment (spec 13)', () => {
       await seedPayment('p1', 'b1', 800)
       await db.exec(`UPDATE bills SET status = 'partial' WHERE id = 'b1';`)
 
+      // 上限与判定条件同容差：生效金额 + 0.01（镜像 0022 触发器上界）
       await expect(updatePayment('p1', { amount: 1200 })).rejects.toThrow(
-        /超过该账单剩余可还额度（本笔最多 ¥1000\.00）/,
+        /超过该账单剩余可还额度（本笔最多 ¥1000\.01）/,
       )
 
       const p = await db
@@ -157,12 +158,29 @@ describe('payments.updatePayment / deletePayment (spec 13)', () => {
       await seedPayment('p1', 'b1', 400)
       await seedPayment('p2', 'b1', 400)
 
-      // 其他已还 400，p2 最多改到 600.01；改 700 拒绝
-      await expect(updatePayment('p2', { amount: 700 })).rejects.toThrow(/本笔最多 ¥600\.00/)
+      // 其他已还 400，p2 上限 = 1000 + 0.01 − 400 = 600.01；改 700 拒绝
+      await expect(updatePayment('p2', { amount: 700 })).rejects.toThrow(/本笔最多 ¥600\.01/)
 
       // 改到 600 正好还清 -> paid
       await updatePayment('p2', { amount: 600 })
       expect(await billStatus('b1')).toBe('paid')
+    })
+
+    it('调小金额/原额保存不受上界拦截（存量超缴数据可改备注）', async () => {
+      // 先按合法状态入账，再把账单金额改到低于已还（模拟 updateBillFields 造成的
+      // 存量超缴——0022 触发器只挂 BEFORE INSERT，不会回溯已入账数据）
+      await seedBill('b1', { amount: 1000, due_date: '2026-10-25' })
+      await seedPayment('p1', 'b1', 400)
+      await db.exec(`UPDATE bills SET bill_amount = 300 WHERE id = 'b1';`)
+
+      await expect(updatePayment('p1', { note: '存量超缴，只改备注' })).resolves.toMatchObject({
+        note: '存量超缴，只改备注',
+      })
+      await expect(updatePayment('p1', { amount: 400 })).resolves.toMatchObject({ amount: 400 })
+      // 调小走的是「金额变小」方向，同样不触上界
+      await expect(updatePayment('p1', { amount: 350 })).resolves.toMatchObject({ amount: 350 })
+      // 调大到超过剩余额度（300 + 0.01）仍要被拒
+      await expect(updatePayment('p1', { amount: 500 })).rejects.toThrow(/剩余可还额度/)
     })
 
     it('金额 <= 0 或非 finite 拒绝（VALIDATION_FAILED）', async () => {

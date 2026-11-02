@@ -12,7 +12,7 @@ import {
 } from "@/lib/api/billDrafts";
 import { getCardsWithBillsSummary } from "@/lib/api/bills";
 import { formatCardTail } from "@/lib/utils";
-import { BillDraftEditForm, mergeDraftPayload } from "./BillDraftEditForm";
+import { BillDraftEditForm, mergeDraftPayload, type BillDraftFieldValues } from "./BillDraftEditForm";
 
 export function BillDraftsPanel({ onChanged }: { onChanged?: () => void }) {
   const [drafts, setDrafts] = useState<BillImportDraft[]>([]);
@@ -62,10 +62,7 @@ export function BillDraftsPanel({ onChanged }: { onChanged?: () => void }) {
 
   // 字段编辑保存：表单校验通过后把五个字段合并回 parsed_payload，
   // 走与改卡相同的 RPC 包装；服务端查重（同卡同月已存在）原样透传给表单内提示。
-  const saveDraftFields = async (
-    draftId: string,
-    values: { bill_amount: string; min_payment: string; bill_month: string; due_date: string; statement_date: string },
-  ) => {
+  const saveDraftFields = async (draftId: string, values: BillDraftFieldValues) => {
     const draft = drafts.find((d) => d.id === draftId);
     if (!draft) throw new Error("草稿不存在或已被处理");
     await updateBillImportDraft(draft.id, {

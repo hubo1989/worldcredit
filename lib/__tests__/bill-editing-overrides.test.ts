@@ -102,6 +102,52 @@ describe('updateBillFields：编辑一律写 override 列', () => {
   it('账单不存在时 NOT_FOUND', async () => {
     await expect(updateBillFields('b_none', { amount: 1 })).rejects.toThrow('账单不存在')
   })
+
+  it('改金额到低于已还时服务端联动重算（unpaid -> paid，spec §6.3 闭环）', async () => {
+    await db.exec(`
+      INSERT INTO payments (id, bill_id, amount, paid_at, idempotency_key) VALUES ('p1', 'b_ed', 800, '2026-10-10', 'k1');
+      UPDATE bills SET status = 'partial' WHERE id = 'b_ed';
+    `)
+    // 已还 800 ≥ 改后生效金额 800 − 0.01 → paid，无需调用方补调 updateBillStatusChecked
+    const updated = await updateBillFields('b_ed', { amount: 800 })
+    expect(updated.status).toBe('paid')
+    expect((await row())?.status).toBe('paid')
+  })
+
+  it('金额改大后 paid 可回退（已还 < 新生效金额 → partial）', async () => {
+    await db.exec(`
+      INSERT INTO payments (id, bill_id, amount, paid_at, idempotency_key) VALUES ('p1', 'b_ed', 800, '2026-10-10', 'k1');
+      UPDATE bills SET status = 'paid' WHERE id = 'b_ed';
+    `)
+    const updated = await updateBillFields('b_ed', { amount: 2000 })
+    expect(updated.status).toBe('partial')
+  })
+
+  it('只改账期字段不触发重算（金额/到期日未动）', async () => {
+    await db.exec(`UPDATE bills SET status = 'partial' WHERE id = 'b_ed';`)
+    const updated = await updateBillFields('b_ed', { statement_start: '2026-09-06' })
+    expect(updated.status).toBe('partial')
+  })
+
+  it('单字段改账期与库内另一端倒挂被拒（读已有行比对）', async () => {
+    await updateBillFields('b_ed', { statement_start: '2026-09-06', statement_end: '2026-10-05' })
+    // 只改开始日到晚于已存结束日 → 拒绝
+    await expect(
+      updateBillFields('b_ed', { statement_start: '2026-10-06' }),
+    ).rejects.toThrow('账期开始日不能晚于账期结束日')
+    // 只改结束日到早于已存开始日 → 同样拒绝
+    await expect(
+      updateBillFields('b_ed', { statement_end: '2026-09-05' }),
+    ).rejects.toThrow('账期开始日不能晚于账期结束日')
+  })
+
+  it('null 清除 min_payment / statement_date 的 override（回落导入值）', async () => {
+    await updateBillFields('b_ed', { min_payment: 66.5, statement_date: '2026-10-08' })
+    await updateBillFields('b_ed', { min_payment: null, statement_date: null })
+    const raw = await row()
+    expect(raw?.min_payment_override).toBeNull()
+    expect(raw?.statement_date_override).toBeNull()
+  })
 })
 
 describe('clearOverride：清空回落导入值', () => {

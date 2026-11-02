@@ -6,7 +6,7 @@ import { Button } from '@/components/obsidian/controls'
 import { TextField, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
 import { format } from 'date-fns'
-import { createBill, updateBill, getBillByCardMonth } from '@/lib/api/bills'
+import { createBill, updateBill, updateBillStatusChecked, getBillByCardMonth } from '@/lib/api/bills'
 import { getAllCardsWithProduct } from '@/lib/api/cards'
 import { formatCardTail } from '@/lib/utils'
 import type { CreditCard, CardProduct, Bill } from '@/lib/types'
@@ -119,13 +119,18 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
     try {
       if (existingBillId) {
         // 更新已有账单。不传 status：编辑金额/日期不该把已还账单重置回
-        // unpaid（spec §5.3 缺陷）；状态由服务端按已还总额重算。
+        // unpaid（spec §5.3 缺陷）。updateBill 只做直接 UPDATE、不重算状态，
+        // 保存后显式按已还总额重算（允许 paid 回退）。
+        // 注意：此处直写 bill_amount 原列；若账单已被 BillEditForm 写入
+        // bill_amount_override，展示按生效金额仍取 override——两个编辑入口
+        // 的分工见 spec §6.1（本表单走基础值，钉住值由编辑表单管理）。
         await updateBill(existingBillId, {
           bill_amount: billAmt,
           min_payment: minPay,
           statement_date: form.statement_date || undefined,
           due_date: form.due_date,
         })
+        await updateBillStatusChecked(existingBillId)
       } else {
         // 创建新账单（补充账期首末日）
         const [year, month] = form.bill_month.split('-').map(Number)

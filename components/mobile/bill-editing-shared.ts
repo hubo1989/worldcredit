@@ -58,6 +58,14 @@ export function validateEditableFields(values: EditableFieldValues): FieldErrors
     if (v && !isValidCalendarDate(v)) errors[field] = '日期格式应为 YYYY-MM-DD 且为真实日历日'
   }
 
+  // 跨字段约束与服务端 updateBillFields 同条：倒挂账期本地提前拦截，
+  // 不要等提交后才收到服务端报错。
+  const periodStart = values.statement_start.trim()
+  const periodEnd = values.statement_end.trim()
+  if (periodStart && periodEnd && periodStart > periodEnd) {
+    errors.statement_end = '账期开始日不能晚于账期结束日'
+  }
+
   return errors
 }
 
@@ -81,13 +89,17 @@ export function previewAfterPayments(
     0,
   )
   const remaining = Math.max(0, effectiveAmount - totalPaid)
-  // spec §6.3：已还 ≥ 生效金额 − 0.01 即 paid（允许回退），与服务端重算口径一致
-  const status: BillStatus =
-    effectiveAmount <= 0 || totalPaid >= effectiveAmount - 0.01
-      ? 'paid'
-      : totalPaid > 0
-        ? 'partial'
-        : 'unpaid'
+  // spec §6.3：已还 ≥ 生效金额 − 0.01 即 paid（允许回退），与服务端重算口径一致。
+  // 注意：此处无 overdue 分支——编辑态金额必须 > 0，totalPaid == 0 且未结清
+  // 的账单不会走到这里，不要把它当成完整状态口径复用。
+  let status: BillStatus
+  if (effectiveAmount <= 0 || totalPaid >= effectiveAmount - 0.01) {
+    status = 'paid'
+  } else if (totalPaid > 0) {
+    status = 'partial'
+  } else {
+    status = 'unpaid'
+  }
   return { totalPaid, remaining, status }
 }
 

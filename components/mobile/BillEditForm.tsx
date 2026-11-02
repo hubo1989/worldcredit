@@ -80,11 +80,18 @@ interface BillEditFormProps {
 }
 
 function toValues(bill: Bill): EditableFieldValues {
+  // 编辑值优先读 override 列：改过的值要能回显，否则再次保存会被导入值覆盖
+  //（bill_amount 例外：服务端投影只归一化了它）。
   return {
     amount: bill.bill_amount != null ? String(bill.bill_amount) : '',
-    min_payment: bill.min_payment != null ? String(bill.min_payment) : '',
-    statement_date: bill.statement_date ?? '',
-    due_date: bill.due_date ?? '',
+    min_payment:
+      bill.min_payment_override != null
+        ? String(bill.min_payment_override)
+        : bill.min_payment != null
+          ? String(bill.min_payment)
+          : '',
+    statement_date: bill.statement_date_override ?? bill.statement_date ?? '',
+    due_date: bill.due_date_override ?? bill.due_date ?? '',
     statement_start: bill.statement_start ?? '',
     statement_end: bill.statement_end ?? '',
   }
@@ -146,11 +153,12 @@ export function BillEditForm({
 
   if (!open || !bill) return null
 
+  // 0025 已落地四个 override 列（getBillDetail 以 b.* 带回），按真实列渲染钉住态
   const pinned = {
     amount: bill.bill_amount_override != null,
-    min_payment: false, // min_payment_override 列未落地前服务端不返回钉住态
-    statement_date: false, // 同上
-    due_date: false,
+    min_payment: bill.min_payment_override != null,
+    statement_date: bill.statement_date_override != null,
+    due_date: bill.due_date_override != null,
   }
 
   const newAmount = Number(values.amount)
@@ -168,7 +176,10 @@ export function BillEditForm({
     setClearingField(field)
     setSubmitError(null)
     try {
-      await clearField(bill.id, [field])
+      const updated = (await clearField(bill.id, [field])) as Bill
+      // loadedId 守卫会拦掉 onSaved 拉回的同 id 新 bill，必须在此手动回写，
+      // 否则输入框仍显示刚撤销的 override 值，再点保存会把它重新钉住
+      setValues(toValues(updated))
       await onSaved()
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : '撤销失败，请重试')
@@ -187,8 +198,11 @@ export function BillEditForm({
     try {
       const fields: BillEditableFields = {
         amount: Number(values.amount),
-        min_payment: values.min_payment.trim() ? Number(values.min_payment) : undefined,
-        statement_date: values.statement_date.trim() || undefined,
+        // min_payment / statement_date：清空（原本有值被改空）提交 null 而非
+        // undefined——null 是服务端约定的「清除 override 回落导入值」语义，
+        // undefined 会把字段整体省略，用户的清除意图被静默吞掉。
+        min_payment: values.min_payment.trim() ? Number(values.min_payment) : null,
+        statement_date: values.statement_date.trim() || null,
         due_date: values.due_date.trim() || undefined,
         statement_start: values.statement_start.trim() || undefined,
         statement_end: values.statement_end.trim() || undefined,

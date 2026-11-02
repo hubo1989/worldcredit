@@ -230,13 +230,17 @@ export function computePaymentDrivenStatus(
     bill_amount?: number | null;
     bill_amount_override?: number | null;
     due_date: string;
+    due_date_override?: string | null;
   },
   totalPaid: number,
 ): PaymentDrivenStatus {
   const amount = effectiveBillAmount(bill);
   if (totalPaid >= amount - 0.01) return "paid";
   if (totalPaid > 0) return "partial";
-  return diffInCalendarDays(bill.due_date) < 0 ? "overdue" : "unpaid";
+  // 逾期判定走生效到期日（billEffectiveDueDate 合成 override），与
+  // updateBillStatusChecked 同口径——否则用户先编辑到期日再改还款时，
+  // 两条重算路径会对同一账单算出不同状态。
+  return diffInCalendarDays(billEffectiveDueDate(bill)) < 0 ? "overdue" : "unpaid";
 }
 
 // 是否被用户手填值钉住（导入不得覆盖）。
@@ -344,6 +348,23 @@ export function diffInCalendarDays(target: string | Date, today: Date = new Date
   const t = typeof target === "string" ? new Date(target) : target;
   const localMidnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   return Math.round((localMidnight(t) - localMidnight(today)) / 86_400_000);
+}
+
+/**
+ * 真实日历日校验（全站唯一定义）：格式必须是 YYYY-MM-DD，且日子真实存在
+ * （2026-02-30、2027-04-31 这类格式对但日子不存在的值必须拦下）。
+ * 服务端（bills.server / payments）与前端表单共享这一份，防止校验口径漂移。
+ */
+export function isValidCalendarDate(value: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return false;
+  const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  return (
+    utc.getUTCFullYear() === year &&
+    utc.getUTCMonth() === month - 1 &&
+    utc.getUTCDate() === day
+  );
 }
 
 /**

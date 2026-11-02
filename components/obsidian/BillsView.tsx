@@ -313,12 +313,14 @@ function BillCard({
                 const bPaid = b.computed_status === 'paid'
                 const bMonth = b.bill_month || (b.due_date ? b.due_date.slice(0, 7) : '账单')
                 return (
-                  <button
+                  <div
                     key={b.id}
-                    type='button'
+                    role='button'
+                    tabIndex={0}
                     onClick={e => { e.stopPropagation(); if (!bPaid) onOpenPayment(b) }}
+                    onKeyDown={e => { if (e.key === 'Enter' && !bPaid) onOpenPayment(b) }}
                     className={
-                      'flex items-center justify-between rounded-lg bg-d-subtle p-2.5 text-left' +
+                      'flex cursor-pointer items-center justify-between rounded-lg bg-d-subtle p-2.5 text-left' +
                       (bPaid ? ' cursor-default' : '')
                     }
                   >
@@ -358,7 +360,7 @@ function BillCard({
                         onClick={e => { e.stopPropagation(); router.push('/bills/' + b.id) }}
                       />
                     </span>
-                  </button>
+                  </div>
                 )
               })}
             </div>

@@ -2,7 +2,12 @@
 import { query, queryOne, execute, batch, uuid } from '../db'
 import type { Payment, Bill } from '../types'
 import type { PaymentWithBill } from './bills.server'
-import { generateIdempotencyKey, computePaymentDrivenStatus } from '../utils'
+import {
+  generateIdempotencyKey,
+  computePaymentDrivenStatus,
+  effectiveBillAmount,
+  isValidCalendarDate,
+} from '../utils'
 import { RpcDomainError } from './errors'
 import type { MemberContext } from './member-scope'
 import { MemberScopeError } from './member-scope'
@@ -127,22 +132,27 @@ export async function updatePayment(paymentId: string, patch: UpdatePaymentPatch
 
   const nextAmount = patch.amount !== undefined ? patch.amount : payment.amount
 
-  // 生效金额上界镜像 0022 触发器：Σpayments 不得超过 COALESCE(override, bill_amount) + 0.01
-  const effectiveAmount =
-    bill.bill_amount_override != null ? Number(bill.bill_amount_override) : Number(bill.bill_amount || 0)
-  const { data: totalRow, error: totalErr } = await query<{ total: number | null }>(
-    'SELECT SUM(amount) AS total FROM payments WHERE bill_id = ?',
-    [payment.bill_id]
-  )
-  if (totalErr) throw new Error(totalErr.message)
-  const otherPaid = Number(totalRow?.[0]?.total ?? 0) - payment.amount
-  if (otherPaid + nextAmount > effectiveAmount + 0.01) {
-    // 本笔可改上限 = 生效金额 − 其他还款合计（触发器上界生效金额+0.01 的等价形式）
-    const maxForThisPayment = Math.max(0, effectiveAmount - otherPaid)
-    throw new RpcDomainError(
-      'CONFLICT',
-      `编辑后金额超过该账单剩余可还额度（本笔最多 ¥${maxForThisPayment.toFixed(2)}）`,
+  // 生效金额上界镜像 0022 触发器：Σpayments 不得超过 COALESCE(override, bill_amount) + 0.01。
+  // 仅在金额实际调大时才可能新触犯上界——存量超缴数据（触发器只挂 BEFORE INSERT，
+  // updateBillFields 又允许把金额改到低于已还总额）下，只改备注/渠道/还款日期
+  // 甚至原额保存都不应被 CONFLICT 拒绝。
+  const effectiveAmount = effectiveBillAmount(bill)
+  let otherPaid = 0
+  if (nextAmount > payment.amount) {
+    const { data: totalRow, error: totalErr } = await query<{ total: number | null }>(
+      'SELECT SUM(amount) AS total FROM payments WHERE bill_id = ?',
+      [payment.bill_id]
     )
+    if (totalErr) throw new Error(totalErr.message)
+    otherPaid = Number(totalRow?.[0]?.total ?? 0) - payment.amount
+    if (otherPaid + nextAmount > effectiveAmount + 0.01) {
+      // 本笔可改上限与判定条件同容差（生效金额 + 0.01 − 其他还款合计）
+      const maxForThisPayment = Math.max(0, effectiveAmount + 0.01 - otherPaid)
+      throw new RpcDomainError(
+        'CONFLICT',
+        `编辑后金额超过该账单剩余可还额度（本笔最多 ¥${maxForThisPayment.toFixed(2)}）`,
+      )
+    }
   }
 
   const statements: { sql: string; params: unknown[] }[] = []
@@ -168,11 +178,14 @@ export async function updatePayment(paymentId: string, patch: UpdatePaymentPatch
     sql: `UPDATE payments SET ${sets.join(', ')} WHERE id = ?`,
     params: [...params, paymentId],
   })
+  // 状态重算的已还总额：Σpayments（其他还款合计 + 本笔改后金额）。
   withRecalcBillStatus(statements, bill, otherPaid + nextAmount)
 
   const { error } = await batch(statements)
   if (error) {
-    // 兜底：并发窗口内其他通道新插入还款可能触碰 0022 触发器，翻译成可读文案
+    // 防御性兜底（正常路径不可达：batch 内只有 UPDATE，0022 只挂 BEFORE INSERT；
+    // batch 是 D1 隐式事务，并发 INSERT 只能落在整个 batch 之前或之后）——
+    // 保留翻译以防未来触发器覆盖面变化。
     if (error.message.includes('PAYMENT_EXCEEDS_REMAINING')) {
       throw new RpcDomainError('CONFLICT', '还款金额超过该账单剩余应还，请刷新后重试')
     }
@@ -217,18 +230,6 @@ export async function deletePayment(paymentId: string): Promise<{ ok: true }> {
   const { error } = await batch(statements)
   if (error) throw new Error(error.message)
   return { ok: true }
-}
-
-function isValidCalendarDate(value: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
-  if (!match) return false
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const utc = new Date(Date.UTC(year, month - 1, day))
-  return (
-    utc.getUTCFullYear() === year && utc.getUTCMonth() === month - 1 && utc.getUTCDate() === day
-  )
 }
 
 export async function getPaymentsByHolder(holderId: string): Promise<PaymentWithBill[]> {

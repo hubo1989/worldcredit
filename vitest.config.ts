@@ -13,6 +13,8 @@ const reactJsxPlugin = {
 }
 
 export default defineConfig({
+  // 双重断言是刻意的：vitest 打包的 vite 类型不含 rolldown-vite 的 oxc 字段，
+  // 直接 as Plugin 不通过（oxc 不在其类型里），只能经 unknown 中转——勿删。
   plugins: [reactJsxPlugin as unknown as ViteUserConfig['plugins'][number]],
   resolve: {
     alias: {

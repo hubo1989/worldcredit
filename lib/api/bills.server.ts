@@ -6,6 +6,7 @@ import {
   effectiveBillAmount,
   billEffectiveDueDate,
   nextBillingDateOf,
+  isValidCalendarDate,
 } from "../utils";
 import { format } from "date-fns";
 import { RpcDomainError } from "./errors";
@@ -956,18 +957,6 @@ export interface RecordPaymentResult {
   already_processed?: boolean;
 }
 
-function isValidCalendarDate(value: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return false;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const utc = new Date(Date.UTC(year, month - 1, day));
-  return (
-    utc.getUTCFullYear() === year && utc.getUTCMonth() === month - 1 && utc.getUTCDate() === day
-  );
-}
-
 /**
  * 离线同步与客户端优先还款。
  * 1. 客户端生成 id 与 idempotency_key，防重并支持多次重放。
@@ -1222,8 +1211,19 @@ export async function updateBillFields(billId: string, patch: BillFieldPatch): P
   assertOptionalDate(patch.statement_date, "账单日", { allowNull: true });
   assertOptionalDate(patch.statement_start, "账期开始日");
   assertOptionalDate(patch.statement_end, "账期结束日");
-  if (patch.statement_start && patch.statement_end && patch.statement_start > patch.statement_end) {
-    throw new RpcDomainError("VALIDATION_FAILED", "账期开始日不能晚于账期结束日");
+  // 单字段补丁也要与库内已存的另一端比对，否则只改开始日（或只改结束日）
+  // 可以绕过同批双字段校验，落库成「开始晚于结束」的倒挂账期。
+  if (patch.statement_start !== undefined || patch.statement_end !== undefined) {
+    const existing = await queryOne<{ statement_start: string | null; statement_end: string | null }>(
+      "SELECT statement_start, statement_end FROM bills WHERE id = ?",
+      [billId],
+    );
+    if (existing.error) throw new Error(existing.error.message);
+    const start = patch.statement_start ?? existing.data?.statement_start ?? null;
+    const end = patch.statement_end ?? existing.data?.statement_end ?? null;
+    if (start && end && start > end) {
+      throw new RpcDomainError("VALIDATION_FAILED", "账期开始日不能晚于账期结束日");
+    }
   }
 
   const statements: { sql: string; params: unknown[] }[] = [];
@@ -1266,6 +1266,11 @@ export async function updateBillFields(billId: string, patch: BillFieldPatch): P
 
   const { error } = await batch(statements);
   if (error) throw new Error(error.message);
+  // 金额/到期日变更会改变「已还 ≥ 生效金额」与逾期判定，服务端联动重算，
+  // 不依赖调用方自觉补调 updateBillStatusChecked（spec §6.3 编辑→重算闭环）。
+  if (patch.amount !== undefined || patch.due_date !== undefined) {
+    await updateBillStatusChecked(billId);
+  }
   const updated = await getBillById(billId);
   if (!updated) throw new RpcDomainError("NOT_FOUND", "账单不存在");
   return updated;
@@ -1352,7 +1357,8 @@ export async function updateBillStatusChecked(
     computed = "unpaid";
   }
 
-  // 显式入参只在「用户手动指定」时覆盖重算值；重算仍是安全底线（见上）。
+  // 显式入参完全覆盖重算值（仅校验枚举合法性，无进一步约束）；
+  // 无入参时落重算值——重算口径见上方注释。
   const finalStatus = status ?? computed;
   const { error: updErr } = await execute("UPDATE bills SET status = ? WHERE id = ?", [
     finalStatus,
