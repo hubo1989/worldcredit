@@ -955,7 +955,11 @@ struct BillsView: View {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(WCColors.border, lineWidth: 1)
         )
-        // 补回重构丢失的编辑入口：iOS 端唯一的固定支出编辑路径（PayableFormView(existing:)），
+        // 整卡可点进编辑（与 Web 端 PayableRow 整卡进编辑对齐）：固定支出没有
+        // 详情页，编辑表单就是它的详情视图。「登记还款」按钮用 .borderless
+        // 样式接收自己的点击，不会触发整卡手势；长按菜单保留作第二入口。
+        .onTapGesture { editingPayable = payable }
+        // 补回重构丢失的编辑入口：iOS 端的固定支出编辑路径（PayableFormView(existing:)），
         // 与 Web bills 页 onEditPayable 对齐；「编辑」不与登记还款按钮争抢点击区。
         .contextMenu {
             Button {
