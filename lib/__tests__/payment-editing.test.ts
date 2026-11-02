@@ -123,6 +123,18 @@ describe('payments.updatePayment / deletePayment (spec 13)', () => {
       expect(await billStatus('b1')).toBe('paid')
     })
 
+    it('多笔还款改备注或减少金额时按所有记录重算', async () => {
+      await seedBill('b1', { amount: 1000, due_date: '2026-10-25' })
+      await seedPayment('p1', 'b1', 400)
+      await seedPayment('p2', 'b1', 600)
+      await updatePayment('p1', { note: '备注' })
+      expect(await billStatus('b1')).toBe('paid')
+      await updatePayment('p1', { amount: 399.995 })
+      expect(await billStatus('b1')).toBe('paid')
+      await updatePayment('p1', { amount: 300 })
+      expect(await billStatus('b1')).toBe('partial')
+    })
+
     it('override 生效金额参与判定：bill_amount=1000 但 override=500，还 500 即 paid', async () => {
       await seedBill('b1', { amount: 1000, override: 500, due_date: '2026-10-25' })
       await seedPayment('p1', 'b1', 300)

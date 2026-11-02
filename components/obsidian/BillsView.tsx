@@ -315,10 +315,16 @@ function BillCard({
                 return (
                   <div
                     key={b.id}
-                    role='button'
-                    tabIndex={0}
+                    role={bPaid ? undefined : 'button'}
+                    tabIndex={bPaid ? undefined : 0}
                     onClick={e => { e.stopPropagation(); if (!bPaid) onOpenPayment(b) }}
-                    onKeyDown={e => { if (e.key === 'Enter' && !bPaid) onOpenPayment(b) }}
+                    onKeyDown={e => {
+                      if (e.target === e.currentTarget && !bPaid && (e.key === 'Enter' || e.key === ' ')) {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        onOpenPayment(b)
+                      }
+                    }}
                     className={
                       'flex cursor-pointer items-center justify-between rounded-lg bg-d-subtle p-2.5 text-left' +
                       (bPaid ? ' cursor-default' : '')

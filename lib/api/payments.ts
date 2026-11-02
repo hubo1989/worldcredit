@@ -137,14 +137,13 @@ export async function updatePayment(paymentId: string, patch: UpdatePaymentPatch
   // updateBillFields 又允许把金额改到低于已还总额）下，只改备注/渠道/还款日期
   // 甚至原额保存都不应被 CONFLICT 拒绝。
   const effectiveAmount = effectiveBillAmount(bill)
-  let otherPaid = 0
+  const { data: totalRow, error: totalErr } = await query<{ total: number | null }>(
+    'SELECT SUM(amount) AS total FROM payments WHERE bill_id = ?',
+    [payment.bill_id]
+  )
+  if (totalErr) throw new Error(totalErr.message)
+  const otherPaid = Number(totalRow?.[0]?.total ?? 0) - payment.amount
   if (nextAmount > payment.amount) {
-    const { data: totalRow, error: totalErr } = await query<{ total: number | null }>(
-      'SELECT SUM(amount) AS total FROM payments WHERE bill_id = ?',
-      [payment.bill_id]
-    )
-    if (totalErr) throw new Error(totalErr.message)
-    otherPaid = Number(totalRow?.[0]?.total ?? 0) - payment.amount
     if (otherPaid + nextAmount > effectiveAmount + 0.01) {
       // 本笔可改上限与判定条件同容差（生效金额 + 0.01 − 其他还款合计）
       const maxForThisPayment = Math.max(0, effectiveAmount + 0.01 - otherPaid)

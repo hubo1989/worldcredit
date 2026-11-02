@@ -23,7 +23,9 @@ export function BillDraftsPanel({ onChanged }: { onChanged?: () => void }) {
 
   const reload = useCallback(async () => {
     try {
-      setDrafts(await getBillImportDrafts());
+      const nextDrafts = await getBillImportDrafts();
+      setDrafts(nextDrafts);
+      setEditingId((id) => id && !nextDrafts.some((draft) => draft.id === id) ? null : id);
     } catch {
       // 取不到草稿不阻塞账单页
       setDrafts([]);

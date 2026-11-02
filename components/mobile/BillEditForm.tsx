@@ -82,14 +82,10 @@ interface BillEditFormProps {
 function toValues(bill: Bill): EditableFieldValues {
   // 编辑值优先读 override 列：改过的值要能回显，否则再次保存会被导入值覆盖
   //（bill_amount 例外：服务端投影只归一化了它）。
+  const minPayment = bill.min_payment_override ?? bill.min_payment
   return {
     amount: bill.bill_amount != null ? String(bill.bill_amount) : '',
-    min_payment:
-      bill.min_payment_override != null
-        ? String(bill.min_payment_override)
-        : bill.min_payment != null
-          ? String(bill.min_payment)
-          : '',
+    min_payment: minPayment != null ? String(minPayment) : '',
     statement_date: bill.statement_date_override ?? bill.statement_date ?? '',
     due_date: bill.due_date_override ?? bill.due_date ?? '',
     statement_start: bill.statement_start ?? '',

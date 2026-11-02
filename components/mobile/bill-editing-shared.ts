@@ -1,20 +1,10 @@
 // 账单编辑共享纯函数：校验、预览计算。被 BillEditForm / BillPaymentsManage
 // 与组件测试共用，保证「金额低于已还警告」「状态预览」口径单点一致。
 
-export type BillStatus = 'unpaid' | 'partial' | 'paid' | 'overdue'
+import { isValidCalendarDate } from '@/lib/utils'
 
-/** 真实日历日校验：格式对但日子不存在（2026-02-30）必须当场拦下。 */
-export function isValidCalendarDate(value: string): boolean {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
-  if (!m) return false
-  const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])]
-  const utc = new Date(Date.UTC(year, month - 1, day))
-  return (
-    utc.getUTCFullYear() === year &&
-    utc.getUTCMonth() === month - 1 &&
-    utc.getUTCDate() === day
-  )
-}
+export { isValidCalendarDate }
+export type BillStatus = 'unpaid' | 'partial' | 'paid' | 'overdue'
 
 /** YYYY-MM 账月格式（与 bills 表 UNIQUE(card_id, bill_month) 口径一致）。 */
 export function isValidBillMonth(value: string): boolean {
