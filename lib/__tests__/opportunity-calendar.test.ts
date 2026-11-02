@@ -4,7 +4,7 @@
 // as review items, dismiss/snooze/restore persistence with revision CAS, and
 // snooze-past-deadline refusal at the service boundary.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createOpportunityDb, type SqliteD1 } from './helpers/sqlite-d1'
 import { seedOpportunityFixtures, FIXTURE_IDS } from './helpers/opportunity-fixtures'
 import { setDb } from '../db/client'
@@ -82,12 +82,15 @@ async function seedWorld(ruleSet: RuleSnapshotV1, verification: 'unverified' | '
 }
 
 beforeEach(async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-10-15T08:00:00Z'))
   db = createOpportunityDb()
   await seedOpportunityFixtures(db)
   setDb(db as unknown as D1Database)
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   setDb(null)
   db.close()
 })

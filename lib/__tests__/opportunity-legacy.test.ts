@@ -12,7 +12,7 @@
 //   backfill     — script dry-run classifies, --apply writes exactly once,
 //                   re-run is a no-op
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createOpportunityDb, wrapLegacyCatalog, type SqliteD1 } from './helpers/sqlite-d1'
 import { seedOpportunityFixtures, FIXTURE_IDS } from './helpers/opportunity-fixtures'
 import { setDb } from '../db/client'
@@ -47,13 +47,16 @@ const actorAdminB: OpportunityActor = { user_id: f.users.adminB, role: 'admin' }
 const actorMemberA: OpportunityActor = { user_id: f.users.memberA, role: 'member' }
 
 beforeEach(async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-10-15T08:00:00Z'))
   db = createOpportunityDb()
   await seedOpportunityFixtures(db)
-  wrapLegacyCatalog(db)
+  wrapLegacyCatalog(db, NOW)
   setDb(db as unknown as D1Database)
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   setDb(null)
   db.close()
 })
@@ -96,22 +99,22 @@ describe('0015 legacy catalog wrap', () => {
       .get(f.promos.live) as { effective_from: string }
     expect(promoVersion.effective_from).toBe('2026-10-01')
 
-    const migrationDate = db.raw.prepare(`SELECT date('now') AS d`).get() as { d: string }
     const benefitVersion = db.raw
       .prepare(
         `SELECT effective_from FROM opportunity_rule_versions
          WHERE definition_id = (SELECT id FROM opportunity_definitions WHERE legacy_benefit_id = ?)`,
       )
       .get(f.benefits.cmbLifeMovie) as { effective_from: string }
-    expect(benefitVersion.effective_from).toBe(migrationDate.d)
+    // wrapLegacyCatalog 以冻结日作迁移日（strftime('now') 被钉到 NOW）
+    expect(benefitVersion.effective_from).toBe('2026-10-15')
   })
 
   it('重复执行不增加任何行', () => {
     const countDefs = () =>
       (db.raw.prepare('SELECT COUNT(*) AS n FROM opportunity_definitions').get() as { n: number }).n
     const before = countDefs()
-    wrapLegacyCatalog(db)
-    wrapLegacyCatalog(db)
+    wrapLegacyCatalog(db, NOW)
+    wrapLegacyCatalog(db, NOW)
     expect(countDefs()).toBe(before)
   })
 })
@@ -443,7 +446,8 @@ describe('getAllMyBenefits compat additions', () => {
   it('accounts 字段按 scope 过滤；已归属旧行不双算', async () => {
     // 未复核的 0015 包装规则 effective_from=迁移日：早于该日的旧行按规范不可
     // 回填（不编造过去资格），因此本例用迁移日当天及之后的日期。
-    const today = (db.raw.prepare(`SELECT date('now') AS d`).get() as { d: string }).d
+    // wrapLegacyCatalog 已把迁移日钉到 NOW（2026-10-15），与此处一致。
+    const today = '2026-10-15'
     db.raw
       .prepare('INSERT INTO benefit_usages (id, benefit_id, used_at, note) VALUES (?,?,?,?)')
       .run('bu-count', f.benefits.cmbLifeMovie, today, 'x')
