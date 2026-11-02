@@ -363,10 +363,11 @@ export function calculateCardGracePeriod(
     billingDay,
     new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(),
   );
-  // 账单日当天（含）的交易归下一期：当天已出账，今天的消费进下一期账单。
-  // 用 >= 而不是 >：今天 == 账单日时 purchaseMonth 必须推到下月，否则
-  // 「今日刷卡免息期」会少算整整一个账期（约 30 天）。
-  if (d.getDate() >= effectiveBillingDay) {
+  // 账单日次日起的交易归下一期：账单日当天刷卡当天出账（多数国内行
+  // 口径），当天交易进当期账单、免息最短；账单日后一天刷卡才是最长
+  // 免息的第一天（今天 == 账单日 → purchaseMonth 留在本月，当期出账
+  // 最早、免息天数最小；今天 == 账单日+1 → 归下一期，免息期最长）。
+  if (d.getDate() > effectiveBillingDay) {
     purchaseMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
   }
   const nextBillingDate = new Date(
