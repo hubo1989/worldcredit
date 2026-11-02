@@ -22,6 +22,9 @@ export interface PayableRowProps {
 /**
  * 单条固定支出卡。从 PayableList 拆出：账单页现在把固定支出混进主列表统一排序。
  *
+ * 整卡可点进编辑（与 BillCard 整卡进详情同交互模型）：固定支出没有单独的
+ * 详情页，「编辑表单」就是它的详情视图。内层动作（复制账号/登记付款）阻止冒泡。
+ *
  * 状态徽章与信用卡卡片同构（右上角、soft 底 + ink 文字）：
  *   已逾期(danger) / 待还款·今天应付(warn) / 待出账(success)。
  * 滚动模型（服务端 resolveDisplayPeriod）保证任一时刻卡片只呈现一期：
@@ -61,7 +64,14 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
       : 'text-d-gold'
 
   return (
-    <div className='rounded-2xl border border-d-border bg-d-surface p-4'>
+    <div
+      role='button'
+      tabIndex={0}
+      aria-label={`编辑固定支出 ${p.name}`}
+      onClick={() => onEdit(p)}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEdit(p) } }}
+      className='cursor-pointer rounded-2xl border border-d-border bg-d-surface p-4 transition-colors active:bg-d-subtle/60'
+    >
       <div className='flex items-start justify-between gap-2'>
         <div className='min-w-0 flex-1'>
           <div className='flex min-w-0 items-baseline gap-1.5'>
@@ -78,7 +88,7 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
           {p.bank_account && (
             <button
               type='button'
-              onClick={() => { void navigator.clipboard?.writeText(p.bank_account!) }}
+              onClick={e => { e.stopPropagation(); void navigator.clipboard?.writeText(p.bank_account!) }}
               title='点击复制账号'
               className='mt-0.5 block max-w-full truncate text-left text-[11px] leading-4 text-d-muted underline underline-offset-2'
             >
@@ -90,7 +100,7 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
           <button
             type='button'
             aria-label='编辑固定支出'
-            onClick={() => onEdit(p)}
+            onClick={e => { e.stopPropagation(); onEdit(p) }}
             className='text-[11px] font-semibold text-d-muted'
           >
             编辑
@@ -126,7 +136,7 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
         ) : (
           <button
             type='button'
-            onClick={() => onPay(p)}
+            onClick={e => { e.stopPropagation(); onPay(p) }}
             className='h-11 shrink-0 whitespace-nowrap rounded-xl bg-d-accent px-4 text-xs font-semibold text-white'
           >
             登记付款
