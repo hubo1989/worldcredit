@@ -5,7 +5,7 @@ import { Modal } from '@/components/obsidian/overlays'
 import { Button } from '@/components/obsidian/controls'
 import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
-import { createRecurringPayable, updateRecurringPayable, PAYABLE_CATEGORIES, type PayableCategory, type PayableWithStatus } from '@/lib/api/payables'
+import { createRecurringPayable, updateRecurringPayable, PAYABLE_CATEGORIES, PAYABLE_CURRENCIES, PAYABLE_CURRENCY_LABELS, type PayableCategory, type PayableWithStatus } from '@/lib/api/payables'
 import { getHolders } from '@/lib/api/holders'
 import type { CardHolder } from '@/lib/types'
 import { useAuth } from '@/lib/auth'
@@ -141,12 +141,12 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
               inputMode='decimal' min={0} step='0.01'
             />
           </div>
-          <div className='w-28 shrink-0'>
+          <div className='w-32 shrink-0'>
             <SelectField
               label="币种"
               value={currency}
               onChange={e => setCurrency(e.target.value)}
-              options={['CNY', 'USD', 'HKD'].map(c => ({ value: c, label: c }))}
+              options={PAYABLE_CURRENCIES.map(c => ({ value: c, label: PAYABLE_CURRENCY_LABELS[c] }))}
             />
           </div>
         </div>

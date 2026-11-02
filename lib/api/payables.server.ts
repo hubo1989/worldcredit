@@ -5,7 +5,7 @@
 
 import { query, queryOne, execute, uuid, now } from '../db'
 import { payablePeriodOf, payableDueDate, nextPayablePeriodOf, diffInCalendarDays } from '../utils'
-import type { PayableCategory } from './payables.shared'
+import { isPayableCurrency, type PayableCategory } from './payables.shared'
 
 export type { PayableCategory } from './payables.shared'
 
@@ -146,6 +146,7 @@ export async function createRecurringPayable(
   if (!Number.isInteger(input.due_day) || input.due_day < 1 || input.due_day > 31) {
     throw new Error('每月应付日必须在 1–31 之间')
   }
+  if (!isPayableCurrency(input.currency)) throw new Error('币种必须是 CNY / USD / HKD 之一')
   const id = uuid()
   const { error } = await execute(
     `INSERT INTO recurring_payables (id, created_by, name, category, amount, currency, due_day, holder_id, note, bank_account, is_active, created_at)
@@ -164,6 +165,9 @@ export async function updateRecurringPayable(
   id: string,
   patch: Partial<RecurringPayableInput> & { is_active?: number }
 ): Promise<PayableWithStatus> {
+  if (patch.currency !== undefined && !isPayableCurrency(patch.currency)) {
+    throw new Error('币种必须是 CNY / USD / HKD 之一')
+  }
   const fields: string[] = []
   const params: unknown[] = []
   for (const key of ['name', 'category', 'amount', 'currency', 'due_day', 'holder_id', 'note', 'bank_account', 'is_active'] as const) {

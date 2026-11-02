@@ -21,3 +21,22 @@ export function categoryLabel(category: PayableCategory): string {
 export const PAYABLE_CATEGORIES: { value: PayableCategory; label: string }[] = (
   Object.keys(CATEGORY_LABELS) as PayableCategory[]
 ).map(value => ({ value, label: CATEGORY_LABELS[value] }))
+
+/**
+ * 固定支出的封闭币种集（2026-11-02 规则）：与生产库实际持有的卡币种一致
+ * （CNY / USD / HKD），界面用下拉枚举、服务端白名单校验，不再接受自由文本。
+ * 代码沿用 ISO-4217 三字码（fx/折算层按代码取汇率与符号），中文名只做展示。
+ */
+export const PAYABLE_CURRENCIES = ['CNY', 'USD', 'HKD'] as const
+
+export type PayableCurrency = (typeof PAYABLE_CURRENCIES)[number]
+
+export const PAYABLE_CURRENCY_LABELS: Record<PayableCurrency, string> = {
+  CNY: '人民币 CNY',
+  USD: '美元 USD',
+  HKD: '港币 HKD',
+}
+
+export function isPayableCurrency(value: unknown): value is PayableCurrency {
+  return typeof value === 'string' && (PAYABLE_CURRENCIES as readonly string[]).includes(value)
+}

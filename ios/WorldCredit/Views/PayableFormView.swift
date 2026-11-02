@@ -32,9 +32,12 @@ struct PayableFormView: View {
                     }
                     TextField("金额", text: $amountText)
                         .keyboardType(.decimalPad)
-                    TextField("币种（如 CNY / USD / HKD）", text: $currency)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.characters)
+                    // 币种是封闭枚举（生产库只有 CNY/USD/HKD 三种卡），不再自由输入
+                    Picker("币种", selection: $currency) {
+                        Text("人民币 CNY").tag("CNY")
+                        Text("美元 USD").tag("USD")
+                        Text("港币 HKD").tag("HKD")
+                    }
                     // 点击行弹出滚轮选择（替代 Stepper 加减：从 1 按到 31 不现实）
                     Button {
                         showingDueDayPicker = true
