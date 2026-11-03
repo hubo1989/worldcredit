@@ -1018,31 +1018,37 @@ struct BillsView: View {
         .accessibilityIdentifier("bills.payable.row.\(payable.id)")
     }
 
-    /// 固定支出历史还款：默认收起，展开才拉取；数据来自 AppState 缓存。
+    /// 固定支出历史还款：按钮常驻，展开才拉取；数据来自 AppState 缓存。
     @ViewBuilder
     private func payableHistorySection(_ payable: PayableItem) -> some View {
-        let records = appState.payablePayments[payable.id] ?? []
+        let records = appState.payablePayments[payable.id]
         let expanded = appState.expandedPayableIds.contains(payable.id)
-        if !records.isEmpty || expanded {
-            Divider().background(WCColors.border)
-            Button {
-                Task { await appState.togglePayableHistory(payable.id) }
-            } label: {
-                HStack {
-                    Text(records.isEmpty ? "历史还款" : "历史还款 \(records.count) 笔")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(WCColors.textSecondary)
-                    Spacer()
-                    Text(expanded ? "收起" : "展开")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(WCColors.primaryAccent)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("bills.payable.history.\(payable.id)")
+        let failed = appState.payableHistoryErrors.contains(payable.id)
 
-            if expanded {
+        Divider().background(WCColors.border)
+        Button {
+            Task { await appState.togglePayableHistory(payable.id) }
+        } label: {
+            HStack {
+                Text(records.map { "历史还款 \($0.count) 笔" } ?? "历史还款")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(WCColors.textSecondary)
+                Spacer()
+                Text(expanded ? "收起" : "展开")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(WCColors.primaryAccent)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("bills.payable.history.\(payable.id)")
+
+        if expanded {
+            if failed {
+                Text("历史还款加载失败，请再次展开重试")
+                    .font(.caption2)
+                    .foregroundStyle(WCColors.dangerInk)
+            } else if let records {
                 if records.isEmpty {
                     Text("还没有历史还款记录")
                         .font(.caption2)
@@ -1071,6 +1077,10 @@ struct BillsView: View {
                         }
                     }
                 }
+            } else {
+                Text("加载中…")
+                    .font(.caption2)
+                    .foregroundStyle(WCColors.textSecondary)
             }
         }
     }

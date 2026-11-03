@@ -15,8 +15,10 @@ export interface PayableRowProps {
   payable: PayableWithStatus
   /** 归属持卡人姓名；未指定归属时不显示 */
   holderName?: string
-  /** 历史还款记录（按账期倒序）；未加载时不显示 */
+  /** 历史还款记录（按账期倒序）；undefined = 尚未加载 */
   payments?: PayablePaymentRecord[]
+  /** 历史加载失败提示；为空表示无错误 */
+  historyError?: string
   /** 是否展开历史还款 */
   historyOpen?: boolean
   onToggleHistory?: () => void
@@ -39,6 +41,7 @@ export function PayableRow({
   payable: p,
   holderName,
   payments,
+  historyError,
   historyOpen = false,
   onToggleHistory,
   onEdit,
@@ -180,35 +183,44 @@ export function PayableRow({
         {detail}
       </div>
 
-      {(payments?.length ?? 0) > 0 && (
+      {onToggleHistory && (
         <div className='mt-2.5 border-t border-d-border pt-2'>
           <button
             type='button'
-            onClick={e => { e.stopPropagation(); onToggleHistory?.() }}
+            aria-expanded={historyOpen}
+            onClick={e => { e.stopPropagation(); onToggleHistory() }}
             className='flex w-full items-center justify-between text-[11px] font-semibold text-d-muted'
           >
-            <span>历史还款 {payments!.length} 笔</span>
+            <span>历史还款{payments && payments.length > 0 ? ` ${payments.length} 笔` : ''}</span>
             <span className='text-d-accent-light'>{historyOpen ? '收起' : '展开'}</span>
           </button>
           {historyOpen && (
-            <ul className='mt-1.5 flex flex-col gap-1'>
-              {payments!.map(record => (
-                <li
-                  key={record.id}
-                  className='flex items-baseline justify-between gap-2 rounded-md bg-d-subtle px-2 py-1'
-                >
-                  <span className='shrink-0 text-[11px] text-d-muted'>{record.period}</span>
-                  <span className='min-w-0 flex-1 truncate text-[11px] text-d-text'>
-                    {record.paid_at.slice(5)}
-                    {record.note ? ' · ' + record.note : ''}
-                  </span>
-                  <span className='shrink-0 text-[11px] font-semibold text-d-text'>
-                    {currencySymbol(p.currency)}
-                    {Number(record.amount).toLocaleString()}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            historyError ? (
+              <p className='mt-1.5 text-[11px] text-d-danger-ink'>{historyError}</p>
+            ) : payments === undefined ? (
+              <p className='mt-1.5 text-[11px] text-d-muted'>加载中…</p>
+            ) : payments.length === 0 ? (
+              <p className='mt-1.5 text-[11px] text-d-muted'>还没有历史还款记录</p>
+            ) : (
+              <ul className='mt-1.5 flex flex-col gap-1'>
+                {payments.map(record => (
+                  <li
+                    key={record.id}
+                    className='flex items-baseline justify-between gap-2 rounded-md bg-d-subtle px-2 py-1'
+                  >
+                    <span className='shrink-0 text-[11px] text-d-muted'>{record.period}</span>
+                    <span className='min-w-0 flex-1 truncate text-[11px] text-d-text'>
+                      {record.paid_at.slice(5)}
+                      {record.note ? ' · ' + record.note : ''}
+                    </span>
+                    <span className='shrink-0 text-[11px] font-semibold text-d-text'>
+                      {currencySymbol(p.currency)}
+                      {Number(record.amount).toLocaleString()}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )
           )}
         </div>
       )}

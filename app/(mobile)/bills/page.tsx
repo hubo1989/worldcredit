@@ -96,6 +96,7 @@ export default function BillsPage() {
   // 固定支出历史还款：按需加载，展开一次后缓存
   const [payablePayments, setPayablePayments] = useState<Record<string, PayablePaymentRecord[]>>({})
   const [expandedPayableIds, setExpandedPayableIds] = useState<Set<string>>(new Set())
+  const [payableHistoryErrors, setPayableHistoryErrors] = useState<Record<string, string>>({})
   const [editingPayable, setEditingPayable] = useState<PayableWithStatus | null>(null)
 
   const [celebrationNotice, setCelebrationNotice] = useState<{ open: boolean; message: string }>({
@@ -420,6 +421,13 @@ export default function BillsPage() {
   const handlePayPayable = async (payable: PayableWithStatus) => {
     try {
       await payRecurringPayable(payable.id, payable.amount)
+      // 新还款落库：清掉该笔历史缓存，展开时重新拉取
+      setPayablePayments(prev => {
+        if (!(payable.id in prev)) return prev
+        const next = { ...prev }
+        delete next[payable.id]
+        return next
+      })
       setCelebrationNotice({
         open: true,
         message: `🎉 已登记「${payable.name}」本期付款 ${currencySymbol(payable.currency)}${payable.amount.toLocaleString()}`,
@@ -444,9 +452,18 @@ export default function BillsPage() {
       try {
         const records = await getPayablePayments(payableId)
         setPayablePayments(prev => ({ ...prev, [payableId]: records }))
-      } catch {
-        // 拉取失败不阻断卡片：保留空历史，用户可再次展开重试
-        setPayablePayments(prev => ({ ...prev, [payableId]: [] }))
+        setPayableHistoryErrors(prev => {
+          if (!prev[payableId]) return prev
+          const next = { ...prev }
+          delete next[payableId]
+          return next
+        })
+      } catch (err) {
+        // 保持未加载状态：再次展开会重试；错误就地展示
+        setPayableHistoryErrors(prev => ({
+          ...prev,
+          [payableId]: err instanceof Error ? err.message : '历史还款加载失败',
+        }))
       }
     },
     [expandedPayableIds, payablePayments]
@@ -533,6 +550,7 @@ export default function BillsPage() {
         onEmptySync={handleSync}
         payables={filteredPayables}
         payablePayments={payablePayments}
+        payableHistoryErrors={payableHistoryErrors}
         expandedPayableIds={expandedPayableIds}
         onTogglePayableHistory={handleTogglePayableHistory}
         onEditPayable={p => { setEditingPayable(p); setPayableFormOpen(true) }}

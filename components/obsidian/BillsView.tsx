@@ -95,6 +95,7 @@ export interface BillsViewProps {
   payables: PayableWithStatus[]
   /** 各固定支出的历史还款记录，key = payable id */
   payablePayments: Record<string, PayablePaymentRecord[]>
+  payableHistoryErrors: Record<string, string>
   /** 已展开历史的 payable id */
   expandedPayableIds: Set<string>
   onTogglePayableHistory: (id: string) => void
@@ -393,7 +394,7 @@ export function BillsView(vm: BillsViewProps) {
     selectedTag, onSelectedTag, holderTags, bankTags,
     loading, loadError, onRetry, onEmptySync, payables, cards, allCards, holderMap,
     bankGroups, onOpenPayment, onManualAmount, onAddBill, sortMode, onSortMode,
-    payablePayments, expandedPayableIds, onTogglePayableHistory,
+    payablePayments, payableHistoryErrors, expandedPayableIds, onTogglePayableHistory,
     onEditPayable, onPayPayable,
   } = vm
 
@@ -453,6 +454,7 @@ export function BillsView(vm: BillsViewProps) {
             payable={p}
             holderName={p.holder_id ? holderMap[p.holder_id] : undefined}
             payments={payablePayments[p.id]}
+            historyError={payableHistoryErrors[p.id]}
             historyOpen={expandedPayableIds.has(p.id)}
             onToggleHistory={() => onTogglePayableHistory(p.id)}
             onEdit={onEditPayable}

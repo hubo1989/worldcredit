@@ -299,7 +299,7 @@ function makeBillsViewFixture(): { props: BillsViewProps; unpaid: BillDashboardI
       holderTags: [], bankTags: [],
       loading: false, loadError: null, onRetry: vi.fn(), onEmptySync: vi.fn(),
       payables: [], onEditPayable: vi.fn(), onPayPayable: vi.fn(),
-      payablePayments: {}, expandedPayableIds: new Set<string>(),
+      payablePayments: {}, payableHistoryErrors: {}, expandedPayableIds: new Set<string>(),
       onTogglePayableHistory: vi.fn(), cards: [item],
       allCards: [item], holderMap: {}, bankGroups: [], onOpenPayment: vi.fn(),
       onManualAmount: vi.fn(), onAddBill: vi.fn(),
