@@ -788,11 +788,9 @@ public final class AppState {
         payableHistoryRevision[item.id] = (payableHistoryRevision[item.id] ?? 0) + 1
         payablePayments[item.id] = nil
         payableHistoryErrors.remove(item.id)
-        // 历史重取与列表刷新互不依赖，并发执行减少一次往返等待
-        async let history: Void = expandedPayableIds.contains(item.id)
-            ? loadPayableHistory(item.id) : ()
-        async let refreshed: Void = refreshPayables()
-        _ = await (history, refreshed)
+        // 只刷新列表：refreshPayables 会清空历史缓存并标记 stale，
+        // 预取的结果必然被作废，交给视图按需重取
+        await refreshPayables()
     }
 
     public func savePayable(_ draft: PayableDraft, existing: PayableItem?) async throws {
@@ -852,9 +850,11 @@ public final class AppState {
             // 视图取消（收起/离屏）：不是失败，保持待重取状态
             guard payableHistoryRevision[payableId] == revision else { return }
             payablePayments[payableId] = nil
+            payableHistoryStale.insert(payableId)
         } catch let urlError as URLError where urlError.code == .cancelled {
             guard payableHistoryRevision[payableId] == revision else { return }
             payablePayments[payableId] = nil
+            payableHistoryStale.insert(payableId)
         } catch {
             guard payableHistoryRevision[payableId] == revision else { return }
             // 保持「未加载」以便下次展开重试，并记录错误供 UI 展示；

@@ -1021,7 +1021,9 @@ struct BillsView: View {
     /// 与服务端 PAYABLE_HISTORY_LIMIT 对齐：达到上限时改称「最近 N 笔」。
     private func payableHistoryLabel(_ records: [PayablePaymentRecord]?) -> String {
         guard let records, !records.isEmpty else { return "历史还款" }
-        if records.count >= 60 { return "最近 60 笔还款" }
+        if records.count >= PayablePaymentHistory.limit {
+            return "最近 \(PayablePaymentHistory.limit) 笔还款"
+        }
         return "历史还款 \(records.count) 笔"
     }
 

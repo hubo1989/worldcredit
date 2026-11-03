@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { format } from 'date-fns'
 import {
   categoryLabel,
   PAYABLE_HISTORY_LIMIT,
@@ -67,7 +68,7 @@ function renderPayableHistory(
         >
           <span className='shrink-0 text-[11px] text-d-muted'>{record.period}</span>
           <span className='min-w-0 flex-1 truncate text-[11px] text-d-text'>
-            {record.paid_at.slice(5)}
+            {format(new Date(record.paid_at), 'MM-dd')}
             {record.note ? ' · ' + record.note : ''}
           </span>
           <span className='shrink-0 text-[11px] font-semibold text-d-text'>

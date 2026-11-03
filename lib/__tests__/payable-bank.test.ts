@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createOpportunityDb, type SqliteD1 } from './helpers/sqlite-d1'
 import { setDb } from '../db/client'
+import currencyFixtures from '../../shared/fixtures/payable-currencies.json'
+import { PAYABLE_HISTORY_LIMIT } from '../api/payables.shared'
 import { RpcDomainError } from '../api/errors'
 import {
   createRecurringPayable,
@@ -113,5 +115,11 @@ describe('recurring payable payment history', () => {
       code: 'VALIDATION_FAILED',
     })
     db.close()
+  })
+})
+
+describe('shared fixture: payable payment history limit', () => {
+  it('TS 常量与 shared fixture 一致', () => {
+    expect(PAYABLE_HISTORY_LIMIT).toBe(currencyFixtures.payment_history_limit)
   })
 })

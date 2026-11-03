@@ -190,6 +190,11 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// 历史还款返回上限：与 TS 侧 `PAYABLE_HISTORY_LIMIT` 对齐，集中在此处取值。
+public enum PayablePaymentHistory {
+    public static let limit = 60
+}
+
 /// 固定支出的一笔历史还款（/api/rpc/payables/getPayablePayments）。
 public struct PayablePaymentRecord: Codable, Sendable, Identifiable, Hashable {
     public let id: String

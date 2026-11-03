@@ -75,7 +75,8 @@ function tagSummary(
 
 /** 不可变地从 Record 中删除一个 key（无该 key 时返回原对象）。 */
 function omitRecordKey<T>(record: Record<string, T>, key: string): Record<string, T> {
-  if (!(key in record)) return record
+  // 只判断自有属性：`in` 会沿原型链命中 toString/constructor 等
+  if (!Object.prototype.hasOwnProperty.call(record, key)) return record
   const next = { ...record }
   delete next[key]
   return next
@@ -174,15 +175,18 @@ export default function BillsPage() {
           [payableId]: err instanceof Error ? err.message : '历史还款加载失败',
         }))
       } finally {
-        // 只清理自己这条：被新任务顶替时不能误删
-        if (payableHistoryInFlight.current.get(payableId) === current) {
+        // 只清理自己这条：被新任务顶替或代次已变时不能误删（否则新请求期间不显示加载中）
+        if (
+          payableHistoryInFlight.current.get(payableId) === current &&
+          payableHistoryGeneration.current === generation
+        ) {
           payableHistoryInFlight.current.delete(payableId)
+          setPayableHistoryLoading(prev => {
+            const next = new Set(prev)
+            next.delete(payableId)
+            return next
+          })
         }
-        setPayableHistoryLoading(prev => {
-          const next = new Set(prev)
-          next.delete(payableId)
-          return next
-        })
       }
     })().finally(() => settle())
     payableHistoryInFlight.current.set(payableId, current)
@@ -493,11 +497,7 @@ export default function BillsPage() {
       const running = payableHistoryInFlight.current.get(payable.id)
       if (running) await running
       setPayablePayments(prev => omitRecordKey(prev, payable.id))
-      // 展开中则立即重取，否则收起态下次展开会拉取
-      if (expandedPayableIdsRef.current.has(payable.id)) {
-        await loadPayableHistory(payable.id)
-      }
-      // 等待期间用户可能收起/展开，重取前重新读取展开状态
+      // 不在此处重取：紧随其后的 loadData 会统一清缓存并重拉展开行
       setCelebrationNotice({
         open: true,
         message: `🎉 已登记「${payable.name}」本期付款 ${currencySymbol(payable.currency)}${payable.amount.toLocaleString()}`,
