@@ -52,7 +52,8 @@ function renderPayableHistory(
     return <p className='mt-1.5 text-[11px] text-d-danger-ink'>{historyError}</p>
   }
   if (payments === undefined) {
-    return <p className='mt-1.5 text-[11px] text-d-muted'>加载中…</p>
+    // 无在途请求却仍为 undefined：说明缓存被清空但未重取，提示可再次展开
+    return <p className='mt-1.5 text-[11px] text-d-muted'>展开以加载历史</p>
   }
   if (payments.length === 0) {
     return <p className='mt-1.5 text-[11px] text-d-muted'>还没有历史还款记录</p>

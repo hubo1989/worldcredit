@@ -1062,13 +1062,15 @@ struct BillsView: View {
                 }
                 .buttonStyle(.plain)
             } else if appState.isPayableHistoryStale(payable.id) {
-                // 刷新后缓存已清空但行仍展开：立即重取
-                Text("加载中…")
-                    .font(.caption2)
-                    .foregroundStyle(WCColors.textSecondary)
-                    .task(id: payable.id) {
-                        await appState.retryPayableHistory(payable.id)
-                    }
+                // 刷新后缓存已清空但行仍展开：手动触发重取，避免 .task(id:) 不重触发的死锁
+                Button {
+                    Task { await appState.retryPayableHistory(payable.id) }
+                } label: {
+                    Text("点击加载最新历史")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(WCColors.primaryAccent)
+                }
+                .buttonStyle(.plain)
             } else if records == nil {
                 Text("加载中…")
                     .font(.caption2)

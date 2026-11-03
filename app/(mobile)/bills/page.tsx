@@ -148,27 +148,33 @@ export default function BillsPage() {
   // 同一笔的在途请求：并发点击或还款后重取都复用同一个 Promise，避免重复 RPC
   const payableHistoryInFlight = useRef<Map<string, Promise<void>>>(new Map())
 
+  // 缓存代次：全量刷新或还款后递增，旧代次发起的请求不再写回
+  const payableHistoryGeneration = useRef(0)
+
   /** 拉取并写入历史缓存；同一 payableId 复用进行中的请求。 */
   const loadPayableHistory = useCallback((payableId: string) => {
     const running = payableHistoryInFlight.current.get(payableId)
     if (running) return running
+    const generation = payableHistoryGeneration.current
     setPayableHistoryLoading(prev => new Set(prev).add(payableId))
     let settle!: () => void
     const current = new Promise<void>(resolve => { settle = resolve })
     void (async () => {
       try {
         const records = await getPayablePayments(payableId)
+        // 代次已变（刷新/还款期间发起）：结果作废，不写回旧数据
+        if (payableHistoryGeneration.current !== generation) return
         setPayablePayments(prev => ({ ...prev, [payableId]: records }))
         setPayableHistoryErrors(prev => omitRecordKey(prev, payableId))
       } catch (err) {
+        if (payableHistoryGeneration.current !== generation) return
         // 保持未加载状态：再次展开会重试；错误就地展示
         setPayableHistoryErrors(prev => ({
           ...prev,
           [payableId]: err instanceof Error ? err.message : '历史还款加载失败',
         }))
       } finally {
-        // 只清理自己这条：若期间已被 loadData 清空并重新发起，不能误删新任务
-        // 用 token 而非 task 引用比对（task 在 IIFE 内部尚未赋值）
+        // 只清理自己这条：被新任务顶替时不能误删
         if (payableHistoryInFlight.current.get(payableId) === current) {
           payableHistoryInFlight.current.delete(payableId)
         }
@@ -193,8 +199,8 @@ export default function BillsPage() {
         getHolders(user.id),
       ])
       setCardsSummary(summaryData)
-      // 全量刷新：历史缓存可能过期。先丢弃在途请求（否则其成功回调会把刷新前的旧数据写回），
-      // 再清空缓存并对仍展开的行重拉，避免停在「加载中」
+      // 全量刷新：递增代次作废在途响应，清空缓存，并对仍展开的行重拉
+      payableHistoryGeneration.current += 1
       payableHistoryInFlight.current.clear()
       setPayablePayments({})
       setPayableHistoryErrors({})
@@ -482,9 +488,15 @@ export default function BillsPage() {
       await payRecurringPayable(payable.id, payable.amount)
       // 新还款落库：先等在途旧请求落定（否则它的成功回调会把不含新还款的记录写回），
       // 再清缓存并重取
+      // 递增代次：作废还款前发起的请求；随后清缓存
+      payableHistoryGeneration.current += 1
       const running = payableHistoryInFlight.current.get(payable.id)
       if (running) await running
       setPayablePayments(prev => omitRecordKey(prev, payable.id))
+      // 展开中则立即重取，否则收起态下次展开会拉取
+      if (expandedPayableIdsRef.current.has(payable.id)) {
+        await loadPayableHistory(payable.id)
+      }
       // 等待期间用户可能收起/展开，重取前重新读取展开状态
       setCelebrationNotice({
         open: true,
