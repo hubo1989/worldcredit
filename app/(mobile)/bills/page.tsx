@@ -19,8 +19,9 @@ import { BillDraftsPanel } from '@/components/mobile/BillDraftsPanel'
 import { ManualBillAmountDialog } from '@/components/mobile/ManualBillAmountDialog'
 import { PayableForm } from '@/components/mobile/PayableForm'
 import {
-  getRecurringPayables, payRecurringPayable,
+  getRecurringPayables, payRecurringPayable, getPayablePayments,
   type PayableWithStatus,
+  type PayablePaymentRecord,
 } from '@/lib/api/payables'
 import {
   formatCardTail, compareBillsListCardsByMode, pickDueReference,
@@ -92,6 +93,9 @@ export default function BillsPage() {
   // 固定支出（房租/贷款等按月应付）
   const [payables, setPayables] = useState<PayableWithStatus[]>([])
   const [payableFormOpen, setPayableFormOpen] = useState(false)
+  // 固定支出历史还款：按需加载，展开一次后缓存
+  const [payablePayments, setPayablePayments] = useState<Record<string, PayablePaymentRecord[]>>({})
+  const [expandedPayableIds, setExpandedPayableIds] = useState<Set<string>>(new Set())
   const [editingPayable, setEditingPayable] = useState<PayableWithStatus | null>(null)
 
   const [celebrationNotice, setCelebrationNotice] = useState<{ open: boolean; message: string }>({
@@ -426,6 +430,28 @@ export default function BillsPage() {
     }
   }
 
+  /** 展开/收起固定支出历史：首次展开才拉取该笔记录。 */
+  const handleTogglePayableHistory = useCallback(
+    async (payableId: string) => {
+      const willOpen = !expandedPayableIds.has(payableId)
+      setExpandedPayableIds(prev => {
+        const next = new Set(prev)
+        if (willOpen) next.add(payableId)
+        else next.delete(payableId)
+        return next
+      })
+      if (!willOpen || payablePayments[payableId]) return
+      try {
+        const records = await getPayablePayments(payableId)
+        setPayablePayments(prev => ({ ...prev, [payableId]: records }))
+      } catch {
+        // 拉取失败不阻断卡片：保留空历史，用户可再次展开重试
+        setPayablePayments(prev => ({ ...prev, [payableId]: [] }))
+      }
+    },
+    [expandedPayableIds, payablePayments]
+  )
+
   // 收起态摘要：把当前筛选、分组与排序压成一行可读文本
   const filterSummary = useMemo(() => {
     const statusText =
@@ -506,6 +532,9 @@ export default function BillsPage() {
         onRetry={() => loadData()}
         onEmptySync={handleSync}
         payables={filteredPayables}
+        payablePayments={payablePayments}
+        expandedPayableIds={expandedPayableIds}
+        onTogglePayableHistory={handleTogglePayableHistory}
         onEditPayable={p => { setEditingPayable(p); setPayableFormOpen(true) }}
         onPayPayable={handlePayPayable}
         cards={sortedCards}

@@ -119,6 +119,11 @@ public final class AppState {
                               rates: rates, filter: filter, today: today)
         }
     }
+    /// 固定支出历史还款：按 payable id 缓存，展开时按需加载。
+    public var payablePayments: [String: [PayablePaymentRecord]] = [:]
+    /// 已展开历史的固定支出。
+    public var expandedPayableIds: Set<String> = []
+
     public var payablesError: String?
     /// 盘库打不开、退到内存库时的可恢复提示（数据不持久化），由 UI 展示。
     public var dbInitWarning: String?
@@ -760,6 +765,8 @@ public final class AppState {
     /// 登记固定支出当期还款，返回成功后刷新列表。
     public func payPayable(_ item: PayableItem, amount: Double) async throws {
         _ = try await payablesService.pay(payableId: item.id, amount: amount)
+        // 新还款落库后清掉该笔历史缓存，下次展开看到最新记录
+        payablePayments[item.id] = nil
         await refreshPayables()
     }
 
@@ -774,6 +781,22 @@ public final class AppState {
             _ = try await payablesService.create(userId: user.id, draft: draft)
         }
         await refreshPayables()
+    }
+
+    /// 展开/收起某笔固定支出的历史；首次展开才拉取，失败保留空列表供重试。
+    public func togglePayableHistory(_ payableId: String) async {
+        if expandedPayableIds.contains(payableId) {
+            expandedPayableIds.remove(payableId)
+            return
+        }
+        expandedPayableIds.insert(payableId)
+        guard payablePayments[payableId] == nil else { return }
+        do {
+            payablePayments[payableId] = try await payablesService.fetchPayments(payableId: payableId)
+        } catch {
+            // 拉取失败不阻断卡片展示；再次收起/展开会重试
+            payablePayments[payableId] = []
+        }
     }
 
     public func deletePayable(_ item: PayableItem) async throws {

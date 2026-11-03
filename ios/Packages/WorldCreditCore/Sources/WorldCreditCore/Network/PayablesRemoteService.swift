@@ -62,6 +62,13 @@ public actor PayablesRemoteService {
             args: [AnyCodable(payableId), payload])
     }
 
+    /// 某笔固定支出的历史还款（按账期倒序）。
+    public func fetchPayments(payableId: String) async throws -> [PayablePaymentRecord] {
+        try await apiClient.rpc(
+            module: "payables", function: "getPayablePayments",
+            args: [AnyCodable(payableId)])
+    }
+
     public func delete(payableId: String) async throws {
         let _: EmptyAck = try await apiClient.rpc(
             module: "payables", function: "deleteRecurringPayable",

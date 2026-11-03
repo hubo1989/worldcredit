@@ -993,6 +993,8 @@ struct BillsView: View {
                         .foregroundStyle(WCColors.textSecondary)
                 }
             }
+
+            payableHistorySection(payable)
         }
         .padding(16)
         .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 16))
@@ -1014,6 +1016,63 @@ struct BillsView: View {
             }
         }
         .accessibilityIdentifier("bills.payable.row.\(payable.id)")
+    }
+
+    /// 固定支出历史还款：默认收起，展开才拉取；数据来自 AppState 缓存。
+    @ViewBuilder
+    private func payableHistorySection(_ payable: PayableItem) -> some View {
+        let records = appState.payablePayments[payable.id] ?? []
+        let expanded = appState.expandedPayableIds.contains(payable.id)
+        if !records.isEmpty || expanded {
+            Divider().background(WCColors.border)
+            Button {
+                Task { await appState.togglePayableHistory(payable.id) }
+            } label: {
+                HStack {
+                    Text(records.isEmpty ? "历史还款" : "历史还款 \(records.count) 笔")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(WCColors.textSecondary)
+                    Spacer()
+                    Text(expanded ? "收起" : "展开")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(WCColors.primaryAccent)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("bills.payable.history.\(payable.id)")
+
+            if expanded {
+                if records.isEmpty {
+                    Text("还没有历史还款记录")
+                        .font(.caption2)
+                        .foregroundStyle(WCColors.textSecondary)
+                } else {
+                    VStack(spacing: 6) {
+                        ForEach(records) { record in
+                            HStack {
+                                Text(record.period)
+                                    .font(.caption2)
+                                    .foregroundStyle(WCColors.textSecondary)
+                                Text(record.paidAt)
+                                    .font(.caption2)
+                                    .foregroundStyle(WCColors.textSecondary)
+                                if let note = record.note, !note.isEmpty {
+                                    Text(note)
+                                        .font(.caption2)
+                                        .foregroundStyle(WCColors.textSecondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Text(DashboardMoney.format(record.amount, currency: payable.currency))
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(WCColors.textPrimary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func payableStatusBadge(_ payable: PayableItem) -> some View {

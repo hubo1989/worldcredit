@@ -190,6 +190,38 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// 固定支出的一笔历史还款（/api/rpc/payables/getPayablePayments）。
+public struct PayablePaymentRecord: Codable, Sendable, Identifiable, Hashable {
+    public let id: String
+    public let payableId: String
+    /// 账期 'YYYY-MM'
+    public let period: String
+    public let amount: Double
+    /// 登记日期 'YYYY-MM-DD'
+    public let paidAt: String
+    public let note: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case payableId = "payable_id"
+        case period, amount
+        case paidAt = "paid_at"
+        case note
+    }
+
+    public init(
+        id: String, payableId: String, period: String,
+        amount: Double, paidAt: String, note: String? = nil
+    ) {
+        self.id = id
+        self.payableId = payableId
+        self.period = period
+        self.amount = amount
+        self.paidAt = paidAt
+        self.note = note
+    }
+}
+
 /// 创建/编辑入参，对齐 Web `RecurringPayableInput`；id 由服务端生成。
 public struct PayableDraft: Codable, Equatable, Sendable {
     public var name: String

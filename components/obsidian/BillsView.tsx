@@ -32,7 +32,7 @@ import {
   type BillsEntityType,
 } from '@/lib/bills-view-model'
 import { PayableRow } from '@/components/mobile/PayableList'
-import type { PayableWithStatus } from '@/lib/api/payables'
+import type { PayableWithStatus, PayablePaymentRecord } from '@/lib/api/payables'
 import { currencySymbol } from '@/lib/fx'
 import {
   AlertIcon,
@@ -93,6 +93,11 @@ export interface BillsViewProps {
   onRetry: () => void
   onEmptySync: () => void
   payables: PayableWithStatus[]
+  /** 各固定支出的历史还款记录，key = payable id */
+  payablePayments: Record<string, PayablePaymentRecord[]>
+  /** 已展开历史的 payable id */
+  expandedPayableIds: Set<string>
+  onTogglePayableHistory: (id: string) => void
   onEditPayable: (p: PayableWithStatus) => void
   onPayPayable: (p: PayableWithStatus) => void
   cards: CardWithBillsSummary[]
@@ -276,11 +281,6 @@ function BillCard({
           <span className='text-d-muted'> · </span>
           下期还款日 <span className='font-bold'>{format(new Date(item.nextDueDate), 'MM-dd')}</span>
         </p>
-        {missingStatement && (
-          <p className='flex items-center gap-1.5 text-[11px] font-semibold leading-4 text-[color:var(--warning)]'>
-            已过账单日 {missingStatement} 日，未接收到新的账单，请检查
-          </p>
-        )}
         {isCleared || sortMode === 'max_interest_free' ? (
           <p className='flex items-center gap-1.5 text-[11px] font-semibold leading-4 text-d-success-ink'>
             今日刷卡免息 {item.graceDays} 天
@@ -373,6 +373,13 @@ function BillCard({
           )}
         </div>
       )}
+
+      {/* 缺账单提醒放在卡片最末：先看账单数据，再看采集异常 */}
+      {missingStatement && (
+        <p className='mt-3 flex items-center gap-1.5 rounded-[10px] bg-d-subtle p-2.5 text-[11px] font-semibold leading-4 text-[color:var(--warning)]'>
+          已过账单日 {missingStatement} 日，未接收到新的账单，请检查
+        </p>
+      )}
     </div>
   )
 }
@@ -386,6 +393,7 @@ export function BillsView(vm: BillsViewProps) {
     selectedTag, onSelectedTag, holderTags, bankTags,
     loading, loadError, onRetry, onEmptySync, payables, cards, allCards, holderMap,
     bankGroups, onOpenPayment, onManualAmount, onAddBill, sortMode, onSortMode,
+    payablePayments, expandedPayableIds, onTogglePayableHistory,
     onEditPayable, onPayPayable,
   } = vm
 
@@ -444,6 +452,9 @@ export function BillsView(vm: BillsViewProps) {
             key={`payable-${p.id}`}
             payable={p}
             holderName={p.holder_id ? holderMap[p.holder_id] : undefined}
+            payments={payablePayments[p.id]}
+            historyOpen={expandedPayableIds.has(p.id)}
+            onToggleHistory={() => onTogglePayableHistory(p.id)}
             onEdit={onEditPayable}
             onPay={onPayPayable}
           />

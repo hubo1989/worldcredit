@@ -272,6 +272,7 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     updateRecurringPayable: { impl: payablesServer.updateRecurringPayable, memberGuard: (args, ctx) => assertPayableAccess(args[0], ctx) },
     deleteRecurringPayable: { impl: payablesServer.deleteRecurringPayable, memberGuard: (args, ctx) => assertPayableAccess(args[0], ctx) },
     payRecurringPayable: { impl: payablesServer.payRecurringPayable, memberGuard: (args, ctx) => assertPayableAccess(args[0], ctx) },
+    getPayablePayments: { impl: payablesServer.getPayablePayments, memberGuard: (args, ctx) => assertPayableAccess(args[0], ctx) },
   },
   opportunities: {
     // Session actor is prepended by the route; each impl re-authorizes via
