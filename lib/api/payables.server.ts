@@ -145,8 +145,8 @@ export async function getPayablePayments(payableId: string): Promise<PayablePaym
      FROM recurring_payable_payments
      WHERE payable_id = ?
      ORDER BY period DESC, created_at DESC
-     LIMIT ${PAYABLE_HISTORY_LIMIT}`,
-    [payableId]
+     LIMIT ?`,
+    [payableId, PAYABLE_HISTORY_LIMIT]
   )
   if (error) throw new Error(error.message)
   return data ?? []

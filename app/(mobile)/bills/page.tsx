@@ -139,6 +139,44 @@ export default function BillsPage() {
   // 持卡人 id → name 映射
   const [holderMap, setHolderMap] = useState<Record<string, string>>({})
 
+  // 展开集合的 ref：异步回调里需要读最新值（state 是渲染快照）
+  const expandedPayableIdsRef = useRef(expandedPayableIds)
+  useEffect(() => {
+    expandedPayableIdsRef.current = expandedPayableIds
+  }, [expandedPayableIds])
+
+  // 同一笔的在途请求：并发点击或还款后重取都复用同一个 Promise，避免重复 RPC
+  const payableHistoryInFlight = useRef<Map<string, Promise<void>>>(new Map())
+
+  /** 拉取并写入历史缓存；同一 payableId 复用进行中的请求。 */
+  const loadPayableHistory = useCallback((payableId: string) => {
+    const running = payableHistoryInFlight.current.get(payableId)
+    if (running) return running
+    setPayableHistoryLoading(prev => new Set(prev).add(payableId))
+    const task = (async () => {
+      try {
+        const records = await getPayablePayments(payableId)
+        setPayablePayments(prev => ({ ...prev, [payableId]: records }))
+        setPayableHistoryErrors(prev => omitRecordKey(prev, payableId))
+      } catch (err) {
+        // 保持未加载状态：再次展开会重试；错误就地展示
+        setPayableHistoryErrors(prev => ({
+          ...prev,
+          [payableId]: err instanceof Error ? err.message : '历史还款加载失败',
+        }))
+      } finally {
+        payableHistoryInFlight.current.delete(payableId)
+        setPayableHistoryLoading(prev => {
+          const next = new Set(prev)
+          next.delete(payableId)
+          return next
+        })
+      }
+    })()
+    payableHistoryInFlight.current.set(payableId, task)
+    return task
+  }, [])
+
   const loadData = useCallback(async () => {
     if (!user) return
     try {
@@ -149,9 +187,10 @@ export default function BillsPage() {
         getHolders(user.id),
       ])
       setCardsSummary(summaryData)
-      // 全量刷新：历史缓存可能过期，清空后按需重拉
+      // 全量刷新：历史缓存可能过期；清空后对仍展开的行立即重拉，避免停在「加载中」
       setPayablePayments({})
       setPayableHistoryErrors({})
+      expandedPayableIdsRef.current.forEach(id => { void loadPayableHistory(id) })
       const map: Record<string, string> = {}
       for (const h of holders) map[h.id] = h.name
       setHolderMap(map)
@@ -168,7 +207,7 @@ export default function BillsPage() {
     } finally {
       setLoading(false)
     }
-  }, [user])
+  }, [user, loadPayableHistory])
 
   useEffect(() => {
     loadData()
@@ -437,7 +476,8 @@ export default function BillsPage() {
       setPayablePayments(prev => omitRecordKey(prev, payable.id))
       const running = payableHistoryInFlight.current.get(payable.id)
       if (running) await running
-      if (expandedPayableIds.has(payable.id)) {
+      // 等待期间用户可能收起/展开，重取前重新读取展开状态
+      if (expandedPayableIdsRef.current.has(payable.id)) {
         await loadPayableHistory(payable.id)
       }
       setCelebrationNotice({
@@ -451,38 +491,6 @@ export default function BillsPage() {
   }
 
   /** 展开/收起固定支出历史：首次展开才拉取该笔记录。 */
-  // 同一笔的在途请求：并发点击或还款后重取都复用同一个 Promise，避免重复 RPC
-  const payableHistoryInFlight = useRef<Map<string, Promise<void>>>(new Map())
-
-  /** 拉取并写入历史缓存；同一 payableId 复用进行中的请求。 */
-  const loadPayableHistory = useCallback((payableId: string) => {
-    const running = payableHistoryInFlight.current.get(payableId)
-    if (running) return running
-    setPayableHistoryLoading(prev => new Set(prev).add(payableId))
-    const task = (async () => {
-      try {
-        const records = await getPayablePayments(payableId)
-        setPayablePayments(prev => ({ ...prev, [payableId]: records }))
-        setPayableHistoryErrors(prev => omitRecordKey(prev, payableId))
-      } catch (err) {
-        // 保持未加载状态：再次展开会重试；错误就地展示
-        setPayableHistoryErrors(prev => ({
-          ...prev,
-          [payableId]: err instanceof Error ? err.message : '历史还款加载失败',
-        }))
-      } finally {
-        payableHistoryInFlight.current.delete(payableId)
-        setPayableHistoryLoading(prev => {
-          const next = new Set(prev)
-          next.delete(payableId)
-          return next
-        })
-      }
-    })()
-    payableHistoryInFlight.current.set(payableId, task)
-    return task
-  }, [])
-
   const handleTogglePayableHistory = useCallback(
     (payableId: string) => {
       const willOpen = !expandedPayableIds.has(payableId)

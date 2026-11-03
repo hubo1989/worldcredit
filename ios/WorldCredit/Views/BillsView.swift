@@ -1018,6 +1018,13 @@ struct BillsView: View {
         .accessibilityIdentifier("bills.payable.row.\(payable.id)")
     }
 
+    /// 与服务端 PAYABLE_HISTORY_LIMIT 对齐：达到上限时改称「最近 N 笔」。
+    private func payableHistoryLabel(_ records: [PayablePaymentRecord]?) -> String {
+        guard let records, !records.isEmpty else { return "历史还款" }
+        if records.count >= 60 { return "最近 60 笔还款" }
+        return "历史还款 \(records.count) 笔"
+    }
+
     /// 固定支出历史还款：按钮常驻，展开才拉取；数据来自 AppState 缓存。
     @ViewBuilder
     private func payableHistorySection(_ payable: PayableItem) -> some View {
@@ -1030,7 +1037,7 @@ struct BillsView: View {
             Task { await appState.togglePayableHistory(payable.id) }
         } label: {
             HStack {
-                Text(records.map { "历史还款 \($0.count) 笔" } ?? "历史还款")
+                Text(payableHistoryLabel(records))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(WCColors.textSecondary)
                 Spacer()
@@ -1044,12 +1051,16 @@ struct BillsView: View {
         .accessibilityIdentifier("bills.payable.history.\(payable.id)")
 
         if expanded {
-            if records == nil {
-                // 在途（含重试）优先显示加载中
+            if appState.isPayableHistoryStale(payable.id) {
+                // 刷新后缓存已清空但行仍展开：立即重取
                 Text("加载中…")
                     .font(.caption2)
                     .foregroundStyle(WCColors.textSecondary)
+                    .task(id: payable.id) {
+                        await appState.retryPayableHistory(payable.id)
+                    }
             } else if failed {
+                // 失败态：records 恒为 nil，必须优先于「加载中」判定
                 Button {
                     Task { await appState.retryPayableHistory(payable.id) }
                 } label: {
@@ -1058,6 +1069,10 @@ struct BillsView: View {
                         .foregroundStyle(WCColors.dangerInk)
                 }
                 .buttonStyle(.plain)
+            } else if records == nil {
+                Text("加载中…")
+                    .font(.caption2)
+                    .foregroundStyle(WCColors.textSecondary)
             } else if let records {
                 if records.isEmpty {
                     Text("还没有历史还款记录")

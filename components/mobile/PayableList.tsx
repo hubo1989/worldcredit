@@ -43,15 +43,12 @@ function renderPayableHistory(
   historyLoading: boolean,
   currency: string
 ) {
-  // 在途优先：重试时不显示上一次的错误
-  if (historyLoading) {
+  // 在途或尚未加载都算加载中：合并同一份文案，重试时不显示上一次的错误
+  if (historyLoading || payments === undefined) {
     return <p className='mt-1.5 text-[11px] text-d-muted'>加载中…</p>
   }
   if (historyError) {
     return <p className='mt-1.5 text-[11px] text-d-danger-ink'>{historyError}</p>
-  }
-  if (payments === undefined) {
-    return <p className='mt-1.5 text-[11px] text-d-muted'>加载中…</p>
   }
   if (payments.length === 0) {
     return <p className='mt-1.5 text-[11px] text-d-muted'>还没有历史还款记录</p>

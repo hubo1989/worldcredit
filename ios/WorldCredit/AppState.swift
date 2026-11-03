@@ -127,6 +127,8 @@ public final class AppState {
     public var payableHistoryErrors: Set<String> = []
     /// 历史请求版本号：还款后递增，过期响应直接丢弃。
     private var payableHistoryRevision: [String: Int] = [:]
+    /// 刷新后待重取历史的已展开项：下一次展开交互时拉取。
+    private var payableHistoryStale: Set<String> = []
 
     public var payablesError: String?
     /// 盘库打不开、退到内存库时的可恢复提示（数据不持久化），由 UI 展示。
@@ -586,6 +588,7 @@ public final class AppState {
         expandedPayableIds = []
         payableHistoryErrors = []
         payableHistoryRevision = [:]
+        payableHistoryStale = []
         lastSyncError = nil
         // 401 会话过期不走完整 logout：per-user 快照靠 owner 记录在这里补清，
         // 否则下一个账号直接 login 时前任财务快照残留磁盘
@@ -647,13 +650,11 @@ public final class AppState {
 
             payables = items
             payablesError = nil
-            // 服务端列表已重取：历史缓存可能过期，清空并对已展开项立即重拉
-            let expanded = expandedPayableIds
+            // 服务端列表已重取：历史缓存可能过期。已展开的行标记为待重取，
+            // 由视图在下一次展开交互时按需拉取，避免刷新路径串行追加 N 次请求。
             payablePayments = [:]
             payableHistoryErrors = []
-            for id in expanded where payables.contains(where: { $0.id == id }) {
-                await loadPayableHistory(id)
-            }
+            payableHistoryStale = expandedPayableIds
 
             // 空结果 = 用户删空了固定支出：移除快照（否则「删空后重启+离线」会复活已删条目）；
             // 服务端瞬时异常返回空列表的窗口极窄且下次在线刷新即自愈，不值得为它保留陈旧快照。
@@ -815,6 +816,11 @@ public final class AppState {
         await loadPayableHistory(payableId)
     }
 
+    /// 该行历史是否需要重新拉取（刷新后清空缓存但保持展开）。
+    public func isPayableHistoryStale(_ payableId: String) -> Bool {
+        payableHistoryStale.contains(payableId)
+    }
+
     /// 错误态点击「重试」：保持展开，直接重拉。
     public func retryPayableHistory(_ payableId: String) async {
         expandedPayableIds.insert(payableId)
@@ -838,6 +844,7 @@ public final class AppState {
             guard payableHistoryRevision[payableId] == revision else { return }
             payablePayments[payableId] = records
             payableHistoryErrors.remove(payableId)
+            payableHistoryStale.remove(payableId)
         } catch {
             guard payableHistoryRevision[payableId] == revision else { return }
             // 保持「未加载」以便下次展开重试，并记录错误供 UI 展示
@@ -1026,6 +1033,7 @@ public final class AppState {
         expandedPayableIds = []
         payableHistoryErrors = []
         payableHistoryRevision = [:]
+        payableHistoryStale = []
         notificationScheduler.center.removeAllPendingNotificationRequests()
         watchSnapshots.clear()
         let emptySnapshot = WatchSnapshot(
