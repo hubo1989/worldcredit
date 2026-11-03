@@ -650,8 +650,11 @@ public final class AppState {
 
             payables = items
             payablesError = nil
-            // 服务端列表已重取：历史缓存可能过期。已展开的行标记为待重取，
-            // 由视图在下一次展开交互时按需拉取，避免刷新路径串行追加 N 次请求。
+            // 服务端列表已重取：先作废所有在途历史请求（否则其回调会把刷新前的旧数据写回），
+            // 再把已展开行标记为待重取，由视图按需拉取。
+            for id in expandedPayableIds {
+                payableHistoryRevision[id] = (payableHistoryRevision[id] ?? 0) + 1
+            }
             payablePayments = [:]
             payableHistoryErrors = []
             payableHistoryStale = expandedPayableIds
@@ -845,6 +848,13 @@ public final class AppState {
             payablePayments[payableId] = records
             payableHistoryErrors.remove(payableId)
             payableHistoryStale.remove(payableId)
+        } catch is CancellationError {
+            // 视图取消（收起/离屏）：不是失败，保持待重取状态
+            guard payableHistoryRevision[payableId] == revision else { return }
+            payablePayments[payableId] = nil
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            guard payableHistoryRevision[payableId] == revision else { return }
+            payablePayments[payableId] = nil
         } catch {
             guard payableHistoryRevision[payableId] == revision else { return }
             // 保持「未加载」以便下次展开重试，并记录错误供 UI 展示；

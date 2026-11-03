@@ -153,7 +153,9 @@ export default function BillsPage() {
     const running = payableHistoryInFlight.current.get(payableId)
     if (running) return running
     setPayableHistoryLoading(prev => new Set(prev).add(payableId))
-    const task = (async () => {
+    let settle!: () => void
+    const current = new Promise<void>(resolve => { settle = resolve })
+    void (async () => {
       try {
         const records = await getPayablePayments(payableId)
         setPayablePayments(prev => ({ ...prev, [payableId]: records }))
@@ -165,16 +167,20 @@ export default function BillsPage() {
           [payableId]: err instanceof Error ? err.message : '历史还款加载失败',
         }))
       } finally {
-        payableHistoryInFlight.current.delete(payableId)
+        // 只清理自己这条：若期间已被 loadData 清空并重新发起，不能误删新任务
+        // 用 token 而非 task 引用比对（task 在 IIFE 内部尚未赋值）
+        if (payableHistoryInFlight.current.get(payableId) === current) {
+          payableHistoryInFlight.current.delete(payableId)
+        }
         setPayableHistoryLoading(prev => {
           const next = new Set(prev)
           next.delete(payableId)
           return next
         })
       }
-    })()
-    payableHistoryInFlight.current.set(payableId, task)
-    return task
+    })().finally(() => settle())
+    payableHistoryInFlight.current.set(payableId, current)
+    return current
   }, [])
 
   const loadData = useCallback(async () => {
@@ -187,7 +193,9 @@ export default function BillsPage() {
         getHolders(user.id),
       ])
       setCardsSummary(summaryData)
-      // 全量刷新：历史缓存可能过期；清空后对仍展开的行立即重拉，避免停在「加载中」
+      // 全量刷新：历史缓存可能过期。先丢弃在途请求（否则其成功回调会把刷新前的旧数据写回），
+      // 再清空缓存并对仍展开的行重拉，避免停在「加载中」
+      payableHistoryInFlight.current.clear()
       setPayablePayments({})
       setPayableHistoryErrors({})
       expandedPayableIdsRef.current.forEach(id => { void loadPayableHistory(id) })

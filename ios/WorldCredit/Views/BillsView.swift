@@ -1102,10 +1102,6 @@ struct BillsView: View {
                         }
                     }
                 }
-            } else {
-                Text("加载中…")
-                    .font(.caption2)
-                    .foregroundStyle(WCColors.textSecondary)
             }
         }
     }
