@@ -1,7 +1,13 @@
 'use client'
 
 import { useState } from 'react'
-import { categoryLabel, type PayableWithStatus } from '@/lib/api/payables'
+import { format } from 'date-fns'
+import {
+  categoryLabel,
+  PAYABLE_HISTORY_LIMIT,
+  type PayableWithStatus,
+  type PayablePaymentRecord,
+} from '@/lib/api/payables'
 import { payableNextCycleStatus } from '@/lib/utils'
 import { badgeToneClass, type BillBadgeTone } from '@/lib/bills-view-model'
 import { currencySymbol } from '@/lib/fx'
@@ -11,8 +17,68 @@ export interface PayableRowProps {
   payable: PayableWithStatus
   /** 归属持卡人姓名；未指定归属时不显示 */
   holderName?: string
+  /** 历史还款记录（按账期倒序）；undefined = 尚未加载 */
+  payments?: PayablePaymentRecord[]
+  /** 历史加载失败提示；为空表示无错误 */
+  historyError?: string
+  /** 历史请求在途（含重试）；优先于错误态展示 */
+  historyLoading?: boolean
+  /** 是否展开历史还款 */
+  historyOpen?: boolean
+  onToggleHistory?: () => void
   onEdit: (payable: PayableWithStatus) => void
   onPay: (payable: PayableWithStatus) => void
+}
+
+/** 展开按钮文案：达到上限时改称「最近 N 笔」，避免误以为已看全。 */
+function historyLabel(payments: PayablePaymentRecord[] | undefined): string {
+  if (!payments || payments.length === 0) return '历史还款'
+  if (payments.length >= PAYABLE_HISTORY_LIMIT) return `最近 ${PAYABLE_HISTORY_LIMIT} 笔还款`
+  return `历史还款 ${payments.length} 笔`
+}
+
+/** 历史还款展开区：加载中 / 失败 / 空 / 列表四态，避免嵌套三元。 */
+function renderPayableHistory(
+  payments: PayablePaymentRecord[] | undefined,
+  historyError: string | undefined,
+  historyLoading: boolean,
+  currency: string
+) {
+  // 顺序必须是 在途 → 失败 → 未加载：失败时 payments 仍为 undefined，
+  // 若把 undefined 并入加载中，错误文案将永远不可达。
+  if (historyLoading) {
+    return <p className='mt-1.5 text-[11px] text-d-muted'>加载中…</p>
+  }
+  if (historyError) {
+    return <p className='mt-1.5 text-[11px] text-d-danger-ink'>{historyError}</p>
+  }
+  if (payments === undefined) {
+    // 无在途请求却仍为 undefined：说明缓存被清空但未重取，提示可再次展开
+    return <p className='mt-1.5 text-[11px] text-d-muted'>展开以加载历史</p>
+  }
+  if (payments.length === 0) {
+    return <p className='mt-1.5 text-[11px] text-d-muted'>还没有历史还款记录</p>
+  }
+  return (
+    <ul className='mt-1.5 flex flex-col gap-1'>
+      {payments.map(record => (
+        <li
+          key={record.id}
+          className='flex items-baseline justify-between gap-2 rounded-md bg-d-subtle px-2 py-1'
+        >
+          <span className='shrink-0 text-[11px] text-d-muted'>{record.period}</span>
+          <span className='min-w-0 flex-1 truncate text-[11px] text-d-text'>
+            {format(new Date(record.paid_at), 'MM-dd')}
+            {record.note ? ' · ' + record.note : ''}
+          </span>
+          <span className='shrink-0 text-[11px] font-semibold text-d-text'>
+            {currencySymbol(currency)}
+            {Number(record.amount).toLocaleString()}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
 }
 
 /**
@@ -26,7 +92,17 @@ export interface PayableRowProps {
  * 滚动模型（服务端 resolveDisplayPeriod）保证任一时刻卡片只呈现一期：
  * 「已登记」只可能出现在待出账态，待还款态一定是可登记付款的未付期。
  */
-export function PayableRow({ payable: p, holderName, onEdit, onPay }: PayableRowProps) {
+export function PayableRow({
+  payable: p,
+  holderName,
+  payments,
+  historyError,
+  historyLoading = false,
+  historyOpen = false,
+  onToggleHistory,
+  onEdit,
+  onPay,
+}: PayableRowProps) {
   const [copiedAccount, setCopiedAccount] = useState(false)
   const paid = p.status === 'paid'
   const overdue = p.status === 'overdue'
@@ -162,6 +238,22 @@ export function PayableRow({ payable: p, holderName, onEdit, onPay }: PayableRow
         <ClockIcon size={14} />
         {detail}
       </div>
+
+      {onToggleHistory && (
+        <div className='mt-2.5 border-t border-d-border pt-2'>
+          <button
+            type='button'
+            aria-expanded={historyOpen}
+            onClick={e => { e.stopPropagation(); onToggleHistory() }}
+            className='flex w-full items-center justify-between text-[11px] font-semibold text-d-muted'
+          >
+            <span>{historyLabel(payments)}</span>
+            <span className='text-d-accent-light'>{historyOpen ? '收起' : '展开'}</span>
+          </button>
+          {historyOpen &&
+            renderPayableHistory(payments, historyError, historyLoading, p.currency)}
+        </div>
+      )}
     </div>
   )
 }

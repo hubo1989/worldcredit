@@ -993,6 +993,8 @@ struct BillsView: View {
                         .foregroundStyle(WCColors.textSecondary)
                 }
             }
+
+            payableHistorySection(payable)
         }
         .padding(16)
         .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 16))
@@ -1014,6 +1016,98 @@ struct BillsView: View {
             }
         }
         .accessibilityIdentifier("bills.payable.row.\(payable.id)")
+    }
+
+    /// 与服务端 PAYABLE_HISTORY_LIMIT 对齐：达到上限时改称「最近 N 笔」。
+    private func payableHistoryLabel(_ records: [PayablePaymentRecord]?) -> String {
+        guard let records, !records.isEmpty else { return "历史还款" }
+        if records.count >= PayablePaymentHistory.limit {
+            return "最近 \(PayablePaymentHistory.limit) 笔还款"
+        }
+        return "历史还款 \(records.count) 笔"
+    }
+
+    /// 固定支出历史还款：按钮常驻，展开才拉取；数据来自 AppState 缓存。
+    @ViewBuilder
+    private func payableHistorySection(_ payable: PayableItem) -> some View {
+        let records = appState.payablePayments[payable.id]
+        let expanded = appState.expandedPayableIds.contains(payable.id)
+        let failed = appState.payableHistoryErrors.contains(payable.id)
+
+        Divider().background(WCColors.border)
+        Button {
+            Task { await appState.togglePayableHistory(payable.id) }
+        } label: {
+            HStack {
+                Text(payableHistoryLabel(records))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(WCColors.textSecondary)
+                Spacer()
+                Text(expanded ? "收起" : "展开")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(WCColors.primaryAccent)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("bills.payable.history.\(payable.id)")
+
+        if expanded {
+            if failed {
+                // 失败态优先：失败时 records 恒为 nil，先判 nil 会让错误永远不可见
+                Button {
+                    Task { await appState.retryPayableHistory(payable.id) }
+                } label: {
+                    Text("加载失败，点此重试")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(WCColors.dangerInk)
+                }
+                .buttonStyle(.plain)
+            } else if appState.isPayableHistoryStale(payable.id) {
+                // 刷新后缓存已清空但行仍展开：手动触发重取，避免 .task(id:) 不重触发的死锁
+                Button {
+                    Task { await appState.retryPayableHistory(payable.id) }
+                } label: {
+                    Text("点击加载最新历史")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(WCColors.primaryAccent)
+                }
+                .buttonStyle(.plain)
+            } else if records == nil {
+                Text("加载中…")
+                    .font(.caption2)
+                    .foregroundStyle(WCColors.textSecondary)
+            } else if let records {
+                if records.isEmpty {
+                    Text("还没有历史还款记录")
+                        .font(.caption2)
+                        .foregroundStyle(WCColors.textSecondary)
+                } else {
+                    VStack(spacing: 6) {
+                        ForEach(records) { record in
+                            HStack {
+                                Text(record.period)
+                                    .font(.caption2)
+                                    .foregroundStyle(WCColors.textSecondary)
+                                Text(record.paidAt)
+                                    .font(.caption2)
+                                    .foregroundStyle(WCColors.textSecondary)
+                                if let note = record.note, !note.isEmpty {
+                                    Text(note)
+                                        .font(.caption2)
+                                        .foregroundStyle(WCColors.textSecondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Text(DashboardMoney.format(record.amount, currency: payable.currency))
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(WCColors.textPrimary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func payableStatusBadge(_ payable: PayableItem) -> some View {

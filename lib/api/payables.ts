@@ -7,6 +7,7 @@ export type {
   RecurringPayableInput,
   CreateRecurringPayableInput,
   PayableWithStatus,
+  PayablePaymentRecord,
 } from './payables.server'
 
 // 纯类型与纯函数走 .shared，避免把服务端依赖带进浏览器包。
@@ -18,6 +19,7 @@ export {
   PAYABLE_CURRENCY_LABELS,
   isPayableCurrency,
   normalizePayableCurrency,
+  PAYABLE_HISTORY_LIMIT,
 } from './payables.shared'
 
 export function getRecurringPayables(...args: Parameters<typeof Server.getRecurringPayables>) {
@@ -34,4 +36,7 @@ export function deleteRecurringPayable(...args: Parameters<typeof Server.deleteR
 }
 export function payRecurringPayable(...args: Parameters<typeof Server.payRecurringPayable>) {
   return callRpc<typeof Server.payRecurringPayable>('payables', 'payRecurringPayable', ...args)
+}
+export function getPayablePayments(...args: Parameters<typeof Server.getPayablePayments>) {
+  return callRpc<typeof Server.getPayablePayments>('payables', 'getPayablePayments', ...args)
 }

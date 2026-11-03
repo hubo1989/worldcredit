@@ -5,7 +5,11 @@
 
 import { query, queryOne, execute, uuid, now } from '../db'
 import { payablePeriodOf, payableDueDate, nextPayablePeriodOf, diffInCalendarDays } from '../utils'
-import { normalizePayableCurrency, type PayableCategory } from './payables.shared'
+import {
+  PAYABLE_HISTORY_LIMIT,
+  normalizePayableCurrency,
+  type PayableCategory,
+} from './payables.shared'
 import { RpcDomainError } from './errors'
 
 export type { PayableCategory } from './payables.shared'
@@ -119,6 +123,33 @@ export async function resolveDisplayPeriod(
     return { period: nextPayablePeriodOf(current), paidAmount: 0 }
   }
   return { period: current, paidAmount: paidCurrent }
+}
+
+export interface PayablePaymentRecord {
+  id: string
+  payable_id: string
+  period: string
+  amount: number
+  paid_at: string
+  note: string | null
+  created_at: string
+}
+
+/** 某个固定支出的历史还款记录（按账期倒序，同期按登记时间倒序）。 */
+export async function getPayablePayments(payableId: string): Promise<PayablePaymentRecord[]> {
+  if (typeof payableId !== 'string' || !payableId.trim()) {
+    throw new RpcDomainError('VALIDATION_FAILED', '缺少合法的固定支出 ID')
+  }
+  const { data, error } = await query<PayablePaymentRecord>(
+    `SELECT id, payable_id, period, amount, paid_at, note, created_at
+     FROM recurring_payable_payments
+     WHERE payable_id = ?
+     ORDER BY period DESC, created_at DESC
+     LIMIT ?`,
+    [payableId, PAYABLE_HISTORY_LIMIT]
+  )
+  if (error) throw new Error(error.message)
+  return data ?? []
 }
 
 /** 账单页用：当前生效的应付事项 + 当期状态。 */

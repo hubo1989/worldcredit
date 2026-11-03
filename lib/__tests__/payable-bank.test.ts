@@ -1,8 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createOpportunityDb, type SqliteD1 } from './helpers/sqlite-d1'
 import { setDb } from '../db/client'
+import currencyFixtures from '../../shared/fixtures/payable-currencies.json'
+import { PAYABLE_HISTORY_LIMIT } from '../api/payables.shared'
 import { RpcDomainError } from '../api/errors'
-import { createRecurringPayable, updateRecurringPayable } from '../api/payables.server'
+import {
+  createRecurringPayable,
+  updateRecurringPayable,
+  payRecurringPayable,
+  getPayablePayments,
+} from '../api/payables.server'
 
 describe('recurring payable bank attribution', () => {
   let db: SqliteD1 | null = null
@@ -60,5 +67,59 @@ describe('recurring payable bank attribution', () => {
     await expect(
       updateRecurringPayable('none', { bank_name: 123 as never })
     ).rejects.toBeInstanceOf(RpcDomainError)
+  })
+})
+
+describe('recurring payable payment history', () => {
+  it('登记还款后可按账期倒序读取历史记录', async () => {
+    const db = createOpportunityDb()
+    db.exec("INSERT INTO users (id, email, password_hash) VALUES ('u1', 'u1@example.com', 'hash')")
+    setDb(db as unknown as D1Database)
+
+    const payable = await createRecurringPayable({
+      created_by: 'u1',
+      name: '房贷',
+      category: 'loan',
+      amount: 4500,
+      currency: 'CNY',
+      due_day: 5,
+    })
+    await payRecurringPayable(payable.id, 4500, '十月')
+
+    const records = await getPayablePayments(payable.id)
+    expect(records.length).toBe(1)
+    expect(records[0]).toMatchObject({
+      payable_id: payable.id,
+      period: payable.period,
+      amount: 4500,
+      note: '十月',
+    })
+    db.close()
+  })
+
+  it('无记录返回空数组；非法 ID 报 VALIDATION_FAILED', async () => {
+    const db = createOpportunityDb()
+    db.exec("INSERT INTO users (id, email, password_hash) VALUES ('u1', 'u1@example.com', 'hash')")
+    setDb(db as unknown as D1Database)
+    const payable = await createRecurringPayable({
+      created_by: 'u1',
+      name: '房租',
+      category: 'rent',
+      amount: 2000,
+      currency: 'CNY',
+      due_day: 10,
+    })
+    await expect(getPayablePayments(payable.id)).resolves.toEqual([])
+    await expect(getPayablePayments('')).rejects.toMatchObject({
+      name: 'RpcDomainError',
+      code: 'VALIDATION_FAILED',
+    })
+    db.close()
+  })
+})
+
+describe('shared fixture: payable payment history limit', () => {
+  it('TS 常量与 shared fixture 一致', () => {
+    expect(PAYABLE_HISTORY_LIMIT).toBe(currencyFixtures.payment_history_limit)
   })
 })

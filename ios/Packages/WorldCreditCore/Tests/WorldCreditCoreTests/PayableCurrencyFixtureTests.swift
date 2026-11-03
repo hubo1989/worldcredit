@@ -16,12 +16,15 @@ private struct PayableCurrencyFixtureFile: Codable {
         let expected: String?
     }
 
+    let paymentHistoryLimit: Int
+
     let currencies: [CurrencyItem]
     let normalizationCases: [NormalizationCase]
 
     enum CodingKeys: String, CodingKey {
         case currencies
         case normalizationCases = "normalization_cases"
+        case paymentHistoryLimit = "payment_history_limit"
     }
 }
 
@@ -39,6 +42,12 @@ struct PayableCurrencyFixtureTests {
         let fixtureUrl = root.appendingPathComponent("shared/fixtures/payable-currencies.json")
         let data = try Data(contentsOf: fixtureUrl)
         return try JSONDecoder().decode(PayableCurrencyFixtureFile.self, from: data)
+    }
+
+    @Test("Payable payment history limit matches shared fixture")
+    func testPaymentHistoryLimitMatchesFixture() throws {
+        let fixtures = try loadFixtures()
+        #expect(PayablePaymentHistory.limit == fixtures.paymentHistoryLimit)
     }
 
     @Test("PayableCurrency cases, labels, and symbols match shared TS/Swift fixture")

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { format } from 'date-fns'
 import {
   getCardsWithBillsSummary,
@@ -19,8 +19,9 @@ import { BillDraftsPanel } from '@/components/mobile/BillDraftsPanel'
 import { ManualBillAmountDialog } from '@/components/mobile/ManualBillAmountDialog'
 import { PayableForm } from '@/components/mobile/PayableForm'
 import {
-  getRecurringPayables, payRecurringPayable,
+  getRecurringPayables, payRecurringPayable, getPayablePayments,
   type PayableWithStatus,
+  type PayablePaymentRecord,
 } from '@/lib/api/payables'
 import {
   formatCardTail, compareBillsListCardsByMode, pickDueReference,
@@ -72,6 +73,15 @@ function tagSummary(
   return selectedTag === NO_BANK_TAG ? '非银行' : selectedTag
 }
 
+/** 不可变地从 Record 中删除一个 key（无该 key 时返回原对象）。 */
+function omitRecordKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  // 只判断自有属性：`in` 会沿原型链命中 toString/constructor 等
+  if (!Object.prototype.hasOwnProperty.call(record, key)) return record
+  const next = { ...record }
+  delete next[key]
+  return next
+}
+
 export default function BillsPage() {
   const { user } = useAuth()
   const { displayConfig } = useUserPreferences()
@@ -92,6 +102,11 @@ export default function BillsPage() {
   // 固定支出（房租/贷款等按月应付）
   const [payables, setPayables] = useState<PayableWithStatus[]>([])
   const [payableFormOpen, setPayableFormOpen] = useState(false)
+  // 固定支出历史还款：按需加载，展开一次后缓存
+  const [payablePayments, setPayablePayments] = useState<Record<string, PayablePaymentRecord[]>>({})
+  const [expandedPayableIds, setExpandedPayableIds] = useState<Set<string>>(new Set())
+  const [payableHistoryErrors, setPayableHistoryErrors] = useState<Record<string, string>>({})
+  const [payableHistoryLoading, setPayableHistoryLoading] = useState<Set<string>>(new Set())
   const [editingPayable, setEditingPayable] = useState<PayableWithStatus | null>(null)
 
   const [celebrationNotice, setCelebrationNotice] = useState<{ open: boolean; message: string }>({
@@ -125,6 +140,59 @@ export default function BillsPage() {
   // 持卡人 id → name 映射
   const [holderMap, setHolderMap] = useState<Record<string, string>>({})
 
+  // 展开集合的 ref：异步回调里需要读最新值（state 是渲染快照）
+  const expandedPayableIdsRef = useRef(expandedPayableIds)
+  useEffect(() => {
+    expandedPayableIdsRef.current = expandedPayableIds
+  }, [expandedPayableIds])
+
+  // 同一笔的在途请求：并发点击或还款后重取都复用同一个 Promise，避免重复 RPC
+  const payableHistoryInFlight = useRef<Map<string, Promise<void>>>(new Map())
+
+  // 缓存代次：全量刷新或还款后递增，旧代次发起的请求不再写回
+  const payableHistoryGeneration = useRef(0)
+
+  /** 拉取并写入历史缓存；同一 payableId 复用进行中的请求。 */
+  const loadPayableHistory = useCallback((payableId: string) => {
+    const running = payableHistoryInFlight.current.get(payableId)
+    if (running) return running
+    const generation = payableHistoryGeneration.current
+    setPayableHistoryLoading(prev => new Set(prev).add(payableId))
+    let settle!: () => void
+    const current = new Promise<void>(resolve => { settle = resolve })
+    void (async () => {
+      try {
+        const records = await getPayablePayments(payableId)
+        // 代次已变（刷新/还款期间发起）：结果作废，不写回旧数据
+        if (payableHistoryGeneration.current !== generation) return
+        setPayablePayments(prev => ({ ...prev, [payableId]: records }))
+        setPayableHistoryErrors(prev => omitRecordKey(prev, payableId))
+      } catch (err) {
+        if (payableHistoryGeneration.current !== generation) return
+        // 保持未加载状态：再次展开会重试；错误就地展示
+        setPayableHistoryErrors(prev => ({
+          ...prev,
+          [payableId]: err instanceof Error ? err.message : '历史还款加载失败',
+        }))
+      } finally {
+        // 只清理自己这条：被新任务顶替或代次已变时不能误删（否则新请求期间不显示加载中）
+        if (
+          payableHistoryInFlight.current.get(payableId) === current &&
+          payableHistoryGeneration.current === generation
+        ) {
+          payableHistoryInFlight.current.delete(payableId)
+          setPayableHistoryLoading(prev => {
+            const next = new Set(prev)
+            next.delete(payableId)
+            return next
+          })
+        }
+      }
+    })().finally(() => settle())
+    payableHistoryInFlight.current.set(payableId, current)
+    return current
+  }, [])
+
   const loadData = useCallback(async () => {
     if (!user) return
     try {
@@ -135,6 +203,12 @@ export default function BillsPage() {
         getHolders(user.id),
       ])
       setCardsSummary(summaryData)
+      // 全量刷新：递增代次作废在途响应，清空缓存，并对仍展开的行重拉
+      payableHistoryGeneration.current += 1
+      payableHistoryInFlight.current.clear()
+      setPayablePayments({})
+      setPayableHistoryErrors({})
+      expandedPayableIdsRef.current.forEach(id => { void loadPayableHistory(id) })
       const map: Record<string, string> = {}
       for (const h of holders) map[h.id] = h.name
       setHolderMap(map)
@@ -151,7 +225,7 @@ export default function BillsPage() {
     } finally {
       setLoading(false)
     }
-  }, [user])
+  }, [user, loadPayableHistory])
 
   useEffect(() => {
     loadData()
@@ -416,6 +490,14 @@ export default function BillsPage() {
   const handlePayPayable = async (payable: PayableWithStatus) => {
     try {
       await payRecurringPayable(payable.id, payable.amount)
+      // 新还款落库：先等在途旧请求落定（否则它的成功回调会把不含新还款的记录写回），
+      // 再清缓存并重取
+      // 递增代次：作废还款前发起的请求；随后清缓存
+      payableHistoryGeneration.current += 1
+      const running = payableHistoryInFlight.current.get(payable.id)
+      if (running) await running
+      setPayablePayments(prev => omitRecordKey(prev, payable.id))
+      // 不在此处重取：紧随其后的 loadData 会统一清缓存并重拉展开行
       setCelebrationNotice({
         open: true,
         message: `🎉 已登记「${payable.name}」本期付款 ${currencySymbol(payable.currency)}${payable.amount.toLocaleString()}`,
@@ -425,6 +507,22 @@ export default function BillsPage() {
       alert(err instanceof Error ? err.message : '登记失败，请重试')
     }
   }
+
+  /** 展开/收起固定支出历史：首次展开才拉取该笔记录。 */
+  const handleTogglePayableHistory = useCallback(
+    (payableId: string) => {
+      const willOpen = !expandedPayableIdsRef.current.has(payableId)
+      setExpandedPayableIds(prev => {
+        const next = new Set(prev)
+        if (willOpen) next.add(payableId)
+        else next.delete(payableId)
+        return next
+      })
+      if (!willOpen || payablePayments[payableId]) return
+      void loadPayableHistory(payableId)
+    },
+    [payablePayments, loadPayableHistory]
+  )
 
   // 收起态摘要：把当前筛选、分组与排序压成一行可读文本
   const filterSummary = useMemo(() => {
@@ -506,6 +604,11 @@ export default function BillsPage() {
         onRetry={() => loadData()}
         onEmptySync={handleSync}
         payables={filteredPayables}
+        payablePayments={payablePayments}
+        payableHistoryErrors={payableHistoryErrors}
+        payableHistoryLoading={payableHistoryLoading}
+        expandedPayableIds={expandedPayableIds}
+        onTogglePayableHistory={handleTogglePayableHistory}
         onEditPayable={p => { setEditingPayable(p); setPayableFormOpen(true) }}
         onPayPayable={handlePayPayable}
         cards={sortedCards}

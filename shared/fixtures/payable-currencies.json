@@ -5,31 +5,78 @@
       "code": "CNY",
       "label": "人民币 CNY",
       "symbol": "¥",
-      "aliases": ["人民币"]
+      "aliases": [
+        "人民币"
+      ]
     },
     {
       "code": "USD",
       "label": "美元 USD",
       "symbol": "US$",
-      "aliases": ["美元"]
+      "aliases": [
+        "美元"
+      ]
     },
     {
       "code": "HKD",
       "label": "港币 HKD",
       "symbol": "HK$",
-      "aliases": ["港币"]
+      "aliases": [
+        "港币"
+      ]
     }
   ],
   "normalization_cases": [
-    { "id": "cny_canonical", "raw": "CNY", "expected": "CNY" },
-    { "id": "usd_lowercase_trimmed", "raw": " usd ", "expected": "USD" },
-    { "id": "hkd_mixed_case", "raw": "\thKd\n", "expected": "HKD" },
-    { "id": "cny_alias", "raw": " 人民币 ", "expected": "CNY" },
-    { "id": "usd_alias", "raw": "美元", "expected": "USD" },
-    { "id": "hkd_alias", "raw": " 港币 ", "expected": "HKD" },
-    { "id": "unknown_eur_preserved", "raw": "EUR", "expected": null },
-    { "id": "unknown_lowercase_eur", "raw": " eur ", "expected": null },
-    { "id": "unknown_rmb_not_guessed", "raw": "RMB", "expected": null },
-    { "id": "empty_rejected", "raw": "   ", "expected": null }
-  ]
+    {
+      "id": "cny_canonical",
+      "raw": "CNY",
+      "expected": "CNY"
+    },
+    {
+      "id": "usd_lowercase_trimmed",
+      "raw": " usd ",
+      "expected": "USD"
+    },
+    {
+      "id": "hkd_mixed_case",
+      "raw": "\thKd\n",
+      "expected": "HKD"
+    },
+    {
+      "id": "cny_alias",
+      "raw": " 人民币 ",
+      "expected": "CNY"
+    },
+    {
+      "id": "usd_alias",
+      "raw": "美元",
+      "expected": "USD"
+    },
+    {
+      "id": "hkd_alias",
+      "raw": " 港币 ",
+      "expected": "HKD"
+    },
+    {
+      "id": "unknown_eur_preserved",
+      "raw": "EUR",
+      "expected": null
+    },
+    {
+      "id": "unknown_lowercase_eur",
+      "raw": " eur ",
+      "expected": null
+    },
+    {
+      "id": "unknown_rmb_not_guessed",
+      "raw": "RMB",
+      "expected": null
+    },
+    {
+      "id": "empty_rejected",
+      "raw": "   ",
+      "expected": null
+    }
+  ],
+  "payment_history_limit": 60
 }
