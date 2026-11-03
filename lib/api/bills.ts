@@ -80,8 +80,9 @@ export type BillOverrideField = Exclude<
 >
 
 /** spec §6.3：改状态前由服务端按已还总额重算（允许 paid 回退）。 */
-export function updateBillStatusChecked(...args: Parameters<typeof Server.updateBillStatusChecked>) {
-  return callRpc<typeof Server.updateBillStatusChecked>('bills', 'updateBillStatusChecked', ...args)
+export function updateBillStatusChecked(billId: string) {
+  // 显式 status 只在服务端内部使用；客户端只能触发按还款事实重算
+  return callRpc<typeof Server.updateBillStatusChecked>('bills', 'updateBillStatusChecked', billId)
 }
 
 /** spec §6.1：删除账单（admin；级联 payments，sync_changes 由 0019 触发器记录）。 */

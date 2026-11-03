@@ -4,7 +4,9 @@ import {
   getDueDate,
   getLoanNextDueDate,
   effectiveBillAmount,
-  computePaymentDrivenStatus,
+  billEffectiveMinPayment,
+  billEffectiveDueDate,
+  billEffectiveStatementDate,
   nextBillingDateOf,
   isValidCalendarDate,
 } from "../utils";
@@ -577,6 +579,10 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
   const bill = row as unknown as BillDetail["bill"];
   // b.* 里带的是导入的原始金额；展示与还款校验必须用生效金额。
   bill.bill_amount = effectiveBillAmount(bill);
+  // 其余可编辑字段同样按 override 优先合成，否则编辑后详情页仍显示导入值。
+  bill.min_payment = billEffectiveMinPayment(bill) ?? undefined;
+  bill.due_date = billEffectiveDueDate(bill);
+  bill.statement_date = billEffectiveStatementDate(bill) ?? undefined;
   if (row.c_id) {
     const card: CreditCard & {
       card_product?: CardProduct;
@@ -668,8 +674,11 @@ export interface BillLiteForForm {
   bill_amount: number;
   bill_amount_override: number | null;
   min_payment: number | null;
+  min_payment_override: number | null;
   statement_date: string | null;
+  statement_date_override: string | null;
   due_date: string;
+  due_date_override: string | null;
 }
 
 /** Bill-entry form duplicate check: existing bill for card + month. */
@@ -678,11 +687,19 @@ export async function getBillByCardMonth(
   billMonth: string,
 ): Promise<BillLiteForForm | null> {
   const { data, error } = await queryOne<BillLiteForForm>(
-    "SELECT id, bill_amount, bill_amount_override, min_payment, statement_date, due_date FROM bills WHERE card_id = ? AND bill_month = ? LIMIT 1",
+    "SELECT id, bill_amount, bill_amount_override, min_payment, min_payment_override, statement_date, statement_date_override, due_date, due_date_override FROM bills WHERE card_id = ? AND bill_month = ? LIMIT 1",
     [cardId, billMonth],
   );
   if (error) throw new Error(error.message);
-  return data ? { ...data, bill_amount: effectiveBillAmount(data) } : null;
+  return data
+    ? {
+        ...data,
+        bill_amount: effectiveBillAmount(data),
+        min_payment: billEffectiveMinPayment(data),
+        statement_date: billEffectiveStatementDate(data) ?? null,
+        due_date: billEffectiveDueDate(data),
+      }
+    : null;
 }
 
 /** Total paid amount across all payments of one bill. */
@@ -1173,8 +1190,8 @@ export interface BillFieldPatch {
   min_payment?: number | null;
   due_date?: string;
   statement_date?: string | null;
-  statement_start?: string;
-  statement_end?: string;
+  statement_start?: string | null;
+  statement_end?: string | null;
 }
 
 function assertOptionalDate(
@@ -1228,8 +1245,8 @@ export async function updateBillFields(billId: string, patch: BillFieldPatch): P
   assertOptionalAmount(patch.min_payment ?? undefined, "最低还款额");
   assertOptionalDate(patch.due_date, "到期日");
   assertOptionalDate(patch.statement_date, "账单日", { allowNull: true });
-  assertOptionalDate(patch.statement_start, "账期开始日");
-  assertOptionalDate(patch.statement_end, "账期结束日");
+  assertOptionalDate(patch.statement_start, "账期开始日", { allowNull: true });
+  assertOptionalDate(patch.statement_end, "账期结束日", { allowNull: true });
   // 单字段补丁也要与库内已存的另一端比对，否则只改开始日（或只改结束日）
   // 可以绕过同批双字段校验，落库成「开始晚于结束」的倒挂账期。
   if (patch.statement_start !== undefined || patch.statement_end !== undefined) {
@@ -1238,8 +1255,15 @@ export async function updateBillFields(billId: string, patch: BillFieldPatch): P
       statement_end: string | null;
     }>("SELECT statement_start, statement_end FROM bills WHERE id = ?", [billId]);
     if (existing.error) throw new Error(existing.error.message);
-    const start = patch.statement_start ?? existing.data?.statement_start ?? null;
-    const end = patch.statement_end ?? existing.data?.statement_end ?? null;
+    // null 是「清空」意图，不能退化成「沿用旧值」
+    const start =
+      patch.statement_start !== undefined
+        ? patch.statement_start
+        : (existing.data?.statement_start ?? null);
+    const end =
+      patch.statement_end !== undefined
+        ? patch.statement_end
+        : (existing.data?.statement_end ?? null);
     if (start && end && start > end) {
       throw new RpcDomainError("VALIDATION_FAILED", "账期开始日不能晚于账期结束日");
     }
@@ -1357,29 +1381,25 @@ export async function updateBillStatusChecked(
   if (status !== undefined && !["unpaid", "partial", "paid", "overdue"].includes(status)) {
     throw new RpcDomainError("VALIDATION_FAILED", "状态必须是 unpaid/partial/paid/overdue 之一");
   }
-  const { data: raw, error } = await queryOne<{
-    bill_amount: number;
-    bill_amount_override: number | null;
-    due_date: string;
-    due_date_override: string | null;
-  }>(
-    "SELECT bill_amount, bill_amount_override, due_date, due_date_override FROM bills WHERE id = ?",
-    [billId],
-  );
+  // 单条 UPDATE 内完成「读 SUM + 判定 + 写入」，消除读→写窗口；
+  // 服务端内部调用可显式传入 status；RPC 表面仅转交 billId。
+  const { data: changed, error } =
+    status !== undefined
+      ? await execute("UPDATE bills SET status = ? WHERE id = ?", [status, billId])
+      : await execute(
+          `UPDATE bills SET status = CASE
+            WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) >= COALESCE(bill_amount_override, bill_amount) - 0.01
+            THEN 'paid'
+            WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) > 0
+            THEN 'partial'
+            WHEN COALESCE(due_date_override, due_date) < ?
+            THEN 'overdue'
+            ELSE 'unpaid'
+          END WHERE id = ?`,
+          [billId, billId, today(), billId],
+        );
   if (error) throw new Error(error.message);
-  if (!raw) throw new RpcDomainError("NOT_FOUND", "账单不存在");
-
-  const paidAmount = await getPaymentTotal(billId);
-  const computed = computePaymentDrivenStatus(raw, paidAmount);
-
-  // 服务端内部调用可显式传入 status；RPC 表面的 bills.updateBillStatusChecked
-  // 仅转交 billId，避免客户端在无真实还款记录时把账单强行锁进 paid。
-  const finalStatus = status ?? computed;
-  const { error: updErr } = await execute("UPDATE bills SET status = ? WHERE id = ?", [
-    finalStatus,
-    billId,
-  ]);
-  if (updErr) throw new Error(updErr.message);
+  if (!changed || changed.changes === 0) throw new RpcDomainError("NOT_FOUND", "账单不存在");
   const updated = await getBillById(billId);
   if (!updated) throw new RpcDomainError("NOT_FOUND", "账单不存在");
   return updated;

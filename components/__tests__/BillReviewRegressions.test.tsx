@@ -162,11 +162,11 @@ describe("BillForm 编辑与更新闭环", () => {
     await waitFor(() => {
       expect(mockedUpdateBillFields).toHaveBeenCalledTimes(1);
     });
+    // 只提交改动过的字段：到期日未改，不得被钉成 override
     expect(mockedUpdateBillFields).toHaveBeenCalledWith("bill-existing", {
       amount: 4100,
       min_payment: null,
       statement_date: null,
-      due_date: "2026-10-28",
     });
     expect(mockedUpdateBill).not.toHaveBeenCalled();
     expect(mockedUpdateBillStatusChecked).not.toHaveBeenCalled();
@@ -181,8 +181,11 @@ describe("BillForm 编辑与更新闭环", () => {
       bill_amount: 1800,
       bill_amount_override: 1800,
       min_payment: 180,
+      min_payment_override: null,
       statement_date: "2026-10-05",
+      statement_date_override: null,
       due_date: "2026-10-25",
+      due_date_override: null,
     });
     mockedUpdateBillFields.mockResolvedValue(makeExistingBill({ id: "bill-dup" }));
 
@@ -192,15 +195,14 @@ describe("BillForm 编辑与更新闭环", () => {
     await user.selectOptions(cardSelect, "card-1");
 
     await screen.findByText("当月账单已存在，将更新金额");
+    // 改动一个字段：验证只提交变更项，不把其余字段钉成 override
+    const amount = screen.getByLabelText(/账单金额/);
+    await user.clear(amount);
+    await user.type(amount, "1900");
     await user.click(screen.getByRole("button", { name: "更新" }));
 
     await waitFor(() => {
-      expect(mockedUpdateBillFields).toHaveBeenCalledWith("bill-dup", {
-        amount: 1800,
-        min_payment: 180,
-        statement_date: "2026-10-05",
-        due_date: "2026-10-25",
-      });
+      expect(mockedUpdateBillFields).toHaveBeenCalledWith("bill-dup", { amount: 1900 });
     });
     expect(mockedCreateBill).not.toHaveBeenCalled();
     expect(mockedUpdateBill).not.toHaveBeenCalled();

@@ -95,7 +95,13 @@ export function BillPaymentsManage({
         note: values.note.trim() || null,
       })
       setEditing(null)
-      await onChanged()
+      setError(null)
+      // 保存已成功：刷新失败不能反过来报「保存失败」
+      try {
+        await onChanged()
+      } catch {
+        /* 列表刷新失败留给下一次进入/下拉刷新，不误报保存失败 */
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存失败，请重试')
     } finally {
@@ -109,7 +115,12 @@ export function BillPaymentsManage({
     try {
       await doDelete(deleteTarget.id)
       setDeleteTarget(null)
-      await onChanged()
+      setError(null)
+      try {
+        await onChanged()
+      } catch {
+        /* 删除已成功，刷新失败不误报「删除失败」 */
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除失败，请重试')
       setDeleteTarget(null)

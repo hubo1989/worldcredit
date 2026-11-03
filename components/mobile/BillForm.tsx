@@ -1,12 +1,17 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Modal } from '@/components/obsidian/overlays'
 import { Button } from '@/components/obsidian/controls'
 import { TextField, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
 import { format } from 'date-fns'
-import { createBill, updateBillFields, getBillByCardMonth } from '@/lib/api/bills'
+import {
+  createBill,
+  updateBillFields,
+  getBillByCardMonth,
+  type BillEditableFields,
+} from '@/lib/api/bills'
 import { getAllCardsWithProduct } from '@/lib/api/cards'
 import {
   formatCardTail,
@@ -66,20 +71,24 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
       .catch(() => setCards([]))
   }, [open])
 
+  // 本次加载的初值：编辑时只提交真正改动过的字段
+  const initialFormRef = useRef<BillFormData | null>(null)
   // 初始化表单
   useEffect(() => {
     if (!open) return
     if (existingBill) {
       const effectiveMinPayment = billEffectiveMinPayment(existingBill)
       const effectiveStatementDate = billEffectiveStatementDate(existingBill)
-      setForm({
+      const initial: BillFormData = {
         card_id: existingBill.card_id,
         bill_month: existingBill.bill_month,
         bill_amount: String(existingBill.bill_amount),
         min_payment: isPresent(effectiveMinPayment) ? String(effectiveMinPayment) : '',
         statement_date: effectiveStatementDate ?? existingBill.statement_end ?? format(new Date(), 'yyyy-MM-dd'),
         due_date: billEffectiveDueDate(existingBill),
-      })
+      }
+      initialFormRef.current = initial
+      setForm(initial)
       setExistingBillId(existingBill.id)
     } else {
       setForm(EMPTY)
@@ -94,22 +103,23 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
     getBillByCardMonth(form.card_id, form.bill_month)
       .then(data => {
         if (data) {
-          const dupWithOverrides = data as typeof data & {
-            min_payment_override?: number | null
-            statement_date_override?: string | null
-            due_date_override?: string | null
-          }
-          const effectiveMinPayment = billEffectiveMinPayment(dupWithOverrides)
-          const effectiveStatementDate = billEffectiveStatementDate(dupWithOverrides)
+          // 服务端已按 override 优先合成生效值，无需前端再断言字段
+          const effectiveMinPayment = billEffectiveMinPayment(data)
+          const effectiveStatementDate = billEffectiveStatementDate(data)
           setExistingBillId(data.id)
-          setForm(prev => ({
-            ...prev,
-            bill_amount: String(data.bill_amount ?? ''),
-            min_payment: isPresent(effectiveMinPayment) ? String(effectiveMinPayment) : '',
-            statement_date: effectiveStatementDate ?? prev.statement_date,
-            due_date: billEffectiveDueDate(dupWithOverrides) || prev.due_date,
-          }))
+          setForm(prev => {
+            const next: BillFormData = {
+              ...prev,
+              bill_amount: String(data.bill_amount ?? ''),
+              min_payment: isPresent(effectiveMinPayment) ? String(effectiveMinPayment) : '',
+              statement_date: effectiveStatementDate ?? prev.statement_date,
+              due_date: billEffectiveDueDate(data) || prev.due_date,
+            }
+            initialFormRef.current = next
+            return next
+          })
         } else {
+          initialFormRef.current = null
           setExistingBillId(null)
         }
       })
@@ -152,14 +162,21 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
     setSubmitting(true)
     try {
       if (existingBillId) {
-        // 统一走单个 updateBillFields RPC：写入 *_override 列保持防导入覆盖语义，
-        // 且服务端在同一 batch 内联动重算状态，避免两次 RPC 中途失败产生半保存状态。
-        await updateBillFields(existingBillId, {
-          amount: billAmt,
-          min_payment: minPay ?? null,
-          statement_date: trimmedStatementDate || null,
-          due_date: trimmedDueDate,
-        })
+        // 统一走单个 updateBillFields RPC，且只提交真正改动过的字段：
+        // 未改动字段不进 patch，服务端就不会把它们钉成 override。
+        const initial = initialFormRef.current
+        const patch: BillEditableFields = {}
+        if (!initial || form.bill_amount !== initial.bill_amount) patch.amount = billAmt
+        if (!initial || form.min_payment !== initial.min_payment) patch.min_payment = minPay ?? null
+        if (!initial || form.statement_date !== initial.statement_date) {
+          patch.statement_date = trimmedStatementDate || null
+        }
+        if (!initial || form.due_date !== initial.due_date) patch.due_date = trimmedDueDate
+        if (Object.keys(patch).length === 0) {
+          onClose()
+          return
+        }
+        await updateBillFields(existingBillId, patch)
       } else {
         // 创建新账单（补充账期首末日）
         const [year, month] = form.bill_month.split('-').map(Number)

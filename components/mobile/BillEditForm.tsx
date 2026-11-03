@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Modal, ConfirmDialog } from '@/components/obsidian/overlays'
 import { Button } from '@/components/obsidian/controls'
 import { TextField } from '@/components/obsidian/fields'
@@ -139,9 +139,13 @@ export function BillEditForm({
 
   // loadedId 防止父组件 reload 换对象引用后把用户正在编辑的值冲掉
   const [loadedId, setLoadedId] = useState<string | null>(null)
+  // 本次加载的初值：保存时只提交真正改动过的字段，避免把未编辑字段钉成 override
+  const loadedValuesRef = useRef<EditableFieldValues | null>(null)
   useEffect(() => {
     if (!open || !bill || loadedId === bill.id) return
-    setValues(toValues(bill))
+    const initial = toValues(bill)
+    loadedValuesRef.current = initial
+    setValues(initial)
     setErrors({})
     setSubmitError(null)
     setAdvancedOpen(false)
@@ -181,6 +185,10 @@ export function BillEditForm({
       // 否则输入框仍显示刚撤销的 override 值，再点保存会把它重新钉住。
       // 只回写被撤销的字段，保留其他未保存编辑，并清掉该字段残留错误。
       const refreshed = toValues(updated)
+      // 撤销后该字段回到导入值，同步更新初值，避免保存时又把它重新钉住
+      if (loadedValuesRef.current) {
+        loadedValuesRef.current = { ...loadedValuesRef.current, [field]: refreshed[field] }
+      }
       setValues(prev => ({ ...prev, [field]: refreshed[field] }))
       setErrors(prev => (prev[field] ? { ...prev, [field]: undefined } : prev))
       await onSaved()
@@ -199,16 +207,31 @@ export function BillEditForm({
 
     setSubmitting(true)
     try {
-      const fields: BillEditableFields = {
-        amount: Number(values.amount),
-        // min_payment / statement_date：清空（原本有值被改空）提交 null 而非
-        // undefined——null 是服务端约定的「清除 override 回落导入值」语义，
-        // undefined 会把字段整体省略，用户的清除意图被静默吞掉。
-        min_payment: values.min_payment.trim() ? Number(values.min_payment) : null,
-        statement_date: values.statement_date.trim() || null,
-        due_date: values.due_date.trim(),
-        statement_start: values.statement_start.trim() || undefined,
-        statement_end: values.statement_end.trim() || undefined,
+      const initial = loadedValuesRef.current
+      const fields: BillEditableFields = {}
+      // 只提交与初值不同的字段：未改动的字段不进 patch，服务端就不会写 override
+      if (!initial || values.amount !== initial.amount) {
+        fields.amount = Number(values.amount)
+      }
+      if (!initial || values.min_payment !== initial.min_payment) {
+        // 清空提交 null（清除 override 回落导入值），不能省略成 undefined
+        fields.min_payment = values.min_payment.trim() ? Number(values.min_payment) : null
+      }
+      if (!initial || values.statement_date !== initial.statement_date) {
+        fields.statement_date = values.statement_date.trim() || null
+      }
+      if (!initial || values.due_date !== initial.due_date) {
+        fields.due_date = values.due_date.trim()
+      }
+      if (!initial || values.statement_start !== initial.statement_start) {
+        fields.statement_start = values.statement_start.trim() || null
+      }
+      if (!initial || values.statement_end !== initial.statement_end) {
+        fields.statement_end = values.statement_end.trim() || null
+      }
+      if (Object.keys(fields).length === 0) {
+        onClose()
+        return
       }
       await submitFields(bill.id, fields)
       await onSaved()

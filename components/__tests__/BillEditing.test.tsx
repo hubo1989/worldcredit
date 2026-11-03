@@ -146,7 +146,7 @@ describe('BillEditForm', () => {
     onDeleted: vi.fn().mockResolvedValue(undefined),
   }
 
-  it('合法保存：调 updateBillFields 且只带有效字段', async () => {
+  it('合法保存：调 updateBillFields 且只提交变更字段', async () => {
     const user = userEvent.setup()
     const submitFields = vi.fn().mockResolvedValue(makeBill())
     render(<BillEditForm {...defaultProps} onSubmitFields={submitFields} />)
@@ -160,14 +160,8 @@ describe('BillEditForm', () => {
     await waitFor(() => {
       expect(submitFields).toHaveBeenCalledTimes(1)
     })
-    expect(submitFields).toHaveBeenCalledWith('bill-1', {
-      amount: 5200,
-      min_payment: 480,
-      statement_date: '2026-10-26',
-      due_date: '2026-11-24',
-      statement_start: '2026-09-27',
-      statement_end: '2026-10-26',
-    })
+    // 只改了金额：其余字段与初值相同，不得写入 override
+    expect(submitFields).toHaveBeenCalledWith('bill-1', { amount: 5200 })
   })
 
   it('金额低于已还总额时显示触发器边界警告，但允许继续保存', async () => {
