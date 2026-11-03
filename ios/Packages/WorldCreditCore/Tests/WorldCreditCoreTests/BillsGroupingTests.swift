@@ -104,29 +104,30 @@ struct BillsGroupingTests {
                                   amount: 200, currency: "CNY", dueDay: 25, period: "2026-10",
                                   dueDate: "2026-10-25", daysUntilDue: 2, paidAmount: 50, status: .unpaid)
         let result = BillsPresentation(bills: bills, cards: [], payables: [payable], rates: nil,
-                                       filter: BillsPresentationFilter(), today: testDay)
-        #expect(result.entries.map(\.id) == ["bill-b1", "payable-rent", "bill-b3", "bill-b2"])
+                                       filter: BillsPresentationFilter(statuses: [.unpaid]), today: testDay)
+        // 待还筛选下，c1 因含逾期账单整卡归入「已逾期」，不出现在待还列表
+        #expect(result.entries.map(\.id) == ["payable-rent", "bill-b3", "bill-b2"])
         #expect(result.interestRows.count == 3)
         #expect(result.interestRows.first(where: { $0.id == "c1" })?.item.id == "b1")
-        #expect(result.unpaidBillCount == 3)
-        #expect(result.currencyTotals["CNY"] == 500)
+        #expect(result.unpaidBillCount == 2)
+        #expect(result.currencyTotals["CNY"] == 200)
         #expect(result.currencyTotals["USD"] == 100)
-        #expect(result.convertedSummary.totalAmount == 500)
+        #expect(result.convertedSummary.totalAmount == 200)
         #expect(result.convertedSummary.unconvertedCurrencies == ["USD"])
-        #expect(result.overdueSummary.totalAmount == 300)
+        #expect(result.overdueSummary.totalAmount == 0, "逾期卡不在待还筛选内")
         #expect(result.dueSoonSummary.totalAmount == 200)
 
         let paid = BillsPresentation(bills: bills, cards: [], payables: [payable], rates: nil,
-                                     filter: BillsPresentationFilter(status: .paid), today: testDay)
-        #expect(paid.entries.map(\.id) == ["bill-b4"])
+                                     filter: BillsPresentationFilter(statuses: [.paid]), today: testDay)
+        #expect(paid.entries.isEmpty, "已还款只匹配固定支出；卡片已结清期不在本页")
         #expect(paid.interestRows.count == 3, "免息模式不受账单状态筛选影响")
         #expect(paid.interestRows.first(where: { $0.id == "c1" })?.item.id == "b1")
 
         let bank = BillsPresentation(bills: bills, cards: [], payables: [payable], rates: nil,
-                                     filter: BillsPresentationFilter(bankName: "测试银行"), today: testDay)
+                                     filter: BillsPresentationFilter(statuses: [.unpaid], bankName: "测试银行"), today: testDay)
         #expect(!bank.entries.contains { $0.id == "payable-rent" })
         let holder = BillsPresentation(bills: bills, cards: [], payables: [payable], rates: nil,
-                                       filter: BillsPresentationFilter(holderId: "h2"), today: testDay)
+                                       filter: BillsPresentationFilter(statuses: [.unpaid], holderId: "h2"), today: testDay)
         #expect(holder.entries.map(\.id) == ["bill-b2"])
         #expect(holder.interestRows.map(\.id) == ["c2"])
     }
@@ -156,7 +157,7 @@ struct BillsGroupingTests {
         #expect(cleared.entries.isEmpty)
         #expect(cleared.interestRows.isEmpty, "账户清理后不可保留旧卡片")
         #expect(builds == 2)
-        let paid = BillsPresentationFilter(status: .paid)
+        let paid = BillsPresentationFilter(statuses: [.paid])
         _ = cache.value(for: paid, today: testDay) { build(bills, filter: paid) }
         #expect(builds == 3)
         _ = cache.value(for: paid, today: testDay.addingTimeInterval(86_400)) { build(bills, filter: paid) }
@@ -169,7 +170,7 @@ struct BillsGroupingTests {
         let query = QueryService(dbManager: db)
         let bills = try await query.fetchBills(filter: .all, today: testDay)
         var cache = BillsPresentationCache()
-        let filter = BillsPresentationFilter()
+        let filter = BillsPresentationFilter(statuses: [])
         let before = cache.value(for: filter, today: testDay) {
             BillsPresentation(bills: bills, cards: [], payables: [], rates: nil, filter: filter, today: testDay)
         }
@@ -184,7 +185,7 @@ struct BillsGroupingTests {
             BillsPresentation(bills: updated, cards: [], payables: [], rates: rates, filter: filter, today: testDay)
         }
         #expect(after.overdueBills.isEmpty)
-        #expect(after.entries.map(\.id) == ["bill-b3", "bill-b2"])
+        #expect(Set(after.entries.map(\.id)) == Set(["bill-b1", "bill-b4", "bill-b3", "bill-b2"]))
         #expect(after.interestRows.count == 3)
         #expect(abs(after.convertedSummary.totalAmount - 760) < 0.001)
         #expect(after.convertedSummary.unconvertedCurrencies.isEmpty)
@@ -199,7 +200,7 @@ struct BillsGroupingTests {
                                   amount: 200, currency: "CNY", dueDay: 20, period: "2026-10",
                                   dueDate: "2026-10-20", daysUntilDue: -3, paidAmount: 200, status: .overdue)
         let result = BillsPresentation(bills: [], cards: [], payables: [payable, settled], rates: nil,
-                                       filter: BillsPresentationFilter(status: .all), today: testDay)
+                                       filter: BillsPresentationFilter(statuses: []), today: testDay)
         #expect(result.currencyTotals["CNY"] == 100)
         #expect(result.convertedSummary.totalAmount == 100)
         #expect(result.convertedSummary.unconvertedCurrencies.isEmpty)

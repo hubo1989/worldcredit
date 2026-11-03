@@ -109,23 +109,37 @@ struct BillsView: View {
 
     private var bankOptions: [String] {
         var seen = Set<String>()
-        return appState.cards.compactMap { card in
-            guard !card.bankName.isEmpty, seen.insert(card.bankName).inserted else { return nil }
-            return card.bankName
+        var names: [String] = []
+        for card in appState.cards where !card.bankName.isEmpty {
+            if seen.insert(card.bankName).inserted { names.append(card.bankName) }
         }
+        for payable in appState.payables {
+            guard let bank = payable.bankName, !bank.isEmpty else { continue }
+            if seen.insert(bank).inserted { names.append(bank) }
+        }
+        return names.sorted()
     }
 
     private var filterSummary: String {
+        var parts: [String] = []
+        if appState.selectedEntityFilter != .all {
+            parts.append(appState.selectedEntityFilter.rawValue)
+        }
+        if !appState.selectedStatusFilters.isEmpty {
+            let order: [BillStatusFilter] = [.unpaid, .overdue, .unissued, .paid]
+            parts.append(
+                order.filter { appState.selectedStatusFilters.contains($0) }
+                    .map(\.rawValue).joined(separator: "+")
+            )
+        }
         if let holderFilterId {
-            return holderOptions.first(where: { $0.id == holderFilterId })?.name ?? "持卡人"
+            parts.append(holderOptions.first(where: { $0.id == holderFilterId })?.name ?? "持卡人")
         }
         if let bankFilterName {
-            return bankFilterName
+            parts.append(
+                bankFilterName == BillsPresentationFilter.noBankValue ? "非银行" : bankFilterName)
         }
-        if appState.selectedBillFilter != .unpaid {
-            return appState.selectedBillFilter.rawValue
-        }
-        return "筛选"
+        return parts.isEmpty ? "筛选" : parts.joined(separator: " · ")
     }
 
     var body: some View {
@@ -204,13 +218,15 @@ struct BillsView: View {
                 if isFilterDrawerPresented {
                     BillsFilterDrawerView(
                         isPresented: $isFilterDrawerPresented,
-                        currentFilter: appState.selectedBillFilter,
+                        currentEntity: appState.selectedEntityFilter,
+                        currentStatuses: appState.selectedStatusFilters,
                         currentHolderId: holderFilterId,
                         currentBankName: bankFilterName,
                         holderOptions: holderOptions,
                         bankOptions: bankOptions
-                    ) { newFilter, newHolderId, newBankName in
-                        appState.selectedBillFilter = newFilter
+                    ) { newEntity, newStatuses, newHolderId, newBankName in
+                        appState.selectedEntityFilter = newEntity
+                        appState.selectedStatusFilters = newStatuses
                         holderFilterId = newHolderId
                         bankFilterName = newBankName
                     }
@@ -338,7 +354,9 @@ struct BillsView: View {
                         .font(.footnote.weight(.medium))
                 }
                 .foregroundStyle(
-                    holderFilterId == nil && bankFilterName == nil && appState.selectedBillFilter == .unpaid
+                    holderFilterId == nil && bankFilterName == nil
+                        && appState.selectedEntityFilter == .all
+                        && appState.selectedStatusFilters.isEmpty
                         ? WCColors.textSecondary : WCColors.primaryAccent
                 )
                 .padding(.horizontal, 10)
@@ -543,7 +561,9 @@ struct BillsView: View {
                 .font(.subheadline.bold())
                 .foregroundStyle(WCColors.textPrimary)
             Spacer()
-            Text(appState.selectedBillFilter == .unpaid ? "待还状态 · 按到期日" : "\(appState.selectedBillFilter.rawValue) · 按到期日")
+            Text(appState.selectedEntityFilter == .all && appState.selectedStatusFilters.isEmpty
+                ? "全部 · 按到期日"
+                : "\(filterSummary) · 按到期日")
                 .font(.caption)
                 .foregroundStyle(WCColors.textSecondary)
         }
@@ -564,7 +584,7 @@ struct BillsView: View {
                 Image(systemName: "line.3.horizontal.decrease.circle")
                     .font(.largeTitle)
                     .foregroundStyle(WCColors.textSecondary)
-                Text("没有\(appState.selectedBillFilter.rawValue)账单或应付")
+                Text("没有符合条件的账单或固定支出")
                     .font(.subheadline)
                     .foregroundStyle(WCColors.textSecondary)
             }

@@ -69,29 +69,152 @@ export function amountToneClass(item: CardWithBillsSummary): string {
   return 'text-d-text'
 }
 
-/**
- * 固定支出的视图筛选：与信用卡共用「状态 + 持卡人」口径。
- * 固定支出没有银行归属，选中银行维度时按 iOS BillsPresentation 的口径隐藏，
- * 避免出现「按银行筛选却混入不属于该银行的固定支出」。
- */
-export type PayableViewFilter = 'all' | 'unpaid' | 'cleared'
-export type PayableFilterDimension = 'holder' | 'bank'
+/** 账单页筛选：对象类型 × 状态（多选）× 归属维度 × 标签。 */
+export type BillsEntityType = 'all' | 'cards' | 'payables'
+export type BillStatusKey = 'unpaid' | 'overdue' | 'unissued' | 'paid'
 
-export function filterPayablesForView<
-  P extends { holder_id: string | null; status: 'unpaid' | 'paid' | 'overdue' },
->(
-  payables: P[],
-  viewFilter: PayableViewFilter,
-  dimension: PayableFilterDimension,
+export const BILL_STATUS_LABELS: Record<BillStatusKey, string> = {
+  unpaid: '待还',
+  overdue: '已逾期',
+  unissued: '未出账',
+  paid: '已还款',
+}
+
+export interface BillsFilterState {
+  entityType: BillsEntityType
+  /** 空数组 = 不按状态过滤 */
+  statuses: BillStatusKey[]
+  dimension: 'holder' | 'bank'
   selectedTag: string
+}
+
+/** 银行维度下代表「没有银行归属」的固定支出桶。 */
+export const NO_BANK_TAG = '__no_bank__'
+
+/** 本页按卡聚合：partial（部分还款）归入「待还」。 */
+export function cardStatusKey(
+  status: 'overdue' | 'unpaid' | 'partial' | 'unissued'
+): BillStatusKey {
+  if (status === 'overdue') return 'overdue'
+  if (status === 'unissued') return 'unissued'
+  return 'unpaid'
+}
+
+export function payableStatusKey(status: 'unpaid' | 'paid' | 'overdue'): BillStatusKey {
+  if (status === 'paid') return 'paid'
+  if (status === 'overdue') return 'overdue'
+  return 'unpaid'
+}
+
+interface CardLike {
+  holder_id: string | null
+  status: 'overdue' | 'unpaid' | 'partial' | 'unissued'
+  card: { card_product?: { bank_name?: string } | null }
+}
+
+interface PayableLike {
+  holder_id: string | null
+  status: 'unpaid' | 'paid' | 'overdue'
+  bank_name?: string | null
+}
+
+function matchesTag(
+  holderId: string | null,
+  bankName: string | null | undefined,
+  f: BillsFilterState
+): boolean {
+  if (f.selectedTag === 'all') return true
+  if (f.dimension === 'holder') return holderId === f.selectedTag
+  if (f.selectedTag === NO_BANK_TAG) return !bankName
+  return bankName === f.selectedTag
+}
+
+export function filterCardsForView<C extends CardLike>(cards: C[], f: BillsFilterState): C[] {
+  if (f.entityType === 'payables') return []
+  return cards.filter(
+    c =>
+      matchesTag(c.holder_id, c.card.card_product?.bank_name, f) &&
+      (f.statuses.length === 0 || f.statuses.includes(cardStatusKey(c.status)))
+  )
+}
+
+export function filterPayablesForView<P extends PayableLike>(
+  payables: P[],
+  f: BillsFilterState
 ): P[] {
-  return payables.filter(p => {
-    if (viewFilter === 'unpaid' && p.status === 'paid') return false
-    if (viewFilter === 'cleared' && p.status !== 'paid') return false
-    if (selectedTag !== 'all') {
-      if (dimension === 'bank') return false
-      if (p.holder_id !== selectedTag) return false
+  if (f.entityType === 'cards') return []
+  return payables.filter(
+    p =>
+      matchesTag(p.holder_id, p.bank_name, f) &&
+      (f.statuses.length === 0 || f.statuses.includes(payableStatusKey(p.status)))
+  )
+}
+
+/** 当前对象类型 / 维度 / 标签下各状态的条数（不受状态选择影响）。 */
+export function countStatuses<C extends CardLike, P extends PayableLike>(
+  cards: C[],
+  payables: P[],
+  f: BillsFilterState
+): Record<BillStatusKey, number> {
+  const counts: Record<BillStatusKey, number> = { unpaid: 0, overdue: 0, unissued: 0, paid: 0 }
+  if (f.entityType !== 'payables') {
+    for (const c of cards) {
+      if (matchesTag(c.holder_id, c.card.card_product?.bank_name, f)) {
+        counts[cardStatusKey(c.status)] += 1
+      }
     }
-    return true
-  })
+  }
+  if (f.entityType !== 'cards') {
+    for (const p of payables) {
+      if (matchesTag(p.holder_id, p.bank_name, f)) counts[payableStatusKey(p.status)] += 1
+    }
+  }
+  return counts
+}
+
+/** 当前维度 / 标签下两种对象的条数。 */
+export function countEntities<C extends CardLike, P extends PayableLike>(
+  cards: C[],
+  payables: P[],
+  f: BillsFilterState
+): { cards: number; payables: number } {
+  let cardCount = 0
+  let payableCount = 0
+  for (const c of cards) {
+    if (matchesTag(c.holder_id, c.card.card_product?.bank_name, f)) cardCount += 1
+  }
+  for (const p of payables) {
+    if (matchesTag(p.holder_id, p.bank_name, f)) payableCount += 1
+  }
+  return { cards: cardCount, payables: payableCount }
+}
+
+/** 当前对象类型 / 状态下的持卡人、银行标签计数。 */
+export function countByTag<C extends CardLike, P extends PayableLike>(
+  cards: C[],
+  payables: P[],
+  f: BillsFilterState
+): { holders: Record<string, number>; banks: Record<string, number>; noBank: number } {
+  const holders: Record<string, number> = {}
+  const banks: Record<string, number> = {}
+  let noBank = 0
+  const statusOk = (key: BillStatusKey) => f.statuses.length === 0 || f.statuses.includes(key)
+
+  if (f.entityType !== 'payables') {
+    for (const c of cards) {
+      if (!statusOk(cardStatusKey(c.status))) continue
+      if (c.holder_id) holders[c.holder_id] = (holders[c.holder_id] ?? 0) + 1
+      const bank = c.card.card_product?.bank_name
+      if (bank) banks[bank] = (banks[bank] ?? 0) + 1
+    }
+  }
+  if (f.entityType !== 'cards') {
+    for (const p of payables) {
+      if (!statusOk(payableStatusKey(p.status))) continue
+      if (p.holder_id) holders[p.holder_id] = (holders[p.holder_id] ?? 0) + 1
+      if (p.bank_name) banks[p.bank_name] = (banks[p.bank_name] ?? 0) + 1
+      else noBank += 1
+    }
+  }
+  return { holders, banks, noBank }
 }

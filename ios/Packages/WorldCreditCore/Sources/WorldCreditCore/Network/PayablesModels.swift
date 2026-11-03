@@ -100,6 +100,8 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
     public let currency: String
     public let dueDay: Int
     public let holderId: String?
+    /// 归属银行名称；nil = 非银行，账单页筛选时单列一个桶。
+    public let bankName: String?
     public let note: String?
     public let bankAccount: String?
     /// 当前账期 'YYYY-MM'
@@ -121,6 +123,7 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
         currency: String,
         dueDay: Int,
         holderId: String? = nil,
+        bankName: String? = nil,
         note: String? = nil,
         bankAccount: String? = nil,
         period: String,
@@ -137,6 +140,7 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
         self.currency = currency
         self.dueDay = dueDay
         self.holderId = holderId
+        self.bankName = bankName
         self.note = note
         self.bankAccount = bankAccount
         self.period = period
@@ -152,6 +156,7 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
         case name, category, amount, currency
         case dueDay = "due_day"
         case holderId = "holder_id"
+        case bankName = "bank_name"
         case note
         case bankAccount = "bank_account"
         case period
@@ -193,6 +198,7 @@ public struct PayableDraft: Codable, Equatable, Sendable {
     public var currency: String
     public var dueDay: Int
     public var holderId: String?
+    public var bankName: String?
     public var note: String?
     public var bankAccount: String?
 
@@ -211,6 +217,7 @@ public struct PayableDraft: Codable, Equatable, Sendable {
         currency: String,
         dueDay: Int,
         holderId: String? = nil,
+        bankName: String? = nil,
         note: String? = nil,
         bankAccount: String? = nil
     ) {
@@ -220,6 +227,7 @@ public struct PayableDraft: Codable, Equatable, Sendable {
         self.currency = currency
         self.dueDay = dueDay
         self.holderId = holderId
+        self.bankName = bankName
         self.note = note
         self.bankAccount = bankAccount
     }

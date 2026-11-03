@@ -23,6 +23,10 @@ vi.mock('@/lib/api/holders', () => ({
   ]),
 }))
 
+vi.mock('@/lib/api/banks', () => ({
+  getBankNames: vi.fn().mockResolvedValue([{ id: 'bank-1', name: '招商银行' }]),
+}))
+
 vi.mock('@/lib/api/payables', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/payables')>('@/lib/api/payables')
   return {
@@ -191,5 +195,22 @@ describe('PayableForm 归属持卡人', () => {
 
     await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1))
     expect(mockedCreate.mock.calls[0][0]).toMatchObject({ holder_id: null })
+  })
+})
+
+describe('PayableForm 归属银行', () => {
+  it('选择银行后随请求提交 bank_name', async () => {
+    const user = userEvent.setup()
+    mockedCreate.mockResolvedValueOnce(makePayable({ id: 'payable-new' }))
+    render(<PayableForm open onClose={vi.fn()} onSuccess={vi.fn()} />)
+
+    await user.type(screen.getByLabelText('名称'), '房贷')
+    await user.type(screen.getByLabelText('每月金额'), '4500')
+    await user.type(screen.getByLabelText('每月应付日'), '5')
+    await user.selectOptions(await screen.findByLabelText('银行（可选）'), '招商银行')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1))
+    expect(mockedCreate.mock.calls[0][0]).toMatchObject({ bank_name: '招商银行' })
   })
 })

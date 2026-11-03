@@ -15,6 +15,8 @@ struct PayableFormView: View {
     @State private var dueDay = 1
     /// 归属持卡人；空字符串 = 不指定
     @State private var holderId = ""
+    /// 归属银行；空字符串 = 非银行
+    @State private var bankName = ""
     @State private var note = ""
     @State private var bankAccount = ""
     @State private var errorMessage: String?
@@ -73,6 +75,13 @@ struct PayableFormView: View {
                         }
                     }
                     .accessibilityIdentifier("payable.form.holder")
+                    Picker("银行（可选）", selection: $bankName) {
+                        Text("非银行 / 不指定").tag("")
+                        ForEach(payableBankOptions, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    .accessibilityIdentifier("payable.form.bank")
                     TextField("备注", text: $note)
                     TextField("收款银行账号（展示层一键复制）", text: $bankAccount)
                         .keyboardType(.numberPad)
@@ -140,6 +149,15 @@ struct PayableFormView: View {
         }
     }
 
+    /// 银行选项：公开银行目录 ∪ 用户已有卡片的银行 ∪ 当前记录的历史值。
+    private var payableBankOptions: [String] {
+        var names = appState.bankOptions.map(\.name)
+        names.append(contentsOf: appState.cards.map(\.bankName))
+        if let legacy = existing?.bankName, !legacy.isEmpty { names.append(legacy) }
+        var seen = Set<String>()
+        return names.filter { !$0.isEmpty && seen.insert($0).inserted }.sorted()
+    }
+
     private func populate() {
         guard let existing else { return }
         name = existing.name
@@ -148,6 +166,7 @@ struct PayableFormView: View {
         currency = PayableCurrencySelection(persistedCurrency: existing.currency)
         dueDay = existing.dueDay
         holderId = existing.holderId ?? ""
+        bankName = existing.bankName ?? ""
         note = existing.note ?? ""
         bankAccount = existing.bankAccount ?? ""
     }
@@ -164,6 +183,7 @@ struct PayableFormView: View {
             currency: currency.draftCurrency,
             dueDay: dueDay,
             holderId: holderId.isEmpty ? nil : holderId,
+            bankName: bankName.isEmpty ? nil : bankName,
             note: note.isEmpty ? nil : note,
             bankAccount: bankAccount.isEmpty ? nil : bankAccount
         )

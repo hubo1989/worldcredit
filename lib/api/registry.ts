@@ -13,6 +13,7 @@ import * as adminServer from './admin.server'
 import * as aiServer from './ai.server'
 import * as analyticsServer from './analytics.server'
 import * as attachmentsServer from './attachments.server'
+import * as banksServer from './banks.server'
 import * as benefitsServer from './benefits.server'
 import * as billDraftsServer from './billDrafts.server'
 import * as billsServer from './bills.server'
@@ -237,6 +238,9 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     markPayment: { impl: gmailLedgerServer.markPayment, memberGuard: (args, ctx) => assertLedgerAccess(args[0], ctx) },
     updateLedgerAmount: { impl: gmailLedgerServer.updateLedgerAmount, memberGuard: (args, ctx) => assertLedgerAccess(args[0], ctx) },
     getGmailLedgerBanks: { impl: gmailLedgerServer.getGmailLedgerBanks, memberGuard: scopeLedgerUserArg(0) },
+  },
+  banks: {
+    getBankNames: { impl: banksServer.getBankNames },
   },
   holders: {
     getHolders: { impl: holdersServer.getHolders, bindUser: 0 },

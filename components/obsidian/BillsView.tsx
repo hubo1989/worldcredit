@@ -24,6 +24,12 @@ import {
   type BillsListCard,
   type BillsSortMode,
 } from '@/lib/utils'
+import {
+  BILL_STATUS_LABELS,
+  NO_BANK_TAG,
+  type BillStatusKey,
+  type BillsEntityType,
+} from '@/lib/bills-view-model'
 import { PayableRow } from '@/components/mobile/PayableList'
 import type { PayableWithStatus } from '@/lib/api/payables'
 import { currencySymbol } from '@/lib/fx'
@@ -39,7 +45,6 @@ import {
 } from '@/components/icons/WcIcon'
 
 export type BillDimension = 'holder' | 'bank'
-export type BillViewFilter = 'all' | 'unpaid' | 'cleared'
 
 export interface BankGroup {
   bankName: string
@@ -66,8 +71,14 @@ export interface BillsViewProps {
   activeFilterCount: number
   hasActiveFilter: boolean
   onResetFilters: () => void
-  viewFilter: BillViewFilter
-  onViewFilter: (v: BillViewFilter) => void
+  entityType: BillsEntityType
+  onEntityType: (v: BillsEntityType) => void
+  statusKeys: BillStatusKey[]
+  onToggleStatus: (k: BillStatusKey) => void
+  onClearStatuses: () => void
+  statusCounts: Record<BillStatusKey, number>
+  entityCounts: { cards: number; payables: number }
+  tagCounts: { holders: Record<string, number>; banks: Record<string, number>; noBank: number }
   sortMode: BillsSortMode
   onSortMode: (m: BillsSortMode) => void
   dimension: BillDimension
@@ -76,9 +87,6 @@ export interface BillsViewProps {
   onSelectedTag: (t: string) => void
   holderTags: Array<{ id: string; name: string }>
   bankTags: string[]
-  totalCount: number
-  unpaidCount: number
-  clearedCount: number
   loading: boolean
   loadError: string | null
   onRetry: () => void
@@ -380,8 +388,9 @@ export function BillsView(vm: BillsViewProps) {
   const {
     syncing, onSync, overdueCount, overdueTotal, overdueUnconverted, displayCurrency,
     onPayAllOpen, filtersOpen, onFiltersToggle, filterSummary, activeFilterCount,
-    hasActiveFilter, onResetFilters, viewFilter, onViewFilter, dimension, onDimension,
-    selectedTag, onSelectedTag, holderTags, bankTags, totalCount, unpaidCount, clearedCount,
+    hasActiveFilter, onResetFilters, entityType, onEntityType, statusKeys, onToggleStatus,
+    onClearStatuses, statusCounts, entityCounts, tagCounts, dimension, onDimension,
+    selectedTag, onSelectedTag, holderTags, bankTags,
     loading, loadError, onRetry, onEmptySync, payables, cards, allCards, holderMap,
     bankGroups, onOpenPayment, onManualAmount, onAddBill, sortMode, onSortMode,
     onEditPayable, onPayPayable,
@@ -579,21 +588,42 @@ export function BillsView(vm: BillsViewProps) {
         {/* 筛选面板：展开态 */}
         {filtersOpen && (
           <div id='bills-filter-panel' className='rounded-xl border border-d-border bg-d-surface p-4'>
-            <SectionLabel>卡片状态</SectionLabel>
+            <SectionLabel>对象类型</SectionLabel>
             <div className='mb-4 flex gap-2 overflow-x-auto pb-1'>
-              <FilterPill selected={viewFilter === 'all'} onClick={() => onViewFilter('all')}>
-                全部卡片 ({totalCount})
+              <FilterPill selected={entityType === 'all'} onClick={() => onEntityType('all')}>
+                全部
+              </FilterPill>
+              <FilterPill selected={entityType === 'cards'} onClick={() => onEntityType('cards')}>
+                信用卡账单 ({entityCounts.cards})
               </FilterPill>
               <FilterPill
-                selected={viewFilter === 'unpaid'}
-                onClick={() => onViewFilter('unpaid')}
-                warn={unpaidCount > 0 && viewFilter !== 'unpaid'}
+                selected={entityType === 'payables'}
+                onClick={() => onEntityType('payables')}
               >
-                待还款卡片 ({unpaidCount})
+                固定支出 ({entityCounts.payables})
               </FilterPill>
-              <FilterPill selected={viewFilter === 'cleared'} onClick={() => onViewFilter('cleared')}>
-                未出账单/已结清 ({clearedCount})
+            </div>
+
+            <SectionLabel>状态（可多选）</SectionLabel>
+            <div className='mb-4 flex gap-2 overflow-x-auto pb-1'>
+              <FilterPill selected={statusKeys.length === 0} onClick={onClearStatuses}>
+                全部状态
               </FilterPill>
+              {(entityType === 'cards'
+                ? (['unpaid', 'overdue', 'unissued'] as const)
+                : entityType === 'payables'
+                  ? (['unpaid', 'overdue', 'paid'] as const)
+                  : (['unpaid', 'overdue', 'unissued', 'paid'] as const)
+              ).map(k => (
+                <FilterPill
+                  key={k}
+                  selected={statusKeys.includes(k)}
+                  onClick={() => onToggleStatus(k)}
+                  warn={k === 'overdue' && statusCounts.overdue > 0 && !statusKeys.includes(k)}
+                >
+                  {BILL_STATUS_LABELS[k]} ({statusCounts[k] ?? 0})
+                </FilterPill>
+              ))}
             </div>
 
             <SectionLabel>分组维度</SectionLabel>
@@ -611,6 +641,14 @@ export function BillsView(vm: BillsViewProps) {
               <FilterPill selected={selectedTag === 'all'} onClick={() => onSelectedTag('all')}>
                 {dimension === 'holder' ? '全部持卡人' : '全部银行'}
               </FilterPill>
+              {dimension === 'bank' && (
+                <FilterPill
+                  selected={selectedTag === NO_BANK_TAG}
+                  onClick={() => onSelectedTag(NO_BANK_TAG)}
+                >
+                  非银行 ({tagCounts.noBank})
+                </FilterPill>
+              )}
               {dimension === 'holder'
                 ? holderTags.map(t => (
                     <FilterPill
@@ -618,7 +656,7 @@ export function BillsView(vm: BillsViewProps) {
                       selected={selectedTag === t.id}
                       onClick={() => onSelectedTag(t.id)}
                     >
-                      {t.name}
+                      {t.name} ({tagCounts.holders[t.id] ?? 0})
                     </FilterPill>
                   ))
                 : bankTags.map(name => (

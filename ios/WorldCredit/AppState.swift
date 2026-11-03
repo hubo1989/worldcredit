@@ -52,6 +52,8 @@ public final class AppState {
     }()
     public var dashboardBills: [BillDisplayItem] = []
     public var dashboardHolders: [CardHolder] = []
+    /// 公开银行目录；固定支出归属选择用，加载失败时退回卡片上的银行名。
+    public var bankOptions: [BankOption] = []
     public var dashboardCurrency = "CNY"
     public var dashboardPrivacy = true
     public var dashboardRates: FxRates? {
@@ -83,7 +85,8 @@ public final class AppState {
     public var cards: [CardDisplayItem] = [] {
         didSet { invalidateBillsPresentation() }
     }
-    public var selectedBillFilter: BillFilter = .unpaid
+    public var selectedEntityFilter: BillsEntityFilter = .all
+    public var selectedStatusFilters: Set<BillStatusFilter> = []
     public var billsSortMode: BillsSortMode = .nearestDue
     // 固定支出(周期应付)为在线数据：失败只降级提示，不影响本地账单。
     public var payables: [PayableItem] = [] {
@@ -100,7 +103,12 @@ public final class AppState {
     public func billsPresentation(holderId: String?, bankName: String?) -> BillsPresentation {
         // 观察 revision，缓存本身不发布状态，避免在 body 求值时反向触发更新。
         _ = billsDataRevision
-        let filter = BillsPresentationFilter(status: selectedBillFilter, holderId: holderId, bankName: bankName)
+        let filter = BillsPresentationFilter(
+            entity: selectedEntityFilter,
+            statuses: selectedStatusFilters,
+            holderId: holderId,
+            bankName: bankName
+        )
         let today = Date()
         let bills = allBills
         let cards = cards
@@ -342,16 +350,12 @@ public final class AppState {
             let sum = try await queryService.fetchDashboardSummary(today: today)
             // 只读一次全量账单，筛选与模式切换在内存完成。
             let allBillsList = try await queryService.fetchBills(filter: .all, today: today)
-            let bList = allBillsList.filter { item in
-                switch selectedBillFilter {
-                case .unpaid: return item.bill.status != "paid" && item.remainingAmount > 0.01
-                case .paid: return item.bill.status == "paid" && item.remainingAmount <= 0.01
-                case .all: return true
-                }
-            }
+            let bList = allBillsList
             let cList = try await queryService.fetchCards(today: today)
             let dashboardList = try await queryService.fetchDashboardBills(today: today)
             let holders = try await queryService.fetchHolders()
+            let banks: [BankOption] = (try? await apiClient.rpc(
+                module: "banks", function: "getBankNames")) ?? []
 
             // 读失败只保留旧值，不把同步状态静默重置为「0 待同步/从未同步」。
             let meta: (String?, Int)? = try? await dbManager.dbWriter.read { db in
@@ -368,6 +372,7 @@ public final class AppState {
             self.cards = cList
             self.dashboardBills = dashboardList
             self.dashboardHolders = holders
+            self.bankOptions = banks
             self.dashboardLoadError = nil
             self.refreshState.markLoaded(today: today)
             if let meta {

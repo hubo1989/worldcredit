@@ -91,6 +91,7 @@ private struct PayableCreatePayload: Codable {
     let currency: String
     let dueDay: Int
     let holderId: String?
+    let bankName: String?
     let note: String?
     let bankAccount: String?
 
@@ -99,6 +100,7 @@ private struct PayableCreatePayload: Codable {
         case name, category, amount, currency
         case dueDay = "due_day"
         case holderId = "holder_id"
+        case bankName = "bank_name"
         case note
         case bankAccount = "bank_account"
     }
@@ -111,6 +113,7 @@ private struct PayableCreatePayload: Codable {
         self.currency = draft.currency
         self.dueDay = draft.dueDay
         self.holderId = draft.holderId
+        self.bankName = draft.bankName
         self.note = draft.note
         self.bankAccount = draft.bankAccount
     }

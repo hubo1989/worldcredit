@@ -1,6 +1,25 @@
 import Foundation
 import GRDB
 
+/// 账单页对象类型：全部 / 信用卡账单 / 固定支出。
+public enum BillsEntityFilter: String, CaseIterable, Identifiable, Sendable {
+    case all = "全部"
+    case cards = "信用卡账单"
+    case payables = "固定支出"
+
+    public var id: String { rawValue }
+}
+
+/// 账单页统一状态：信用卡「部分还款」归入待还，固定支出「已付」归入已还款。
+public enum BillStatusFilter: String, CaseIterable, Identifiable, Sendable {
+    case unpaid = "待还"
+    case overdue = "已逾期"
+    case unissued = "未出账"
+    case paid = "已还款"
+
+    public var id: String { rawValue }
+}
+
 public enum BillFilter: String, CaseIterable, Identifiable, Sendable {
     case unpaid = "待还"
     case paid = "已还"

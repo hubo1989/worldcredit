@@ -1,4 +1,11 @@
-import { filterPayablesForView } from '../bills-view-model'
+import {
+  NO_BANK_TAG,
+  countByTag,
+  countEntities,
+  countStatuses,
+  filterCardsForView,
+  filterPayablesForView,
+} from '../bills-view-model'
 import { describe, expect, it } from 'vitest'
 import {
   amountToneClass,
@@ -129,22 +136,30 @@ describe('badgeToneClass / amountToneClass', () => {
   })
 })
 
-describe('filterPayablesForView', () => {
+describe('filterCardsForView / filterPayablesForView', () => {
   const payable = (
     id: string,
     holderId: string | null,
-    status: 'unpaid' | 'paid' | 'overdue'
-  ) => ({ id, holder_id: holderId, status })
+    status: 'unpaid' | 'paid' | 'overdue',
+    bankName: string | null = null
+  ) => ({ id, holder_id: holderId, status, bank_name: bankName })
 
   const rows = [
-    payable('rent-me', 'h-me', 'unpaid'),
-    payable('loan-me', 'h-me', 'paid'),
-    payable('insurance-wang', 'h-wang', 'overdue'),
-    payable('shared', null, 'unpaid'),
+    payable('rent-me', 'h-me', 'unpaid', '招商银行'),
+    payable('loan-me', 'h-me', 'paid', '招商银行'),
+    payable('insurance-wang', 'h-wang', 'overdue', null),
+    payable('shared', null, 'unpaid', null),
   ]
 
-  it('全部 + 全部标签：返回所有固定支出', () => {
-    expect(filterPayablesForView(rows, 'all', 'holder', 'all').map(p => p.id)).toEqual([
+  const base = {
+    entityType: 'all' as const,
+    statuses: [] as Array<'unpaid' | 'overdue' | 'unissued' | 'paid'>,
+    dimension: 'holder' as const,
+    selectedTag: 'all',
+  }
+
+  it('默认：返回所有固定支出', () => {
+    expect(filterPayablesForView(rows, base).map(p => p.id)).toEqual([
       'rent-me',
       'loan-me',
       'insurance-wang',
@@ -152,23 +167,77 @@ describe('filterPayablesForView', () => {
     ])
   })
 
-  it('按持卡人筛选：只保留该持卡人的固定支出', () => {
-    expect(filterPayablesForView(rows, 'all', 'holder', 'h-me').map(p => p.id)).toEqual([
-      'rent-me',
+  it('按持卡人筛选', () => {
+    expect(
+      filterPayablesForView(rows, { ...base, selectedTag: 'h-me' }).map(p => p.id)
+    ).toEqual(['rent-me', 'loan-me'])
+  })
+
+  it('状态多选为 OR：待还 + 已逾期', () => {
+    expect(
+      filterPayablesForView(rows, { ...base, statuses: ['unpaid', 'overdue'] }).map(p => p.id)
+    ).toEqual(['rent-me', 'insurance-wang', 'shared'])
+  })
+
+  it('已付归入「已还款」', () => {
+    expect(filterPayablesForView(rows, { ...base, statuses: ['paid'] }).map(p => p.id)).toEqual([
       'loan-me',
     ])
   })
 
-  it('按持卡人筛选与状态筛选叠加', () => {
-    expect(filterPayablesForView(rows, 'unpaid', 'holder', 'h-me').map(p => p.id)).toEqual([
-      'rent-me',
-    ])
-    expect(filterPayablesForView(rows, 'cleared', 'holder', 'h-me').map(p => p.id)).toEqual([
-      'loan-me',
-    ])
+  it('对象类型只看固定支出时，卡片为空', () => {
+    const card = {
+      holder_id: 'h-me',
+      status: 'unpaid' as const,
+      card: { card_product: { bank_name: '招商银行' } },
+    }
+    expect(filterCardsForView([card], { ...base, entityType: 'payables' })).toEqual([])
+    expect(filterPayablesForView(rows, { ...base, entityType: 'cards' })).toEqual([])
   })
 
-  it('银行维度下固定支出不参与（它们没有银行归属）', () => {
-    expect(filterPayablesForView(rows, 'all', 'bank', '招商银行')).toEqual([])
+  it('银行维度按固定支出的银行匹配；非银行单独成桶', () => {
+    expect(
+      filterPayablesForView(rows, { ...base, dimension: 'bank', selectedTag: '招商银行' }).map(
+        p => p.id
+      )
+    ).toEqual(['rent-me', 'loan-me'])
+    expect(
+      filterPayablesForView(rows, { ...base, dimension: 'bank', selectedTag: NO_BANK_TAG }).map(
+        p => p.id
+      )
+    ).toEqual(['insurance-wang', 'shared'])
+  })
+
+  it('部分还款归入待还（卡状态口径）', () => {
+    const card = {
+      holder_id: 'h-me',
+      status: 'partial' as const,
+      card: { card_product: { bank_name: '招商银行' } },
+    }
+    expect(filterCardsForView([card], { ...base, statuses: ['unpaid'] }).length).toBe(1)
+    expect(filterCardsForView([card], { ...base, statuses: ['overdue'] }).length).toBe(0)
+  })
+
+  it('计数：对象数与状态数随筛选变化', () => {
+    const cards = [
+      {
+        holder_id: 'h-me',
+        status: 'unpaid' as const,
+        card: { card_product: { bank_name: '招商银行' } },
+      },
+      {
+        holder_id: 'h-wang',
+        status: 'overdue' as const,
+        card: { card_product: { bank_name: '工商银行' } },
+      },
+    ]
+    expect(countEntities(cards, rows, base)).toEqual({ cards: 2, payables: 4 })
+    expect(countStatuses(cards, rows, base)).toEqual({
+      unpaid: 3,
+      overdue: 2,
+      unissued: 0,
+      paid: 1,
+    })
+    expect(countByTag(cards, rows, base).noBank).toBe(2)
   })
 })

@@ -7,6 +7,7 @@ import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
 import { createRecurringPayable, updateRecurringPayable, PAYABLE_CATEGORIES, PAYABLE_CURRENCIES, PAYABLE_CURRENCY_LABELS, normalizePayableCurrency, type PayableCategory, type PayableWithStatus } from '@/lib/api/payables'
 import { getHolders } from '@/lib/api/holders'
+import { getBankNames } from '@/lib/api/banks'
 import type { CardHolder } from '@/lib/types'
 import { useAuth } from '@/lib/auth'
 
@@ -34,6 +35,8 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
   const [dueDay, setDueDay] = useState('')
   const [holderId, setHolderId] = useState('')
   const [note, setNote] = useState('')
+  const [bankName, setBankName] = useState('')
+  const [bankOptions, setBankOptions] = useState<string[]>([])
   const [bankAccount, setBankAccount] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -41,6 +44,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
   useEffect(() => {
     if (!open) return
     getHolders().then(setHolders).catch(() => setHolders([]))
+    getBankNames().then(list => setBankOptions(list.map(b => b.name))).catch(() => setBankOptions([]))
   }, [open])
 
   useEffect(() => {
@@ -54,6 +58,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       setDueDay(String(existing.due_day))
       setHolderId(existing.holder_id || '')
       setNote(existing.note || '')
+      setBankName(existing.bank_name || '')
       setBankAccount(existing.bank_account || '')
     } else {
       setName('')
@@ -63,6 +68,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       setDueDay('')
       setHolderId('')
       setNote('')
+      setBankName('')
       setBankAccount('')
     }
   }, [open, existing])
@@ -92,6 +98,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
         due_day: parsedDay,
         holder_id: holderId || null,
         note: note.trim() || null,
+        bank_name: bankName.trim() || null,
         bank_account: bankAccount.trim() || null,
       }
       if (existing) {
@@ -190,6 +197,19 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
             ]}
           />
         )}
+        <SelectField
+          label="银行（可选）"
+          value={bankName}
+          onChange={e => setBankName(e.target.value)}
+          options={[
+            { value: '', label: '非银行 / 不指定' },
+            ...Array.from(new Set([
+              ...bankOptions,
+              ...(existing?.bank_name ? [existing.bank_name] : []),
+            ])).map(name => ({ value: name, label: name })),
+          ]}
+          helperText="用于账单页按银行筛选固定支出"
+        />
         <TextField
           label="银行账号（可选）"
           value={bankAccount}

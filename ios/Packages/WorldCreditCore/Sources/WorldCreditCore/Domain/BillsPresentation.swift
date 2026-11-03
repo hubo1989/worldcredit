@@ -1,12 +1,23 @@
 import Foundation
 
 public struct BillsPresentationFilter: Hashable, Sendable {
-    public let status: BillFilter
+    /// 银行维度下代表「没有银行归属」的固定支出桶。
+    public static let noBankValue = "__no_bank__"
+
+    public let entity: BillsEntityFilter
+    /// 空集合 = 不按状态过滤；多选为 OR。
+    public let statuses: Set<BillStatusFilter>
     public let holderId: String?
     public let bankName: String?
 
-    public init(status: BillFilter = .unpaid, holderId: String? = nil, bankName: String? = nil) {
-        self.status = status
+    public init(
+        entity: BillsEntityFilter = .all,
+        statuses: Set<BillStatusFilter> = [],
+        holderId: String? = nil,
+        bankName: String? = nil
+    ) {
+        self.entity = entity
+        self.statuses = statuses
         self.holderId = holderId
         self.bankName = bankName
     }
@@ -115,17 +126,31 @@ public struct BillsPresentation: Sendable {
             (filter.holderId == nil || $0.holderId == filter.holderId)
                 && (filter.bankName == nil || $0.bankName == filter.bankName)
         }
-        let filteredBills = holderBills.filter { Self.includes($0, status: filter.status) }
-        let filteredPayables = payables.filter {
-            guard filter.bankName == nil,
-                  filter.holderId == nil || $0.holderId == filter.holderId else { return false }
-            switch filter.status {
-            case .unpaid: return $0.remainingAmount > 0.01 && !$0.isSettled
-            case .paid: return $0.remainingAmount <= 0.01 || $0.isSettled
-            case .all: return true
+        // 本页按卡聚合：先分组算卡的单一状态，再按状态筛选整组，
+        // 避免把同一张卡的多期账单拆成不同状态。
+        let allGroups: [CardBillsGroup] = BillsGrouping.groups(from: holderBills)
+        let groups: [CardBillsGroup] = BillsGrouping.sorted(
+            allGroups.filter { (group: CardBillsGroup) -> Bool in
+                if filter.entity == .payables { return false }
+                if filter.statuses.isEmpty { return true }
+                return filter.statuses.contains(Self.cardStatus(of: group))
+            },
+            by: .nearestDue
+        )
+        let filteredBills: [BillDisplayItem] = groups.flatMap(\.bills)
+        let filteredPayables: [PayableItem] = payables.filter { (payable: PayableItem) -> Bool in
+            if filter.entity == .cards { return false }
+            if let holder = filter.holderId, payable.holderId != holder { return false }
+            if let bank = filter.bankName {
+                if bank == BillsPresentationFilter.noBankValue {
+                    if let own = payable.bankName, !own.isEmpty { return false }
+                } else if payable.bankName != bank {
+                    return false
+                }
             }
+            if filter.statuses.isEmpty { return true }
+            return filter.statuses.contains(Self.payableStatus(of: payable))
         }
-        let groups = BillsGrouping.sorted(BillsGrouping.groups(from: filteredBills), by: .nearestDue)
         let interestGroups = BillsGrouping.sorted(BillsGrouping.groups(from: holderBills), by: .maxInterestFree)
         interestRows = interestGroups.compactMap { group in
             guard let latest = group.bills.max(by: { $0.bill.billMonth < $1.bill.billMonth }) else { return nil }
@@ -133,7 +158,9 @@ public struct BillsPresentation: Sendable {
         }
         let billedCardIds = Set(bills.map(\.card.id))
         unbilledCards = cards.filter {
-            !billedCardIds.contains($0.id)
+            filter.entity != .payables
+                && (filter.statuses.isEmpty || filter.statuses.contains(.unissued))
+                && !billedCardIds.contains($0.id)
                 && (filter.holderId == nil || $0.card.holderId == filter.holderId)
                 && (filter.bankName == nil || $0.bankName == filter.bankName)
         }.sorted {
@@ -184,11 +211,18 @@ public struct BillsPresentation: Sendable {
         )
     }
 
-    private static func includes(_ item: BillDisplayItem, status: BillFilter) -> Bool {
-        switch status {
-        case .unpaid: item.bill.status != "paid" && item.remainingAmount > 0.01
-        case .paid: item.bill.status == "paid" && item.remainingAmount <= 0.01
-        case .all: true
+    /// 一张卡只有一个状态：有逾期 → 已逾期；仍有未还 → 待还；否则未出账。
+    private static func cardStatus(of group: CardBillsGroup) -> BillStatusFilter {
+        if group.hasOverdue { return .overdue }
+        if group.unpaidAmount > 0.01 { return .unpaid }
+        return .unissued
+    }
+
+    private static func payableStatus(of payable: PayableItem) -> BillStatusFilter {
+        switch payable.status {
+        case .overdue: return .overdue
+        case .paid: return .paid
+        case .unpaid: return .unpaid
         }
     }
 }
