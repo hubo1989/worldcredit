@@ -43,12 +43,16 @@ function renderPayableHistory(
   historyLoading: boolean,
   currency: string
 ) {
-  // 在途或尚未加载都算加载中：合并同一份文案，重试时不显示上一次的错误
-  if (historyLoading || payments === undefined) {
+  // 顺序必须是 在途 → 失败 → 未加载：失败时 payments 仍为 undefined，
+  // 若把 undefined 并入加载中，错误文案将永远不可达。
+  if (historyLoading) {
     return <p className='mt-1.5 text-[11px] text-d-muted'>加载中…</p>
   }
   if (historyError) {
     return <p className='mt-1.5 text-[11px] text-d-danger-ink'>{historyError}</p>
+  }
+  if (payments === undefined) {
+    return <p className='mt-1.5 text-[11px] text-d-muted'>加载中…</p>
   }
   if (payments.length === 0) {
     return <p className='mt-1.5 text-[11px] text-d-muted'>还没有历史还款记录</p>

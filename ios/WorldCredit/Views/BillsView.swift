@@ -1051,16 +1051,8 @@ struct BillsView: View {
         .accessibilityIdentifier("bills.payable.history.\(payable.id)")
 
         if expanded {
-            if appState.isPayableHistoryStale(payable.id) {
-                // 刷新后缓存已清空但行仍展开：立即重取
-                Text("加载中…")
-                    .font(.caption2)
-                    .foregroundStyle(WCColors.textSecondary)
-                    .task(id: payable.id) {
-                        await appState.retryPayableHistory(payable.id)
-                    }
-            } else if failed {
-                // 失败态：records 恒为 nil，必须优先于「加载中」判定
+            if failed {
+                // 失败态优先：失败时 records 恒为 nil，先判 nil 会让错误永远不可见
                 Button {
                     Task { await appState.retryPayableHistory(payable.id) }
                 } label: {
@@ -1069,6 +1061,14 @@ struct BillsView: View {
                         .foregroundStyle(WCColors.dangerInk)
                 }
                 .buttonStyle(.plain)
+            } else if appState.isPayableHistoryStale(payable.id) {
+                // 刷新后缓存已清空但行仍展开：立即重取
+                Text("加载中…")
+                    .font(.caption2)
+                    .foregroundStyle(WCColors.textSecondary)
+                    .task(id: payable.id) {
+                        await appState.retryPayableHistory(payable.id)
+                    }
             } else if records == nil {
                 Text("加载中…")
                     .font(.caption2)

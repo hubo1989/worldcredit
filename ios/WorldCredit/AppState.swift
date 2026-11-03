@@ -847,9 +847,11 @@ public final class AppState {
             payableHistoryStale.remove(payableId)
         } catch {
             guard payableHistoryRevision[payableId] == revision else { return }
-            // 保持「未加载」以便下次展开重试，并记录错误供 UI 展示
+            // 保持「未加载」以便下次展开重试，并记录错误供 UI 展示；
+            // 同时清 stale，否则 stale 分支会反复自动重试形成死循环
             payablePayments[payableId] = nil
             payableHistoryErrors.insert(payableId)
+            payableHistoryStale.remove(payableId)
         }
     }
 
@@ -859,6 +861,7 @@ public final class AppState {
         expandedPayableIds.remove(item.id)
         payableHistoryErrors.remove(item.id)
         payableHistoryRevision[item.id] = nil
+        payableHistoryStale.remove(item.id)
         await refreshPayables()
     }
 

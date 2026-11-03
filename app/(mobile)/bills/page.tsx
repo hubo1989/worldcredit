@@ -472,14 +472,12 @@ export default function BillsPage() {
   const handlePayPayable = async (payable: PayableWithStatus) => {
     try {
       await payRecurringPayable(payable.id, payable.amount)
-      // 新还款落库：清掉该笔历史缓存；先等在途旧请求落定，避免旧结果回写覆盖新数据
-      setPayablePayments(prev => omitRecordKey(prev, payable.id))
+      // 新还款落库：先等在途旧请求落定（否则它的成功回调会把不含新还款的记录写回），
+      // 再清缓存并重取
       const running = payableHistoryInFlight.current.get(payable.id)
       if (running) await running
+      setPayablePayments(prev => omitRecordKey(prev, payable.id))
       // 等待期间用户可能收起/展开，重取前重新读取展开状态
-      if (expandedPayableIdsRef.current.has(payable.id)) {
-        await loadPayableHistory(payable.id)
-      }
       setCelebrationNotice({
         open: true,
         message: `🎉 已登记「${payable.name}」本期付款 ${currencySymbol(payable.currency)}${payable.amount.toLocaleString()}`,
@@ -493,7 +491,7 @@ export default function BillsPage() {
   /** 展开/收起固定支出历史：首次展开才拉取该笔记录。 */
   const handleTogglePayableHistory = useCallback(
     (payableId: string) => {
-      const willOpen = !expandedPayableIds.has(payableId)
+      const willOpen = !expandedPayableIdsRef.current.has(payableId)
       setExpandedPayableIds(prev => {
         const next = new Set(prev)
         if (willOpen) next.add(payableId)
@@ -503,7 +501,7 @@ export default function BillsPage() {
       if (!willOpen || payablePayments[payableId]) return
       void loadPayableHistory(payableId)
     },
-    [expandedPayableIds, payablePayments, loadPayableHistory]
+    [payablePayments, loadPayableHistory]
   )
 
   // 收起态摘要：把当前筛选、分组与排序压成一行可读文本
