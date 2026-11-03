@@ -140,7 +140,8 @@ export async function getPayablePayments(payableId: string): Promise<PayablePaym
     `SELECT id, payable_id, period, amount, paid_at, note, created_at
      FROM recurring_payable_payments
      WHERE payable_id = ?
-     ORDER BY period DESC, created_at DESC`,
+     ORDER BY period DESC, created_at DESC
+     LIMIT 60`,
     [payableId]
   )
   if (error) throw new Error(error.message)

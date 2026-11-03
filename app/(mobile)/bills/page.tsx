@@ -421,13 +421,24 @@ export default function BillsPage() {
   const handlePayPayable = async (payable: PayableWithStatus) => {
     try {
       await payRecurringPayable(payable.id, payable.amount)
-      // 新还款落库：清掉该笔历史缓存，展开时重新拉取
+      // 新还款落库：清掉该笔历史缓存；若当时正展开则立即重取，避免停在「加载中」
       setPayablePayments(prev => {
         if (!(payable.id in prev)) return prev
         const next = { ...prev }
         delete next[payable.id]
         return next
       })
+      if (expandedPayableIds.has(payable.id)) {
+        try {
+          const records = await getPayablePayments(payable.id)
+          setPayablePayments(prev => ({ ...prev, [payable.id]: records }))
+        } catch (err) {
+          setPayableHistoryErrors(prev => ({
+            ...prev,
+            [payable.id]: err instanceof Error ? err.message : '历史还款加载失败',
+          }))
+        }
+      }
       setCelebrationNotice({
         open: true,
         message: `🎉 已登记「${payable.name}」本期付款 ${currencySymbol(payable.currency)}${payable.amount.toLocaleString()}`,

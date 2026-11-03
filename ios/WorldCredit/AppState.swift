@@ -777,10 +777,11 @@ public final class AppState {
         payableHistoryRevision[item.id] = (payableHistoryRevision[item.id] ?? 0) + 1
         payablePayments[item.id] = nil
         payableHistoryErrors.remove(item.id)
-        if expandedPayableIds.contains(item.id) {
-            await loadPayableHistory(item.id)
-        }
-        await refreshPayables()
+        // 历史重取与列表刷新互不依赖，并发执行减少一次往返等待
+        async let history: Void = expandedPayableIds.contains(item.id)
+            ? loadPayableHistory(item.id) : ()
+        async let refreshed: Void = refreshPayables()
+        _ = await (history, refreshed)
     }
 
     public func savePayable(_ draft: PayableDraft, existing: PayableItem?) async throws {
