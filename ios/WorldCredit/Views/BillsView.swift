@@ -84,11 +84,27 @@ struct BillsView: View {
 
     private var holderOptions: [(id: String, name: String)] {
         var seen = Set<String>()
-        return appState.cards.compactMap { card in
+        var options: [(id: String, name: String)] = []
+        for card in appState.cards {
             let holderId = card.card.holderId
-            guard !holderId.isEmpty, seen.insert(holderId).inserted else { return nil }
-            return (holderId, card.holderName)
+            guard !holderId.isEmpty, seen.insert(holderId).inserted else { continue }
+            options.append((holderId, card.holderName))
         }
+        // 固定支出也可以归属到没有信用卡的持卡人：筛选标签必须覆盖这些归属
+        for payable in appState.payables {
+            guard let holderId = payable.holderId, !holderId.isEmpty,
+                  seen.insert(holderId).inserted else { continue }
+            let name = appState.dashboardHolders.first(where: { $0.id == holderId })?.name
+                ?? "未知持卡人"
+            options.append((holderId, name))
+        }
+        return options
+    }
+
+    private func payableHolderName(_ payable: PayableItem) -> String? {
+        guard let holderId = payable.holderId, !holderId.isEmpty else { return nil }
+        return appState.dashboardHolders.first(where: { $0.id == holderId })?.name
+            ?? appState.cards.first(where: { $0.card.holderId == holderId })?.holderName
     }
 
     private var bankOptions: [String] {
@@ -838,6 +854,15 @@ struct BillsView: View {
                             .padding(.vertical, 2)
                             .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 4))
                             .foregroundStyle(WCColors.textSecondary)
+                        if let holderName = payableHolderName(payable) {
+                            Text(holderName)
+                                .font(.caption2.weight(.medium))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 4))
+                                .foregroundStyle(WCColors.textSecondary)
+                                .accessibilityIdentifier("payable.holder")
+                        }
                     }
 
                     HStack(spacing: 6) {

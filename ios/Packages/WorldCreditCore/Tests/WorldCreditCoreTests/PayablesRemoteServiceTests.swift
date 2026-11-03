@@ -102,6 +102,24 @@ struct PayablesRemoteServiceTests {
         }
     }
 
+    @Test("编辑请求携带归属持卡人 holder_id")
+    func updateSendsHolderId() async throws {
+        let session = MockNetworkSession { [itemEnvelope] request in
+            #expect(request.url?.path == "/api/rpc/payables/updateRecurringPayable")
+            let body = try #require(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
+            let args = try #require(body["args"] as? [Any])
+            #expect(args.first as? String == "p1")
+            let payload = try #require(args.last as? [String: Any])
+            #expect(payload["holder_id"] as? String == "holder-2")
+            return response(request, itemEnvelope)
+        }
+        let draft = PayableDraft(
+            name: "房租", category: .rent, amount: 4500, currency: "CNY", dueDay: 5,
+            holderId: "holder-2")
+        _ = try await PayablesRemoteService(apiClient: client(session))
+            .update(payableId: "p1", draft: draft)
+    }
+
     @Test("历史未知币种原值未变时，编辑请求省略 currency", arguments: ["EUR", " eur ", "", "  "])
     func updatePreservesLegacyCurrency(_ original: String) async throws {
         let session = MockNetworkSession { [itemEnvelope] request in

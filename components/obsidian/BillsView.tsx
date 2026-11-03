@@ -441,6 +441,7 @@ export function BillsView(vm: BillsViewProps) {
           <PayableRow
             key={`payable-${p.id}`}
             payable={p}
+            holderName={p.holder_id ? holderMap[p.holder_id] : undefined}
             onEdit={onEditPayable}
             onPay={onPayPayable}
           />

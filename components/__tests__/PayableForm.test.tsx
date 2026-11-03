@@ -17,7 +17,10 @@ vi.mock('@/lib/auth', () => ({
 }))
 
 vi.mock('@/lib/api/holders', () => ({
-  getHolders: vi.fn().mockResolvedValue([]),
+  getHolders: vi.fn().mockResolvedValue([
+    { id: 'holder-1', name: '本人' },
+    { id: 'holder-2', name: '家人' },
+  ]),
 }))
 
 vi.mock('@/lib/api/payables', async () => {
@@ -157,5 +160,36 @@ describe('PayableForm currency compatibility', () => {
 
     await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1))
     expect(mockedCreate.mock.calls[0][0].currency).toBe('HKD')
+  })
+})
+
+describe('PayableForm 归属持卡人', () => {
+  it('新建时可选归属并随请求提交 holder_id', async () => {
+    const user = userEvent.setup()
+    mockedCreate.mockResolvedValueOnce(makePayable({ id: 'payable-new' }))
+    render(<PayableForm open onClose={vi.fn()} onSuccess={vi.fn()} />)
+
+    await user.type(screen.getByLabelText('名称'), '房租')
+    await user.type(screen.getByLabelText('每月金额'), '4500')
+    await user.type(screen.getByLabelText('每月应付日'), '5')
+    await user.selectOptions(await screen.findByLabelText('归属（可选）'), 'holder-2')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1))
+    expect(mockedCreate.mock.calls[0][0]).toMatchObject({ holder_id: 'holder-2' })
+  })
+
+  it('未选择归属时提交 null，不伪造持卡人', async () => {
+    const user = userEvent.setup()
+    mockedCreate.mockResolvedValueOnce(makePayable({ id: 'payable-new' }))
+    render(<PayableForm open onClose={vi.fn()} onSuccess={vi.fn()} />)
+
+    await user.type(screen.getByLabelText('名称'), '房租')
+    await user.type(screen.getByLabelText('每月金额'), '4500')
+    await user.type(screen.getByLabelText('每月应付日'), '5')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1))
+    expect(mockedCreate.mock.calls[0][0]).toMatchObject({ holder_id: null })
   })
 })

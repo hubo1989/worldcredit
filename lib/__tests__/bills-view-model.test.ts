@@ -1,3 +1,4 @@
+import { filterPayablesForView } from '../bills-view-model'
 import { describe, expect, it } from 'vitest'
 import {
   amountToneClass,
@@ -125,5 +126,49 @@ describe('badgeToneClass / amountToneClass', () => {
       'text-d-muted'
     )
     expect(amountToneClass(item({ bank: 'A', status: 'unpaid' }))).toBe('text-d-text')
+  })
+})
+
+describe('filterPayablesForView', () => {
+  const payable = (
+    id: string,
+    holderId: string | null,
+    status: 'unpaid' | 'paid' | 'overdue'
+  ) => ({ id, holder_id: holderId, status })
+
+  const rows = [
+    payable('rent-me', 'h-me', 'unpaid'),
+    payable('loan-me', 'h-me', 'paid'),
+    payable('insurance-wang', 'h-wang', 'overdue'),
+    payable('shared', null, 'unpaid'),
+  ]
+
+  it('全部 + 全部标签：返回所有固定支出', () => {
+    expect(filterPayablesForView(rows, 'all', 'holder', 'all').map(p => p.id)).toEqual([
+      'rent-me',
+      'loan-me',
+      'insurance-wang',
+      'shared',
+    ])
+  })
+
+  it('按持卡人筛选：只保留该持卡人的固定支出', () => {
+    expect(filterPayablesForView(rows, 'all', 'holder', 'h-me').map(p => p.id)).toEqual([
+      'rent-me',
+      'loan-me',
+    ])
+  })
+
+  it('按持卡人筛选与状态筛选叠加', () => {
+    expect(filterPayablesForView(rows, 'unpaid', 'holder', 'h-me').map(p => p.id)).toEqual([
+      'rent-me',
+    ])
+    expect(filterPayablesForView(rows, 'cleared', 'holder', 'h-me').map(p => p.id)).toEqual([
+      'loan-me',
+    ])
+  })
+
+  it('银行维度下固定支出不参与（它们没有银行归属）', () => {
+    expect(filterPayablesForView(rows, 'all', 'bank', '招商银行')).toEqual([])
   })
 })

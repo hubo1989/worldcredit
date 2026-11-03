@@ -15,6 +15,8 @@ interface Props {
 
 export interface PayableRowProps {
   payable: PayableWithStatus
+  /** 归属持卡人姓名；未指定归属时不显示 */
+  holderName?: string
   onEdit: (payable: PayableWithStatus) => void
   onPay: (payable: PayableWithStatus) => void
 }
@@ -30,7 +32,7 @@ export interface PayableRowProps {
  * 滚动模型（服务端 resolveDisplayPeriod）保证任一时刻卡片只呈现一期：
  * 「已登记」只可能出现在待出账态，待还款态一定是可登记付款的未付期。
  */
-export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
+export function PayableRow({ payable: p, holderName, onEdit, onPay }: PayableRowProps) {
   const paid = p.status === 'paid'
   const overdue = p.status === 'overdue'
 
@@ -82,6 +84,11 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
             <span className='shrink-0 whitespace-nowrap text-[12px] text-d-muted'>
               · {categoryLabel(p.category)}
             </span>
+            {holderName && (
+              <span className='shrink-0 whitespace-nowrap rounded-md bg-d-subtle px-1.5 py-0.5 text-[10px] font-semibold text-d-muted'>
+                {holderName}
+              </span>
+            )}
           </div>
           <p className='mt-1 block text-[11px] leading-4 text-d-muted'>
             每月 {p.due_day} 日

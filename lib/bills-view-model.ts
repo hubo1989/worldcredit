@@ -68,3 +68,30 @@ export function amountToneClass(item: CardWithBillsSummary): string {
   if (isCleared) return 'text-d-muted'
   return 'text-d-text'
 }
+
+/**
+ * 固定支出的视图筛选：与信用卡共用「状态 + 持卡人」口径。
+ * 固定支出没有银行归属，选中银行维度时按 iOS BillsPresentation 的口径隐藏，
+ * 避免出现「按银行筛选却混入不属于该银行的固定支出」。
+ */
+export type PayableViewFilter = 'all' | 'unpaid' | 'cleared'
+export type PayableFilterDimension = 'holder' | 'bank'
+
+export function filterPayablesForView<
+  P extends { holder_id: string | null; status: 'unpaid' | 'paid' | 'overdue' },
+>(
+  payables: P[],
+  viewFilter: PayableViewFilter,
+  dimension: PayableFilterDimension,
+  selectedTag: string
+): P[] {
+  return payables.filter(p => {
+    if (viewFilter === 'unpaid' && p.status === 'paid') return false
+    if (viewFilter === 'cleared' && p.status !== 'paid') return false
+    if (selectedTag !== 'all') {
+      if (dimension === 'bank') return false
+      if (p.holder_id !== selectedTag) return false
+    }
+    return true
+  })
+}

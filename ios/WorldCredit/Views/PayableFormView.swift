@@ -13,6 +13,8 @@ struct PayableFormView: View {
     @State private var amountText = ""
     @State private var currency: PayableCurrencySelection = .supported(.cny)
     @State private var dueDay = 1
+    /// 归属持卡人；空字符串 = 不指定
+    @State private var holderId = ""
     @State private var note = ""
     @State private var bankAccount = ""
     @State private var errorMessage: String?
@@ -63,6 +65,14 @@ struct PayableFormView: View {
                 }
 
                 Section("选填") {
+                    // 归属用于账单页按持卡人筛选与汇总；不指定时该固定支出只出现在「全部」
+                    Picker("归属持卡人", selection: $holderId) {
+                        Text("不指定").tag("")
+                        ForEach(appState.dashboardHolders) { holder in
+                            Text(holder.name).tag(holder.id)
+                        }
+                    }
+                    .accessibilityIdentifier("payable.form.holder")
                     TextField("备注", text: $note)
                     TextField("收款银行账号（展示层一键复制）", text: $bankAccount)
                         .keyboardType(.numberPad)
@@ -137,6 +147,7 @@ struct PayableFormView: View {
         amountText = String(format: "%.2f", existing.amount)
         currency = PayableCurrencySelection(persistedCurrency: existing.currency)
         dueDay = existing.dueDay
+        holderId = existing.holderId ?? ""
         note = existing.note ?? ""
         bankAccount = existing.bankAccount ?? ""
     }
@@ -152,6 +163,7 @@ struct PayableFormView: View {
             amount: amount,
             currency: currency.draftCurrency,
             dueDay: dueDay,
+            holderId: holderId.isEmpty ? nil : holderId,
             note: note.isEmpty ? nil : note,
             bankAccount: bankAccount.isEmpty ? nil : bankAccount
         )

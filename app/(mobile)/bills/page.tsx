@@ -38,6 +38,7 @@ import {
   type BillViewFilter,
 } from '@/components/obsidian/BillsView'
 import { BillsOverlays } from '@/components/obsidian/BillsOverlays'
+import { filterPayablesForView } from '@/lib/bills-view-model'
 
 type Dimension = BillDimension
 type ViewFilter = BillViewFilter
@@ -248,7 +249,7 @@ export default function BillsPage() {
     }
   }
 
-  // 持卡人维度可选标签
+  // 持卡人维度可选标签：信用卡 + 固定支出
   const holderTags = useMemo(() => {
     const ids: string[] = []
     const seen = new Set<string>()
@@ -259,8 +260,16 @@ export default function BillsPage() {
         ids.push(hid)
       }
     }
+    // 固定支出可归属到某个持卡人：即使该人名下没有信用卡，也要出现在筛选标签里
+    for (const p of payables) {
+      const hid = p.holder_id
+      if (hid && !seen.has(hid)) {
+        seen.add(hid)
+        ids.push(hid)
+      }
+    }
     return ids.map(id => ({ id, name: holderMap[id] || '未知持卡人' }))
-  }, [cardsSummary, holderMap])
+  }, [cardsSummary, payables, holderMap])
 
   // 银行维度可选标签
   const bankTags = useMemo(() => {
@@ -291,6 +300,12 @@ export default function BillsPage() {
       return true
     })
   }, [cardsSummary, viewFilter, selectedTag, dimension])
+
+  // 固定支出同样参与状态 + 持卡人筛选（银行维度下固定支出无归属，按 iOS 口径隐藏）
+  const filteredPayables = useMemo(
+    () => filterPayablesForView(payables, viewFilter, dimension, selectedTag),
+    [payables, viewFilter, dimension, selectedTag]
+  )
 
   // 排序固定为三段，每段用各自的时间轴，方向都是「最紧要的在前」：
   //   逾期      → 逾期最久 → 逾期最短
@@ -434,7 +449,7 @@ export default function BillsPage() {
         loadError={loadError}
         onRetry={() => loadData()}
         onEmptySync={handleSync}
-        payables={payables}
+        payables={filteredPayables}
         onEditPayable={p => { setEditingPayable(p); setPayableFormOpen(true) }}
         onPayPayable={handlePayPayable}
         cards={sortedCards}
