@@ -64,3 +64,6 @@ export function normalizePayableCurrency(value: unknown): PayableCurrency | null
 export function isPayableCurrency(value: unknown): value is PayableCurrency {
   return typeof value === 'string' && (PAYABLE_CURRENCIES as readonly string[]).includes(value)
 }
+
+/** 历史还款返回上限：服务端查询与前端「最近 N 笔」文案共用同一常量。 */
+export const PAYABLE_HISTORY_LIMIT = 60

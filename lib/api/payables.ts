@@ -19,6 +19,7 @@ export {
   PAYABLE_CURRENCY_LABELS,
   isPayableCurrency,
   normalizePayableCurrency,
+  PAYABLE_HISTORY_LIMIT,
 } from './payables.shared'
 
 export function getRecurringPayables(...args: Parameters<typeof Server.getRecurringPayables>) {

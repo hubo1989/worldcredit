@@ -5,7 +5,11 @@
 
 import { query, queryOne, execute, uuid, now } from '../db'
 import { payablePeriodOf, payableDueDate, nextPayablePeriodOf, diffInCalendarDays } from '../utils'
-import { normalizePayableCurrency, type PayableCategory } from './payables.shared'
+import {
+  PAYABLE_HISTORY_LIMIT,
+  normalizePayableCurrency,
+  type PayableCategory,
+} from './payables.shared'
 import { RpcDomainError } from './errors'
 
 export type { PayableCategory } from './payables.shared'
@@ -120,9 +124,6 @@ export async function resolveDisplayPeriod(
   }
   return { period: current, paidAmount: paidCurrent }
 }
-
-/** 历史还款返回上限：与前端「最近 N 笔」文案一致。 */
-export const PAYABLE_HISTORY_LIMIT = 60
 
 export interface PayablePaymentRecord {
   id: string

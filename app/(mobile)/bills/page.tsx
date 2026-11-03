@@ -73,6 +73,14 @@ function tagSummary(
   return selectedTag === NO_BANK_TAG ? '非银行' : selectedTag
 }
 
+/** 不可变地从 Record 中删除一个 key（无该 key 时返回原对象）。 */
+function omitRecordKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in record)) return record
+  const next = { ...record }
+  delete next[key]
+  return next
+}
+
 export default function BillsPage() {
   const { user } = useAuth()
   const { displayConfig } = useUserPreferences()
@@ -97,6 +105,7 @@ export default function BillsPage() {
   const [payablePayments, setPayablePayments] = useState<Record<string, PayablePaymentRecord[]>>({})
   const [expandedPayableIds, setExpandedPayableIds] = useState<Set<string>>(new Set())
   const [payableHistoryErrors, setPayableHistoryErrors] = useState<Record<string, string>>({})
+  const [payableHistoryLoading, setPayableHistoryLoading] = useState<Set<string>>(new Set())
   const [editingPayable, setEditingPayable] = useState<PayableWithStatus | null>(null)
 
   const [celebrationNotice, setCelebrationNotice] = useState<{ open: boolean; message: string }>({
@@ -140,6 +149,9 @@ export default function BillsPage() {
         getHolders(user.id),
       ])
       setCardsSummary(summaryData)
+      // 全量刷新：历史缓存可能过期，清空后按需重拉
+      setPayablePayments({})
+      setPayableHistoryErrors({})
       const map: Record<string, string> = {}
       for (const h of holders) map[h.id] = h.name
       setHolderMap(map)
@@ -421,13 +433,10 @@ export default function BillsPage() {
   const handlePayPayable = async (payable: PayableWithStatus) => {
     try {
       await payRecurringPayable(payable.id, payable.amount)
-      // 新还款落库：清掉该笔历史缓存；若当时正展开则立即重取，避免停在「加载中」
-      setPayablePayments(prev => {
-        if (!(payable.id in prev)) return prev
-        const next = { ...prev }
-        delete next[payable.id]
-        return next
-      })
+      // 新还款落库：清掉该笔历史缓存；先等在途旧请求落定，避免旧结果回写覆盖新数据
+      setPayablePayments(prev => omitRecordKey(prev, payable.id))
+      const running = payableHistoryInFlight.current.get(payable.id)
+      if (running) await running
       if (expandedPayableIds.has(payable.id)) {
         await loadPayableHistory(payable.id)
       }
@@ -449,16 +458,12 @@ export default function BillsPage() {
   const loadPayableHistory = useCallback((payableId: string) => {
     const running = payableHistoryInFlight.current.get(payableId)
     if (running) return running
+    setPayableHistoryLoading(prev => new Set(prev).add(payableId))
     const task = (async () => {
       try {
         const records = await getPayablePayments(payableId)
         setPayablePayments(prev => ({ ...prev, [payableId]: records }))
-        setPayableHistoryErrors(prev => {
-          if (!prev[payableId]) return prev
-          const next = { ...prev }
-          delete next[payableId]
-          return next
-        })
+        setPayableHistoryErrors(prev => omitRecordKey(prev, payableId))
       } catch (err) {
         // 保持未加载状态：再次展开会重试；错误就地展示
         setPayableHistoryErrors(prev => ({
@@ -467,6 +472,11 @@ export default function BillsPage() {
         }))
       } finally {
         payableHistoryInFlight.current.delete(payableId)
+        setPayableHistoryLoading(prev => {
+          const next = new Set(prev)
+          next.delete(payableId)
+          return next
+        })
       }
     })()
     payableHistoryInFlight.current.set(payableId, task)
@@ -570,6 +580,7 @@ export default function BillsPage() {
         payables={filteredPayables}
         payablePayments={payablePayments}
         payableHistoryErrors={payableHistoryErrors}
+        payableHistoryLoading={payableHistoryLoading}
         expandedPayableIds={expandedPayableIds}
         onTogglePayableHistory={handleTogglePayableHistory}
         onEditPayable={p => { setEditingPayable(p); setPayableFormOpen(true) }}

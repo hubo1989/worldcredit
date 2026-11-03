@@ -647,9 +647,13 @@ public final class AppState {
 
             payables = items
             payablesError = nil
-            // 服务端列表已重取：历史缓存可能过期，清空后按需重拉
+            // 服务端列表已重取：历史缓存可能过期，清空并对已展开项立即重拉
+            let expanded = expandedPayableIds
             payablePayments = [:]
             payableHistoryErrors = []
+            for id in expanded where payables.contains(where: { $0.id == id }) {
+                await loadPayableHistory(id)
+            }
 
             // 空结果 = 用户删空了固定支出：移除快照（否则「删空后重启+离线」会复活已删条目）；
             // 服务端瞬时异常返回空列表的窗口极窄且下次在线刷新即自愈，不值得为它保留陈旧快照。
@@ -808,6 +812,12 @@ public final class AppState {
         }
         expandedPayableIds.insert(payableId)
         guard payablePayments[payableId] == nil else { return }
+        await loadPayableHistory(payableId)
+    }
+
+    /// 错误态点击「重试」：保持展开，直接重拉。
+    public func retryPayableHistory(_ payableId: String) async {
+        expandedPayableIds.insert(payableId)
         await loadPayableHistory(payableId)
     }
 

@@ -1051,7 +1051,7 @@ struct BillsView: View {
                     .foregroundStyle(WCColors.textSecondary)
             } else if failed {
                 Button {
-                    Task { await appState.togglePayableHistory(payable.id) }
+                    Task { await appState.retryPayableHistory(payable.id) }
                 } label: {
                     Text("加载失败，点此重试")
                         .font(.caption2.weight(.semibold))

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import {
   categoryLabel,
+  PAYABLE_HISTORY_LIMIT,
   type PayableWithStatus,
   type PayablePaymentRecord,
 } from '@/lib/api/payables'
@@ -19,6 +20,8 @@ export interface PayableRowProps {
   payments?: PayablePaymentRecord[]
   /** 历史加载失败提示；为空表示无错误 */
   historyError?: string
+  /** 历史请求在途（含重试）；优先于错误态展示 */
+  historyLoading?: boolean
   /** 是否展开历史还款 */
   historyOpen?: boolean
   onToggleHistory?: () => void
@@ -26,21 +29,29 @@ export interface PayableRowProps {
   onPay: (payable: PayableWithStatus) => void
 }
 
-/** 与服务端 LIMIT 保持一致：超出时文案改称「最近 N 笔」。 */
-const PAYABLE_HISTORY_LIMIT = 60
+/** 展开按钮文案：达到上限时改称「最近 N 笔」，避免误以为已看全。 */
+function historyLabel(payments: PayablePaymentRecord[] | undefined): string {
+  if (!payments || payments.length === 0) return '历史还款'
+  if (payments.length >= PAYABLE_HISTORY_LIMIT) return `最近 ${PAYABLE_HISTORY_LIMIT} 笔还款`
+  return `历史还款 ${payments.length} 笔`
+}
 
 /** 历史还款展开区：加载中 / 失败 / 空 / 列表四态，避免嵌套三元。 */
 function renderPayableHistory(
   payments: PayablePaymentRecord[] | undefined,
   historyError: string | undefined,
+  historyLoading: boolean,
   currency: string
 ) {
-  // 重试在途时优先显示「加载中」，旧错误不再滞留
-  if (payments === undefined) {
+  // 在途优先：重试时不显示上一次的错误
+  if (historyLoading) {
     return <p className='mt-1.5 text-[11px] text-d-muted'>加载中…</p>
   }
   if (historyError) {
     return <p className='mt-1.5 text-[11px] text-d-danger-ink'>{historyError}</p>
+  }
+  if (payments === undefined) {
+    return <p className='mt-1.5 text-[11px] text-d-muted'>加载中…</p>
   }
   if (payments.length === 0) {
     return <p className='mt-1.5 text-[11px] text-d-muted'>还没有历史还款记录</p>
@@ -83,6 +94,7 @@ export function PayableRow({
   holderName,
   payments,
   historyError,
+  historyLoading = false,
   historyOpen = false,
   onToggleHistory,
   onEdit,
@@ -232,14 +244,11 @@ export function PayableRow({
             onClick={e => { e.stopPropagation(); onToggleHistory() }}
             className='flex w-full items-center justify-between text-[11px] font-semibold text-d-muted'
           >
-            <span>
-              {payments && payments.length >= PAYABLE_HISTORY_LIMIT
-                ? `最近 ${PAYABLE_HISTORY_LIMIT} 笔还款`
-                : `历史还款${payments && payments.length > 0 ? ` ${payments.length} 笔` : ''}`}
-            </span>
+            <span>{historyLabel(payments)}</span>
             <span className='text-d-accent-light'>{historyOpen ? '收起' : '展开'}</span>
           </button>
-          {historyOpen && renderPayableHistory(payments, historyError, p.currency)}
+          {historyOpen &&
+            renderPayableHistory(payments, historyError, historyLoading, p.currency)}
         </div>
       )}
     </div>
