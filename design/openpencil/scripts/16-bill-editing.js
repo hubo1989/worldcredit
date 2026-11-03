@@ -39,6 +39,11 @@ const T = {
 };
 
 const W = 440, H = 956, SB = 48, PAD = 20, SCENE_H = H - SB; // 908
+// 版式几何单点定义：导航头 66 + 44，内容区下沿留操作栏与底部安全区
+const NAV_Y = 66, NAV_H = 44, CONTENT_GAP = 16;
+const CONTENT_TOP = NAV_Y + NAV_H + CONTENT_GAP; // 126
+const ACTION_BAR_H = 64, BOTTOM_INSET = 34;
+const CONTENT_BOTTOM = ACTION_BAR_H + BOTTOM_INSET; // 98
 const FONT = 'PingFang SC';
 
 // ---------- 基础片段 ----------
@@ -73,7 +78,7 @@ const navHeader = (parent, m, title, trail) => {
 
 const actionBar = (parent, m, primary, secondary) => {
   const bar = I(parent, {
-    type: 'frame', name: 'action bar', x: 0, y: H - 34 - 64, width: W, height: 64,
+    type: 'frame', name: 'action bar', x: 0, y: H - BOTTOM_INSET - ACTION_BAR_H, width: W, height: ACTION_BAR_H,
     layout: 'horizontal', gap: 12, alignItems: 'center', padding: [10, PAD], fill: s(m.surface),
   });
   if (secondary) {
@@ -91,10 +96,12 @@ const actionBar = (parent, m, primary, secondary) => {
 };
 
 const pill = (parent, m, label, kind, iconName) => {
-  const map = {
+  const palette = {
     warn: [m.warnSoft, m.warnInk], danger: [m.dangerSoft, m.dangerInk], ok: [m.okSoft, m.okInk],
     neutral: [m.subtle, m.text2],
-  }[kind || 'neutral'];
+  };
+  // 未知 kind 兜底为 neutral，避免 map[0] 抛错
+  const map = palette[kind] ?? palette.neutral;
   const el = I(parent, {
     type: 'frame', name: 'status / ' + label, layout: 'horizontal', gap: 4, padding: [3, 10],
     cornerRadius: 999, fill: s(map[0]), alignItems: 'center',
@@ -212,7 +219,7 @@ const drawEditForm = (mode) => {
   const { f, m } = formBoard('bill-editing', mode);
   navHeader(f, m, '编辑账单', { icon: 'trash-2', danger: true });
 
-  const content = I(f, { type: 'frame', name: 'content', x: 0, y: 126, width: W, height: H - 126 - 98, layout: 'vertical', gap: 10, padding: [4, PAD], clipContent: true });
+  const content = I(f, { type: 'frame', name: 'content', x: 0, y: CONTENT_TOP, width: W, height: H - CONTENT_TOP - CONTENT_BOTTOM, layout: 'vertical', gap: 10, padding: [4, PAD], clipContent: true });
 
   const idCard = I(content, { type: 'frame', name: 'identity card', width: 'fill_container', layout: 'vertical', gap: 6, padding: 14, cornerRadius: 12, fill: s(m.subtle) });
   billCardHead(idCard, m, { bank: '招商银行', card: '标准信用卡', holder: '持卡人 · 本人', period: '十月账期' });
@@ -346,7 +353,7 @@ const drawPayments = (mode) => {
   const { f, m } = formBoard('bill-editing-payments', mode);
   navHeader(f, m, '还款记录');
 
-  const content = I(f, { type: 'frame', name: 'content', x: 0, y: 126, width: W, height: H - 126 - 98, layout: 'vertical', gap: 10, padding: [4, PAD], clipContent: true });
+  const content = I(f, { type: 'frame', name: 'content', x: 0, y: CONTENT_TOP, width: W, height: H - CONTENT_TOP - CONTENT_BOTTOM, layout: 'vertical', gap: 10, padding: [4, PAD], clipContent: true });
 
   const sumCard = I(content, { type: 'frame', name: 'statement summary', width: 'fill_container', layout: 'horizontal', justifyContent: 'space_between', padding: 14, cornerRadius: 12, fill: s(m.subtle) });
   for (const [key, label, val, color] of [['original value', '应还', '4,800.00', m.text], ['paid value', '已还', '1,600.00', m.okInk], ['remaining value', '剩余', '3,200.00', m.warnInk]]) {
@@ -445,7 +452,7 @@ const drawHistory = (mode) => {
   const { f, m } = formBoard('bill-editing-history', mode);
   navHeader(f, m, '金额来源');
 
-  const content = I(f, { type: 'frame', name: 'content', x: 0, y: 126, width: W, height: H - 126 - 98, layout: 'vertical', gap: 10, padding: [4, PAD], clipContent: true });
+  const content = I(f, { type: 'frame', name: 'content', x: 0, y: CONTENT_TOP, width: W, height: H - CONTENT_TOP - CONTENT_BOTTOM, layout: 'vertical', gap: 10, padding: [4, PAD], clipContent: true });
 
   const heroCard = I(content, { type: 'frame', name: 'effective amount card', width: 'fill_container', layout: 'vertical', gap: 6, padding: 14, cornerRadius: 12, fill: s(m.subtle) });
   amountHero(heroCard, m, '当前生效金额', '4,720.00');
@@ -485,7 +492,7 @@ const drawDraft = (mode) => {
   const { f, m } = formBoard('bill-editing-draft', mode);
   navHeader(f, m, '确认导入草稿');
 
-  const content = I(f, { type: 'frame', name: 'content', x: 0, y: 126, width: W, height: H - 126 - 98, layout: 'vertical', gap: 10, padding: [4, PAD], clipContent: true });
+  const content = I(f, { type: 'frame', name: 'content', x: 0, y: CONTENT_TOP, width: W, height: H - CONTENT_TOP - CONTENT_BOTTOM, layout: 'vertical', gap: 10, padding: [4, PAD], clipContent: true });
 
   const metaCard = I(content, { type: 'frame', name: 'draft meta card', width: 'fill_container', layout: 'vertical', gap: 6, padding: 14, cornerRadius: 12, fill: s(m.subtle) });
   const metaRow = I(metaCard, { type: 'frame', name: 'draft source', layout: 'horizontal', gap: 8, alignItems: 'center' });

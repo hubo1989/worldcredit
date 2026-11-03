@@ -12,6 +12,15 @@ import { currencySymbol } from '@/lib/fx'
 import type { CardHolder } from '@/lib/types'
 import { useAuth } from '@/lib/auth'
 
+// 银行目录变化频率低：进程内缓存，避免每次打开弹窗重复拉取
+let bankCatalogCache: string[] | null = null
+async function loadBankNames(): Promise<string[]> {
+  if (bankCatalogCache) return bankCatalogCache
+  const list = await getBankNames()
+  bankCatalogCache = list.map(b => b.name)
+  return bankCatalogCache
+}
+
 /** Select 里代表「保留历史未知币种」的哨兵值。 */
 const LEGACY_CURRENCY = '__legacy__'
 
@@ -50,8 +59,15 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
 
   useEffect(() => {
     if (!open) return
-    getHolders().then(setHolders).catch(() => setHolders([]))
-    getBankNames().then(list => setBankOptions(list.map(b => b.name))).catch(() => setBankOptions([]))
+    // 关闭后到达的旧响应直接丢弃，避免快速开关时覆盖新状态
+    let cancelled = false
+    getHolders()
+      .then(list => { if (!cancelled) setHolders(list) })
+      .catch(() => { if (!cancelled) setHolders([]) })
+    loadBankNames()
+      .then(list => { if (!cancelled) setBankOptions(list) })
+      .catch(() => { if (!cancelled) setBankOptions([]) })
+    return () => { cancelled = true }
   }, [open])
 
   useEffect(() => {
@@ -114,10 +130,14 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
           ...(normalizedCurrency ? { currency: normalizedCurrency } : {}),
         })
       } else {
-        // 走到这里 normalizedCurrency 必非空（上方校验已拦截）；created_by 由服务端按会话覆盖
+        // 显式兜底而不是非空断言：校验遗漏时也要给出可读错误
+        if (!normalizedCurrency) {
+          setError('币种必须是 CNY / USD / HKD 之一')
+          return
+        }
         await createRecurringPayable({
           ...payload,
-          currency: normalizedCurrency!,
+          currency: normalizedCurrency,
           created_by: user?.id ?? '',
         })
       }
