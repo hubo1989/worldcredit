@@ -15,6 +15,7 @@ import {
 } from '@/lib/api/bills'
 import type { Bill } from '@/lib/types'
 import {
+  isPresent,
   validateEditableFields,
   amountBelowPaidWarning,
   STATUS_LABELS,
@@ -77,10 +78,6 @@ interface BillEditFormProps {
   onSubmitFields?: (billId: string, fields: BillEditableFields) => Promise<Bill>
   onClearOverrideField?: (billId: string, fields: BillOverrideField[]) => Promise<Bill>
   onDeleteBill?: (billId: string) => Promise<void>
-}
-
-function isPresent(value: unknown): boolean {
-  return value !== null && value !== undefined
 }
 
 function toValues(bill: Bill): EditableFieldValues {

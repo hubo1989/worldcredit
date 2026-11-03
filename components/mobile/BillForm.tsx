@@ -20,6 +20,7 @@ import {
   billEffectiveDueDate,
   isValidCalendarDate,
 } from '@/lib/utils'
+import { isPresent } from './bill-editing-shared'
 import type { CreditCard, CardProduct, Bill } from '@/lib/types'
 import { AiFillBox } from '@/components/mobile/AiFillBox'
 
@@ -42,10 +43,6 @@ interface Props {
 
 // 服务端 joinRowToCard 会把卡级别覆盖写进顶层 card_name，这里如实声明以便选卡器显示生效名称
 type CardWithProduct = CreditCard & { card_product: CardProduct; card_name?: string }
-
-function isPresent(value: unknown): boolean {
-  return value !== null && value !== undefined
-}
 
 const EMPTY: BillFormData = {
   card_id: '',

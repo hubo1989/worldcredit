@@ -7,6 +7,7 @@ import { TextField, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
 import type { BillImportDraft } from '@/lib/api/billDrafts'
 import {
+  isPresent,
   isValidBillMonth,
   validateAmountText,
   validateDateText,
@@ -23,10 +24,6 @@ export interface BillDraftFieldValues {
 }
 
 type Errors = Partial<Record<keyof BillDraftFieldValues, string>>
-
-function isPresent(value: unknown): boolean {
-  return value !== null && value !== undefined
-}
 
 function toInputValues(draft: BillImportDraft): BillDraftFieldValues {
   const p = draft.parsed_payload

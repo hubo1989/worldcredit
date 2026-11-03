@@ -73,6 +73,13 @@ export function amountToneClass(item: CardWithBillsSummary): string {
 export type BillsEntityType = 'all' | 'cards' | 'payables'
 export type BillStatusKey = 'unpaid' | 'overdue' | 'unissued' | 'paid'
 
+/** 对象类型下可选的状态；切换类型时用它裁剪已选状态。 */
+export function statusOptionsFor(entity: BillsEntityType): BillStatusKey[] {
+  if (entity === 'cards') return ['unpaid', 'overdue', 'unissued']
+  if (entity === 'payables') return ['unpaid', 'overdue', 'paid']
+  return ['unpaid', 'overdue', 'unissued', 'paid']
+}
+
 export const BILL_STATUS_LABELS: Record<BillStatusKey, string> = {
   unpaid: '待还',
   overdue: '已逾期',

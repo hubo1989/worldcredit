@@ -27,6 +27,7 @@ import {
 import {
   BILL_STATUS_LABELS,
   NO_BANK_TAG,
+  statusOptionsFor,
   type BillStatusKey,
   type BillsEntityType,
 } from '@/lib/bills-view-model'
@@ -359,7 +360,6 @@ function BillCard({
                       <button
                         type='button'
                         onClick={goToBill}
-                        onKeyDown={e => { e.stopPropagation() }}
                         className='inline-flex items-center gap-0.5 text-[11px] font-semibold text-d-accent-light'
                       >
                         <span className='underline underline-offset-2'>编辑</span>
@@ -602,19 +602,14 @@ export function BillsView(vm: BillsViewProps) {
               <FilterPill selected={statusKeys.length === 0} onClick={onClearStatuses}>
                 全部状态
               </FilterPill>
-              {(entityType === 'cards'
-                ? (['unpaid', 'overdue', 'unissued'] as const)
-                : entityType === 'payables'
-                  ? (['unpaid', 'overdue', 'paid'] as const)
-                  : (['unpaid', 'overdue', 'unissued', 'paid'] as const)
-              ).map(k => (
+              {statusOptionsFor(entityType).map(k => (
                 <FilterPill
                   key={k}
                   selected={statusKeys.includes(k)}
                   onClick={() => onToggleStatus(k)}
                   warn={k === 'overdue' && statusCounts.overdue > 0 && !statusKeys.includes(k)}
                 >
-                  {BILL_STATUS_LABELS[k]} ({statusCounts[k] ?? 0})
+                  {BILL_STATUS_LABELS[k]} ({statusCounts[k]})
                 </FilterPill>
               ))}
             </div>

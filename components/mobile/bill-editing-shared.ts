@@ -11,6 +11,11 @@ export function isValidBillMonth(value: string): boolean {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(value)
 }
 
+/** 值是否存在（null / undefined 都算空）。 */
+export function isPresent(value: unknown): boolean {
+  return value !== null && value !== undefined
+}
+
 /** 金额校验（required 时为空报错）；返回错误文案或 undefined。 */
 export function validateAmountText(raw: string, required = true): string | undefined {
   const v = raw.trim()

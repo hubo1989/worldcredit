@@ -4,14 +4,7 @@ import { categoryLabel, type PayableWithStatus } from '@/lib/api/payables'
 import { payableNextCycleStatus } from '@/lib/utils'
 import { badgeToneClass, type BillBadgeTone } from '@/lib/bills-view-model'
 import { currencySymbol } from '@/lib/fx'
-import { ClockIcon, PlusIcon } from '@/components/icons/WcIcon'
-
-interface Props {
-  payables: PayableWithStatus[]
-  onAdd: () => void
-  onEdit: (payable: PayableWithStatus) => void
-  onPay: (payable: PayableWithStatus) => void
-}
+import { ClockIcon } from '@/components/icons/WcIcon'
 
 export interface PayableRowProps {
   payable: PayableWithStatus
@@ -170,34 +163,3 @@ export function PayableRow({ payable: p, holderName, onEdit, onPay }: PayableRow
  * 与上方卡账分节展示：它们的到期与还款规则不同（没有免息期、没有额度），
  * 混在一张卡里会让两套口径互相污染。
  */
-export function PayableList({ payables, onAdd, onEdit, onPay }: Props) {
-  return (
-    <div>
-      <div className='mb-2 flex items-center justify-between'>
-        <p className='text-[15px] font-semibold leading-5 text-d-text'>固定支出</p>
-        <button
-          type='button'
-          onClick={onAdd}
-          className='flex items-center gap-1 text-[13px] font-semibold text-d-accent-light'
-        >
-          <PlusIcon size={15} />
-          添加
-        </button>
-      </div>
-
-      {payables.length === 0 ? (
-        <div className='rounded-[14px] border border-d-border bg-d-surface px-4 py-4 text-center'>
-          <p className='text-[12px] leading-5 text-d-muted'>
-            还没有固定支出。房租、贷款这类每月固定要付的可以加在这里。
-          </p>
-        </div>
-      ) : (
-        <div className='flex flex-col gap-2.5'>
-          {payables.map(p => (
-            <PayableRow key={p.id} payable={p} onEdit={onEdit} onPay={onPay} />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}

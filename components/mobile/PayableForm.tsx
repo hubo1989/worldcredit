@@ -8,8 +8,12 @@ import { Alert } from '@/components/obsidian/feedback'
 import { createRecurringPayable, updateRecurringPayable, PAYABLE_CATEGORIES, PAYABLE_CURRENCIES, PAYABLE_CURRENCY_LABELS, normalizePayableCurrency, type PayableCategory, type PayableWithStatus } from '@/lib/api/payables'
 import { getHolders } from '@/lib/api/holders'
 import { getBankNames } from '@/lib/api/banks'
+import { currencySymbol } from '@/lib/fx'
 import type { CardHolder } from '@/lib/types'
 import { useAuth } from '@/lib/auth'
+
+/** Select 里代表「保留历史未知币种」的哨兵值。 */
+const LEGACY_CURRENCY = '__legacy__'
 
 interface Props {
   open: boolean
@@ -39,6 +43,9 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
   const [bankOptions, setBankOptions] = useState<string[]>([])
   const [bankAccount, setBankAccount] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // 历史未知币种（如 EUR）：只用于显式展示与「保留」选项
+  const legacyCurrency =
+    existing && normalizePayableCurrency(existing.currency) === null ? existing.currency : null
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -54,7 +61,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       setName(existing.name)
       setCategory(existing.category)
       setAmount(String(existing.amount))
-      setCurrency(normalizePayableCurrency(existing.currency) ?? '__legacy__')
+      setCurrency(normalizePayableCurrency(existing.currency) ?? LEGACY_CURRENCY)
       setDueDay(String(existing.due_day))
       setHolderId(existing.holder_id || '')
       setNote(existing.note || '')
@@ -84,8 +91,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
     }
 
     const normalizedCurrency = normalizePayableCurrency(currency)
-    const keepLegacyCurrency = currency === '__legacy__' && !!existing &&
-      normalizePayableCurrency(existing.currency) === null
+    const keepLegacyCurrency = currency === LEGACY_CURRENCY && legacyCurrency !== null
     if (!normalizedCurrency && !keepLegacyCurrency) {
       return setError('币种必须是 CNY / USD / HKD 之一')
     }
@@ -107,9 +113,13 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
           ...payload,
           ...(normalizedCurrency ? { currency: normalizedCurrency } : {}),
         })
-      } else if (normalizedCurrency) {
-        // created_by 会在服务端按会话 cookie 覆盖，这里带上只是满足入参形状
-        await createRecurringPayable({ ...payload, currency: normalizedCurrency, created_by: user?.id ?? '' })
+      } else {
+        // 走到这里 normalizedCurrency 必非空（上方校验已拦截）；created_by 由服务端按会话覆盖
+        await createRecurringPayable({
+          ...payload,
+          currency: normalizedCurrency!,
+          created_by: user?.id ?? '',
+        })
       }
       onSuccess()
       onClose()
@@ -156,7 +166,11 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
               label="每月金额"
               value={amount}
               onChange={e => setAmount(e.target.value)}
-              startAdornment={<span>{currency === '__legacy__' ? existing?.currency : currency === 'USD' ? 'US$' : currency === 'HKD' ? 'HK$' : '¥'}</span>}
+              startAdornment={
+                <span>
+                  {legacyCurrency ?? currencySymbol(normalizePayableCurrency(currency) ?? 'CNY')}
+                </span>
+              }
               inputMode='decimal' min={0} step='0.01'
             />
           </div>
@@ -166,14 +180,16 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
               value={currency}
               onChange={e => setCurrency(e.target.value)}
               options={[
-                ...(existing && normalizePayableCurrency(existing.currency) === null
-                  ? [{ value: '__legacy__', label: `保留 ${existing.currency || '空币种'}（历史值）` }]
+                ...(legacyCurrency !== null
+                  ? [{ value: LEGACY_CURRENCY, label: `保留 ${legacyCurrency || '空币种'}（历史值）` }]
                   : []),
                 ...PAYABLE_CURRENCIES.map(c => ({ value: c, label: PAYABLE_CURRENCY_LABELS[c] })),
               ]}
-              helperText={existing && normalizePayableCurrency(existing.currency) === null
-                ? '可保留历史币种；如需更改，请选择 CNY / USD / HKD，并核对金额。'
-                : undefined}
+              helperText={
+                legacyCurrency !== null
+                  ? '可保留历史币种；如需更改，请选择 CNY / USD / HKD，并核对金额。'
+                  : undefined
+              }
             />
           </div>
         </div>

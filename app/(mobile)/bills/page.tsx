@@ -45,6 +45,7 @@ import {
   countStatuses,
   filterCardsForView,
   filterPayablesForView,
+  statusOptionsFor,
   type BillStatusKey,
   type BillsEntityType,
   type BillsFilterState,
@@ -464,7 +465,12 @@ export default function BillsPage() {
         hasActiveFilter={hasActiveFilter}
         onResetFilters={resetFilters}
         entityType={entityType}
-        onEntityType={setEntityType}
+        onEntityType={next => {
+          setEntityType(next)
+          // 切到只含一种对象时，剔除该类型不存在的状态，避免残留成空结果
+          const allowed = statusOptionsFor(next)
+          setStatusKeys(prev => prev.filter(k => allowed.includes(k)))
+        }}
         statusKeys={statusKeys}
         onToggleStatus={k =>
           setStatusKeys(prev => (prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k]))
