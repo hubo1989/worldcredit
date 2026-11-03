@@ -81,8 +81,9 @@ interface BillEditFormProps {
 }
 
 function toValues(bill: Bill): EditableFieldValues {
-  // 编辑值优先读 override 列：改过的值要能回显，否则再次保存会被导入值覆盖
-  //（bill_amount 例外：服务端投影只归一化了它）。
+  // 编辑值优先读 override 列：改过的值要能回显，否则再次保存会被导入值覆盖。
+  // 服务端 getBillDetail 已把四个可编辑字段按 override 优先合成，这里仍读
+  // override 是为了在「清空 override 但父组件尚未刷新」的瞬间保持显示稳定。
   const minPayment = bill.min_payment_override ?? bill.min_payment
   return {
     amount: isPresent(bill.bill_amount) ? String(bill.bill_amount) : '',
@@ -267,7 +268,7 @@ export function BillEditForm({
             <Button variant='ghost' onClick={onClose} disabled={submitting || !!clearingField}>
               放弃
             </Button>
-            <Button onClick={handleSubmit} loading={submitting}>
+            <Button onClick={handleSubmit} loading={submitting} disabled={clearingField !== null}>
               {submitting ? '保存中…' : '保存'}
             </Button>
           </>

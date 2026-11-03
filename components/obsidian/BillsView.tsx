@@ -320,7 +320,7 @@ function BillCard({
                 const bPaid = b.computed_status === 'paid'
                 const bMonth = b.bill_month || (b.due_date ? b.due_date.slice(0, 7) : '账单')
                 const HistoryLabel = bPaid ? 'span' : 'button'
-                const goToBill = (e: { stopPropagation: () => void }) => {
+                const goToBill = (e: React.MouseEvent<HTMLButtonElement>) => {
                   e.stopPropagation()
                   router.push('/bills/' + b.id)
                 }

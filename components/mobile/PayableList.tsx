@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { categoryLabel, type PayableWithStatus } from '@/lib/api/payables'
 import { payableNextCycleStatus } from '@/lib/utils'
 import { badgeToneClass, type BillBadgeTone } from '@/lib/bills-view-model'
@@ -26,6 +27,7 @@ export interface PayableRowProps {
  * 「已登记」只可能出现在待出账态，待还款态一定是可登记付款的未付期。
  */
 export function PayableRow({ payable: p, holderName, onEdit, onPay }: PayableRowProps) {
+  const [copiedAccount, setCopiedAccount] = useState(false)
   const paid = p.status === 'paid'
   const overdue = p.status === 'overdue'
 
@@ -59,10 +61,7 @@ export function PayableRow({ payable: p, holderName, onEdit, onPay }: PayableRow
       : 'text-d-gold'
 
   return (
-    <div
-      onClick={() => onEdit(p)}
-      className='cursor-pointer rounded-2xl border border-d-border bg-d-surface p-4 transition-colors active:bg-d-subtle/60'
-    >
+    <div className='rounded-2xl border border-d-border bg-d-surface p-4'>
       <div className='flex items-start justify-between gap-2'>
         <div className='min-w-0 flex-1'>
           <div className='flex min-w-0 items-baseline gap-1.5'>
@@ -89,11 +88,21 @@ export function PayableRow({ payable: p, holderName, onEdit, onPay }: PayableRow
           {p.bank_account && (
             <button
               type='button'
-              onClick={e => { e.stopPropagation(); void navigator.clipboard?.writeText(p.bank_account!) }}
+              onClick={async e => {
+                e.stopPropagation()
+                try {
+                  await navigator.clipboard?.writeText(p.bank_account!)
+                  setCopiedAccount(true)
+                  window.setTimeout(() => setCopiedAccount(false), 1500)
+                } catch {
+                  // 剪贴板被拒绝（无权限/非安全上下文）：保持原文案，不假装成功
+                  setCopiedAccount(false)
+                }
+              }}
               title='点击复制账号'
               className='mt-0.5 block max-w-full truncate text-left text-[11px] leading-4 text-d-muted underline underline-offset-2'
             >
-              账号 {p.bank_account}
+              {copiedAccount ? '已复制' : `账号 ${p.bank_account}`}
             </button>
           )}
         </div>

@@ -8,6 +8,7 @@ import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillEditForm } from '@/components/mobile/BillEditForm'
 import { BillPaymentsManage } from '@/components/mobile/BillPaymentsManage'
 import { useAuth } from '@/lib/auth'
+import { computePaymentDrivenStatus } from '@/lib/utils'
 import { ChevronLeftIcon, ChevronRightIcon, BankIcon, UserIcon, ClockIcon } from '@/components/icons/WcIcon'
 import { formatCardTail, getEffectiveCardName } from '@/lib/utils'
 import type { Bill, Payment, CreditCard, CardProduct, CardHolder } from '@/lib/types'
@@ -25,14 +26,8 @@ function computeBillProgress(bill: BillDetail) {
   const paid = (bill.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0)
   const amount = Number(bill.bill_amount) || 0
   const remaining = Math.max(0, amount - paid)
-  let status: Bill['status'] = 'unpaid'
-  if (amount <= 0 || paid >= amount) status = 'paid'
-  else if (paid > 0) status = 'partial'
-  else {
-    const today = new Date(); today.setHours(0, 0, 0, 0)
-    const due = new Date(bill.due_date); due.setHours(0, 0, 0, 0)
-    if (due.getTime() < today.getTime()) status = 'overdue'
-  }
+  // 与服务端落库、还款重算共用同一个状态函数，避免 0 / 0.01 边界两套口径
+  const status = computePaymentDrivenStatus(bill, paid)
   return { paid, remaining, status }
 }
 
@@ -81,9 +76,10 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   // deleteBill 服务端 admin only；member 隐藏删除入口，权限以服务端为准
   const isAdmin = user?.role === 'admin'
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true
     try {
-      setLoading(true)
+      if (!silent) setLoading(true)
       setError(null)
       // 账单 + 卡 + 卡产品 + 持卡人 + 还款记录，一次 RPC 返回
       const detail = await getBillDetail(id)
@@ -94,7 +90,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载账单失败')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [id])
 
@@ -138,7 +134,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
           <p className='text-[12px] font-semibold text-d-danger-ink'>{error || '账单不存在或已被删除'}</p>
           <button
             type='button'
-            onClick={load}
+            onClick={() => load()}
             className='mt-2 h-10 rounded-xl bg-d-danger px-4 text-xs font-semibold text-white'
           >
             重试
@@ -359,7 +355,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         currency='¥'
         canDelete={isAdmin}
         onClose={() => setEditOpen(false)}
-        onSaved={load}
+        onSaved={() => load({ silent: true })}
         onDeleted={() => {
           router.replace('/bills')
         }}

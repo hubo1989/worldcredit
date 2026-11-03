@@ -70,6 +70,11 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
 
   // 本次加载的初值：编辑时只提交真正改动过的字段
   const initialFormRef = useRef<BillFormData | null>(null)
+  // 保存最新表单值，供异步回调构造快照（避免在 setState updater 里写 ref）
+  const formRef = useRef<BillFormData>(form)
+  useEffect(() => {
+    formRef.current = form
+  }, [form])
   // 初始化表单
   useEffect(() => {
     if (!open) return
@@ -104,17 +109,16 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
           const effectiveMinPayment = billEffectiveMinPayment(data)
           const effectiveStatementDate = billEffectiveStatementDate(data)
           setExistingBillId(data.id)
-          setForm(prev => {
-            const next: BillFormData = {
-              ...prev,
-              bill_amount: String(data.bill_amount ?? ''),
-              min_payment: isPresent(effectiveMinPayment) ? String(effectiveMinPayment) : '',
-              statement_date: effectiveStatementDate ?? prev.statement_date,
-              due_date: billEffectiveDueDate(data) || prev.due_date,
-            }
-            initialFormRef.current = next
-            return next
-          })
+          // 用最新表单值 + 覆盖字段生成快照；不写进 setState updater（保持 updater 纯函数）
+          const snapshot: BillFormData = {
+            ...formRef.current,
+            bill_amount: String(data.bill_amount ?? ''),
+            min_payment: isPresent(effectiveMinPayment) ? String(effectiveMinPayment) : '',
+            statement_date: effectiveStatementDate ?? formRef.current.statement_date,
+            due_date: billEffectiveDueDate(data) || formRef.current.due_date,
+          }
+          initialFormRef.current = snapshot
+          setForm(snapshot)
         } else {
           initialFormRef.current = null
           setExistingBillId(null)

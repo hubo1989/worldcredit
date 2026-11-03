@@ -205,19 +205,17 @@ export function countByTag<C extends CardLike, P extends PayableLike>(
   const holders: Record<string, number> = {}
   const banks: Record<string, number> = {}
   let noBank = 0
-  const statusOk = (key: BillStatusKey) => f.statuses.length === 0 || f.statuses.includes(key)
-
+  // 与 countEntities / countStatuses 一致：facet 计数不受已选状态影响
   if (f.entityType !== 'payables') {
     for (const c of cards) {
-      if (!statusOk(cardStatusKey(c.status))) continue
       if (c.holder_id) holders[c.holder_id] = (holders[c.holder_id] ?? 0) + 1
       const bank = c.card.card_product?.bank_name
       if (bank) banks[bank] = (banks[bank] ?? 0) + 1
+      else noBank += 1
     }
   }
   if (f.entityType !== 'cards') {
     for (const p of payables) {
-      if (!statusOk(payableStatusKey(p.status))) continue
       if (p.holder_id) holders[p.holder_id] = (holders[p.holder_id] ?? 0) + 1
       if (p.bank_name) banks[p.bank_name] = (banks[p.bank_name] ?? 0) + 1
       else noBank += 1

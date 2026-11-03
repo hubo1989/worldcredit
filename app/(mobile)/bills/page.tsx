@@ -53,6 +53,25 @@ import {
 
 type Dimension = BillDimension
 
+const ENTITY_TEXT: Record<BillsEntityType, string> = {
+  all: '全部',
+  cards: '信用卡账单',
+  payables: '固定支出',
+}
+
+/** 标签摘要：维度 + 选中值，避免多层嵌套三目。 */
+function tagSummary(
+  dimension: Dimension,
+  selectedTag: string,
+  holderTags: Array<{ id: string; name: string }>
+): string {
+  if (selectedTag === 'all') return '全部' + (dimension === 'holder' ? '持卡人' : '银行')
+  if (dimension === 'holder') {
+    return holderTags.find(t => t.id === selectedTag)?.name ?? '未知持卡人'
+  }
+  return selectedTag === NO_BANK_TAG ? '非银行' : selectedTag
+}
+
 export default function BillsPage() {
   const { user } = useAuth()
   const { displayConfig } = useUserPreferences()
@@ -409,22 +428,17 @@ export default function BillsPage() {
 
   // 收起态摘要：把当前筛选、分组与排序压成一行可读文本
   const filterSummary = useMemo(() => {
-    const entityText =
-      entityType === 'cards' ? '信用卡账单' : entityType === 'payables' ? '固定支出' : '全部'
     const statusText =
       statusKeys.length === 0
         ? '全部状态'
         : statusKeys.map(k => BILL_STATUS_LABELS[k]).join('+')
-    const tagText =
-      selectedTag === 'all'
-        ? '全部' + (dimension === 'holder' ? '持卡人' : '银行')
-        : dimension === 'holder'
-          ? holderTags.find(t => t.id === selectedTag)?.name || '未知持卡人'
-          : selectedTag === NO_BANK_TAG
-            ? '非银行'
-            : selectedTag
     const dimText = dimension === 'holder' ? '持卡人' : '银行'
-    return entityText + ' · ' + statusText + ' · 按' + dimText + ' · ' + tagText
+    return (
+      ENTITY_TEXT[entityType] +
+      ' · ' + statusText +
+      ' · 按' + dimText +
+      ' · ' + tagSummary(dimension, selectedTag, holderTags)
+    )
   }, [entityType, statusKeys, dimension, selectedTag, holderTags])
 
   // 计入摘要的非默认维度数量

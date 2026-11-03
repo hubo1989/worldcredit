@@ -10,9 +10,18 @@ import {
   updateBillImportDraft,
   type BillImportDraft,
 } from "@/lib/api/billDrafts";
+import { isPresent } from "./bill-editing-shared";
 import { getCardsWithBillsSummary } from "@/lib/api/bills";
 import { formatCardTail } from "@/lib/utils";
 import { BillDraftEditForm, mergeDraftPayload, type BillDraftFieldValues } from "./BillDraftEditForm";
+
+function isCompleteDraft(p: {
+  bill_amount?: number | null
+  due_date?: string | null
+  bill_month?: string | null
+}) {
+  return isPresent(p.bill_amount) && Boolean(p.due_date) && Boolean(p.bill_month)
+}
 
 export function BillDraftsPanel({ onChanged }: { onChanged?: () => void }) {
   const [drafts, setDrafts] = useState<BillImportDraft[]>([]);
@@ -25,7 +34,7 @@ export function BillDraftsPanel({ onChanged }: { onChanged?: () => void }) {
     try {
       const nextDrafts = await getBillImportDrafts();
       setDrafts(nextDrafts);
-      setEditingId((id) => id && !nextDrafts.some((draft) => draft.id === id) ? null : id);
+      setEditingId((id) => (id !== null && !nextDrafts.some((draft) => draft.id === id) ? null : id));
     } catch {
       // 取不到草稿不阻塞账单页
       setDrafts([]);
@@ -113,7 +122,7 @@ export function BillDraftsPanel({ onChanged }: { onChanged?: () => void }) {
         {drafts.map((draft) => {
           const p = draft.parsed_payload;
           const completable = Boolean(
-            p.bill_amount != null && p.due_date && p.bill_month && draft.card_id,
+            isCompleteDraft(p) && draft.card_id,
           );
           return (
             <div
@@ -121,7 +130,7 @@ export function BillDraftsPanel({ onChanged }: { onChanged?: () => void }) {
               className="mt-3 border-t border-d-border pt-3 text-[12px] text-d-muted"
             >
               <p className="text-d-text">
-                {p.bill_month ?? "未识别月份"}｜{p.bill_amount != null ? p.bill_amount : "—"}｜到期{" "}
+                {p.bill_month ?? "未识别月份"}｜{isPresent(p.bill_amount) ? p.bill_amount : "—"}｜到期{" "}
                 {p.due_date ?? "—"}
               </p>
               <select
