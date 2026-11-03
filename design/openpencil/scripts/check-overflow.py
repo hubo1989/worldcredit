@@ -27,7 +27,11 @@ PAGES = {
     "10 · Mobile Core": (390, 430),
     "11 · Mobile Details": (390,),
     "12 · Mobile Extended": (390,),
-    "13 · Candidates": (390,),
+    # 13 号 spec 账单编辑候选页：440×956 画板（与 15 · iOS Bills 同尺寸口径；
+    # 15 页顶层含 400 宽 label 文本节点，不适配本脚本的首帧基线假设，由便携版覆盖）
+    "16 · Bill Editing": (440,),
+    # B0-2 候选页存在 430×932 的历史宽屏候选帧（见 screens/NAMING.md 双轨规则）
+    "13 · Candidates": (390, 430),
     "20 · Auth & Public": (390,),
     "30 · Admin": (1440,),
 }

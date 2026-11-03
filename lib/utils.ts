@@ -212,9 +212,96 @@ export function effectiveBillAmount(bill: {
   return Number(bill.bill_amount || 0);
 }
 
+export type PaymentDrivenStatus = "unpaid" | "partial" | "paid" | "overdue";
+
+/**
+ * 还款变更（增/改/删）后的账单状态重算，全站唯一口径。
+ *
+ * 与展示层 computeStatus 的关键差异：没有 `status === 'paid'` 短路——
+ * 那个短路让「改低账单金额 / 删还款」后状态永久停在 paid 不可自愈
+ * （spec 13 §6.3 的核心缺陷）。这里一律按 Σpayments 与生效金额现场判定：
+ *   - 已还 ≥ 生效金额 − 0.01（浮点容差，与金额列 REAL 精度对齐）→ paid
+ *   - 有还款未还清 → partial
+ *   - 未还清且到期日已过 → overdue
+ *   - 其余 → unpaid
+ */
+export function computePaymentDrivenStatus(
+  bill: {
+    bill_amount?: number | null;
+    bill_amount_override?: number | null;
+    due_date: string;
+    due_date_override?: string | null;
+  },
+  totalPaid: number,
+): PaymentDrivenStatus {
+  const amount = effectiveBillAmount(bill);
+  if (totalPaid >= amount - 0.01) return "paid";
+  if (totalPaid > 0) return "partial";
+  // 逾期判定走生效到期日（billEffectiveDueDate 合成 override），与
+  // updateBillStatusChecked 同口径——否则用户先编辑到期日再改还款时，
+  // 两条重算路径会对同一账单算出不同状态。
+  return diffInCalendarDays(billEffectiveDueDate(bill)) < 0 ? "overdue" : "unpaid";
+}
+
+/**
+ * 账单状态重算的 SQL 片段：与 computePaymentDrivenStatus 同一口径
+ * （paid → partial → overdue → unpaid），参数顺序 [billId, billId, 今天, billId]。
+ * 服务端各写入路径共用这一份，避免 SQL 文本多处漂移。
+ */
+export function billStatusRecalcStatement(billId: string): {
+  sql: string;
+  params: [string, string, string, string];
+} {
+  return {
+    sql: `UPDATE bills SET status = CASE
+      WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) >= COALESCE(bill_amount_override, bill_amount) - 0.01
+      THEN 'paid'
+      WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) > 0
+      THEN 'partial'
+      WHEN COALESCE(due_date_override, due_date) < ?
+      THEN 'overdue'
+      ELSE 'unpaid'
+    END WHERE id = ?`,
+    params: [billId, billId, getLocalTodayString(), billId],
+  };
+}
+
 // 是否被用户手填值钉住（导入不得覆盖）。
 export function hasManualBillAmount(bill: { bill_amount_override?: number | null }): boolean {
   return bill.bill_amount_override !== null && bill.bill_amount_override !== undefined;
+}
+
+// ── 账单编辑 override 字段族（spec 13 §6.1/§6.2）────────────────────────────
+//
+// 与 effectiveBillAmount 同一合成规则：用户编辑写 *_override 列，导入方只写
+// 原始列，读取时按优先级合成。bill_month / card_id 等身份字段不提供 override——
+// UNIQUE(card_id, bill_month) 约束的一半，换卡/换期等于删旧建新。
+
+/** 生效最低还款额：override 优先于导入值。 */
+export function billEffectiveMinPayment(bill: {
+  min_payment?: number | null;
+  min_payment_override?: number | null;
+}): number | null {
+  const override = bill.min_payment_override;
+  if (override !== null && override !== undefined) return Number(override);
+  if (bill.min_payment === null || bill.min_payment === undefined) return null;
+  return Number(bill.min_payment);
+}
+
+/** 生效还款到期日：override 优先于导入值。 */
+export function billEffectiveDueDate(bill: {
+  due_date: string;
+  due_date_override?: string | null;
+}): string {
+  return bill.due_date_override ?? bill.due_date;
+}
+
+/** 生效账单日（出账日）：override 优先于导入值。 */
+export function billEffectiveStatementDate(bill: {
+  statement_date?: string | null;
+  statement_date_override?: string | null;
+}): string | null {
+  return bill.statement_date_override ?? bill.statement_date ?? null;
 }
 
 // 账单日临近判定：距下一次账单日不足 days 天（含当天）时允许手填金额。
@@ -284,6 +371,23 @@ export function diffInCalendarDays(target: string | Date, today: Date = new Date
   const t = typeof target === "string" ? new Date(target) : target;
   const localMidnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   return Math.round((localMidnight(t) - localMidnight(today)) / 86_400_000);
+}
+
+/**
+ * 真实日历日校验（全站唯一定义）：格式必须是 YYYY-MM-DD，且日子真实存在
+ * （2026-02-30、2027-04-31 这类格式对但日子不存在的值必须拦下）。
+ * 服务端（bills.server / payments）与前端表单共享这一份，防止校验口径漂移。
+ */
+export function isValidCalendarDate(value: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return false;
+  const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  return (
+    utc.getUTCFullYear() === year &&
+    utc.getUTCMonth() === month - 1 &&
+    utc.getUTCDate() === day
+  );
 }
 
 /**

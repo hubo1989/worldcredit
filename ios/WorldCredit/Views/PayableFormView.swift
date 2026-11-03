@@ -11,13 +11,18 @@ struct PayableFormView: View {
     @State private var name = ""
     @State private var category: PayableCategory = .rent
     @State private var amountText = ""
-    @State private var currency = "CNY"
+    @State private var currency: PayableCurrencySelection = .supported(.cny)
     @State private var dueDay = 1
+    /// 归属持卡人；空字符串 = 不指定
+    @State private var holderId = ""
+    /// 归属银行；空字符串 = 非银行
+    @State private var bankName = ""
     @State private var note = ""
     @State private var bankAccount = ""
     @State private var errorMessage: String?
     @State private var confirmDelete = false
     @State private var saving = false
+    @State private var showingDueDayPicker = false
 
     var body: some View {
         NavigationStack {
@@ -31,13 +36,52 @@ struct PayableFormView: View {
                     }
                     TextField("金额", text: $amountText)
                         .keyboardType(.decimalPad)
-                    TextField("币种（如 CNY / USD / HKD）", text: $currency)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.characters)
-                    Stepper("每月应付日：\(dueDay) 日", value: $dueDay, in: 1...31)
+                    Picker("币种", selection: $currency) {
+                        if let existing, PayableCurrency.normalize(existing.currency) == nil {
+                            let label = existing.currency.trimmingCharacters(in: .whitespacesAndNewlines)
+                            Text("保留 \(label.isEmpty ? "空币种" : label)（历史值）")
+                                .tag(PayableCurrencySelection.legacy(existing.currency))
+                        }
+                        ForEach(PayableCurrency.allCases) { item in
+                            Text(item.label).tag(PayableCurrencySelection.supported(item))
+                        }
+                    }
+                    if let existing, PayableCurrency.normalize(existing.currency) == nil {
+                        Text("可保留历史币种；如需更改，请选择 CNY / USD / HKD，并核对金额。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    // 点击行弹出滚轮选择（替代 Stepper 加减：从 1 按到 31 不现实）
+                    Button {
+                        showingDueDayPicker = true
+                    } label: {
+                        HStack {
+                            Text("每月应付日")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text("\(dueDay) 日")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityIdentifier("payable.form.dueDay")
                 }
 
                 Section("选填") {
+                    // 归属用于账单页按持卡人筛选与汇总；不指定时该固定支出只出现在「全部」
+                    Picker("归属持卡人", selection: $holderId) {
+                        Text("不指定").tag("")
+                        ForEach(appState.dashboardHolders) { holder in
+                            Text(holder.name).tag(holder.id)
+                        }
+                    }
+                    .accessibilityIdentifier("payable.form.holder")
+                    Picker("银行（可选）", selection: $bankName) {
+                        Text("非银行 / 不指定").tag("")
+                        ForEach(payableBankOptions, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    .accessibilityIdentifier("payable.form.bank")
                     TextField("备注", text: $note)
                     TextField("收款银行账号（展示层一键复制）", text: $bankAccount)
                         .keyboardType(.numberPad)
@@ -78,7 +122,40 @@ struct PayableFormView: View {
                     Task { await deleteExisting() }
                 }
             }
+            .sheet(isPresented: $showingDueDayPicker) {
+                NavigationStack {
+                    Picker("每月应付日", selection: $dueDay) {
+                        ForEach(1...31, id: \.self) { day in
+                            Text("\(day) 日").tag(day)
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 280)
+                    .padding(.vertical, 40)
+                    .background(WCColors.subtle)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .padding(.horizontal, 16)
+                    .navigationTitle("每月应付日")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("完成") { showingDueDayPicker = false }
+                        }
+                    }
+                }
+                .presentationDetents([.height(480)])
+            }
         }
+    }
+
+    /// 银行选项：公开银行目录 ∪ 用户已有卡片的银行 ∪ 当前记录的历史值。
+    private var payableBankOptions: [String] {
+        var names = appState.bankOptions.map(\.name)
+        names.append(contentsOf: appState.cards.map(\.bankName))
+        if let legacy = existing?.bankName, !legacy.isEmpty { names.append(legacy) }
+        var seen = Set<String>()
+        return names.filter { !$0.isEmpty && seen.insert($0).inserted }.sorted()
     }
 
     private func populate() {
@@ -86,8 +163,10 @@ struct PayableFormView: View {
         name = existing.name
         category = existing.category
         amountText = String(format: "%.2f", existing.amount)
-        currency = existing.currency
+        currency = PayableCurrencySelection(persistedCurrency: existing.currency)
         dueDay = existing.dueDay
+        holderId = existing.holderId ?? ""
+        bankName = existing.bankName ?? ""
         note = existing.note ?? ""
         bankAccount = existing.bankAccount ?? ""
     }
@@ -97,17 +176,14 @@ struct PayableFormView: View {
             errorMessage = "金额必须是不小于 0 的数字"
             return
         }
-        let trimmedCurrency = currency.trimmingCharacters(in: .whitespaces).uppercased()
-        guard trimmedCurrency.count == 3 else {
-            errorMessage = "币种请填 3 位代码，如 CNY"
-            return
-        }
         let draft = PayableDraft(
             name: name.trimmingCharacters(in: .whitespaces),
             category: category,
             amount: amount,
-            currency: trimmedCurrency,
+            currency: currency.draftCurrency,
             dueDay: dueDay,
+            holderId: holderId.isEmpty ? nil : holderId,
+            bankName: bankName.isEmpty ? nil : bankName,
             note: note.isEmpty ? nil : note,
             bankAccount: bankAccount.isEmpty ? nil : bankAccount
         )

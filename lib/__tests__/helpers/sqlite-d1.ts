@@ -187,11 +187,22 @@ export function createOpportunityDb(): SqliteD1 {
  * AFTER migrations ran (matching a live database where the catalog predates
  * 0015), so the wrap must run again once rows exist — exactly what a real
  * deployment gets from applying 0015 over populated tables.
+ *
+ * `fakeNow` freezes the SQL-side timestamps the migration stamps with
+ * strftime('now'): JS fake timers cannot reach into SQLite, and the suite
+ * freezes "today" at 2026-10-15, so without this the wrapped versions get
+ * stamped with the real run date and appear "not yet effective" inside the
+ * frozen fixture world. Idempotence is untouched — the substituted literals
+ * keep the same WHERE NOT EXISTS guards.
  */
-export function wrapLegacyCatalog(db: SqliteD1): void {
-  db.exec(
-    readFileSync(join(SQLITE_D1_MIGRATIONS_DIR, "0015_opportunity_legacy_catalog.sql"), "utf8"),
-  );
+export function wrapLegacyCatalog(db: SqliteD1, fakeNow?: string): void {
+  let sql = readFileSync(join(SQLITE_D1_MIGRATIONS_DIR, "0015_opportunity_legacy_catalog.sql"), "utf8");
+  if (fakeNow) {
+    sql = sql
+      .replaceAll("strftime('%Y-%m-%dT%H:%M:%SZ','now')", `strftime('%Y-%m-%dT%H:%M:%SZ','${fakeNow}')`)
+      .replaceAll("strftime('%Y-%m-%d','now')", `strftime('%Y-%m-%d','${fakeNow}')`);
+  }
+  db.exec(sql);
 }
 
 /** Bare harness without migrations, for harness-level contract tests. */

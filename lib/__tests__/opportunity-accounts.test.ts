@@ -7,7 +7,7 @@
 //       and clips usable_start; no overlapping windows
 //   A10 opening verification and opening→used reclassification (later cases)
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createOpportunityDb, type SqliteD1 } from './helpers/sqlite-d1'
 import { seedOpportunityFixtures, FIXTURE_IDS } from './helpers/opportunity-fixtures'
 import { setDb } from '../db/client'
@@ -83,9 +83,17 @@ async function seedDefinition(db: SqliteD1, rules: RuleSnapshotV1, effectiveFrom
 }
 
 beforeEach(async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-10-15T08:00:00Z'))
   db = createOpportunityDb()
   await seedOpportunityFixtures(db)
   setDb(db as unknown as D1Database)
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  setDb(null)
+  db.close()
 })
 
 // ---------------------------------------------------------------------------

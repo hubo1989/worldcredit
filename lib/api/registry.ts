@@ -13,6 +13,7 @@ import * as adminServer from './admin.server'
 import * as aiServer from './ai.server'
 import * as analyticsServer from './analytics.server'
 import * as attachmentsServer from './attachments.server'
+import * as banksServer from './banks.server'
 import * as benefitsServer from './benefits.server'
 import * as billDraftsServer from './billDrafts.server'
 import * as billsServer from './bills.server'
@@ -24,6 +25,9 @@ import * as gmailServer from './gmail.server'
 import * as gmailLedgerServer from './gmail-ledger.server'
 import * as holdersServer from './holders.server'
 import * as payablesServer from './payables.server'
+// payments.ts 直接持有 db 访问（历史文件无 .server 拆分），registry 是
+// server-only 模块，导入即并入服务端 bundle，符合现有约定。
+import * as paymentsServer from './payments'
 import * as preferencesServer from './preferences.server'
 import * as promosServer from './promos.server'
 import * as opportunitiesServer from './opportunities.server'
@@ -192,6 +196,19 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     recordPayment: { impl: billsServer.recordPayment, memberGuard: guardObjField(0, "bill_id", assertBillAccess) },
     markBillAsPaid: { impl: billsServer.markBillAsPaid, memberGuard: guardBill(0) },
     markAllOverdueBillsAsPaid: { impl: billsServer.markAllOverdueBillsAsPaid, bindUser: 0, memberGuard: (args, ctx) => assertBillListAccess(args[1], ctx) },
+    updateBillFields: { impl: billsServer.updateBillFields, memberGuard: guardBill(0) },
+    clearOverride: { impl: billsServer.clearOverride, memberGuard: guardBill(0) },
+    updateBillStatusChecked: {
+      impl: (billId: string) => billsServer.updateBillStatusChecked(billId),
+      memberGuard: guardBill(0),
+    },
+    deleteBill: { impl: billsServer.deleteBill, admin: true },
+  },
+  payments: {
+    // 还款记录编辑（spec 13 §6.1/§6.2）：成员经 payment -> bill -> card -> holder
+    // 归属链校验；更新/删除后 impl 内部重算所属账单状态。
+    updatePayment: { impl: paymentsServer.updatePayment, memberGuard: (args, ctx) => paymentsServer.assertPaymentAccess(args[0], ctx) },
+    deletePayment: { impl: paymentsServer.deletePayment, memberGuard: (args, ctx) => paymentsServer.assertPaymentAccess(args[0], ctx) },
   },
   cards: {
     getCardsByHolder: { impl: cardsServer.getCardsByHolder, memberGuard: guardHolder(0) },
@@ -221,6 +238,9 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     markPayment: { impl: gmailLedgerServer.markPayment, memberGuard: (args, ctx) => assertLedgerAccess(args[0], ctx) },
     updateLedgerAmount: { impl: gmailLedgerServer.updateLedgerAmount, memberGuard: (args, ctx) => assertLedgerAccess(args[0], ctx) },
     getGmailLedgerBanks: { impl: gmailLedgerServer.getGmailLedgerBanks, memberGuard: scopeLedgerUserArg(0) },
+  },
+  banks: {
+    getBankNames: { impl: banksServer.getBankNames },
   },
   holders: {
     getHolders: { impl: holdersServer.getHolders, bindUser: 0 },

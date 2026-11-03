@@ -3,13 +3,14 @@ import { calculateCardGracePeriod } from '../api/bills.server'
 import type { CardProduct, CreditCard } from '../types'
 
 /**
- * 「今日刷卡免息期」口径回归（2026-10-20 用户规则）：
+ * 「今日刷卡免息期」口径回归（2026-11-02 用户规则）：
  * 今天交易 → 落在下一期账单 → 到该期还款日的天数，最大的卡排最上面。
  *
- * 两个曾错的边界：
- *   1. 今天正好是账单日：当天的交易归下一期（当天已出账），
- *      旧逻辑用 > 判月会把交易算进本期，少算一个账期（约 30 天）；
- *   2. 未结清卡曾退化为「距当前未还账单的还款日」——今天的新交易
+ * 国内多数银行账单日当天刷卡当天出账：当天交易进当期账单（出得最快、
+ * 免息最短），最长免息的第一天是账单日的后一天。三个关键边界：
+ *   1. 今天 == 账单日：交易进当期（本月出账），免息只剩账单日→还款日；
+ *   2. 今天 == 账单日+1：交易归下一期，免息期最长（选卡刷就挑这一天）；
+ *   3. 未结清卡曾退化为「距当前未还账单的还款日」——今天的新交易
  *      进的是下一期，与当前欠款无关（排序层已改，见 bills-list-order）。
  */
 
@@ -57,11 +58,18 @@ describe('calculateCardGracePeriod：今天交易 → 下一期账单 → 该期
     expect(r.graceDays).toBe(40)
   })
 
-  it('[边界] 今天正好是账单日：交易归下一期，免息期含完整一个账期', () => {
+  it('[边界] 今天正好是账单日：当天交易进当期账单（当天刷卡当天出账），免息最短', () => {
     const r = calculateCardGracePeriod(card(), new Date(2026, 9, 27))
+    expect(iso(r.nextBillingDate)).toBe('2026-10-27')
+    expect(iso(r.nextDueDate)).toBe('2026-11-16')
+    expect(r.graceDays).toBe(20) // 账单日当天出账：只剩账单日→还款日这一段
+  })
+
+  it('[边界] 账单日后一天：交易归下一期，免息期最长（新口径最长免息日）', () => {
+    const r = calculateCardGracePeriod(card(), new Date(2026, 9, 28))
     expect(iso(r.nextBillingDate)).toBe('2026-11-27')
     expect(iso(r.nextDueDate)).toBe('2026-12-17')
-    expect(r.graceDays).toBe(51) // 旧逻辑（> 判月）会算成 20 天
+    expect(r.graceDays).toBe(50)
   })
 
   it('账单日大于当月天数时按月末算（账单日 31，2 月）', () => {

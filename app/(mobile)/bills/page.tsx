@@ -35,12 +35,42 @@ import {
   BillsView,
   type BankGroup,
   type BillDimension,
-  type BillViewFilter,
 } from '@/components/obsidian/BillsView'
 import { BillsOverlays } from '@/components/obsidian/BillsOverlays'
+import {
+  BILL_STATUS_LABELS,
+  NO_BANK_TAG,
+  countByTag,
+  countEntities,
+  countStatuses,
+  filterCardsForView,
+  filterPayablesForView,
+  statusOptionsFor,
+  type BillStatusKey,
+  type BillsEntityType,
+  type BillsFilterState,
+} from '@/lib/bills-view-model'
 
 type Dimension = BillDimension
-type ViewFilter = BillViewFilter
+
+const ENTITY_TEXT: Record<BillsEntityType, string> = {
+  all: '全部',
+  cards: '信用卡账单',
+  payables: '固定支出',
+}
+
+/** 标签摘要：维度 + 选中值，避免多层嵌套三目。 */
+function tagSummary(
+  dimension: Dimension,
+  selectedTag: string,
+  holderTags: Array<{ id: string; name: string }>
+): string {
+  if (selectedTag === 'all') return '全部' + (dimension === 'holder' ? '持卡人' : '银行')
+  if (dimension === 'holder') {
+    return holderTags.find(t => t.id === selectedTag)?.name ?? '未知持卡人'
+  }
+  return selectedTag === NO_BANK_TAG ? '非银行' : selectedTag
+}
 
 export default function BillsPage() {
   const { user } = useAuth()
@@ -72,7 +102,9 @@ export default function BillsPage() {
   // 维度 / 标签 / 排序 / 状态过滤
   const [dimension, setDimension] = useState<Dimension>('holder')
   const [selectedTag, setSelectedTag] = useState<string>('all')
-  const [viewFilter, setViewFilter] = useState<ViewFilter>('all')
+  // 对象类型 + 状态多选；默认全部（用户口径）
+  const [entityType, setEntityType] = useState<BillsEntityType>('all')
+  const [statusKeys, setStatusKeys] = useState<BillStatusKey[]>([])
   // BILL-02：三个排序快捷栏。只影响卡片组内顺序，不碰筛选条件。
   const [sortMode, setSortMode] = useState<BillsSortMode>('nearest_due')
   // 筛选器默认收成一行摘要，逐步展开完整维度/标签/排序
@@ -195,10 +227,39 @@ export default function BillsPage() {
     }
   }
 
-  // 所有逾期账单列表
+  const filterState: BillsFilterState = useMemo(
+    () => ({ entityType, statuses: statusKeys, dimension, selectedTag }),
+    [entityType, statusKeys, dimension, selectedTag]
+  )
+
+  // 信用卡与固定支出共用同一套筛选口径
+  const filteredCards = useMemo(
+    () => filterCardsForView(cardsSummary, filterState),
+    [cardsSummary, filterState]
+  )
+  const filteredPayables = useMemo(
+    () => filterPayablesForView(payables, filterState),
+    [payables, filterState]
+  )
+
+  // 面板里的 facet 计数
+  const statusCounts = useMemo(
+    () => countStatuses(cardsSummary, payables, filterState),
+    [cardsSummary, payables, filterState]
+  )
+  const entityCounts = useMemo(
+    () => countEntities(cardsSummary, payables, filterState),
+    [cardsSummary, payables, filterState]
+  )
+  const tagCounts = useMemo(
+    () => countByTag(cardsSummary, payables, filterState),
+    [cardsSummary, payables, filterState]
+  )
+
+  // 当前筛选结果中的逾期账单（筛选影响汇总与一键还款范围）
   const allOverdueBills = useMemo(() => {
     const list: BillDashboardItem[] = []
-    for (const card of cardsSummary) {
+    for (const card of filteredCards) {
       for (const bill of card.historyBills) {
         if (bill.computed_status === 'overdue' || (bill.days_until_due < 0 && bill.computed_status !== 'paid')) {
           list.push(bill)
@@ -206,7 +267,7 @@ export default function BillsPage() {
       }
     }
     return list
-  }, [cardsSummary])
+  }, [filteredCards])
 
   /**
    * 逾期待还合计。
@@ -248,7 +309,7 @@ export default function BillsPage() {
     }
   }
 
-  // 持卡人维度可选标签
+  // 持卡人维度可选标签：信用卡 + 固定支出
   const holderTags = useMemo(() => {
     const ids: string[] = []
     const seen = new Set<string>()
@@ -259,10 +320,18 @@ export default function BillsPage() {
         ids.push(hid)
       }
     }
+    // 固定支出可归属到某个持卡人：即使该人名下没有信用卡，也要出现在筛选标签里
+    for (const p of payables) {
+      const hid = p.holder_id
+      if (hid && !seen.has(hid)) {
+        seen.add(hid)
+        ids.push(hid)
+      }
+    }
     return ids.map(id => ({ id, name: holderMap[id] || '未知持卡人' }))
-  }, [cardsSummary, holderMap])
+  }, [cardsSummary, payables, holderMap])
 
-  // 银行维度可选标签
+  // 银行维度可选标签：信用卡银行 + 固定支出银行
   const bankTags = useMemo(() => {
     const names: string[] = []
     const seen = new Set<string>()
@@ -273,24 +342,16 @@ export default function BillsPage() {
         names.push(n)
       }
     }
-    return names
-  }, [cardsSummary])
-
-  // 过滤卡片列表
-  const filteredCards = useMemo(() => {
-    return cardsSummary.filter(item => {
-      // 状态筛选
-      if (viewFilter === 'unpaid' && (item.status === 'unissued' || item.unpaidAmount <= 0)) return false
-      if (viewFilter === 'cleared' && item.unpaidAmount > 0) return false
-
-      // 标签筛选
-      if (selectedTag !== 'all') {
-        if (dimension === 'holder' && item.holder_id !== selectedTag) return false
-        if (dimension === 'bank' && item.card.card_product?.bank_name !== selectedTag) return false
+    for (const p of payables) {
+      const n = p.bank_name
+      if (n && !seen.has(n)) {
+        seen.add(n)
+        names.push(n)
       }
-      return true
-    })
-  }, [cardsSummary, viewFilter, selectedTag, dimension])
+    }
+    return names.sort()
+  }, [cardsSummary, payables])
+
 
   // 排序固定为三段，每段用各自的时间轴，方向都是「最紧要的在前」：
   //   逾期      → 逾期最久 → 逾期最短
@@ -365,36 +426,36 @@ export default function BillsPage() {
     }
   }
 
-  const unpaidCount = useMemo(() => cardsSummary.filter(c => c.unpaidAmount > 0).length, [cardsSummary])
-  const clearedCount = useMemo(() => cardsSummary.filter(c => c.unpaidAmount <= 0).length, [cardsSummary])
-
   // 收起态摘要：把当前筛选、分组与排序压成一行可读文本
   const filterSummary = useMemo(() => {
     const statusText =
-      viewFilter === 'unpaid' ? '待还款' : viewFilter === 'cleared' ? '未出账单/已结清' : '全部卡片'
-    const tagText =
-      selectedTag === 'all'
-        ? '全部' + (dimension === 'holder' ? '持卡人' : '银行')
-        : dimension === 'holder'
-          ? holderTags.find(t => t.id === selectedTag)?.name || '未知持卡人'
-          : selectedTag
+      statusKeys.length === 0
+        ? '全部状态'
+        : statusKeys.map(k => BILL_STATUS_LABELS[k]).join('+')
     const dimText = dimension === 'holder' ? '持卡人' : '银行'
-    return statusText + ' · 按' + dimText + ' · ' + tagText + ' · 逾期优先'
-  }, [viewFilter, dimension, selectedTag, holderTags])
+    return (
+      ENTITY_TEXT[entityType] +
+      ' · ' + statusText +
+      ' · 按' + dimText +
+      ' · ' + tagSummary(dimension, selectedTag, holderTags)
+    )
+  }, [entityType, statusKeys, dimension, selectedTag, holderTags])
 
-  // 计入摘要的非默认维度数量（排序已固定，不计入）
+  // 计入摘要的非默认维度数量
   const activeFilterCount = useMemo(() => {
     let n = 0
-    if (viewFilter !== 'all') n += 1
+    if (entityType !== 'all') n += 1
+    if (statusKeys.length > 0) n += 1
     if (dimension !== 'holder') n += 1
     if (selectedTag !== 'all') n += 1
     return n
-  }, [viewFilter, dimension, selectedTag])
+  }, [entityType, statusKeys, dimension, selectedTag])
 
   const hasActiveFilter = activeFilterCount > 0
 
   const resetFilters = useCallback(() => {
-    setViewFilter('all')
+    setEntityType('all')
+    setStatusKeys([])
     setDimension('holder')
     setSelectedTag('all')
   }, [])
@@ -417,8 +478,21 @@ export default function BillsPage() {
         activeFilterCount={activeFilterCount}
         hasActiveFilter={hasActiveFilter}
         onResetFilters={resetFilters}
-        viewFilter={viewFilter}
-        onViewFilter={setViewFilter}
+        entityType={entityType}
+        onEntityType={next => {
+          setEntityType(next)
+          // 切到只含一种对象时，剔除该类型不存在的状态，避免残留成空结果
+          const allowed = statusOptionsFor(next)
+          setStatusKeys(prev => prev.filter(k => allowed.includes(k)))
+        }}
+        statusKeys={statusKeys}
+        onToggleStatus={k =>
+          setStatusKeys(prev => (prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k]))
+        }
+        onClearStatuses={() => setStatusKeys([])}
+        statusCounts={statusCounts}
+        entityCounts={entityCounts}
+        tagCounts={tagCounts}
         sortMode={sortMode}
         onSortMode={setSortMode}
         dimension={dimension}
@@ -427,14 +501,11 @@ export default function BillsPage() {
         onSelectedTag={setSelectedTag}
         holderTags={holderTags}
         bankTags={bankTags}
-        totalCount={cardsSummary.length}
-        unpaidCount={unpaidCount}
-        clearedCount={clearedCount}
         loading={loading}
         loadError={loadError}
         onRetry={() => loadData()}
         onEmptySync={handleSync}
-        payables={payables}
+        payables={filteredPayables}
         onEditPayable={p => { setEditingPayable(p); setPayableFormOpen(true) }}
         onPayPayable={handlePayPayable}
         cards={sortedCards}

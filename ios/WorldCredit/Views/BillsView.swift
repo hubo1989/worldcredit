@@ -84,32 +84,62 @@ struct BillsView: View {
 
     private var holderOptions: [(id: String, name: String)] {
         var seen = Set<String>()
-        return appState.cards.compactMap { card in
+        var options: [(id: String, name: String)] = []
+        for card in appState.cards {
             let holderId = card.card.holderId
-            guard !holderId.isEmpty, seen.insert(holderId).inserted else { return nil }
-            return (holderId, card.holderName)
+            guard !holderId.isEmpty, seen.insert(holderId).inserted else { continue }
+            options.append((holderId, card.holderName))
         }
+        // 固定支出也可以归属到没有信用卡的持卡人：筛选标签必须覆盖这些归属
+        for payable in appState.payables {
+            guard let holderId = payable.holderId, !holderId.isEmpty,
+                  seen.insert(holderId).inserted else { continue }
+            let name = appState.dashboardHolders.first(where: { $0.id == holderId })?.name
+                ?? "未知持卡人"
+            options.append((holderId, name))
+        }
+        return options
+    }
+
+    private func payableHolderName(_ payable: PayableItem) -> String? {
+        guard let holderId = payable.holderId, !holderId.isEmpty else { return nil }
+        return appState.dashboardHolders.first(where: { $0.id == holderId })?.name
+            ?? appState.cards.first(where: { $0.card.holderId == holderId })?.holderName
     }
 
     private var bankOptions: [String] {
         var seen = Set<String>()
-        return appState.cards.compactMap { card in
-            guard !card.bankName.isEmpty, seen.insert(card.bankName).inserted else { return nil }
-            return card.bankName
+        var names: [String] = []
+        for card in appState.cards where !card.bankName.isEmpty {
+            if seen.insert(card.bankName).inserted { names.append(card.bankName) }
         }
+        for payable in appState.payables {
+            guard let bank = payable.bankName, !bank.isEmpty else { continue }
+            if seen.insert(bank).inserted { names.append(bank) }
+        }
+        return names.sorted()
     }
 
     private var filterSummary: String {
+        var parts: [String] = []
+        if appState.selectedEntityFilter != .all {
+            parts.append(appState.selectedEntityFilter.rawValue)
+        }
+        if !appState.selectedStatusFilters.isEmpty {
+            let order: [BillStatusFilter] = [.unpaid, .overdue, .unissued, .paid]
+            parts.append(
+                order.filter { appState.selectedStatusFilters.contains($0) }
+                    .map(\.rawValue).joined(separator: "+")
+            )
+        }
         if let holderFilterId {
-            return holderOptions.first(where: { $0.id == holderFilterId })?.name ?? "持卡人"
+            parts.append(holderOptions.first(where: { $0.id == holderFilterId })?.name ?? "持卡人")
         }
         if let bankFilterName {
-            return bankFilterName
+            parts.append(
+                bankFilterName == BillsPresentationFilter.noBankValue ? "非银行" : bankFilterName)
         }
-        if appState.selectedBillFilter != .unpaid {
-            return appState.selectedBillFilter.rawValue
-        }
-        return "筛选"
+        return parts.isEmpty ? "筛选" : parts.joined(separator: " · ")
     }
 
     var body: some View {
@@ -188,13 +218,15 @@ struct BillsView: View {
                 if isFilterDrawerPresented {
                     BillsFilterDrawerView(
                         isPresented: $isFilterDrawerPresented,
-                        currentFilter: appState.selectedBillFilter,
+                        currentEntity: appState.selectedEntityFilter,
+                        currentStatuses: appState.selectedStatusFilters,
                         currentHolderId: holderFilterId,
                         currentBankName: bankFilterName,
                         holderOptions: holderOptions,
                         bankOptions: bankOptions
-                    ) { newFilter, newHolderId, newBankName in
-                        appState.selectedBillFilter = newFilter
+                    ) { newEntity, newStatuses, newHolderId, newBankName in
+                        appState.selectedEntityFilter = newEntity
+                        appState.selectedStatusFilters = newStatuses
                         holderFilterId = newHolderId
                         bankFilterName = newBankName
                     }
@@ -322,7 +354,9 @@ struct BillsView: View {
                         .font(.footnote.weight(.medium))
                 }
                 .foregroundStyle(
-                    holderFilterId == nil && bankFilterName == nil && appState.selectedBillFilter == .unpaid
+                    holderFilterId == nil && bankFilterName == nil
+                        && appState.selectedEntityFilter == .all
+                        && appState.selectedStatusFilters.isEmpty
                         ? WCColors.textSecondary : WCColors.primaryAccent
                 )
                 .padding(.horizontal, 10)
@@ -527,7 +561,9 @@ struct BillsView: View {
                 .font(.subheadline.bold())
                 .foregroundStyle(WCColors.textPrimary)
             Spacer()
-            Text(appState.selectedBillFilter == .unpaid ? "待还状态 · 按到期日" : "\(appState.selectedBillFilter.rawValue) · 按到期日")
+            Text(appState.selectedEntityFilter == .all && appState.selectedStatusFilters.isEmpty
+                ? "全部 · 按到期日"
+                : "\(filterSummary) · 按到期日")
                 .font(.caption)
                 .foregroundStyle(WCColors.textSecondary)
         }
@@ -548,7 +584,7 @@ struct BillsView: View {
                 Image(systemName: "line.3.horizontal.decrease.circle")
                     .font(.largeTitle)
                     .foregroundStyle(WCColors.textSecondary)
-                Text("没有\(appState.selectedBillFilter.rawValue)账单或应付")
+                Text("没有符合条件的账单或固定支出")
                     .font(.subheadline)
                     .foregroundStyle(WCColors.textSecondary)
             }
@@ -838,6 +874,15 @@ struct BillsView: View {
                             .padding(.vertical, 2)
                             .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 4))
                             .foregroundStyle(WCColors.textSecondary)
+                        if let holderName = payableHolderName(payable) {
+                            Text(holderName)
+                                .font(.caption2.weight(.medium))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 4))
+                                .foregroundStyle(WCColors.textSecondary)
+                                .accessibilityIdentifier("payable.holder")
+                        }
                     }
 
                     HStack(spacing: 6) {
@@ -955,7 +1000,11 @@ struct BillsView: View {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(WCColors.border, lineWidth: 1)
         )
-        // 补回重构丢失的编辑入口：iOS 端唯一的固定支出编辑路径（PayableFormView(existing:)），
+        // 整卡可点进编辑（与 Web 端 PayableRow 整卡进编辑对齐）：固定支出没有
+        // 详情页，编辑表单就是它的详情视图。「登记还款」按钮用 .borderless
+        // 样式接收自己的点击，不会触发整卡手势；长按菜单保留作第二入口。
+        .onTapGesture { editingPayable = payable }
+        // 补回重构丢失的编辑入口：iOS 端的固定支出编辑路径（PayableFormView(existing:)），
         // 与 Web bills 页 onEditPayable 对齐；「编辑」不与登记还款按钮争抢点击区。
         .contextMenu {
             Button {

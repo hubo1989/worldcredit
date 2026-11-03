@@ -148,7 +148,12 @@ describe("RPC registry contract", () => {
     // A function with no admin flag and no guard/filter/binding is callable by
     // any signed-in member against unscoped data, so each such entry must be
     // justified here rather than overlooked.
-    const SANCTIONED_UNGUARDED = new Set(["ai.aiComplete", "cards.getCardProducts"]);
+    const SANCTIONED_UNGUARDED = new Set([
+      "ai.aiComplete",
+      "cards.getCardProducts",
+      // 公开只读银行目录：无用户数据、无写操作，成员选归属银行时需要
+      "banks.getBankNames",
+    ]);
     for (const [moduleName, mod] of Object.entries(RPC_REGISTRY)) {
       for (const [fn, entry] of Object.entries(mod)) {
         if (entry.admin) continue;

@@ -10,18 +10,31 @@ import {
   updateBillImportDraft,
   type BillImportDraft,
 } from "@/lib/api/billDrafts";
+import { isPresent } from "./bill-editing-shared";
 import { getCardsWithBillsSummary } from "@/lib/api/bills";
 import { formatCardTail } from "@/lib/utils";
+import { BillDraftEditForm, mergeDraftPayload, type BillDraftFieldValues } from "./BillDraftEditForm";
+
+function isCompleteDraft(p: {
+  bill_amount?: number | null
+  due_date?: string | null
+  bill_month?: string | null
+}) {
+  return isPresent(p.bill_amount) && Boolean(p.due_date) && Boolean(p.bill_month)
+}
 
 export function BillDraftsPanel({ onChanged }: { onChanged?: () => void }) {
   const [drafts, setDrafts] = useState<BillImportDraft[]>([]);
   const [cards, setCards] = useState<Array<{ id: string; label: string }>>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
-      setDrafts(await getBillImportDrafts());
+      const nextDrafts = await getBillImportDrafts();
+      setDrafts(nextDrafts);
+      setEditingId((id) => (id !== null && !nextDrafts.some((draft) => draft.id === id) ? null : id));
     } catch {
       // 取不到草稿不阻塞账单页
       setDrafts([]);
@@ -56,6 +69,16 @@ export function BillDraftsPanel({ onChanged }: { onChanged?: () => void }) {
     } finally {
       setBusy(false);
     }
+  };
+
+  // 字段编辑保存：表单校验通过后把五个字段合并回 parsed_payload，
+  // 走与改卡相同的 RPC 包装；服务端查重（同卡同月已存在）原样透传给表单内提示。
+  const saveDraftFields = async (draftId: string, values: BillDraftFieldValues) => {
+    const draft = drafts.find((d) => d.id === draftId);
+    if (!draft) throw new Error("草稿不存在或已被处理");
+    await updateBillImportDraft(draft.id, {
+      parsed_payload: mergeDraftPayload(draft, values),
+    });
   };
 
   const confirm = async (draft: BillImportDraft) => {
@@ -99,7 +122,7 @@ export function BillDraftsPanel({ onChanged }: { onChanged?: () => void }) {
         {drafts.map((draft) => {
           const p = draft.parsed_payload;
           const completable = Boolean(
-            p.bill_amount != null && p.due_date && p.bill_month && draft.card_id,
+            isCompleteDraft(p) && draft.card_id,
           );
           return (
             <div
@@ -107,7 +130,7 @@ export function BillDraftsPanel({ onChanged }: { onChanged?: () => void }) {
               className="mt-3 border-t border-d-border pt-3 text-[12px] text-d-muted"
             >
               <p className="text-d-text">
-                {p.bill_month ?? "未识别月份"}｜{p.bill_amount != null ? p.bill_amount : "—"}｜到期{" "}
+                {p.bill_month ?? "未识别月份"}｜{isPresent(p.bill_amount) ? p.bill_amount : "—"}｜到期{" "}
                 {p.due_date ?? "—"}
               </p>
               <select
@@ -133,6 +156,14 @@ export function BillDraftsPanel({ onChanged }: { onChanged?: () => void }) {
               <div className="mt-2 flex gap-2">
                 <button
                   type="button"
+                  disabled={busy}
+                  onClick={() => setEditingId(draft.id)}
+                  className="h-9 rounded-full border border-d-border px-3 text-[12px] font-semibold text-d-muted disabled:opacity-40"
+                >
+                  编辑字段
+                </button>
+                <button
+                  type="button"
                   disabled={!completable || busy}
                   onClick={() => void confirm(draft)}
                   className="h-9 rounded-full border border-d-accent px-3 text-[12px] font-semibold text-d-accent-light disabled:opacity-40"
@@ -152,6 +183,14 @@ export function BillDraftsPanel({ onChanged }: { onChanged?: () => void }) {
           );
         })}
       </div>
+      <BillDraftEditForm
+        open={editingId != null}
+        draft={drafts.find((d) => d.id === editingId) ?? null}
+        cards={cards}
+        onClose={() => setEditingId(null)}
+        onSaved={() => void reload()}
+        onSubmit={saveDraftFields}
+      />
     </div>
   );
 }

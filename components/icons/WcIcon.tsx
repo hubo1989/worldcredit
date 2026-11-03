@@ -583,6 +583,17 @@ export function AlertCircleIcon(props: IconProps) {
   )
 }
 
+/** 锁 · 字段手动钉住（override）/身份锁定 */
+export function LockIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+      <path d="M8 11V8a4 4 0 018 0v3" />
+      <circle cx="12" cy="15.5" r="0.6" fill="currentColor" />
+    </Base>
+  )
+}
+
 /** 纸币 · 金额 */
 export function PaymentsIcon(props: IconProps) {
   return (

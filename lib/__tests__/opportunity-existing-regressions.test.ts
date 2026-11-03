@@ -8,7 +8,7 @@
 //   4. next-month usage leaked into this month's count; registrations had no
 //      date / expiry / quota protection
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createOpportunityDb, wrapLegacyCatalog, type SqliteD1 } from './helpers/sqlite-d1'
 import { seedOpportunityFixtures, FIXTURE_IDS, FIXTURE_NOW_ON } from './helpers/opportunity-fixtures'
 import { setDb } from '../db/client'
@@ -24,13 +24,16 @@ const actorAdminA: OpportunityActor = { user_id: FIXTURE_IDS.users.adminA, role:
 let db: SqliteD1
 
 beforeEach(async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-10-15T08:00:00Z'))
   db = createOpportunityDb()
   await seedOpportunityFixtures(db)
-  wrapLegacyCatalog(db)
+  wrapLegacyCatalog(db, FIXTURE_NOW_ON)
   setDb(db as unknown as D1Database)
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   setDb(null)
   db.close()
 })
@@ -168,10 +171,10 @@ describe('recordBenefitUsage: input protection', () => {
   it('rejects once the period quota is exhausted, allows below it', async () => {
     // Compat adapter: one account on the 0015-wrapped definition + one linked
     // card → writes go to the ledger; the cycle CHECK enforces quota 2. The
-    // 0015 wrap stamps effective_from at the real migration date (date('now')),
-    // so usages must sit on/after today — using the fixture's frozen date
-    // would hit the (correct) “usable window starts at migration” rule.
-    const today = new Date().toISOString().slice(0, 10)
+    // 0015 wrap stamps effective_from at the migration date — the suite
+    // freezes both clocks at FIXTURE_NOW_ON, so usages sit on/after it and
+    // the (correct) “usable window starts at migration” rule still applies.
+    const today = FIXTURE_NOW_ON
     const { createOpportunityAccount } = await import('../opportunities/accounts.server')
     const defRow = db.raw
       .prepare('SELECT id FROM opportunity_definitions WHERE legacy_benefit_id = ?')

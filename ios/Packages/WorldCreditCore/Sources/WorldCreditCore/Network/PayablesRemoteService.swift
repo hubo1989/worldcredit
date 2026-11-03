@@ -26,17 +26,40 @@ public actor PayablesRemoteService {
 
     @discardableResult
     public func create(userId: String, draft: PayableDraft) async throws -> PayableItem {
-        let payload = PayableCreatePayload(createdBy: userId, draft: draft)
+        guard let currency = PayableCurrency.normalize(draft.currency) else {
+            throw PayableCurrencyError.unsupported
+        }
+        var normalizedDraft = draft
+        normalizedDraft.currency = currency.rawValue
+        let payload = PayableCreatePayload(createdBy: userId, draft: normalizedDraft)
         return try await apiClient.rpc(
             module: "payables", function: "createRecurringPayable",
             args: [try jsonValue(payload)])
     }
 
     @discardableResult
-    public func update(payableId: String, draft: PayableDraft) async throws -> PayableItem {
-        try await apiClient.rpc(
+    public func update(
+        payableId: String,
+        draft: PayableDraft,
+        originalCurrency: String? = nil
+    ) async throws -> PayableItem {
+        let payload: AnyCodable
+        if let currency = PayableCurrency.normalize(draft.currency) {
+            var normalizedDraft = draft
+            normalizedDraft.currency = currency.rawValue
+            payload = try jsonValue(normalizedDraft)
+        } else if let originalCurrency, draft.currency == originalCurrency {
+            // 只改其他字段时省略历史未知币种，保留服务端原值及其金额单位。
+            let data = try JSONEncoder().encode(draft)
+            var fields = try JSONDecoder().decode([String: AnyCodable].self, from: data)
+            fields.removeValue(forKey: "currency")
+            payload = try jsonValue(fields)
+        } else {
+            throw PayableCurrencyError.unsupported
+        }
+        return try await apiClient.rpc(
             module: "payables", function: "updateRecurringPayable",
-            args: [AnyCodable(payableId), try jsonValue(draft)])
+            args: [AnyCodable(payableId), payload])
     }
 
     public func delete(payableId: String) async throws {
@@ -53,6 +76,12 @@ public actor PayablesRemoteService {
     }
 }
 
+private enum PayableCurrencyError: LocalizedError {
+    case unsupported
+
+    var errorDescription: String? { "币种必须是 CNY / USD / HKD 之一" }
+}
+
 /// create 入参：created_by 由客户端带上、服务端按会话覆盖(与 createHolder 同约定)。
 private struct PayableCreatePayload: Codable {
     let createdBy: String
@@ -62,6 +91,7 @@ private struct PayableCreatePayload: Codable {
     let currency: String
     let dueDay: Int
     let holderId: String?
+    let bankName: String?
     let note: String?
     let bankAccount: String?
 
@@ -70,6 +100,7 @@ private struct PayableCreatePayload: Codable {
         case name, category, amount, currency
         case dueDay = "due_day"
         case holderId = "holder_id"
+        case bankName = "bank_name"
         case note
         case bankAccount = "bank_account"
     }
@@ -82,6 +113,7 @@ private struct PayableCreatePayload: Codable {
         self.currency = draft.currency
         self.dueDay = draft.dueDay
         self.holderId = draft.holderId
+        self.bankName = draft.bankName
         self.note = draft.note
         self.bankAccount = draft.bankAccount
     }

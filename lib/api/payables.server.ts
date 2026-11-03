@@ -5,7 +5,8 @@
 
 import { query, queryOne, execute, uuid, now } from '../db'
 import { payablePeriodOf, payableDueDate, nextPayablePeriodOf, diffInCalendarDays } from '../utils'
-import type { PayableCategory } from './payables.shared'
+import { normalizePayableCurrency, type PayableCategory } from './payables.shared'
+import { RpcDomainError } from './errors'
 
 export type { PayableCategory } from './payables.shared'
 
@@ -19,6 +20,8 @@ export interface RecurringPayable {
   due_day: number
   holder_id: string | null
   note: string | null
+  /** 归属银行名称（选填；null = 非银行，筛选时单列一个桶） */
+  bank_name?: string | null
   /** 还款/转账目标银行账号（选填，展示层一键复制） */
   bank_account?: string | null
   is_active: number
@@ -33,6 +36,7 @@ export interface RecurringPayableInput {
   due_day: number
   holder_id?: string | null
   note?: string | null
+  bank_name?: string | null
   bank_account?: string | null
 }
 
@@ -138,21 +142,40 @@ export async function getRecurringPayables(
   )
 }
 
+/** 归属银行：trim 后空串归一为 null（= 非银行）；不做白名单，银行可被重命名。 */
+function normalizePayableBankName(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value !== 'string') {
+    throw new RpcDomainError('VALIDATION_FAILED', '银行名称不合法')
+  }
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (trimmed.length > 60) {
+    throw new RpcDomainError('VALIDATION_FAILED', '银行名称过长')
+  }
+  return trimmed
+}
+
 export async function createRecurringPayable(
   input: CreateRecurringPayableInput
 ): Promise<PayableWithStatus> {
-  if (!input.name?.trim()) throw new Error('请填写名称')
-  if (!Number.isFinite(input.amount) || input.amount < 0) throw new Error('金额必须是不小于 0 的数字')
-  if (!Number.isInteger(input.due_day) || input.due_day < 1 || input.due_day > 31) {
-    throw new Error('每月应付日必须在 1–31 之间')
+  if (!input.name?.trim()) throw new RpcDomainError('VALIDATION_FAILED', '请填写名称')
+  if (!Number.isFinite(input.amount) || input.amount < 0) {
+    throw new RpcDomainError('VALIDATION_FAILED', '金额必须是不小于 0 的数字')
   }
+  if (!Number.isInteger(input.due_day) || input.due_day < 1 || input.due_day > 31) {
+    throw new RpcDomainError('VALIDATION_FAILED', '每月应付日必须在 1–31 之间')
+  }
+  const currency = normalizePayableCurrency(input.currency)
+  if (!currency) throw new RpcDomainError('VALIDATION_FAILED', '币种必须是 CNY / USD / HKD 之一')
+  const bankName = normalizePayableBankName(input.bank_name)
   const id = uuid()
   const { error } = await execute(
-    `INSERT INTO recurring_payables (id, created_by, name, category, amount, currency, due_day, holder_id, note, bank_account, is_active, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+    `INSERT INTO recurring_payables (id, created_by, name, category, amount, currency, due_day, holder_id, note, bank_name, bank_account, is_active, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     [id, input.created_by, input.name.trim(), input.category, input.amount,
-     input.currency || 'CNY', input.due_day, input.holder_id || null, input.note || null,
-     input.bank_account?.trim() || null, now()]
+     currency, input.due_day, input.holder_id || null, input.note || null,
+     bankName, input.bank_account?.trim() || null, now()]
   )
   if (error) throw new Error(error.message)
   const created = await queryOne<RecurringPayable>('SELECT * FROM recurring_payables WHERE id = ?', [id])
@@ -164,9 +187,17 @@ export async function updateRecurringPayable(
   id: string,
   patch: Partial<RecurringPayableInput> & { is_active?: number }
 ): Promise<PayableWithStatus> {
+  if (patch.currency !== undefined) {
+    const currency = normalizePayableCurrency(patch.currency)
+    if (!currency) throw new RpcDomainError('VALIDATION_FAILED', '币种必须是 CNY / USD / HKD 之一')
+    patch = { ...patch, currency }
+  }
+  if (patch.bank_name !== undefined) {
+    patch = { ...patch, bank_name: normalizePayableBankName(patch.bank_name) }
+  }
   const fields: string[] = []
   const params: unknown[] = []
-  for (const key of ['name', 'category', 'amount', 'currency', 'due_day', 'holder_id', 'note', 'bank_account', 'is_active'] as const) {
+  for (const key of ['name', 'category', 'amount', 'currency', 'due_day', 'holder_id', 'note', 'bank_name', 'bank_account', 'is_active'] as const) {
     const value = (patch as Record<string, unknown>)[key]
     if (value !== undefined) {
       fields.push(`${key} = ?`)

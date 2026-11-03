@@ -26,12 +26,16 @@ struct FixtureFile: Codable {
         let overrideBillingDay: Int?
         let overrideDueType: PaymentDueType?
         let overrideDueValue: Int?
+        let cardType: String?
+        let loanDueDay: Int?
 
         enum CodingKeys: String, CodingKey {
             case billingDay = "billing_day"
             case overrideBillingDay = "override_billing_day"
             case overrideDueType = "override_due_type"
             case overrideDueValue = "override_due_value"
+            case cardType = "card_type"
+            case loanDueDay = "loan_due_day"
         }
     }
 
@@ -72,14 +76,35 @@ struct FixtureFile: Codable {
         }
     }
 
+    struct GracePeriodCaseItem: Codable {
+        let id: String
+        let description: String
+        let card: CardItem
+        let cardProduct: CardProductItem
+        let today: String
+        let expectedNextBillingDate: String
+        let expectedNextDueDate: String
+        let expectedGraceDays: Int
+
+        enum CodingKeys: String, CodingKey {
+            case id, description, card, today
+            case cardProduct = "card_product"
+            case expectedNextBillingDate = "expected_next_billing_date"
+            case expectedNextDueDate = "expected_next_due_date"
+            case expectedGraceDays = "expected_grace_days"
+        }
+    }
+
     let cases: [CaseItem]
     let loanCases: [LoanCaseItem]
     let diffDaysCases: [DiffDaysCaseItem]
+    let gracePeriodCases: [GracePeriodCaseItem]
 
     enum CodingKeys: String, CodingKey {
         case cases
         case loanCases = "loan_cases"
         case diffDaysCases = "diff_days_cases"
+        case gracePeriodCases = "grace_period_cases"
     }
 }
 
@@ -168,6 +193,51 @@ struct BillingDatesFixtureTests {
 
             #expect(diff == item.expectedDiff, "Diff mismatch for \(item.target)")
             #expect(label == item.expectedLabel, "Label mismatch for \(item.target)")
+        }
+    }
+
+    @Test("Card grace period boundary matches shared fixtures (today == billing_day stays current cycle)")
+    func testCardGracePeriodBoundaries() throws {
+        let fixtures = try loadFixtures()
+        for item in fixtures.gracePeriodCases {
+            guard let today = dateFormatter.date(from: item.today) else {
+                Issue.record("Failed to parse today: \(item.today)")
+                continue
+            }
+            let card = CreditCard(
+                id: "c-\(item.id)",
+                holderId: "h1",
+                cardProductId: "cp1",
+                billingDay: item.card.billingDay,
+                overrideBillingDay: item.card.overrideBillingDay,
+                overrideDueType: item.card.overrideDueType,
+                overrideDueValue: item.card.overrideDueValue,
+                cardType: item.card.cardType ?? "credit",
+                loanDueDay: item.card.loanDueDay
+            )
+            let cardProduct = CardProduct(
+                id: "cp1",
+                cardName: "Test Card",
+                paymentDueType: item.cardProduct.paymentDueType,
+                paymentDueValue: item.cardProduct.paymentDueValue
+            )
+            let result = BillingDateCalculator.calculateCardGracePeriod(
+                card: card,
+                cardProduct: cardProduct,
+                today: today
+            )
+            #expect(
+                dateFormatter.string(from: result.nextBillingDate) == item.expectedNextBillingDate,
+                "\(item.id) next billing date mismatch"
+            )
+            #expect(
+                dateFormatter.string(from: result.nextDueDate) == item.expectedNextDueDate,
+                "\(item.id) next due date mismatch"
+            )
+            #expect(
+                result.graceDays == item.expectedGraceDays,
+                "\(item.id) grace days mismatch"
+            )
         }
     }
 }

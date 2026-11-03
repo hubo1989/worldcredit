@@ -10,8 +10,15 @@ export type {
 } from './payables.server'
 
 // 纯类型与纯函数走 .shared，避免把服务端依赖带进浏览器包。
-export type { PayableCategory } from './payables.shared'
-export { categoryLabel, PAYABLE_CATEGORIES } from './payables.shared'
+export type { PayableCategory, PayableCurrency } from './payables.shared'
+export {
+  categoryLabel,
+  PAYABLE_CATEGORIES,
+  PAYABLE_CURRENCIES,
+  PAYABLE_CURRENCY_LABELS,
+  isPayableCurrency,
+  normalizePayableCurrency,
+} from './payables.shared'
 
 export function getRecurringPayables(...args: Parameters<typeof Server.getRecurringPayables>) {
   return callRpc<typeof Server.getRecurringPayables>('payables', 'getRecurringPayables', ...args)

@@ -159,7 +159,13 @@ export interface Bill {
   bill_amount: number
   /** 用户手填的金额（优先级高于一切导入来源）。非空时即为「人工钉住」。 */
   bill_amount_override?: number
+  /** 用户钉住的最低还款额（spec 13 / 0025）：非空时优先于导入的 min_payment。 */
+  min_payment_override?: number
   min_payment?: number
+  /** 用户钉住的到期日（spec 13 / 0025）：非空时优先于导入的 due_date。 */
+  due_date_override?: string
+  /** 用户钉住的账单日（spec 13 / 0025）：非空时优先于导入的 statement_date。 */
+  statement_date_override?: string
   due_date: string
   status: 'unpaid' | 'partial' | 'paid' | 'overdue'
   created_at: string

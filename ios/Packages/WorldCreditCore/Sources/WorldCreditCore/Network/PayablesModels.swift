@@ -21,6 +21,75 @@ public enum PayableStatus: String, Codable, Sendable {
     case unpaid, paid, overdue
 }
 
+/// 周期应付的封闭币种集（与 Web `lib/api/payables.shared.ts` 及 `shared/fixtures/payable-currencies.json` 三方对齐）。
+/// 存量记录里的 `PayableItem.currency` 仍保持 `String`，以便原样透传历史未知币种（如 EUR），绝不静默当成 CNY。
+public enum PayableCurrency: String, Codable, Sendable, CaseIterable, Identifiable {
+    case cny = "CNY"
+    case usd = "USD"
+    case hkd = "HKD"
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .cny: return "人民币 CNY"
+        case .usd: return "美元 USD"
+        case .hkd: return "港币 HKD"
+        }
+    }
+
+    public var symbol: String {
+        switch self {
+        case .cny: return "¥"
+        case .usd: return "US$"
+        case .hkd: return "HK$"
+        }
+    }
+
+    /// 显式归一化：trim + uppercase，仅接受封闭三字码或明确中文别名（人民币/美元/港币）；未知币种返回 nil。
+    public static func normalize(_ raw: String) -> PayableCurrency? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch trimmed {
+        case "人民币": return .cny
+        case "美元": return .usd
+        case "港币": return .hkd
+        default:
+            return PayableCurrency(rawValue: trimmed.uppercased())
+        }
+    }
+}
+
+/// 表单币种选择状态：合法封闭币种 vs 历史未知币种（原样展示，不静默改成 CNY）。
+public enum PayableCurrencySelection: Hashable, Sendable {
+    case supported(PayableCurrency)
+    case legacy(String)
+
+    public init(persistedCurrency: String) {
+        if let normalized = PayableCurrency.normalize(persistedCurrency) {
+            self = .supported(normalized)
+        } else {
+            self = .legacy(persistedCurrency)
+        }
+    }
+
+    public var legacyCode: String? {
+        if case .legacy(let code) = self { return code }
+        return nil
+    }
+
+    /// 供 PayableDraft 提交的币种值：
+    /// - 合法封闭币种：返回规范三字码（CNY/USD/HKD）；
+    /// - 历史未知币种（如 EUR）：保留原始值；服务更新时核对原值并省略 currency 字段。
+    public var draftCurrency: String {
+        switch self {
+        case .supported(let currency):
+            return currency.rawValue
+        case .legacy(let code):
+            return code
+        }
+    }
+}
+
 /// 服务端 `PayableWithStatus`：应付事项 + 当期状态，账单页直接渲染。
 public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
     public let id: String
@@ -31,6 +100,8 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
     public let currency: String
     public let dueDay: Int
     public let holderId: String?
+    /// 归属银行名称；nil = 非银行，账单页筛选时单列一个桶。
+    public let bankName: String?
     public let note: String?
     public let bankAccount: String?
     /// 当前账期 'YYYY-MM'
@@ -52,6 +123,7 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
         currency: String,
         dueDay: Int,
         holderId: String? = nil,
+        bankName: String? = nil,
         note: String? = nil,
         bankAccount: String? = nil,
         period: String,
@@ -68,6 +140,7 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
         self.currency = currency
         self.dueDay = dueDay
         self.holderId = holderId
+        self.bankName = bankName
         self.note = note
         self.bankAccount = bankAccount
         self.period = period
@@ -83,6 +156,7 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
         case name, category, amount, currency
         case dueDay = "due_day"
         case holderId = "holder_id"
+        case bankName = "bank_name"
         case note
         case bankAccount = "bank_account"
         case period
@@ -124,6 +198,7 @@ public struct PayableDraft: Codable, Equatable, Sendable {
     public var currency: String
     public var dueDay: Int
     public var holderId: String?
+    public var bankName: String?
     public var note: String?
     public var bankAccount: String?
 
@@ -142,6 +217,7 @@ public struct PayableDraft: Codable, Equatable, Sendable {
         currency: String,
         dueDay: Int,
         holderId: String? = nil,
+        bankName: String? = nil,
         note: String? = nil,
         bankAccount: String? = nil
     ) {
@@ -151,6 +227,7 @@ public struct PayableDraft: Codable, Equatable, Sendable {
         self.currency = currency
         self.dueDay = dueDay
         self.holderId = holderId
+        self.bankName = bankName
         self.note = note
         self.bankAccount = bankAccount
     }

@@ -24,6 +24,13 @@ import {
   type BillsListCard,
   type BillsSortMode,
 } from '@/lib/utils'
+import {
+  BILL_STATUS_LABELS,
+  NO_BANK_TAG,
+  statusOptionsFor,
+  type BillStatusKey,
+  type BillsEntityType,
+} from '@/lib/bills-view-model'
 import { PayableRow } from '@/components/mobile/PayableList'
 import type { PayableWithStatus } from '@/lib/api/payables'
 import { currencySymbol } from '@/lib/fx'
@@ -39,7 +46,6 @@ import {
 } from '@/components/icons/WcIcon'
 
 export type BillDimension = 'holder' | 'bank'
-export type BillViewFilter = 'all' | 'unpaid' | 'cleared'
 
 export interface BankGroup {
   bankName: string
@@ -66,8 +72,14 @@ export interface BillsViewProps {
   activeFilterCount: number
   hasActiveFilter: boolean
   onResetFilters: () => void
-  viewFilter: BillViewFilter
-  onViewFilter: (v: BillViewFilter) => void
+  entityType: BillsEntityType
+  onEntityType: (v: BillsEntityType) => void
+  statusKeys: BillStatusKey[]
+  onToggleStatus: (k: BillStatusKey) => void
+  onClearStatuses: () => void
+  statusCounts: Record<BillStatusKey, number>
+  entityCounts: { cards: number; payables: number }
+  tagCounts: { holders: Record<string, number>; banks: Record<string, number>; noBank: number }
   sortMode: BillsSortMode
   onSortMode: (m: BillsSortMode) => void
   dimension: BillDimension
@@ -76,9 +88,6 @@ export interface BillsViewProps {
   onSelectedTag: (t: string) => void
   holderTags: Array<{ id: string; name: string }>
   bankTags: string[]
-  totalCount: number
-  unpaidCount: number
-  clearedCount: number
   loading: boolean
   loadError: string | null
   onRetry: () => void
@@ -168,22 +177,20 @@ function BillCard({
   const accountMode = deriveAccountMode(item.holder_id, bankName, allCards)
 
   return (
-    <div
-      role='button'
-      tabIndex={0}
-      aria-label={`查看 ${bankName} 卡片详情`}
-      onClick={() => router.push(`/cards/${item.card.id}`)}
-      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/cards/${item.card.id}`) } }}
-      className='cursor-pointer rounded-2xl border border-d-border bg-d-surface p-4 transition-colors active:bg-d-subtle/60'
-    >
+    <div className='rounded-2xl border border-d-border bg-d-surface p-4'>
       {/* 主行：银行名 + 账户模式标签 + 状态徽章 */}
       <div className='flex items-start justify-between gap-2'>
         <div className='min-w-0 flex-1'>
           <div className='flex min-w-0 items-center gap-2'>
             <BankIcon size={16} className='shrink-0 text-d-accent-light' />
-            <p className='min-w-0 truncate text-[16px] font-bold leading-[22px] text-d-text'>
+            <button
+              type='button'
+              aria-label={`查看 ${bankName} 卡片详情`}
+              onClick={e => { e.stopPropagation(); router.push(`/cards/${item.card.id}`) }}
+              className='min-w-0 truncate text-left text-[16px] font-bold leading-[22px] text-d-text'
+            >
               {bankName}
-            </p>
+            </button>
             <span
               className={
                 'shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-semibold leading-[14px] ' +
@@ -312,24 +319,29 @@ function BillCard({
               {item.historyBills.map(b => {
                 const bPaid = b.computed_status === 'paid'
                 const bMonth = b.bill_month || (b.due_date ? b.due_date.slice(0, 7) : '账单')
+                const HistoryLabel = bPaid ? 'span' : 'button'
+                const goToBill = (e: React.MouseEvent<HTMLButtonElement>) => {
+                  e.stopPropagation()
+                  router.push('/bills/' + b.id)
+                }
                 return (
-                  <button
+                  <div
                     key={b.id}
-                    type='button'
-                    onClick={e => { e.stopPropagation(); if (!bPaid) onOpenPayment(b) }}
-                    className={
-                      'flex items-center justify-between rounded-lg bg-d-subtle p-2.5 text-left' +
-                      (bPaid ? ' cursor-default' : '')
-                    }
+                    className='flex items-center justify-between rounded-lg bg-d-subtle p-2.5 text-left'
                   >
-                    <span className='min-w-0'>
+                    <HistoryLabel
+                      type={bPaid ? undefined : 'button'}
+                      aria-label={bPaid ? undefined : `登记 ${bMonth} 期账单还款`}
+                      onClick={bPaid ? undefined : e => { e.stopPropagation(); onOpenPayment(b) }}
+                      className='min-w-0 text-left'
+                    >
                       <span className='block text-[12px] font-semibold leading-4 text-d-text'>
                         {bMonth} 期账单
                       </span>
                       <span className='mt-0.5 block text-[10px] leading-4 text-d-muted'>
                         到期日: {b.due_date ? format(new Date(b.due_date), 'yyyy-MM-dd') : '—'}
                       </span>
-                    </span>
+                    </HistoryLabel>
                     <span className='flex shrink-0 items-center gap-2'>
                       <span className='text-[12px] font-semibold text-d-text'>
                         {currencySymbol(rowCurrency)}
@@ -345,13 +357,16 @@ function BillCard({
                       >
                         {bPaid ? '已结清' : '未结清'}
                       </span>
-                      <ChevronRightIcon
-                        size={14}
-                        className='text-d-muted'
-                        onClick={e => { e.stopPropagation(); router.push('/bills/' + b.id) }}
-                      />
+                      <button
+                        type='button'
+                        onClick={goToBill}
+                        className='inline-flex items-center gap-0.5 text-[11px] font-semibold text-d-accent-light'
+                      >
+                        <span className='underline underline-offset-2'>编辑</span>
+                        <ChevronRightIcon size={14} className='text-d-muted' />
+                      </button>
                     </span>
-                  </button>
+                  </div>
                 )
               })}
             </div>
@@ -366,8 +381,9 @@ export function BillsView(vm: BillsViewProps) {
   const {
     syncing, onSync, overdueCount, overdueTotal, overdueUnconverted, displayCurrency,
     onPayAllOpen, filtersOpen, onFiltersToggle, filterSummary, activeFilterCount,
-    hasActiveFilter, onResetFilters, viewFilter, onViewFilter, dimension, onDimension,
-    selectedTag, onSelectedTag, holderTags, bankTags, totalCount, unpaidCount, clearedCount,
+    hasActiveFilter, onResetFilters, entityType, onEntityType, statusKeys, onToggleStatus,
+    onClearStatuses, statusCounts, entityCounts, tagCounts, dimension, onDimension,
+    selectedTag, onSelectedTag, holderTags, bankTags,
     loading, loadError, onRetry, onEmptySync, payables, cards, allCards, holderMap,
     bankGroups, onOpenPayment, onManualAmount, onAddBill, sortMode, onSortMode,
     onEditPayable, onPayPayable,
@@ -427,6 +443,7 @@ export function BillsView(vm: BillsViewProps) {
           <PayableRow
             key={`payable-${p.id}`}
             payable={p}
+            holderName={p.holder_id ? holderMap[p.holder_id] : undefined}
             onEdit={onEditPayable}
             onPay={onPayPayable}
           />
@@ -564,21 +581,37 @@ export function BillsView(vm: BillsViewProps) {
         {/* 筛选面板：展开态 */}
         {filtersOpen && (
           <div id='bills-filter-panel' className='rounded-xl border border-d-border bg-d-surface p-4'>
-            <SectionLabel>卡片状态</SectionLabel>
+            <SectionLabel>对象类型</SectionLabel>
             <div className='mb-4 flex gap-2 overflow-x-auto pb-1'>
-              <FilterPill selected={viewFilter === 'all'} onClick={() => onViewFilter('all')}>
-                全部卡片 ({totalCount})
+              <FilterPill selected={entityType === 'all'} onClick={() => onEntityType('all')}>
+                全部
+              </FilterPill>
+              <FilterPill selected={entityType === 'cards'} onClick={() => onEntityType('cards')}>
+                信用卡账单 ({entityCounts.cards})
               </FilterPill>
               <FilterPill
-                selected={viewFilter === 'unpaid'}
-                onClick={() => onViewFilter('unpaid')}
-                warn={unpaidCount > 0 && viewFilter !== 'unpaid'}
+                selected={entityType === 'payables'}
+                onClick={() => onEntityType('payables')}
               >
-                待还款卡片 ({unpaidCount})
+                固定支出 ({entityCounts.payables})
               </FilterPill>
-              <FilterPill selected={viewFilter === 'cleared'} onClick={() => onViewFilter('cleared')}>
-                未出账单/已结清 ({clearedCount})
+            </div>
+
+            <SectionLabel>状态（可多选）</SectionLabel>
+            <div className='mb-4 flex gap-2 overflow-x-auto pb-1'>
+              <FilterPill selected={statusKeys.length === 0} onClick={onClearStatuses}>
+                全部状态
               </FilterPill>
+              {statusOptionsFor(entityType).map(k => (
+                <FilterPill
+                  key={k}
+                  selected={statusKeys.includes(k)}
+                  onClick={() => onToggleStatus(k)}
+                  warn={k === 'overdue' && statusCounts.overdue > 0 && !statusKeys.includes(k)}
+                >
+                  {BILL_STATUS_LABELS[k]} ({statusCounts[k]})
+                </FilterPill>
+              ))}
             </div>
 
             <SectionLabel>分组维度</SectionLabel>
@@ -596,6 +629,14 @@ export function BillsView(vm: BillsViewProps) {
               <FilterPill selected={selectedTag === 'all'} onClick={() => onSelectedTag('all')}>
                 {dimension === 'holder' ? '全部持卡人' : '全部银行'}
               </FilterPill>
+              {dimension === 'bank' && (
+                <FilterPill
+                  selected={selectedTag === NO_BANK_TAG}
+                  onClick={() => onSelectedTag(NO_BANK_TAG)}
+                >
+                  非银行 ({tagCounts.noBank})
+                </FilterPill>
+              )}
               {dimension === 'holder'
                 ? holderTags.map(t => (
                     <FilterPill
@@ -603,7 +644,7 @@ export function BillsView(vm: BillsViewProps) {
                       selected={selectedTag === t.id}
                       onClick={() => onSelectedTag(t.id)}
                     >
-                      {t.name}
+                      {t.name} ({tagCounts.holders[t.id] ?? 0})
                     </FilterPill>
                   ))
                 : bankTags.map(name => (

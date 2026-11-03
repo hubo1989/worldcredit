@@ -11,15 +11,17 @@ enum BillFilterScope: String, CaseIterable, Identifiable {
 
 struct BillsFilterDrawerView: View {
     @Binding var isPresented: Bool
-    let currentFilter: BillFilter
+    let currentEntity: BillsEntityFilter
+    let currentStatuses: Set<BillStatusFilter>
     let currentHolderId: String?
     let currentBankName: String?
     let holderOptions: [(id: String, name: String)]
     let bankOptions: [String]
-    let onApply: (BillFilter, String?, String?) -> Void
+    let onApply: (BillsEntityFilter, Set<BillStatusFilter>, String?, String?) -> Void
 
     // Local draft states
-    @State private var draftFilter: BillFilter
+    @State private var draftEntity: BillsEntityFilter
+    @State private var draftStatuses: Set<BillStatusFilter>
     @State private var draftScope: BillFilterScope
     @State private var draftHolderId: String?
     @State private var draftBankName: String?
@@ -27,22 +29,25 @@ struct BillsFilterDrawerView: View {
 
     init(
         isPresented: Binding<Bool>,
-        currentFilter: BillFilter,
+        currentEntity: BillsEntityFilter,
+        currentStatuses: Set<BillStatusFilter>,
         currentHolderId: String?,
         currentBankName: String?,
         holderOptions: [(id: String, name: String)],
         bankOptions: [String],
-        onApply: @escaping (BillFilter, String?, String?) -> Void
+        onApply: @escaping (BillsEntityFilter, Set<BillStatusFilter>, String?, String?) -> Void
     ) {
         self._isPresented = isPresented
-        self.currentFilter = currentFilter
+        self.currentEntity = currentEntity
+        self.currentStatuses = currentStatuses
         self.currentHolderId = currentHolderId
         self.currentBankName = currentBankName
         self.holderOptions = holderOptions
         self.bankOptions = bankOptions
         self.onApply = onApply
 
-        _draftFilter = State(initialValue: currentFilter)
+        _draftEntity = State(initialValue: currentEntity)
+        _draftStatuses = State(initialValue: currentStatuses)
         if currentHolderId != nil {
             _draftScope = State(initialValue: .holder)
         } else if currentBankName != nil {
@@ -61,10 +66,18 @@ struct BillsFilterDrawerView: View {
         return bankOptions.filter { $0.localizedCaseInsensitiveContains(bankSearchText) }
     }
 
+    /// 状态选项随对象类型变化：未出账只属于信用卡，已还款只属于固定支出。
+    private var statusOptions: [BillStatusFilter] {
+        switch draftEntity {
+        case .cards: return [.unpaid, .overdue, .unissued]
+        case .payables: return [.unpaid, .overdue, .paid]
+        case .all: return [.unpaid, .overdue, .unissued, .paid]
+        }
+    }
+
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .trailing) {
-                // Dimmed backdrop (left 84pt equivalent or covers background)
                 Color.black.opacity(0.4)
                     .ignoresSafeArea()
                     .onTapGesture {
@@ -73,7 +86,6 @@ struct BillsFilterDrawerView: View {
                         }
                     }
 
-                // Drawer (356pt width on regular screens, or min(356, geometry.size.width - 40))
                 let drawerWidth = min(356.0, geometry.size.width)
 
                 VStack(spacing: 0) {
@@ -87,6 +99,7 @@ struct BillsFilterDrawerView: View {
 
                     ScrollView {
                         VStack(alignment: .leading, spacing: 24) {
+                            entitySection
                             statusSection
                             scopeSection
                             optionsSection
@@ -127,7 +140,7 @@ struct BillsFilterDrawerView: View {
                 Text("筛选")
                     .font(.title2.bold())
                     .foregroundStyle(WCColors.textPrimary)
-                Text("单维度生效：持卡人与银行互斥")
+                Text("状态可多选；持卡人与银行单维度生效")
                     .font(.caption)
                     .foregroundStyle(WCColors.textSecondary)
             }
@@ -138,30 +151,33 @@ struct BillsFilterDrawerView: View {
                 }
             }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.footnote.weight(.bold))
                     .foregroundStyle(WCColors.textSecondary)
-                    .frame(width: 32, height: 32)
-                    .background(WCColors.subtle)
-                    .clipShape(Circle())
+                    .padding(8)
+                    .background(WCColors.subtle, in: Circle())
             }
+            .buttonStyle(.plain)
             .accessibilityIdentifier("bills.filter.close")
         }
     }
 
-    // MARK: - Status Section
-    private var statusSection: some View {
+    // MARK: - Entity Section
+    private var entitySection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("账单状态")
+            Text("对象类型")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(WCColors.textPrimary)
 
             HStack(spacing: 8) {
-                ForEach(BillFilter.allCases) { filter in
-                    let isSelected = draftFilter == filter
+                ForEach(BillsEntityFilter.allCases) { entity in
+                    let isSelected = draftEntity == entity
                     Button(action: {
-                        draftFilter = filter
+                        draftEntity = entity
+                        // 切到只含一种对象时，剔除该类型不存在的状态
+                        let allowed = Set(statusOptions)
+                        draftStatuses = draftStatuses.intersection(allowed)
                     }) {
-                        Text(filter.rawValue)
+                        Text(entity.rawValue)
                             .font(.footnote.weight(isSelected ? .bold : .medium))
                             .foregroundStyle(isSelected ? Color.white : WCColors.textPrimary)
                             .frame(maxWidth: .infinity)
@@ -172,8 +188,49 @@ struct BillsFilterDrawerView: View {
                             )
                     }
                     .buttonStyle(.plain)
-                    .accessibilityIdentifier(filter.rawValue)
+                    .accessibilityIdentifier("bills.entity.\(entity.rawValue)")
                 }
+            }
+        }
+    }
+
+    // MARK: - Status Section (multi-select)
+    private var statusSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("状态（可多选）")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(WCColors.textPrimary)
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                ForEach(statusOptions) { status in
+                    let isSelected = draftStatuses.contains(status)
+                    Button(action: {
+                        if isSelected {
+                            draftStatuses.remove(status)
+                        } else {
+                            draftStatuses.insert(status)
+                        }
+                    }) {
+                        Text(status.rawValue)
+                            .font(.footnote.weight(isSelected ? .bold : .medium))
+                            .foregroundStyle(isSelected ? Color.white : WCColors.textPrimary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(
+                                isSelected ? WCColors.primaryAccent : WCColors.subtle,
+                                in: RoundedRectangle(cornerRadius: 8)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("bills.status.\(status.rawValue)")
+                }
+            }
+
+            if !draftStatuses.isEmpty {
+                Button("清除状态") { draftStatuses.removeAll() }
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(WCColors.primaryAccent)
+                    .buttonStyle(.plain)
             }
         }
     }
@@ -228,7 +285,10 @@ struct BillsFilterDrawerView: View {
                         .foregroundStyle(WCColors.textPrimary)
 
                     VStack(spacing: 4) {
-                        holderRow(title: "全部持卡人", isSelected: draftHolderId == nil && draftBankName == nil) {
+                        holderRow(
+                            title: "全部持卡人",
+                            isSelected: draftHolderId == nil && draftBankName == nil
+                        ) {
                             draftHolderId = nil
                             draftBankName = nil
                         }
@@ -249,9 +309,21 @@ struct BillsFilterDrawerView: View {
                         .foregroundStyle(WCColors.textPrimary)
 
                     VStack(spacing: 4) {
-                        holderRow(title: "全部银行", isSelected: draftBankName == nil && draftHolderId == nil) {
+                        holderRow(
+                            title: "全部银行",
+                            isSelected: draftBankName == nil && draftHolderId == nil
+                        ) {
                             draftBankName = nil
                             draftHolderId = nil
+                        }
+
+                        holderRow(
+                            title: "非银行（固定支出）",
+                            isSelected: draftBankName == BillsPresentationFilter.noBankValue
+                        ) {
+                            draftBankName = BillsPresentationFilter.noBankValue
+                            draftHolderId = nil
+                            draftScope = .bank
                         }
 
                         ForEach(filteredBanks.prefix(6), id: \.self) { bank in
@@ -261,8 +333,6 @@ struct BillsFilterDrawerView: View {
                                 draftScope = .bank
                             }
                         }
-                        // 「全部」维度只展示前 6 家银行：超出时给出显式指引，
-                        // 避免用户误以为目标银行不存在
                         if filteredBanks.count > 6 {
                             Button {
                                 draftScope = .bank
@@ -304,34 +374,33 @@ struct BillsFilterDrawerView: View {
             }
 
         case .bank:
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text("选择银行")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(WCColors.textPrimary)
 
-                // Search field
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
-                        .font(.footnote)
                         .foregroundStyle(WCColors.textSecondary)
-                    TextField("搜索银行...", text: $bankSearchText)
+                    TextField("搜索银行", text: $bankSearchText)
                         .font(.subheadline)
-                        .foregroundStyle(WCColors.textPrimary)
-                    if !bankSearchText.isEmpty {
-                        Button(action: { bankSearchText = "" }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.footnote)
-                                .foregroundStyle(WCColors.textSecondary)
-                        }
-                    }
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                 }
-                .padding(10)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
                 .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityIdentifier("bank.search")
 
                 VStack(spacing: 4) {
                     holderRow(title: "全部银行", isSelected: draftBankName == nil) {
                         draftBankName = nil
+                    }
+
+                    holderRow(
+                        title: "非银行（固定支出）",
+                        isSelected: draftBankName == BillsPresentationFilter.noBankValue
+                    ) {
+                        draftBankName = BillsPresentationFilter.noBankValue
                     }
 
                     ForEach(filteredBanks, id: \.self) { bank in
@@ -349,30 +418,31 @@ struct BillsFilterDrawerView: View {
             HStack {
                 Text(title)
                     .font(.subheadline)
-                    .foregroundStyle(isSelected ? WCColors.primaryAccent : WCColors.textPrimary)
+                    .foregroundStyle(WCColors.textPrimary)
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.footnote.weight(.bold))
                         .foregroundStyle(WCColors.primaryAccent)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
             .background(
-                isSelected ? WCColors.subtle : Color.clear,
+                isSelected ? WCColors.primaryAccent.opacity(0.12) : Color.clear,
                 in: RoundedRectangle(cornerRadius: 8)
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier(title)
     }
 
     // MARK: - Footer
     private var footerView: some View {
         HStack(spacing: 12) {
             Button(action: {
-                draftFilter = .unpaid
+                draftEntity = .all
+                draftStatuses.removeAll()
                 draftScope = .all
                 draftHolderId = nil
                 draftBankName = nil
@@ -388,7 +458,7 @@ struct BillsFilterDrawerView: View {
             .accessibilityIdentifier("bills.filter.reset")
 
             Button(action: {
-                onApply(draftFilter, draftHolderId, draftBankName)
+                onApply(draftEntity, draftStatuses, draftHolderId, draftBankName)
                 withAnimation(.easeOut(duration: 0.25)) {
                     isPresented = false
                 }

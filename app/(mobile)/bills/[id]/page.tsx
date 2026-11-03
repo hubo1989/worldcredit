@@ -5,6 +5,10 @@ import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { createPayment, updateBillStatus, getBillDetail, getPaymentTotal } from '@/lib/api/bills'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
+import { BillEditForm } from '@/components/mobile/BillEditForm'
+import { BillPaymentsManage } from '@/components/mobile/BillPaymentsManage'
+import { useAuth } from '@/lib/auth'
+import { computePaymentDrivenStatus } from '@/lib/utils'
 import { ChevronLeftIcon, ChevronRightIcon, BankIcon, UserIcon, ClockIcon } from '@/components/icons/WcIcon'
 import { formatCardTail, getEffectiveCardName } from '@/lib/utils'
 import type { Bill, Payment, CreditCard, CardProduct, CardHolder } from '@/lib/types'
@@ -22,14 +26,8 @@ function computeBillProgress(bill: BillDetail) {
   const paid = (bill.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0)
   const amount = Number(bill.bill_amount) || 0
   const remaining = Math.max(0, amount - paid)
-  let status: Bill['status'] = 'unpaid'
-  if (amount <= 0 || paid >= amount) status = 'paid'
-  else if (paid > 0) status = 'partial'
-  else {
-    const today = new Date(); today.setHours(0, 0, 0, 0)
-    const due = new Date(bill.due_date); due.setHours(0, 0, 0, 0)
-    if (due.getTime() < today.getTime()) status = 'overdue'
-  }
+  // 与服务端落库、还款重算共用同一个状态函数，避免 0 / 0.01 边界两套口径
+  const status = computePaymentDrivenStatus(bill, paid)
   return { paid, remaining, status }
 }
 
@@ -72,10 +70,16 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [paymentOpen, setPaymentOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [paymentsManageOpen, setPaymentsManageOpen] = useState(false)
+  const { user } = useAuth()
+  // deleteBill 服务端 admin only；member 隐藏删除入口，权限以服务端为准
+  const isAdmin = user?.role === 'admin'
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true
     try {
-      setLoading(true)
+      if (!silent) setLoading(true)
       setError(null)
       // 账单 + 卡 + 卡产品 + 持卡人 + 还款记录，一次 RPC 返回
       const detail = await getBillDetail(id)
@@ -86,7 +90,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载账单失败')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [id])
 
@@ -130,7 +134,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
           <p className='text-[12px] font-semibold text-d-danger-ink'>{error || '账单不存在或已被删除'}</p>
           <button
             type='button'
-            onClick={load}
+            onClick={() => load()}
             className='mt-2 h-10 rounded-xl bg-d-danger px-4 text-xs font-semibold text-white'
           >
             重试
@@ -201,6 +205,13 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         <p className='num-tabular mt-2 text-[28px] font-bold leading-none text-d-text'>
           ¥{billAmount.toLocaleString()}
         </p>
+        <button
+          type='button'
+          onClick={() => setEditOpen(true)}
+          className='mt-2.5 text-[13px] font-semibold text-d-accent-light underline underline-offset-2'
+        >
+          编辑金额与日期
+        </button>
       </div>
 
       {/* 金额四格 */}
@@ -261,6 +272,13 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
 
       {/* 还款记录 */}
       <Section title='还款记录'>
+        <button
+          type='button'
+          onClick={() => setPaymentsManageOpen(true)}
+          className='mb-1 text-[12px] font-semibold text-d-accent-light underline underline-offset-2'
+        >
+          管理还款记录
+        </button>
         {bill.payments.length === 0 ? (
           <div className='py-3 text-center'>
             <p className='text-[13px] font-semibold text-d-text'>尚未还款</p>
@@ -287,6 +305,13 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                     {p.note}
                   </p>
                 )}
+                <button
+                  type='button'
+                  onClick={() => setPaymentsManageOpen(true)}
+                  className='shrink-0 text-[12px] font-semibold text-d-accent-light underline underline-offset-2'
+                >
+                  管理
+                </button>
               </div>
             ))}
           </div>
@@ -319,6 +344,31 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         totalAmount={remaining || billAmount}
         billMonth={bill.bill_month}
         billId={bill.id}
+      />
+
+      {/* spec 13 编辑表单：金额/日期走 override，状态重算，admin 可删除 */}
+      <BillEditForm
+        open={editOpen}
+        bill={bill}
+        identityLabel={`${bankName} ${cardName}${last4 ? ` · 尾号 ${last4}` : ''} · ${bill.bill_month} 期`}
+        totalPaid={paid}
+        currency='¥'
+        canDelete={isAdmin}
+        onClose={() => setEditOpen(false)}
+        onSaved={() => load({ silent: true })}
+        onDeleted={() => {
+          router.replace('/bills')
+        }}
+      />
+
+      {/* 还款记录管理：单笔改/删，改后服务端重算状态 */}
+      <BillPaymentsManage
+        open={paymentsManageOpen}
+        payments={bill.payments}
+        effectiveAmount={billAmount}
+        currency='¥'
+        onClose={() => setPaymentsManageOpen(false)}
+        onChanged={load}
       />
     </div>
   )

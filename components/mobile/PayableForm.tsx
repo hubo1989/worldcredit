@@ -5,10 +5,24 @@ import { Modal } from '@/components/obsidian/overlays'
 import { Button } from '@/components/obsidian/controls'
 import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
-import { createRecurringPayable, updateRecurringPayable, PAYABLE_CATEGORIES, type PayableCategory, type PayableWithStatus } from '@/lib/api/payables'
+import { createRecurringPayable, updateRecurringPayable, PAYABLE_CATEGORIES, PAYABLE_CURRENCIES, PAYABLE_CURRENCY_LABELS, normalizePayableCurrency, type PayableCategory, type PayableWithStatus } from '@/lib/api/payables'
 import { getHolders } from '@/lib/api/holders'
+import { getBankNames } from '@/lib/api/banks'
+import { currencySymbol } from '@/lib/fx'
 import type { CardHolder } from '@/lib/types'
 import { useAuth } from '@/lib/auth'
+
+// 银行目录变化频率低：进程内缓存，避免每次打开弹窗重复拉取
+let bankCatalogCache: string[] | null = null
+async function loadBankNames(): Promise<string[]> {
+  if (bankCatalogCache) return bankCatalogCache
+  const list = await getBankNames()
+  bankCatalogCache = list.map(b => b.name)
+  return bankCatalogCache
+}
+
+/** Select 里代表「保留历史未知币种」的哨兵值。 */
+const LEGACY_CURRENCY = '__legacy__'
 
 interface Props {
   open: boolean
@@ -34,13 +48,26 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
   const [dueDay, setDueDay] = useState('')
   const [holderId, setHolderId] = useState('')
   const [note, setNote] = useState('')
+  const [bankName, setBankName] = useState('')
+  const [bankOptions, setBankOptions] = useState<string[]>([])
   const [bankAccount, setBankAccount] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // 历史未知币种（如 EUR）：只用于显式展示与「保留」选项
+  const legacyCurrency =
+    existing && normalizePayableCurrency(existing.currency) === null ? existing.currency : null
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
-    getHolders().then(setHolders).catch(() => setHolders([]))
+    // 关闭后到达的旧响应直接丢弃，避免快速开关时覆盖新状态
+    let cancelled = false
+    getHolders()
+      .then(list => { if (!cancelled) setHolders(list) })
+      .catch(() => { if (!cancelled) setHolders([]) })
+    loadBankNames()
+      .then(list => { if (!cancelled) setBankOptions(list) })
+      .catch(() => { if (!cancelled) setBankOptions([]) })
+    return () => { cancelled = true }
   }, [open])
 
   useEffect(() => {
@@ -50,10 +77,11 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       setName(existing.name)
       setCategory(existing.category)
       setAmount(String(existing.amount))
-      setCurrency(existing.currency)
+      setCurrency(normalizePayableCurrency(existing.currency) ?? LEGACY_CURRENCY)
       setDueDay(String(existing.due_day))
       setHolderId(existing.holder_id || '')
       setNote(existing.note || '')
+      setBankName(existing.bank_name || '')
       setBankAccount(existing.bank_account || '')
     } else {
       setName('')
@@ -63,6 +91,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       setDueDay('')
       setHolderId('')
       setNote('')
+      setBankName('')
       setBankAccount('')
     }
   }, [open, existing])
@@ -77,21 +106,41 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       return setError('每月应付日必须在 1–31 之间')
     }
 
+    const normalizedCurrency = normalizePayableCurrency(currency)
+    const keepLegacyCurrency = currency === LEGACY_CURRENCY && legacyCurrency !== null
+    if (!normalizedCurrency && !keepLegacyCurrency) {
+      return setError('币种必须是 CNY / USD / HKD 之一')
+    }
     setSubmitting(true)
     try {
       const payload = {
         name: name.trim(),
         category,
         amount: parsedAmount,
-        currency,
         due_day: parsedDay,
         holder_id: holderId || null,
         note: note.trim() || null,
+        bank_name: bankName.trim() || null,
         bank_account: bankAccount.trim() || null,
       }
-      if (existing) await updateRecurringPayable(existing.id, payload)
-      // created_by 会在服务端按会话 cookie 覆盖，这里带上只是满足入参形状
-      else await createRecurringPayable({ ...payload, created_by: user?.id ?? '' })
+      if (existing) {
+        // 历史未知币种不回传，避免只改名称/备注时触发币种变更或丢失原币种。
+        await updateRecurringPayable(existing.id, {
+          ...payload,
+          ...(normalizedCurrency ? { currency: normalizedCurrency } : {}),
+        })
+      } else {
+        // 显式兜底而不是非空断言：校验遗漏时也要给出可读错误
+        if (!normalizedCurrency) {
+          setError('币种必须是 CNY / USD / HKD 之一')
+          return
+        }
+        await createRecurringPayable({
+          ...payload,
+          currency: normalizedCurrency,
+          created_by: user?.id ?? '',
+        })
+      }
       onSuccess()
       onClose()
     } catch (err) {
@@ -137,16 +186,30 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
               label="每月金额"
               value={amount}
               onChange={e => setAmount(e.target.value)}
-              startAdornment={<span>{currency === 'USD' ? 'US$' : currency === 'HKD' ? 'HK$' : '¥'}</span>}
+              startAdornment={
+                <span>
+                  {legacyCurrency ?? currencySymbol(normalizePayableCurrency(currency) ?? 'CNY')}
+                </span>
+              }
               inputMode='decimal' min={0} step='0.01'
             />
           </div>
-          <div className='w-28 shrink-0'>
+          <div className='w-32 shrink-0'>
             <SelectField
               label="币种"
               value={currency}
               onChange={e => setCurrency(e.target.value)}
-              options={['CNY', 'USD', 'HKD'].map(c => ({ value: c, label: c }))}
+              options={[
+                ...(legacyCurrency !== null
+                  ? [{ value: LEGACY_CURRENCY, label: `保留 ${legacyCurrency || '空币种'}（历史值）` }]
+                  : []),
+                ...PAYABLE_CURRENCIES.map(c => ({ value: c, label: PAYABLE_CURRENCY_LABELS[c] })),
+              ]}
+              helperText={
+                legacyCurrency !== null
+                  ? '可保留历史币种；如需更改，请选择 CNY / USD / HKD，并核对金额。'
+                  : undefined
+              }
             />
           </div>
         </div>
@@ -170,6 +233,19 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
             ]}
           />
         )}
+        <SelectField
+          label="银行（可选）"
+          value={bankName}
+          onChange={e => setBankName(e.target.value)}
+          options={[
+            { value: '', label: '非银行 / 不指定' },
+            ...Array.from(new Set([
+              ...bankOptions,
+              ...(existing?.bank_name ? [existing.bank_name] : []),
+            ])).map(name => ({ value: name, label: name })),
+          ]}
+          helperText="用于账单页按银行筛选固定支出"
+        />
         <TextField
           label="银行账号（可选）"
           value={bankAccount}

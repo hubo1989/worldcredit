@@ -1,6 +1,16 @@
 import { query, queryOne, execute, batch, uuid, now, today } from "../db";
 import type { Bill, Payment, CreditCard, CardProduct } from "../types";
-import { getDueDate, getLoanNextDueDate, effectiveBillAmount, nextBillingDateOf } from "../utils";
+import {
+  getDueDate,
+  getLoanNextDueDate,
+  effectiveBillAmount,
+  billEffectiveMinPayment,
+  billEffectiveDueDate,
+  billEffectiveStatementDate,
+  billStatusRecalcStatement,
+  nextBillingDateOf,
+  isValidCalendarDate,
+} from "../utils";
 import { format } from "date-fns";
 import { RpcDomainError } from "./errors";
 
@@ -356,10 +366,11 @@ export function calculateCardGracePeriod(
     billingDay,
     new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(),
   );
-  // 账单日当天（含）的交易归下一期：当天已出账，今天的消费进下一期账单。
-  // 用 >= 而不是 >：今天 == 账单日时 purchaseMonth 必须推到下月，否则
-  // 「今日刷卡免息期」会少算整整一个账期（约 30 天）。
-  if (d.getDate() >= effectiveBillingDay) {
+  // 账单日次日起的交易归下一期：账单日当天刷卡当天出账（多数国内行
+  // 口径），当天交易进当期账单、免息最短；账单日后一天刷卡才是最长
+  // 免息的第一天（今天 == 账单日 → purchaseMonth 留在本月，当期出账
+  // 最早、免息天数最小；今天 == 账单日+1 → 归下一期，免息期最长）。
+  if (d.getDate() > effectiveBillingDay) {
     purchaseMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
   }
   const nextBillingDate = new Date(
@@ -569,6 +580,10 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
   const bill = row as unknown as BillDetail["bill"];
   // b.* 里带的是导入的原始金额；展示与还款校验必须用生效金额。
   bill.bill_amount = effectiveBillAmount(bill);
+  // 其余可编辑字段同样按 override 优先合成，否则编辑后详情页仍显示导入值。
+  bill.min_payment = billEffectiveMinPayment(bill) ?? undefined;
+  bill.due_date = billEffectiveDueDate(bill);
+  bill.statement_date = billEffectiveStatementDate(bill) ?? undefined;
   if (row.c_id) {
     const card: CreditCard & {
       card_product?: CardProduct;
@@ -660,8 +675,11 @@ export interface BillLiteForForm {
   bill_amount: number;
   bill_amount_override: number | null;
   min_payment: number | null;
+  min_payment_override: number | null;
   statement_date: string | null;
+  statement_date_override: string | null;
   due_date: string;
+  due_date_override: string | null;
 }
 
 /** Bill-entry form duplicate check: existing bill for card + month. */
@@ -670,11 +688,19 @@ export async function getBillByCardMonth(
   billMonth: string,
 ): Promise<BillLiteForForm | null> {
   const { data, error } = await queryOne<BillLiteForForm>(
-    "SELECT id, bill_amount, bill_amount_override, min_payment, statement_date, due_date FROM bills WHERE card_id = ? AND bill_month = ? LIMIT 1",
+    "SELECT id, bill_amount, bill_amount_override, min_payment, min_payment_override, statement_date, statement_date_override, due_date, due_date_override FROM bills WHERE card_id = ? AND bill_month = ? LIMIT 1",
     [cardId, billMonth],
   );
   if (error) throw new Error(error.message);
-  return data ? { ...data, bill_amount: effectiveBillAmount(data) } : null;
+  return data
+    ? {
+        ...data,
+        bill_amount: effectiveBillAmount(data),
+        min_payment: billEffectiveMinPayment(data),
+        statement_date: billEffectiveStatementDate(data) ?? null,
+        due_date: billEffectiveDueDate(data),
+      }
+    : null;
 }
 
 /** Total paid amount across all payments of one bill. */
@@ -950,18 +976,6 @@ export interface RecordPaymentResult {
   already_processed?: boolean;
 }
 
-function isValidCalendarDate(value: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return false;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const utc = new Date(Date.UTC(year, month - 1, day));
-  return (
-    utc.getUTCFullYear() === year && utc.getUTCMonth() === month - 1 && utc.getUTCDate() === day
-  );
-}
-
 /**
  * 离线同步与客户端优先还款。
  * 1. 客户端生成 id 与 idempotency_key，防重并支持多次重放。
@@ -1149,4 +1163,243 @@ export async function markAllOverdueBillsAsPaid(
   if (error) throw new Error(error.message);
 
   return { count: overdueBills.length, totalAmount };
+}
+
+// ── 账单编辑（spec 13 §6.1/§6.2/§6.4）────────────────────────────────────────
+
+function buildAtomicBillStatusRecalcStatement(billId: string) {
+  return billStatusRecalcStatement(billId);
+}
+
+/** updateBillFields 接受的字段白名单（spec §6.2）。 */
+export interface BillFieldPatch {
+  amount?: number;
+  min_payment?: number | null;
+  due_date?: string;
+  statement_date?: string | null;
+  statement_start?: string | null;
+  statement_end?: string | null;
+}
+
+function assertOptionalDate(
+  value: unknown,
+  field: string,
+  { allowNull = false }: { allowNull?: boolean } = {},
+): void {
+  if (value === undefined) return;
+  if (value === null) {
+    if (allowNull) return;
+    throw new RpcDomainError("VALIDATION_FAILED", `${field}不能为空`);
+  }
+  if (typeof value !== "string" || !isValidCalendarDate(value)) {
+    throw new RpcDomainError("VALIDATION_FAILED", `${field}必须是 YYYY-MM-DD 格式的真实日历日`);
+  }
+}
+
+function assertOptionalAmount(value: unknown, field: string): void {
+  if (value === undefined) return;
+  if (!Number.isFinite(value) || (value as number) < 0) {
+    throw new RpcDomainError("VALIDATION_FAILED", `${field}必须是不小于 0 的数字`);
+  }
+}
+
+/**
+ * 结构化编辑入口（spec 13 §6.2）：金额与日期类字段一律写 *_override 列
+ * （amount → bill_amount_override），导入值（bill_amount 等）保持不动，
+ * 这样下一封账单邮件 / Gmail 同步不会把用户改过的数字悄悄覆盖回去。
+ * statement_start/end 无自动化争抢，直接 UPDATE 原列。
+ */
+export async function updateBillFields(billId: string, patch: BillFieldPatch): Promise<Bill> {
+  if (typeof billId !== "string" || !billId.trim()) {
+    throw new RpcDomainError("VALIDATION_FAILED", "缺少合法的账单 ID");
+  }
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    throw new RpcDomainError("VALIDATION_FAILED", "缺少合法的编辑参数");
+  }
+  const allowedKeys = [
+    "amount",
+    "min_payment",
+    "due_date",
+    "statement_date",
+    "statement_start",
+    "statement_end",
+  ] as const;
+  const unknownKey = Object.keys(patch).find((k) => !allowedKeys.includes(k as never));
+  if (unknownKey) {
+    throw new RpcDomainError("VALIDATION_FAILED", `不支持编辑字段 ${unknownKey}`);
+  }
+  assertOptionalAmount(patch.amount, "账单金额");
+  assertOptionalAmount(patch.min_payment ?? undefined, "最低还款额");
+  assertOptionalDate(patch.due_date, "到期日");
+  assertOptionalDate(patch.statement_date, "账单日", { allowNull: true });
+  assertOptionalDate(patch.statement_start, "账期开始日", { allowNull: true });
+  assertOptionalDate(patch.statement_end, "账期结束日", { allowNull: true });
+  // 单字段补丁也要与库内已存的另一端比对，否则只改开始日（或只改结束日）
+  // 可以绕过同批双字段校验，落库成「开始晚于结束」的倒挂账期。
+  if (patch.statement_start !== undefined || patch.statement_end !== undefined) {
+    const existing = await queryOne<{
+      statement_start: string | null;
+      statement_end: string | null;
+    }>("SELECT statement_start, statement_end FROM bills WHERE id = ?", [billId]);
+    if (existing.error) throw new Error(existing.error.message);
+    // null 是「清空」意图，不能退化成「沿用旧值」
+    const start =
+      patch.statement_start !== undefined
+        ? patch.statement_start
+        : (existing.data?.statement_start ?? null);
+    const end =
+      patch.statement_end !== undefined
+        ? patch.statement_end
+        : (existing.data?.statement_end ?? null);
+    if (start && end && start > end) {
+      throw new RpcDomainError("VALIDATION_FAILED", "账期开始日不能晚于账期结束日");
+    }
+  }
+
+  const statements: { sql: string; params: unknown[] }[] = [];
+  if (patch.amount !== undefined) {
+    statements.push({
+      sql: "UPDATE bills SET bill_amount_override = ? WHERE id = ?",
+      params: [patch.amount, billId],
+    });
+  }
+  if (patch.min_payment !== undefined) {
+    statements.push({
+      sql: "UPDATE bills SET min_payment_override = ? WHERE id = ?",
+      params: [patch.min_payment, billId],
+    });
+  }
+  if (patch.due_date !== undefined) {
+    statements.push({
+      sql: "UPDATE bills SET due_date_override = ? WHERE id = ?",
+      params: [patch.due_date, billId],
+    });
+  }
+  if (patch.statement_date !== undefined) {
+    statements.push({
+      sql: "UPDATE bills SET statement_date_override = ? WHERE id = ?",
+      params: [patch.statement_date, billId],
+    });
+  }
+  // 账期首末日是展示口径，没有导入自动化写这两列，直接 UPDATE。
+  for (const [field, value] of [
+    ["statement_start", patch.statement_start],
+    ["statement_end", patch.statement_end],
+  ] as const) {
+    if (value !== undefined) {
+      statements.push({
+        sql: `UPDATE bills SET ${field} = ? WHERE id = ?`,
+        params: [value, billId],
+      });
+    }
+  }
+  if (statements.length === 0) {
+    throw new RpcDomainError("VALIDATION_FAILED", "没有需要更新的字段");
+  }
+  // 金额/到期日变更会改变「已还 ≥ 生效金额」与逾期判定；状态更新与字段写入放进同一个 batch，
+  // 避免第二步失败导致「字段已落库、状态仍是旧值」的半保存状态（spec §6.3 编辑→重算闭环）。
+  if (patch.amount !== undefined || patch.due_date !== undefined) {
+    statements.push(buildAtomicBillStatusRecalcStatement(billId));
+  }
+
+  const { error } = await batch(statements);
+  if (error) throw new Error(error.message);
+  const updated = await getBillById(billId);
+  if (!updated) throw new RpcDomainError("NOT_FOUND", "账单不存在");
+  return updated;
+}
+
+const OVERRIDABLE_FIELDS = ["amount", "min_payment", "due_date", "statement_date"] as const;
+type OverridableField = (typeof OVERRIDABLE_FIELDS)[number];
+
+const OVERRIDE_COLUMN_BY_FIELD: Record<OverridableField, string> = {
+  amount: "bill_amount_override",
+  min_payment: "min_payment_override",
+  due_date: "due_date_override",
+  statement_date: "statement_date_override",
+};
+
+/**
+ * 按字段清空 override，回落到导入值（setBillAmountOverride(id, null) 语义的推广）。
+ * 导入值列在钉住期间一直没被改过，因此清空即可恢复，撤销是可逆的。
+ */
+export async function clearOverride(billId: string, fields: string[]): Promise<Bill> {
+  if (typeof billId !== "string" || !billId.trim()) {
+    throw new RpcDomainError("VALIDATION_FAILED", "缺少合法的账单 ID");
+  }
+  if (!Array.isArray(fields) || fields.length === 0) {
+    throw new RpcDomainError("VALIDATION_FAILED", "没有需要撤销的字段");
+  }
+  const unknown = fields.filter((f) => !OVERRIDABLE_FIELDS.includes(f as never));
+  if (unknown.length > 0) {
+    throw new RpcDomainError("VALIDATION_FAILED", `不支持撤销字段 ${unknown.join(", ")}`);
+  }
+  const statements: { sql: string; params: unknown[] }[] = fields.map((field) => ({
+    sql: `UPDATE bills SET ${OVERRIDE_COLUMN_BY_FIELD[field as OverridableField]} = NULL WHERE id = ?`,
+    params: [billId],
+  }));
+  // 撤销 amount/due_date 钉住后生效金额或生效到期日回落，必须在同一事务内联动重算状态。
+  if (fields.includes("amount") || fields.includes("due_date")) {
+    statements.push(buildAtomicBillStatusRecalcStatement(billId));
+  }
+  const { error } = await batch(statements);
+  if (error) throw new Error(error.message);
+  const updated = await getBillById(billId);
+  if (!updated) throw new RpcDomainError("NOT_FOUND", "账单不存在");
+  return updated;
+}
+
+/**
+ * 改状态前先重算（spec 13 §6.3）：computeStatus 的 `status === 'paid'` 短路
+ * 让已结清账单永远自愈不了——手工改小金额后它仍显示 paid。这里去掉短路，
+ * 统一按「Σpayments ≥ 生效金额 − 0.01 即 paid，允许从 paid 回退」重算；
+ * 无入参 status 时直接落重算值。
+ *
+ * 生效金额/到期日从 raw 列取（Bill 投影不携带 override 字段），与
+ * getBillDashboardItems 的 COALESCE 口径一致。
+ */
+export async function updateBillStatusChecked(
+  billId: string,
+  status?: Bill["status"],
+): Promise<Bill> {
+  if (typeof billId !== "string" || !billId.trim()) {
+    throw new RpcDomainError("VALIDATION_FAILED", "缺少合法的账单 ID");
+  }
+  if (status !== undefined && !["unpaid", "partial", "paid", "overdue"].includes(status)) {
+    throw new RpcDomainError("VALIDATION_FAILED", "状态必须是 unpaid/partial/paid/overdue 之一");
+  }
+  // 单条 UPDATE 内完成「读 SUM + 判定 + 写入」，消除读→写窗口；
+  // 服务端内部调用可显式传入 status；RPC 表面仅转交 billId。
+  const { data: changed, error } =
+    status !== undefined
+      ? await execute("UPDATE bills SET status = ? WHERE id = ?", [status, billId])
+      : await (() => {
+          const stmt = billStatusRecalcStatement(billId);
+          return execute(stmt.sql, stmt.params);
+        })();
+  if (error) throw new Error(error.message);
+  if (!changed || changed.changes === 0) throw new RpcDomainError("NOT_FOUND", "账单不存在");
+  const updated = await getBillById(billId);
+  if (!updated) throw new RpcDomainError("NOT_FOUND", "账单不存在");
+  return updated;
+}
+
+/**
+ * 删除账单（admin only，注册层用 admin: true 强制）。
+ *
+ * sync_changes 不在此手写：0019 的 trg_bills_delete / trg_payments_delete
+ * 触发器会在删除事务内按 managed_by 归属自动落 delete 变更（payments 由
+ * ON DELETE CASCADE 连带删除并逐条记录），与持卡人/卡片级联删除同一套
+ * 离线同步口径，iOS 端无需特判——手写一份反而会与触发器重复。
+ */
+export async function deleteBill(billId: string): Promise<void> {
+  if (typeof billId !== "string" || !billId.trim()) {
+    throw new RpcDomainError("VALIDATION_FAILED", "缺少合法的账单 ID");
+  }
+  const existing = await queryOne<{ id: string }>("SELECT id FROM bills WHERE id = ?", [billId]);
+  if (existing.error) throw new Error(existing.error.message);
+  if (!existing.data) throw new RpcDomainError("NOT_FOUND", "账单不存在");
+
+  const { error } = await batch([{ sql: "DELETE FROM bills WHERE id = ?", params: [billId] }]);
+  if (error) throw new Error(error.message);
 }

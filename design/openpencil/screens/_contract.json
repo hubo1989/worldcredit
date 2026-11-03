@@ -136,6 +136,82 @@
       ]
     },
     {
+      "id": "ios.bill-editing",
+      "key": "screen.ios.bill-editing",
+      "requiredRoles": ["candidate"],
+      "fields": [
+        { "id": "identity", "kind": "field", "allMarkers": [{ "node": "identity card" }, { "node": "bank name" }, { "node": "card title" }, { "node": "holder and period" }, { "node": "identity lock note" }] },
+        { "id": "fields", "kind": "field", "allMarkers": [{ "node": "field row / amount" }, { "node": "field row / min-payment" }, { "node": "field row / statement-date" }, { "node": "field row / due-date" }, { "node": "override pin / amount" }] },
+        { "id": "status", "kind": "field", "allMarkers": [{ "node": "status options" }, { "nodePrefix": "status option /", "min": 4 }, { "node": "recompute note" }] },
+        { "id": "advanced", "kind": "field", "allMarkers": [{ "node": "advanced card" }, { "node": "advanced toggle" }, { "node": "field row / statement-start" }, { "node": "field row / statement-end" }] }
+      ],
+      "actions": [
+        { "id": "back", "kind": "action", "markers": [{ "node": "btn / back" }] },
+        { "id": "delete", "kind": "action", "markers": [{ "node": "btn / delete bill" }] },
+        { "id": "save", "kind": "action", "markers": [{ "node": "btn / save" }] },
+        { "id": "revert", "kind": "action", "markers": [{ "node": "btn / revert" }] }
+      ]
+    },
+    {
+      "id": "ios.bill-editing-amount",
+      "key": "screen.ios.bill-editing-amount",
+      "requiredRoles": ["candidate"],
+      "fields": [
+        { "id": "dialog", "kind": "field", "allMarkers": [{ "node": "dialog" }, { "node": "dialog title" }] },
+        { "id": "source", "kind": "field", "allMarkers": [{ "node": "field row / imported" }, { "node": "field row / manual" }, { "node": "override pin / manual" }] },
+        { "id": "input", "kind": "field", "allMarkers": [{ "node": "input amount" }, { "node": "priority hint" }] }
+      ],
+      "actions": [
+        { "id": "clear", "kind": "action", "markers": [{ "node": "btn / clear override" }] },
+        { "id": "save", "kind": "action", "markers": [{ "node": "btn / save override" }] },
+        { "id": "close", "kind": "action", "markers": [{ "node": "btn / close" }] }
+      ]
+    },
+    {
+      "id": "ios.bill-editing-payments",
+      "key": "screen.ios.bill-editing-payments",
+      "requiredRoles": ["candidate"],
+      "fields": [
+        { "id": "summary", "kind": "field", "allMarkers": [{ "node": "original value" }, { "node": "paid value" }, { "node": "remaining value" }] },
+        { "id": "entries", "kind": "field", "allMarkers": [{ "nodePrefix": "payment row /", "min": 2 }, { "nodePrefix": "payment info", "min": 2 }, { "nodePrefix": "amount value /", "min": 2 }] },
+        { "id": "recalc", "kind": "field", "markers": [{ "node": "recalc note" }] }
+      ],
+      "actions": [
+        { "id": "back", "kind": "action", "markers": [{ "node": "btn / back" }] },
+        { "id": "edit", "kind": "action", "markers": [{ "nodePrefix": "btn / edit payment", "min": 2 }] },
+        { "id": "delete", "kind": "action", "markers": [{ "nodePrefix": "btn / delete payment", "min": 2 }] },
+        { "id": "add", "kind": "action", "markers": [{ "node": "btn / add payment" }] }
+      ]
+    },
+    {
+      "id": "ios.bill-editing-draft",
+      "key": "screen.ios.bill-editing-draft",
+      "requiredRoles": ["candidate"],
+      "fields": [
+        { "id": "meta", "kind": "field", "allMarkers": [{ "node": "draft meta card" }, { "node": "draft source" }, { "node": "draft confidence" }] },
+        { "id": "fields", "kind": "field", "allMarkers": [{ "node": "field row / draft-card" }, { "node": "field row / draft-month" }, { "node": "field row / draft-amount" }, { "node": "field row / draft-due" }, { "node": "field row / draft-statement" }] },
+        { "id": "note", "kind": "field", "markers": [{ "node": "draft note" }] }
+      ],
+      "actions": [
+        { "id": "back", "kind": "action", "markers": [{ "node": "btn / back" }] },
+        { "id": "confirm", "kind": "action", "markers": [{ "node": "btn / confirm draft" }] },
+        { "id": "discard", "kind": "action", "markers": [{ "node": "btn / discard draft" }] }
+      ]
+    },
+    {
+      "id": "ios.bill-editing-history",
+      "key": "screen.ios.bill-editing-history",
+      "requiredRoles": ["candidate"],
+      "fields": [
+        { "id": "effective", "kind": "field", "allMarkers": [{ "node": "effective amount card" }, { "node": "amount value / 当前生效金额" }, { "node": "effective source" }, { "node": "status / 已手动设定" }] },
+        { "id": "entries", "kind": "field", "allMarkers": [{ "nodePrefix": "history row /", "min": 3 }, { "nodePrefix": "history icon", "min": 3 }, { "nodePrefix": "history text", "min": 3 }, { "nodePrefix": "amount value /", "min": 3 }] },
+        { "id": "rule", "kind": "field", "markers": [{ "node": "override rule note" }] }
+      ],
+      "actions": [
+        { "id": "back", "kind": "action", "markers": [{ "node": "btn / back" }] }
+      ]
+    },
+    {
       "id": "mobile.dashboard",
       "key": "screen.mobile.dashboard",
       "registryKey": "screen.mobile.dashboard",
@@ -1409,6 +1485,26 @@
     }
   ],
   "uncovered": [
+    {
+      "key": "candidate.ios.bill-editing-override-warning",
+      "reason": "13 号 spec 警示态样例：金额低于已还的确认弹窗（几何检查覆盖）"
+    },
+    {
+      "key": "candidate.ios.bill-editing-status",
+      "reason": "13 号 spec 状态编辑弹窗：四态选项与重算说明（几何检查覆盖）"
+    },
+    {
+      "key": "candidate.ios.bill-editing-payment-edit",
+      "reason": "13 号 spec 单笔还款编辑弹窗（几何检查覆盖）"
+    },
+    {
+      "key": "candidate.ios.bill-editing-delete",
+      "reason": "13 号 spec 删除账单二次确认弹窗（几何检查覆盖）"
+    },
+    {
+      "key": "candidate.ios.bill-editing-sheet",
+      "reason": "13 号 spec 账单操作面板：编辑入口聚合（几何检查覆盖）"
+    },
     {
       "key": "candidate.wireframe.dashboard",
       "reason": "B0-2 低保真信息层级图（评审用，无字段契约；几何检查覆盖）"

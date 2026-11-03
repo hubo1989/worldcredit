@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createOpportunityDb, wrapLegacyCatalog, type SqliteD1 } from './helpers/sqlite-d1'
-import { seedOpportunityFixtures, FIXTURE_IDS } from './helpers/opportunity-fixtures'
+import { seedOpportunityFixtures, FIXTURE_IDS, FIXTURE_NOW_ON } from './helpers/opportunity-fixtures'
 import { setDb } from '../db/client'
 import {
   previewOpportunityCandidates,
@@ -64,7 +64,7 @@ function countDefs(): number {
 beforeEach(async () => {
   db = createOpportunityDb()
   await seedOpportunityFixtures(db)
-  wrapLegacyCatalog(db)
+  wrapLegacyCatalog(db, FIXTURE_NOW_ON)
   setDb(db as unknown as D1Database)
 })
 

@@ -105,7 +105,10 @@
           "due_date": "2026-10-25",
           "status": "partial",
           "created_at": "2026-10-01T00:00:00Z",
-          "bill_amount_override": null
+          "bill_amount_override": null,
+          "min_payment_override": null,
+          "due_date_override": null,
+          "statement_date_override": null
         }
       },
       {

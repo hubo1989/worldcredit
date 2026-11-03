@@ -1,20 +1,16 @@
 'use client'
 
+import { useState } from 'react'
 import { categoryLabel, type PayableWithStatus } from '@/lib/api/payables'
 import { payableNextCycleStatus } from '@/lib/utils'
 import { badgeToneClass, type BillBadgeTone } from '@/lib/bills-view-model'
 import { currencySymbol } from '@/lib/fx'
-import { ClockIcon, PlusIcon } from '@/components/icons/WcIcon'
-
-interface Props {
-  payables: PayableWithStatus[]
-  onAdd: () => void
-  onEdit: (payable: PayableWithStatus) => void
-  onPay: (payable: PayableWithStatus) => void
-}
+import { ClockIcon } from '@/components/icons/WcIcon'
 
 export interface PayableRowProps {
   payable: PayableWithStatus
+  /** 归属持卡人姓名；未指定归属时不显示 */
+  holderName?: string
   onEdit: (payable: PayableWithStatus) => void
   onPay: (payable: PayableWithStatus) => void
 }
@@ -22,12 +18,16 @@ export interface PayableRowProps {
 /**
  * 单条固定支出卡。从 PayableList 拆出：账单页现在把固定支出混进主列表统一排序。
  *
+ * 整卡可点进编辑（与 BillCard 整卡进详情同交互模型）：固定支出没有单独的
+ * 详情页，「编辑表单」就是它的详情视图。内层动作（复制账号/登记付款）阻止冒泡。
+ *
  * 状态徽章与信用卡卡片同构（右上角、soft 底 + ink 文字）：
  *   已逾期(danger) / 待还款·今天应付(warn) / 待出账(success)。
  * 滚动模型（服务端 resolveDisplayPeriod）保证任一时刻卡片只呈现一期：
  * 「已登记」只可能出现在待出账态，待还款态一定是可登记付款的未付期。
  */
-export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
+export function PayableRow({ payable: p, holderName, onEdit, onPay }: PayableRowProps) {
+  const [copiedAccount, setCopiedAccount] = useState(false)
   const paid = p.status === 'paid'
   const overdue = p.status === 'overdue'
 
@@ -65,12 +65,22 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
       <div className='flex items-start justify-between gap-2'>
         <div className='min-w-0 flex-1'>
           <div className='flex min-w-0 items-baseline gap-1.5'>
-            <p className='min-w-0 truncate text-[15px] font-semibold leading-5 text-d-text'>
+            <button
+              type='button'
+              aria-label={`编辑固定支出 ${p.name}`}
+              onClick={e => { e.stopPropagation(); onEdit(p) }}
+              className='min-w-0 truncate text-left text-[15px] font-semibold leading-5 text-d-text'
+            >
               {p.name}
-            </p>
+            </button>
             <span className='shrink-0 whitespace-nowrap text-[12px] text-d-muted'>
               · {categoryLabel(p.category)}
             </span>
+            {holderName && (
+              <span className='shrink-0 whitespace-nowrap rounded-md bg-d-subtle px-1.5 py-0.5 text-[10px] font-semibold text-d-muted'>
+                {holderName}
+              </span>
+            )}
           </div>
           <p className='mt-1 block text-[11px] leading-4 text-d-muted'>
             每月 {p.due_day} 日
@@ -78,11 +88,21 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
           {p.bank_account && (
             <button
               type='button'
-              onClick={() => { void navigator.clipboard?.writeText(p.bank_account!) }}
+              onClick={async e => {
+                e.stopPropagation()
+                try {
+                  await navigator.clipboard?.writeText(p.bank_account!)
+                  setCopiedAccount(true)
+                  window.setTimeout(() => setCopiedAccount(false), 1500)
+                } catch {
+                  // 剪贴板被拒绝（无权限/非安全上下文）：保持原文案，不假装成功
+                  setCopiedAccount(false)
+                }
+              }}
               title='点击复制账号'
               className='mt-0.5 block max-w-full truncate text-left text-[11px] leading-4 text-d-muted underline underline-offset-2'
             >
-              账号 {p.bank_account}
+              {copiedAccount ? '已复制' : `账号 ${p.bank_account}`}
             </button>
           )}
         </div>
@@ -90,7 +110,7 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
           <button
             type='button'
             aria-label='编辑固定支出'
-            onClick={() => onEdit(p)}
+            onClick={e => { e.stopPropagation(); onEdit(p) }}
             className='text-[11px] font-semibold text-d-muted'
           >
             编辑
@@ -126,7 +146,7 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
         ) : (
           <button
             type='button'
-            onClick={() => onPay(p)}
+            onClick={e => { e.stopPropagation(); onPay(p) }}
             className='h-11 shrink-0 whitespace-nowrap rounded-xl bg-d-accent px-4 text-xs font-semibold text-white'
           >
             登记付款
@@ -152,34 +172,3 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
  * 与上方卡账分节展示：它们的到期与还款规则不同（没有免息期、没有额度），
  * 混在一张卡里会让两套口径互相污染。
  */
-export function PayableList({ payables, onAdd, onEdit, onPay }: Props) {
-  return (
-    <div>
-      <div className='mb-2 flex items-center justify-between'>
-        <p className='text-[15px] font-semibold leading-5 text-d-text'>固定支出</p>
-        <button
-          type='button'
-          onClick={onAdd}
-          className='flex items-center gap-1 text-[13px] font-semibold text-d-accent-light'
-        >
-          <PlusIcon size={15} />
-          添加
-        </button>
-      </div>
-
-      {payables.length === 0 ? (
-        <div className='rounded-[14px] border border-d-border bg-d-surface px-4 py-4 text-center'>
-          <p className='text-[12px] leading-5 text-d-muted'>
-            还没有固定支出。房租、贷款这类每月固定要付的可以加在这里。
-          </p>
-        </div>
-      ) : (
-        <div className='flex flex-col gap-2.5'>
-          {payables.map(p => (
-            <PayableRow key={p.id} payable={p} onEdit={onEdit} onPay={onPay} />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
