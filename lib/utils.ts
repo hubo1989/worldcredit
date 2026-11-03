@@ -243,6 +243,29 @@ export function computePaymentDrivenStatus(
   return diffInCalendarDays(billEffectiveDueDate(bill)) < 0 ? "overdue" : "unpaid";
 }
 
+/**
+ * 账单状态重算的 SQL 片段：与 computePaymentDrivenStatus 同一口径
+ * （paid → partial → overdue → unpaid），参数顺序 [billId, billId, 今天, billId]。
+ * 服务端各写入路径共用这一份，避免 SQL 文本多处漂移。
+ */
+export function billStatusRecalcStatement(billId: string): {
+  sql: string;
+  params: [string, string, string, string];
+} {
+  return {
+    sql: `UPDATE bills SET status = CASE
+      WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) >= COALESCE(bill_amount_override, bill_amount) - 0.01
+      THEN 'paid'
+      WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) > 0
+      THEN 'partial'
+      WHEN COALESCE(due_date_override, due_date) < ?
+      THEN 'overdue'
+      ELSE 'unpaid'
+    END WHERE id = ?`,
+    params: [billId, billId, getLocalTodayString(), billId],
+  };
+}
+
 // 是否被用户手填值钉住（导入不得覆盖）。
 export function hasManualBillAmount(bill: { bill_amount_override?: number | null }): boolean {
   return bill.bill_amount_override !== null && bill.bill_amount_override !== undefined;

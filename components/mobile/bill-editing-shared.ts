@@ -11,6 +11,32 @@ export function isValidBillMonth(value: string): boolean {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(value)
 }
 
+/** 金额校验（required 时为空报错）；返回错误文案或 undefined。 */
+export function validateAmountText(raw: string, required = true): string | undefined {
+  const v = raw.trim()
+  if (!v) return required ? '请填写账单金额' : undefined
+  const n = Number(v)
+  if (!Number.isFinite(n) || n < 0) return '金额必须是不小于 0 的数字'
+  return undefined
+}
+
+/** 最低还款额：可空，但填了必须是不小于 0 的数字。 */
+export function validateMinPaymentText(raw: string): string | undefined {
+  const v = raw.trim()
+  if (!v) return undefined
+  const n = Number(v)
+  if (!Number.isFinite(n) || n < 0) return '最低还款额必须是不小于 0 的数字'
+  return undefined
+}
+
+/** 日期校验：required 时为空报错；否则空值放行，但填了必须是真实日历日。 */
+export function validateDateText(raw: string, required = false): string | undefined {
+  const v = raw.trim()
+  if (!v) return required ? '请填写还款到期日' : undefined
+  if (!isValidCalendarDate(v)) return '日期格式应为 YYYY-MM-DD 且为真实日历日'
+  return undefined
+}
+
 export interface EditableFieldValues {
   amount: string
   min_payment: string
@@ -29,30 +55,16 @@ export type FieldErrors = Partial<Record<keyof EditableFieldValues, string>>
 export function validateEditableFields(values: EditableFieldValues): FieldErrors {
   const errors: FieldErrors = {}
 
-  const amount = values.amount.trim()
-  if (!amount) {
-    errors.amount = '请填写账单金额'
-  } else {
-    const n = Number(amount)
-    if (!Number.isFinite(n) || n < 0) errors.amount = '金额必须是不小于 0 的数字'
-  }
-
-  const minPayment = values.min_payment.trim()
-  if (minPayment) {
-    const n = Number(minPayment)
-    if (!Number.isFinite(n) || n < 0) errors.min_payment = '最低还款额必须是不小于 0 的数字'
-  }
-
-  const dueDate = values.due_date.trim()
-  if (!dueDate) {
-    errors.due_date = '请填写还款到期日'
-  } else if (!isValidCalendarDate(dueDate)) {
-    errors.due_date = '日期格式应为 YYYY-MM-DD 且为真实日历日'
-  }
+  const amountError = validateAmountText(values.amount)
+  if (amountError) errors.amount = amountError
+  const minPaymentError = validateMinPaymentText(values.min_payment)
+  if (minPaymentError) errors.min_payment = minPaymentError
+  const dueDateError = validateDateText(values.due_date, true)
+  if (dueDateError) errors.due_date = dueDateError
 
   for (const field of ['statement_date', 'statement_start', 'statement_end'] as const) {
-    const v = values[field].trim()
-    if (v && !isValidCalendarDate(v)) errors[field] = '日期格式应为 YYYY-MM-DD 且为真实日历日'
+    const error = validateDateText(values[field])
+    if (error) errors[field] = error
   }
 
   // 跨字段约束与服务端 updateBillFields 同条：倒挂账期本地提前拦截，

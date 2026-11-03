@@ -10,6 +10,23 @@ import { updatePayment, deletePayment, type PaymentPatch } from '@/lib/api/bills
 import type { Payment } from '@/lib/types'
 import { previewAfterPayments, STATUS_LABELS, isValidCalendarDate, type BillStatus } from './bill-editing-shared'
 
+/** 列表态按账面值预览；编辑态把正在编辑的那笔替换成输入值。 */
+function computePreview(
+  editing: Payment | null,
+  effectiveAmount: number,
+  payments: Payment[],
+  amountText: string
+) {
+  if (!editing) return previewAfterPayments(effectiveAmount, payments, null, 0)
+  const parsed = Number(amountText)
+  return previewAfterPayments(
+    effectiveAmount,
+    payments,
+    editing.id,
+    Number.isFinite(parsed) ? parsed : 0
+  )
+}
+
 export interface BillPaymentsManageProps {
   open: boolean
   payments: Payment[]
@@ -132,20 +149,21 @@ export function BillPaymentsManage({
   if (!open) return null
 
   const totalPaidNow = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
-  const preview = editing
-    ? previewAfterPayments(
-        effectiveAmount,
-        payments,
-        editing.id,
-        Number.isFinite(Number(values.amount)) ? Number(values.amount) : 0,
-      )
-    : previewAfterPayments(effectiveAmount, payments, null, 0)
+  const preview = computePreview(editing, effectiveAmount, payments, values.amount)
 
   return (
     <>
       <Modal
         open={open}
-        onClose={() => !submitting && !deleting && onClose()}
+        onClose={() => {
+          if (submitting || deleting) return
+          // Esc / 点遮罩与「返回」同义：编辑态先回列表，列表态才关闭
+          if (editing) {
+            setEditing(null)
+            return
+          }
+          onClose()
+        }}
         dismissible={!submitting && !deleting}
         title={editing ? '编辑还款记录' : '还款记录'}
         maxWidth='md'

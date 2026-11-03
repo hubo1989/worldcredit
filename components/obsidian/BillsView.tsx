@@ -176,10 +176,7 @@ function BillCard({
   const accountMode = deriveAccountMode(item.holder_id, bankName, allCards)
 
   return (
-    <div
-      onClick={() => router.push(`/cards/${item.card.id}`)}
-      className='cursor-pointer rounded-2xl border border-d-border bg-d-surface p-4 transition-colors active:bg-d-subtle/60'
-    >
+    <div className='rounded-2xl border border-d-border bg-d-surface p-4'>
       {/* 主行：银行名 + 账户模式标签 + 状态徽章 */}
       <div className='flex items-start justify-between gap-2'>
         <div className='min-w-0 flex-1'>
@@ -329,11 +326,7 @@ function BillCard({
                 return (
                   <div
                     key={b.id}
-                    onClick={e => { e.stopPropagation(); if (!bPaid) onOpenPayment(b) }}
-                    className={
-                      'flex items-center justify-between rounded-lg bg-d-subtle p-2.5 text-left' +
-                      (bPaid ? ' cursor-default' : ' cursor-pointer')
-                    }
+                    className='flex items-center justify-between rounded-lg bg-d-subtle p-2.5 text-left'
                   >
                     <HistoryLabel
                       type={bPaid ? undefined : 'button'}

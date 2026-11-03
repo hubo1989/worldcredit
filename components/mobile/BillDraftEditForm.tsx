@@ -6,7 +6,12 @@ import { Button } from '@/components/obsidian/controls'
 import { TextField, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
 import type { BillImportDraft } from '@/lib/api/billDrafts'
-import { isValidCalendarDate, isValidBillMonth } from './bill-editing-shared'
+import {
+  isValidBillMonth,
+  validateAmountText,
+  validateDateText,
+  validateMinPaymentText,
+} from './bill-editing-shared'
 
 /** 可编辑的 parsed_payload 字段（其余字段原样保留）。 */
 export interface BillDraftFieldValues {
@@ -42,19 +47,10 @@ function toInputValues(draft: BillImportDraft): BillDraftFieldValues {
 export function validateDraftFields(values: BillDraftFieldValues): Errors {
   const errors: Errors = {}
 
-  const amount = values.bill_amount.trim()
-  if (!amount) {
-    errors.bill_amount = '请填写账单金额'
-  } else {
-    const n = Number(amount)
-    if (!Number.isFinite(n) || n < 0) errors.bill_amount = '金额必须是不小于 0 的数字'
-  }
-
-  const minPayment = values.min_payment.trim()
-  if (minPayment) {
-    const n = Number(minPayment)
-    if (!Number.isFinite(n) || n < 0) errors.min_payment = '最低还款额必须是不小于 0 的数字'
-  }
+  const amountError = validateAmountText(values.bill_amount)
+  if (amountError) errors.bill_amount = amountError
+  const minPaymentError = validateMinPaymentText(values.min_payment)
+  if (minPaymentError) errors.min_payment = minPaymentError
 
   const month = values.bill_month.trim()
   if (!month) {
@@ -63,17 +59,10 @@ export function validateDraftFields(values: BillDraftFieldValues): Errors {
     errors.bill_month = '月份格式应为 YYYY-MM'
   }
 
-  const due = values.due_date.trim()
-  if (!due) {
-    errors.due_date = '请填写还款到期日'
-  } else if (!isValidCalendarDate(due)) {
-    errors.due_date = '到期日应为 YYYY-MM-DD 的真实日期'
-  }
-
-  const statement = values.statement_date.trim()
-  if (statement && !isValidCalendarDate(statement)) {
-    errors.statement_date = '账单日应为 YYYY-MM-DD 的真实日期'
-  }
+  const dueError = validateDateText(values.due_date, true)
+  if (dueError) errors.due_date = dueError
+  const statementError = validateDateText(values.statement_date)
+  if (statementError) errors.statement_date = statementError
 
   return errors
 }

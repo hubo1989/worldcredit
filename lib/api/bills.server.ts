@@ -7,6 +7,7 @@ import {
   billEffectiveMinPayment,
   billEffectiveDueDate,
   billEffectiveStatementDate,
+  billStatusRecalcStatement,
   nextBillingDateOf,
   isValidCalendarDate,
 } from "../utils";
@@ -1166,22 +1167,8 @@ export async function markAllOverdueBillsAsPaid(
 
 // ── 账单编辑（spec 13 §6.1/§6.2/§6.4）────────────────────────────────────────
 
-function buildAtomicBillStatusRecalcStatement(billId: string): {
-  sql: string;
-  params: [string, string, string, string];
-} {
-  return {
-    sql: `UPDATE bills SET status = CASE
-      WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) >= COALESCE(bill_amount_override, bill_amount) - 0.01
-      THEN 'paid'
-      WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) > 0
-      THEN 'partial'
-      WHEN COALESCE(due_date_override, due_date) < ?
-      THEN 'overdue'
-      ELSE 'unpaid'
-    END WHERE id = ?`,
-    params: [billId, billId, today(), billId],
-  };
+function buildAtomicBillStatusRecalcStatement(billId: string) {
+  return billStatusRecalcStatement(billId);
 }
 
 /** updateBillFields 接受的字段白名单（spec §6.2）。 */
@@ -1386,18 +1373,10 @@ export async function updateBillStatusChecked(
   const { data: changed, error } =
     status !== undefined
       ? await execute("UPDATE bills SET status = ? WHERE id = ?", [status, billId])
-      : await execute(
-          `UPDATE bills SET status = CASE
-            WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) >= COALESCE(bill_amount_override, bill_amount) - 0.01
-            THEN 'paid'
-            WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) > 0
-            THEN 'partial'
-            WHEN COALESCE(due_date_override, due_date) < ?
-            THEN 'overdue'
-            ELSE 'unpaid'
-          END WHERE id = ?`,
-          [billId, billId, today(), billId],
-        );
+      : await (() => {
+          const stmt = billStatusRecalcStatement(billId);
+          return execute(stmt.sql, stmt.params);
+        })();
   if (error) throw new Error(error.message);
   if (!changed || changed.changes === 0) throw new RpcDomainError("NOT_FOUND", "账单不存在");
   const updated = await getBillById(billId);

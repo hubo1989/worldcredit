@@ -331,9 +331,11 @@ describe("BillsView 键盘导航边界", () => {
     expect(props.onOpenPayment).toHaveBeenCalledWith(unpaid);
     expect(routerPush).toHaveBeenCalledTimes(2);
 
+    // 行容器不再是点击目标：已结清期无按钮，未结清期走内部真实按钮
     const paidRow = screen.getByText("2026-09 期账单").parentElement?.parentElement;
-    expect(paidRow).toHaveClass("cursor-default");
     expect(paidRow).not.toHaveClass("cursor-pointer");
+    expect(paidRow).not.toHaveClass("cursor-default");
+    expect(screen.getByText("2026-09 期账单").closest("button")).toBeNull();
     editButtons[1].focus();
     await user.keyboard("{Enter}");
     expect(routerPush).toHaveBeenLastCalledWith("/bills/bill-paid");

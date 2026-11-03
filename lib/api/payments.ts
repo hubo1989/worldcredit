@@ -1,11 +1,12 @@
 // lib/api/payments.ts
-import { query, queryOne, execute, batch, uuid, today } from '../db'
+import { query, queryOne, execute, batch, uuid } from '../db'
 import type { Payment, Bill } from '../types'
 import type { PaymentWithBill } from './bills.server'
 import {
   generateIdempotencyKey,
   effectiveBillAmount,
   isValidCalendarDate,
+  billStatusRecalcStatement,
 } from '../utils'
 import { RpcDomainError } from './errors'
 import type { MemberContext } from './member-scope'
@@ -63,18 +64,7 @@ function withRecalcBillStatus(
   statements: { sql: string; params: unknown[] }[],
   billId: string,
 ): void {
-  statements.push({
-    sql: `UPDATE bills SET status = CASE
-      WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) >= COALESCE(bill_amount_override, bill_amount) - 0.01
-      THEN 'paid'
-      WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) > 0
-      THEN 'partial'
-      WHEN COALESCE(due_date_override, due_date) < ?
-      THEN 'overdue'
-      ELSE 'unpaid'
-    END WHERE id = ?`,
-    params: [billId, billId, today(), billId],
-  })
+  statements.push(billStatusRecalcStatement(billId))
 }
 
 export interface UpdatePaymentPatch {
