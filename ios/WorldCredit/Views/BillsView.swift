@@ -1044,10 +1044,20 @@ struct BillsView: View {
         .accessibilityIdentifier("bills.payable.history.\(payable.id)")
 
         if expanded {
-            if failed {
-                Text("历史还款加载失败，请再次展开重试")
+            if records == nil {
+                // 在途（含重试）优先显示加载中
+                Text("加载中…")
                     .font(.caption2)
-                    .foregroundStyle(WCColors.dangerInk)
+                    .foregroundStyle(WCColors.textSecondary)
+            } else if failed {
+                Button {
+                    Task { await appState.togglePayableHistory(payable.id) }
+                } label: {
+                    Text("加载失败，点此重试")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(WCColors.dangerInk)
+                }
+                .buttonStyle(.plain)
             } else if let records {
                 if records.isEmpty {
                     Text("还没有历史还款记录")

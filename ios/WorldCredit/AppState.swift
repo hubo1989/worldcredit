@@ -647,6 +647,9 @@ public final class AppState {
 
             payables = items
             payablesError = nil
+            // 服务端列表已重取：历史缓存可能过期，清空后按需重拉
+            payablePayments = [:]
+            payableHistoryErrors = []
 
             // 空结果 = 用户删空了固定支出：移除快照（否则「删空后重启+离线」会复活已删条目）；
             // 服务端瞬时异常返回空列表的窗口极窄且下次在线刷新即自愈，不值得为它保留陈旧快照。
@@ -809,8 +812,16 @@ public final class AppState {
     }
 
     private func loadPayableHistory(_ payableId: String) async {
+        // 演示模式与 UI 测试不访问在线固定支出，历史同样跳过
+        guard !UITestConfiguration.isEnabled,
+              !CommandLine.arguments.contains("--demo-mode") else {
+            payablePayments[payableId] = []
+            return
+        }
         let revision = (payableHistoryRevision[payableId] ?? 0) + 1
         payableHistoryRevision[payableId] = revision
+        // 重试在途：先清旧错误，UI 显示「加载中」而不是上次的失败文案
+        payableHistoryErrors.remove(payableId)
         do {
             let records = try await payablesService.fetchPayments(payableId: payableId)
             // 拉取在途期间发生还款会递增版本号，过期响应丢弃

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { format } from 'date-fns'
 import {
   getCardsWithBillsSummary,
@@ -429,15 +429,7 @@ export default function BillsPage() {
         return next
       })
       if (expandedPayableIds.has(payable.id)) {
-        try {
-          const records = await getPayablePayments(payable.id)
-          setPayablePayments(prev => ({ ...prev, [payable.id]: records }))
-        } catch (err) {
-          setPayableHistoryErrors(prev => ({
-            ...prev,
-            [payable.id]: err instanceof Error ? err.message : '历史还款加载失败',
-          }))
-        }
+        await loadPayableHistory(payable.id)
       }
       setCelebrationNotice({
         open: true,
@@ -450,16 +442,14 @@ export default function BillsPage() {
   }
 
   /** 展开/收起固定支出历史：首次展开才拉取该笔记录。 */
-  const handleTogglePayableHistory = useCallback(
-    async (payableId: string) => {
-      const willOpen = !expandedPayableIds.has(payableId)
-      setExpandedPayableIds(prev => {
-        const next = new Set(prev)
-        if (willOpen) next.add(payableId)
-        else next.delete(payableId)
-        return next
-      })
-      if (!willOpen || payablePayments[payableId]) return
+  // 同一笔的在途请求：并发点击或还款后重取都复用同一个 Promise，避免重复 RPC
+  const payableHistoryInFlight = useRef<Map<string, Promise<void>>>(new Map())
+
+  /** 拉取并写入历史缓存；同一 payableId 复用进行中的请求。 */
+  const loadPayableHistory = useCallback((payableId: string) => {
+    const running = payableHistoryInFlight.current.get(payableId)
+    if (running) return running
+    const task = (async () => {
       try {
         const records = await getPayablePayments(payableId)
         setPayablePayments(prev => ({ ...prev, [payableId]: records }))
@@ -475,9 +465,27 @@ export default function BillsPage() {
           ...prev,
           [payableId]: err instanceof Error ? err.message : '历史还款加载失败',
         }))
+      } finally {
+        payableHistoryInFlight.current.delete(payableId)
       }
+    })()
+    payableHistoryInFlight.current.set(payableId, task)
+    return task
+  }, [])
+
+  const handleTogglePayableHistory = useCallback(
+    (payableId: string) => {
+      const willOpen = !expandedPayableIds.has(payableId)
+      setExpandedPayableIds(prev => {
+        const next = new Set(prev)
+        if (willOpen) next.add(payableId)
+        else next.delete(payableId)
+        return next
+      })
+      if (!willOpen || payablePayments[payableId]) return
+      void loadPayableHistory(payableId)
     },
-    [expandedPayableIds, payablePayments]
+    [expandedPayableIds, payablePayments, loadPayableHistory]
   )
 
   // 收起态摘要：把当前筛选、分组与排序压成一行可读文本

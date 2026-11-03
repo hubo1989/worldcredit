@@ -26,28 +26,21 @@ export interface PayableRowProps {
   onPay: (payable: PayableWithStatus) => void
 }
 
-/**
- * 单条固定支出卡。从 PayableList 拆出：账单页现在把固定支出混进主列表统一排序。
- *
- * 整卡可点进编辑（与 BillCard 整卡进详情同交互模型）：固定支出没有单独的
- * 详情页，「编辑表单」就是它的详情视图。内层动作（复制账号/登记付款）阻止冒泡。
- *
- * 状态徽章与信用卡卡片同构（右上角、soft 底 + ink 文字）：
- *   已逾期(danger) / 待还款·今天应付(warn) / 待出账(success)。
- * 滚动模型（服务端 resolveDisplayPeriod）保证任一时刻卡片只呈现一期：
- * 「已登记」只可能出现在待出账态，待还款态一定是可登记付款的未付期。
- */
+/** 与服务端 LIMIT 保持一致：超出时文案改称「最近 N 笔」。 */
+const PAYABLE_HISTORY_LIMIT = 60
+
 /** 历史还款展开区：加载中 / 失败 / 空 / 列表四态，避免嵌套三元。 */
 function renderPayableHistory(
   payments: PayablePaymentRecord[] | undefined,
   historyError: string | undefined,
   currency: string
 ) {
-  if (historyError) {
-    return <p className='mt-1.5 text-[11px] text-d-danger-ink'>{historyError}</p>
-  }
+  // 重试在途时优先显示「加载中」，旧错误不再滞留
   if (payments === undefined) {
     return <p className='mt-1.5 text-[11px] text-d-muted'>加载中…</p>
+  }
+  if (historyError) {
+    return <p className='mt-1.5 text-[11px] text-d-danger-ink'>{historyError}</p>
   }
   if (payments.length === 0) {
     return <p className='mt-1.5 text-[11px] text-d-muted'>还没有历史还款记录</p>
@@ -74,6 +67,17 @@ function renderPayableHistory(
   )
 }
 
+/**
+ * 单条固定支出卡。从 PayableList 拆出：账单页现在把固定支出混进主列表统一排序。
+ *
+ * 整卡可点进编辑（与 BillCard 整卡进详情同交互模型）：固定支出没有单独的
+ * 详情页，「编辑表单」就是它的详情视图。内层动作（复制账号/登记付款）阻止冒泡。
+ *
+ * 状态徽章与信用卡卡片同构（右上角、soft 底 + ink 文字）：
+ *   已逾期(danger) / 待还款·今天应付(warn) / 待出账(success)。
+ * 滚动模型（服务端 resolveDisplayPeriod）保证任一时刻卡片只呈现一期：
+ * 「已登记」只可能出现在待出账态，待还款态一定是可登记付款的未付期。
+ */
 export function PayableRow({
   payable: p,
   holderName,
@@ -228,7 +232,11 @@ export function PayableRow({
             onClick={e => { e.stopPropagation(); onToggleHistory() }}
             className='flex w-full items-center justify-between text-[11px] font-semibold text-d-muted'
           >
-            <span>历史还款{payments && payments.length > 0 ? ` ${payments.length} 笔` : ''}</span>
+            <span>
+              {payments && payments.length >= PAYABLE_HISTORY_LIMIT
+                ? `最近 ${PAYABLE_HISTORY_LIMIT} 笔还款`
+                : `历史还款${payments && payments.length > 0 ? ` ${payments.length} 笔` : ''}`}
+            </span>
             <span className='text-d-accent-light'>{historyOpen ? '收起' : '展开'}</span>
           </button>
           {historyOpen && renderPayableHistory(payments, historyError, p.currency)}

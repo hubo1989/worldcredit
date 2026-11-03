@@ -121,6 +121,9 @@ export async function resolveDisplayPeriod(
   return { period: current, paidAmount: paidCurrent }
 }
 
+/** 历史还款返回上限：与前端「最近 N 笔」文案一致。 */
+export const PAYABLE_HISTORY_LIMIT = 60
+
 export interface PayablePaymentRecord {
   id: string
   payable_id: string
@@ -141,7 +144,7 @@ export async function getPayablePayments(payableId: string): Promise<PayablePaym
      FROM recurring_payable_payments
      WHERE payable_id = ?
      ORDER BY period DESC, created_at DESC
-     LIMIT 60`,
+     LIMIT ${PAYABLE_HISTORY_LIMIT}`,
     [payableId]
   )
   if (error) throw new Error(error.message)
