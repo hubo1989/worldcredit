@@ -8,7 +8,13 @@ import {
   diffInCalendarDays,
   dueDistanceLabel,
 } from '../utils'
+import { calculateCardGracePeriod } from '../api/bills.server'
 import type { CreditCard, CardProduct } from '../types'
+
+function parseLocalDate(isoDate: string): Date {
+  const [y, m, d] = isoDate.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
 
 function formatDate(d: Date): string {
   const y = d.getFullYear()
@@ -47,6 +53,33 @@ describe('shared/fixtures/billing-dates.json TS Runner', () => {
       const today = new Date(c.today)
       const nextDue = getLoanNextDueDate(c.loan_due_day, today)
       expect(formatDate(nextDue), `${c.id} loan next due`).toBe(c.expected_next_due)
+    }
+  })
+
+  it('validates card grace period boundary fixtures (today == billing_day stays current cycle)', () => {
+    for (const c of fixtures.grace_period_cases) {
+      const cardProduct = {
+        payment_due_type: c.card_product.payment_due_type,
+        payment_due_value: c.card_product.payment_due_value,
+      } as unknown as CardProduct
+
+      const card = {
+        billing_day: c.card.billing_day,
+        override_billing_day: c.card.override_billing_day ?? undefined,
+        override_due_type:
+          (c.card.override_due_type as CreditCard['override_due_type']) ?? undefined,
+        override_due_value: c.card.override_due_value ?? undefined,
+        card_type: c.card.card_type,
+        loan_due_day: c.card.loan_due_day ?? undefined,
+        card_product: cardProduct,
+      } as unknown as CreditCard & { card_product: CardProduct }
+
+      const result = calculateCardGracePeriod(card, parseLocalDate(c.today))
+      expect(formatDate(result.nextBillingDate), `${c.id} next billing`).toBe(
+        c.expected_next_billing_date,
+      )
+      expect(formatDate(result.nextDueDate), `${c.id} next due`).toBe(c.expected_next_due_date)
+      expect(result.graceDays, `${c.id} grace days`).toBe(c.expected_grace_days)
     }
   })
 

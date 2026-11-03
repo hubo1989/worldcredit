@@ -21,6 +21,7 @@ export default defineConfig({
       // Mirror tsconfig "paths" so tests can import app/ route handlers the
       // same way the Next.js (vinext) build resolves them.
       '@': fileURLToPath(new URL('./', import.meta.url)),
+      'next/navigation': fileURLToPath(new URL('./node_modules/vinext/dist/shims/navigation.js', import.meta.url)),
     },
   },
   test: {

@@ -79,13 +79,17 @@ interface BillEditFormProps {
   onDeleteBill?: (billId: string) => Promise<void>
 }
 
+function isPresent(value: unknown): boolean {
+  return value !== null && value !== undefined
+}
+
 function toValues(bill: Bill): EditableFieldValues {
   // 编辑值优先读 override 列：改过的值要能回显，否则再次保存会被导入值覆盖
   //（bill_amount 例外：服务端投影只归一化了它）。
   const minPayment = bill.min_payment_override ?? bill.min_payment
   return {
-    amount: bill.bill_amount != null ? String(bill.bill_amount) : '',
-    min_payment: minPayment != null ? String(minPayment) : '',
+    amount: isPresent(bill.bill_amount) ? String(bill.bill_amount) : '',
+    min_payment: isPresent(minPayment) ? String(minPayment) : '',
     statement_date: bill.statement_date_override ?? bill.statement_date ?? '',
     due_date: bill.due_date_override ?? bill.due_date ?? '',
     statement_start: bill.statement_start ?? '',
@@ -99,7 +103,7 @@ function toValues(bill: Bill): EditableFieldValues {
  * - 身份锁定：卡 + 账期事实不可变（UNIQUE(card_id, bill_month)），只读展示。
  * - 金额/最低还款/账单日/到期日走 *_override（updateBillFields），账期首末日
  *   在「高级」折叠里直接 UPDATE（无自动化争抢）。
- * - 状态四态选择，说明文案声明「保存前按已还总额重算」。
+ * - 状态只读展示，保存时由服务端按已还总额重算。
  * - 金额低于已还总额时给警示，不让用户去撞 PAYMENT_EXCEEDS_REMAINING。
  */
 export function BillEditForm({
@@ -151,10 +155,10 @@ export function BillEditForm({
 
   // 0025 已落地四个 override 列（getBillDetail 以 b.* 带回），按真实列渲染钉住态
   const pinned = {
-    amount: bill.bill_amount_override != null,
-    min_payment: bill.min_payment_override != null,
-    statement_date: bill.statement_date_override != null,
-    due_date: bill.due_date_override != null,
+    amount: isPresent(bill.bill_amount_override),
+    min_payment: isPresent(bill.min_payment_override),
+    statement_date: isPresent(bill.statement_date_override),
+    due_date: isPresent(bill.due_date_override),
   }
 
   const newAmount = Number(values.amount)
@@ -174,8 +178,11 @@ export function BillEditForm({
     try {
       const updated = (await clearField(bill.id, [field])) as Bill
       // loadedId 守卫会拦掉 onSaved 拉回的同 id 新 bill，必须在此手动回写，
-      // 否则输入框仍显示刚撤销的 override 值，再点保存会把它重新钉住
-      setValues(toValues(updated))
+      // 否则输入框仍显示刚撤销的 override 值，再点保存会把它重新钉住。
+      // 只回写被撤销的字段，保留其他未保存编辑，并清掉该字段残留错误。
+      const refreshed = toValues(updated)
+      setValues(prev => ({ ...prev, [field]: refreshed[field] }))
+      setErrors(prev => (prev[field] ? { ...prev, [field]: undefined } : prev))
       await onSaved()
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : '撤销失败，请重试')
@@ -199,7 +206,7 @@ export function BillEditForm({
         // undefined 会把字段整体省略，用户的清除意图被静默吞掉。
         min_payment: values.min_payment.trim() ? Number(values.min_payment) : null,
         statement_date: values.statement_date.trim() || null,
-        due_date: values.due_date.trim() || undefined,
+        due_date: values.due_date.trim(),
         statement_start: values.statement_start.trim() || undefined,
         statement_end: values.statement_end.trim() || undefined,
       }
@@ -319,18 +326,22 @@ export function BillEditForm({
             helperText={errors.due_date}
           />
 
-          {/* 状态：改前按已还总额重算，允许从结清回退（updateBillStatusChecked） */}
+          {/* 状态：只读展示，保存时按已还总额服务端重算 */}
           <div>
-            <p className='mb-1.5 text-[13px] font-semibold leading-5 text-d-muted'>状态</p>
-            <div className='grid grid-cols-2 gap-1.5'>
+            <p className='mb-1.5 text-[13px] font-semibold leading-5 text-d-muted'>
+              状态（只读 · 保存时自动重算）
+            </p>
+            <div className='grid grid-cols-2 gap-1.5' aria-label='账单状态（只读）'>
               {(['unpaid', 'partial', 'paid', 'overdue'] as BillStatus[]).map(s => (
                 <div
                   key={s}
+                  aria-disabled='true'
+                  aria-current={bill.status === s ? 'true' : undefined}
                   className={
-                    'rounded-xl border px-2.5 py-2 ' +
+                    'cursor-default select-none rounded-xl border px-2.5 py-2 ' +
                     (bill.status === s
                       ? 'border-d-accent bg-d-subtle'
-                      : 'border-d-border bg-d-surface opacity-70')
+                      : 'border-dashed border-d-border bg-d-surface opacity-50')
                   }
                 >
                   <p className='text-[13px] font-semibold leading-4 text-d-text'>{STATUS_LABELS[s]}</p>
@@ -339,7 +350,7 @@ export function BillEditForm({
               ))}
             </div>
             <p className='mt-1.5 text-[11px] leading-4 text-d-muted'>
-              保存时按已还总额重算：已还 ≥ 生效金额即视为结清，允许从已结清回退。
+              当前状态不可手动切换；保存时按已还总额自动重算（已还 ≥ 生效金额即视为结清，允许从已结清回退）。
             </p>
           </div>
 

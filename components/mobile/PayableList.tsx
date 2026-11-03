@@ -65,19 +65,20 @@ export function PayableRow({ payable: p, onEdit, onPay }: PayableRowProps) {
 
   return (
     <div
-      role='button'
-      tabIndex={0}
-      aria-label={`编辑固定支出 ${p.name}`}
       onClick={() => onEdit(p)}
-      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEdit(p) } }}
       className='cursor-pointer rounded-2xl border border-d-border bg-d-surface p-4 transition-colors active:bg-d-subtle/60'
     >
       <div className='flex items-start justify-between gap-2'>
         <div className='min-w-0 flex-1'>
           <div className='flex min-w-0 items-baseline gap-1.5'>
-            <p className='min-w-0 truncate text-[15px] font-semibold leading-5 text-d-text'>
+            <button
+              type='button'
+              aria-label={`编辑固定支出 ${p.name}`}
+              onClick={e => { e.stopPropagation(); onEdit(p) }}
+              className='min-w-0 truncate text-left text-[15px] font-semibold leading-5 text-d-text'
+            >
               {p.name}
-            </p>
+            </button>
             <span className='shrink-0 whitespace-nowrap text-[12px] text-d-muted'>
               · {categoryLabel(p.category)}
             </span>

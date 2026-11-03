@@ -75,6 +75,83 @@ struct PayablesRemoteServiceTests {
         #expect(item.id == "p1")
     }
 
+    @Test("创建请求把已知币种别名规范为 ISO 代码", arguments: [" usd ", "美元"])
+    func createNormalizesCurrency(_ currency: String) async throws {
+        let session = MockNetworkSession { [itemEnvelope] request in
+            let body = try #require(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
+            let payload = try #require((body["args"] as? [[String: Any]])?.first)
+            #expect(payload["currency"] as? String == "USD")
+            return response(request, itemEnvelope)
+        }
+        let draft = PayableDraft(name: "订阅", category: .other, amount: 88, currency: currency, dueDay: 12)
+        _ = try await PayablesRemoteService(apiClient: client(session)).create(userId: "alice", draft: draft)
+    }
+
+    @Test("未知币种新增时在请求前拒绝", arguments: ["EUR", "", "  ", "人民币币"])
+    func createRejectsUnknownCurrency(_ currency: String) async {
+        let session = MockNetworkSession { _ in
+            Issue.record("非法币种不应发送网络请求")
+            throw URLError(.badURL)
+        }
+        let draft = PayableDraft(name: "订阅", category: .other, amount: 88, currency: currency, dueDay: 12)
+        do {
+            _ = try await PayablesRemoteService(apiClient: client(session)).create(userId: "alice", draft: draft)
+            Issue.record("非法币种必须失败")
+        } catch {
+            #expect(error.localizedDescription == "币种必须是 CNY / USD / HKD 之一")
+        }
+    }
+
+    @Test("历史未知币种原值未变时，编辑请求省略 currency", arguments: ["EUR", " eur ", "", "  "])
+    func updatePreservesLegacyCurrency(_ original: String) async throws {
+        let session = MockNetworkSession { [itemEnvelope] request in
+            #expect(request.url?.path == "/api/rpc/payables/updateRecurringPayable")
+            let body = try #require(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
+            let args = try #require(body["args"] as? [Any])
+            let payload = try #require(args[1] as? [String: Any])
+            #expect(payload["currency"] == nil)
+            #expect(payload["amount"] as? Double == 88)
+            #expect(payload["note"] as? String == "只改备注")
+            return response(request, itemEnvelope)
+        }
+        let draft = PayableDraft(name: "订阅", category: .other, amount: 88,
+                                 currency: original, dueDay: 12, note: "只改备注")
+        _ = try await PayablesRemoteService(apiClient: client(session)).update(
+            payableId: "p1", draft: draft, originalCurrency: original)
+    }
+
+    @Test("主动选择合法币种时提交归一化代码", arguments: [" usd ", "美元", "USD"])
+    func updateNormalizesSelectedCurrency(_ currency: String) async throws {
+        let session = MockNetworkSession { [itemEnvelope] request in
+            let body = try #require(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
+            let args = try #require(body["args"] as? [Any])
+            let payload = try #require(args[1] as? [String: Any])
+            #expect(payload["currency"] as? String == "USD")
+            return response(request, itemEnvelope)
+        }
+        let draft = PayableDraft(name: "订阅", category: .other, amount: 88, currency: currency, dueDay: 12)
+        _ = try await PayablesRemoteService(apiClient: client(session)).update(
+            payableId: "p1", draft: draft, originalCurrency: "EUR")
+    }
+
+    @Test("没有原值或主动变成未知币种时，更新在请求前拒绝")
+    func updateRejectsUnknownCurrencyChange() async {
+        let session = MockNetworkSession { _ in
+            Issue.record("主动未知币种变更不应发送网络请求")
+            throw URLError(.badURL)
+        }
+        let draft = PayableDraft(name: "订阅", category: .other, amount: 88, currency: "EUR", dueDay: 12)
+        let service = PayablesRemoteService(apiClient: client(session))
+        for original: String? in [nil, "CNY", " eur "] {
+            do {
+                _ = try await service.update(payableId: "p1", draft: draft, originalCurrency: original)
+                Issue.record("非法币种必须失败")
+            } catch {
+                #expect(error.localizedDescription == "币种必须是 CNY / USD / HKD 之一")
+            }
+        }
+    }
+
     @Test("update sends id then draft; delete accepts null data; errors propagate")
     func updateDeleteAndErrors() async throws {
         let session = MockNetworkSession { [itemEnvelope] request in

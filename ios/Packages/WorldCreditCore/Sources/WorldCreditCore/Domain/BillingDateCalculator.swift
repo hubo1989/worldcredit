@@ -196,7 +196,8 @@ public enum BillingDateCalculator {
         var purchaseMonth = cal.date(from: purchaseMonthComp) ?? d
 
         let currentDay = cal.component(.day, from: d)
-        if currentDay >= effectiveBillingDay {
+        // 账单日当天交易计入当期，与 Web/shared fixture 的免息期口径一致。
+        if currentDay > effectiveBillingDay {
             purchaseMonth = cal.date(byAdding: .month, value: 1, to: purchaseMonth) ?? purchaseMonth
         }
 

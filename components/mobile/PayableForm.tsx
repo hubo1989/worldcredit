@@ -5,7 +5,7 @@ import { Modal } from '@/components/obsidian/overlays'
 import { Button } from '@/components/obsidian/controls'
 import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
-import { createRecurringPayable, updateRecurringPayable, PAYABLE_CATEGORIES, PAYABLE_CURRENCIES, PAYABLE_CURRENCY_LABELS, type PayableCategory, type PayableWithStatus } from '@/lib/api/payables'
+import { createRecurringPayable, updateRecurringPayable, PAYABLE_CATEGORIES, PAYABLE_CURRENCIES, PAYABLE_CURRENCY_LABELS, normalizePayableCurrency, type PayableCategory, type PayableWithStatus } from '@/lib/api/payables'
 import { getHolders } from '@/lib/api/holders'
 import type { CardHolder } from '@/lib/types'
 import { useAuth } from '@/lib/auth'
@@ -50,7 +50,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       setName(existing.name)
       setCategory(existing.category)
       setAmount(String(existing.amount))
-      setCurrency(existing.currency)
+      setCurrency(normalizePayableCurrency(existing.currency) ?? '__legacy__')
       setDueDay(String(existing.due_day))
       setHolderId(existing.holder_id || '')
       setNote(existing.note || '')
@@ -77,21 +77,33 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       return setError('每月应付日必须在 1–31 之间')
     }
 
+    const normalizedCurrency = normalizePayableCurrency(currency)
+    const keepLegacyCurrency = currency === '__legacy__' && !!existing &&
+      normalizePayableCurrency(existing.currency) === null
+    if (!normalizedCurrency && !keepLegacyCurrency) {
+      return setError('币种必须是 CNY / USD / HKD 之一')
+    }
     setSubmitting(true)
     try {
       const payload = {
         name: name.trim(),
         category,
         amount: parsedAmount,
-        currency,
         due_day: parsedDay,
         holder_id: holderId || null,
         note: note.trim() || null,
         bank_account: bankAccount.trim() || null,
       }
-      if (existing) await updateRecurringPayable(existing.id, payload)
-      // created_by 会在服务端按会话 cookie 覆盖，这里带上只是满足入参形状
-      else await createRecurringPayable({ ...payload, created_by: user?.id ?? '' })
+      if (existing) {
+        // 历史未知币种不回传，避免只改名称/备注时触发币种变更或丢失原币种。
+        await updateRecurringPayable(existing.id, {
+          ...payload,
+          ...(normalizedCurrency ? { currency: normalizedCurrency } : {}),
+        })
+      } else if (normalizedCurrency) {
+        // created_by 会在服务端按会话 cookie 覆盖，这里带上只是满足入参形状
+        await createRecurringPayable({ ...payload, currency: normalizedCurrency, created_by: user?.id ?? '' })
+      }
       onSuccess()
       onClose()
     } catch (err) {
@@ -137,7 +149,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
               label="每月金额"
               value={amount}
               onChange={e => setAmount(e.target.value)}
-              startAdornment={<span>{currency === 'USD' ? 'US$' : currency === 'HKD' ? 'HK$' : '¥'}</span>}
+              startAdornment={<span>{currency === '__legacy__' ? existing?.currency : currency === 'USD' ? 'US$' : currency === 'HKD' ? 'HK$' : '¥'}</span>}
               inputMode='decimal' min={0} step='0.01'
             />
           </div>
@@ -146,7 +158,15 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
               label="币种"
               value={currency}
               onChange={e => setCurrency(e.target.value)}
-              options={PAYABLE_CURRENCIES.map(c => ({ value: c, label: PAYABLE_CURRENCY_LABELS[c] }))}
+              options={[
+                ...(existing && normalizePayableCurrency(existing.currency) === null
+                  ? [{ value: '__legacy__', label: `保留 ${existing.currency || '空币种'}（历史值）` }]
+                  : []),
+                ...PAYABLE_CURRENCIES.map(c => ({ value: c, label: PAYABLE_CURRENCY_LABELS[c] })),
+              ]}
+              helperText={existing && normalizePayableCurrency(existing.currency) === null
+                ? '可保留历史币种；如需更改，请选择 CNY / USD / HKD，并核对金额。'
+                : undefined}
             />
           </div>
         </div>

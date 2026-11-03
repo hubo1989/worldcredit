@@ -166,5 +166,127 @@
       "expected_diff": -2,
       "expected_label": "逾期 2 日"
     }
+  ],
+  "grace_period_cases": [
+    {
+      "id": "today_before_billing_day",
+      "description": "Today before billing day stays in current statement cycle",
+      "card": {
+        "billing_day": 27,
+        "override_billing_day": null,
+        "override_due_type": null,
+        "override_due_value": null,
+        "card_type": "credit",
+        "loan_due_day": null
+      },
+      "card_product": {
+        "payment_due_type": "after_billing",
+        "payment_due_value": 20
+      },
+      "today": "2026-10-20",
+      "expected_next_billing_date": "2026-10-27",
+      "expected_next_due_date": "2026-11-16",
+      "expected_grace_days": 27
+    },
+    {
+      "id": "today_equals_billing_day_current_cycle",
+      "description": "Today == billing day stays in current statement cycle (shortest grace period)",
+      "card": {
+        "billing_day": 27,
+        "override_billing_day": null,
+        "override_due_type": null,
+        "override_due_value": null,
+        "card_type": "credit",
+        "loan_due_day": null
+      },
+      "card_product": {
+        "payment_due_type": "after_billing",
+        "payment_due_value": 20
+      },
+      "today": "2026-10-27",
+      "expected_next_billing_date": "2026-10-27",
+      "expected_next_due_date": "2026-11-16",
+      "expected_grace_days": 20
+    },
+    {
+      "id": "today_after_billing_day_next_cycle",
+      "description": "Today == billing day + 1 rolls to next statement cycle (longest grace period)",
+      "card": {
+        "billing_day": 27,
+        "override_billing_day": null,
+        "override_due_type": null,
+        "override_due_value": null,
+        "card_type": "credit",
+        "loan_due_day": null
+      },
+      "card_product": {
+        "payment_due_type": "after_billing",
+        "payment_due_value": 20
+      },
+      "today": "2026-10-28",
+      "expected_next_billing_date": "2026-11-27",
+      "expected_next_due_date": "2026-12-17",
+      "expected_grace_days": 50
+    },
+    {
+      "id": "today_equals_clamped_february_non_leap_billing_day",
+      "description": "Billing day 31 clamped to Feb 28 in non-leap year: today == Feb 28 stays in current cycle",
+      "card": {
+        "billing_day": 31,
+        "override_billing_day": null,
+        "override_due_type": null,
+        "override_due_value": null,
+        "card_type": "credit",
+        "loan_due_day": null
+      },
+      "card_product": {
+        "payment_due_type": "after_billing",
+        "payment_due_value": 20
+      },
+      "today": "2026-02-28",
+      "expected_next_billing_date": "2026-02-28",
+      "expected_next_due_date": "2026-03-20",
+      "expected_grace_days": 20
+    },
+    {
+      "id": "today_equals_clamped_february_leap_billing_day",
+      "description": "Billing day 31 clamped to Feb 29 in leap year: today == Feb 29 stays in current cycle",
+      "card": {
+        "billing_day": 31,
+        "override_billing_day": null,
+        "override_due_type": null,
+        "override_due_value": null,
+        "card_type": "credit",
+        "loan_due_day": null
+      },
+      "card_product": {
+        "payment_due_type": "after_billing",
+        "payment_due_value": 20
+      },
+      "today": "2028-02-29",
+      "expected_next_billing_date": "2028-02-29",
+      "expected_next_due_date": "2028-03-20",
+      "expected_grace_days": 20
+    },
+    {
+      "id": "today_equals_override_billing_day_fixed_due",
+      "description": "Override billing day takes precedence when today == override billing day",
+      "card": {
+        "billing_day": 5,
+        "override_billing_day": 18,
+        "override_due_type": null,
+        "override_due_value": null,
+        "card_type": "credit",
+        "loan_due_day": null
+      },
+      "card_product": {
+        "payment_due_type": "fixed",
+        "payment_due_value": 10
+      },
+      "today": "2026-05-18",
+      "expected_next_billing_date": "2026-05-18",
+      "expected_next_due_date": "2026-06-10",
+      "expected_grace_days": 23
+    }
   ]
 }

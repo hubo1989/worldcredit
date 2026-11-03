@@ -306,7 +306,7 @@ const drawOverrideWarning = (mode) => {
 const drawStatusDialog = (mode) => {
   const { f, m, scene } = sceneBoard('bill-editing-status', mode);
   dimmedBackdrop(scene, m, '账单详情', '¥ 4,800.00', '已还 1,600.00 · 剩余 3,200.00');
-  const dialog = dialogIn(scene, m, '账单状态', 400, 384);
+  const dialog = dialogIn(scene, m, '账单状态', 400, 448);
 
   const opts = I(dialog, { type: 'frame', name: 'status options', width: 'fill_container', layout: 'vertical', gap: 8 });
   // 选中态由 active 行的描边/填充表达（见下方 row 样式），无需按语义色着色
@@ -387,7 +387,7 @@ const drawPayments = (mode) => {
 const drawPaymentEdit = (mode) => {
   const { f, m, scene } = sceneBoard('bill-editing-payment-edit', mode);
   dimmedBackdrop(scene, m, '还款记录', '¥ 600.00', '10月28日 · 手机银行');
-  const dialog = dialogIn(scene, m, '编辑还款', 400, 396);
+  const dialog = dialogIn(scene, m, '编辑还款', 400, 444);
 
   inputAmount(dialog, m, '640.00');
   I(dialog, { type: 'text', name: 'input constraint', content: '金额需大于 0，且不超过剩余可还（重算前为 3,200.00）', fontFamily: FONT, fontSize: 11, fill: s(m.text2), textGrowth: 'fixed-width' });
@@ -520,7 +520,7 @@ const drawActionSheet = (mode) => {
   dimmedBackdrop(scene, m, '账单详情', '¥ 4,720.00', '招商银行 · 十月账期 · 11/24 到期');
 
   const sheet = I(scene, {
-    type: 'frame', name: 'action sheet', x: 0, y: SCENE_H - 330, width: W, height: 330,
+    type: 'frame', name: 'action sheet', x: 0, y: SCENE_H - 400, width: W, height: 400,
     layout: 'vertical', gap: 0, padding: [16, PAD], cornerRadius: [18, 18, 0, 0], fill: s(m.surface),
   });
   I(sheet, { type: 'frame', name: 'grabber', width: 36, height: 4, cornerRadius: 999, fill: s(m.border), layout: 'none' });
@@ -570,5 +570,5 @@ for (const mode of ['dark', 'light']) {
     drawActionSheet(mode),
   );
 }
-  // 摘要走 stderr：头部运行命令把 stdout 重定向为 boards.json，混入日志会破坏 JSON
-  console.error('bill editing set built: ' + boards.length + ' boards (dark/light × 10)');
+// 摘要走 stderr，避免混入 op design 的 JSON 输出。
+console.error('bill editing set built: ' + boards.length + ' boards (dark/light × 10)');

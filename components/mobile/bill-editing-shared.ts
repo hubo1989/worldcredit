@@ -24,7 +24,7 @@ export type FieldErrors = Partial<Record<keyof EditableFieldValues, string>>
 
 /**
  * 编辑表单校验。返回 errors，空对象即通过。
- * 金额 ≥ 0；最低还款额可空；日期可空但填了必须是真实日历日。
+ * 金额 ≥ 0；最低还款额可空；还款到期日必填；其余日期可空但填了必须是真实日历日。
  */
 export function validateEditableFields(values: EditableFieldValues): FieldErrors {
   const errors: FieldErrors = {}
@@ -43,7 +43,14 @@ export function validateEditableFields(values: EditableFieldValues): FieldErrors
     if (!Number.isFinite(n) || n < 0) errors.min_payment = '最低还款额必须是不小于 0 的数字'
   }
 
-  for (const field of ['statement_date', 'due_date', 'statement_start', 'statement_end'] as const) {
+  const dueDate = values.due_date.trim()
+  if (!dueDate) {
+    errors.due_date = '请填写还款到期日'
+  } else if (!isValidCalendarDate(dueDate)) {
+    errors.due_date = '日期格式应为 YYYY-MM-DD 且为真实日历日'
+  }
+
+  for (const field of ['statement_date', 'statement_start', 'statement_end'] as const) {
     const v = values[field].trim()
     if (v && !isValidCalendarDate(v)) errors[field] = '日期格式应为 YYYY-MM-DD 且为真实日历日'
   }

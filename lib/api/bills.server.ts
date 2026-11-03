@@ -4,7 +4,7 @@ import {
   getDueDate,
   getLoanNextDueDate,
   effectiveBillAmount,
-  billEffectiveDueDate,
+  computePaymentDrivenStatus,
   nextBillingDateOf,
   isValidCalendarDate,
 } from "../utils";
@@ -1149,6 +1149,24 @@ export async function markAllOverdueBillsAsPaid(
 
 // ── 账单编辑（spec 13 §6.1/§6.2/§6.4）────────────────────────────────────────
 
+function buildAtomicBillStatusRecalcStatement(billId: string): {
+  sql: string;
+  params: [string, string, string, string];
+} {
+  return {
+    sql: `UPDATE bills SET status = CASE
+      WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) >= COALESCE(bill_amount_override, bill_amount) - 0.01
+      THEN 'paid'
+      WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) > 0
+      THEN 'partial'
+      WHEN COALESCE(due_date_override, due_date) < ?
+      THEN 'overdue'
+      ELSE 'unpaid'
+    END WHERE id = ?`,
+    params: [billId, billId, today(), billId],
+  };
+}
+
 /** updateBillFields 接受的字段白名单（spec §6.2）。 */
 export interface BillFieldPatch {
   amount?: number;
@@ -1215,10 +1233,10 @@ export async function updateBillFields(billId: string, patch: BillFieldPatch): P
   // 单字段补丁也要与库内已存的另一端比对，否则只改开始日（或只改结束日）
   // 可以绕过同批双字段校验，落库成「开始晚于结束」的倒挂账期。
   if (patch.statement_start !== undefined || patch.statement_end !== undefined) {
-    const existing = await queryOne<{ statement_start: string | null; statement_end: string | null }>(
-      "SELECT statement_start, statement_end FROM bills WHERE id = ?",
-      [billId],
-    );
+    const existing = await queryOne<{
+      statement_start: string | null;
+      statement_end: string | null;
+    }>("SELECT statement_start, statement_end FROM bills WHERE id = ?", [billId]);
     if (existing.error) throw new Error(existing.error.message);
     const start = patch.statement_start ?? existing.data?.statement_start ?? null;
     const end = patch.statement_end ?? existing.data?.statement_end ?? null;
@@ -1258,20 +1276,23 @@ export async function updateBillFields(billId: string, patch: BillFieldPatch): P
     ["statement_end", patch.statement_end],
   ] as const) {
     if (value !== undefined) {
-      statements.push({ sql: `UPDATE bills SET ${field} = ? WHERE id = ?`, params: [value, billId] });
+      statements.push({
+        sql: `UPDATE bills SET ${field} = ? WHERE id = ?`,
+        params: [value, billId],
+      });
     }
   }
   if (statements.length === 0) {
     throw new RpcDomainError("VALIDATION_FAILED", "没有需要更新的字段");
   }
+  // 金额/到期日变更会改变「已还 ≥ 生效金额」与逾期判定；状态更新与字段写入放进同一个 batch，
+  // 避免第二步失败导致「字段已落库、状态仍是旧值」的半保存状态（spec §6.3 编辑→重算闭环）。
+  if (patch.amount !== undefined || patch.due_date !== undefined) {
+    statements.push(buildAtomicBillStatusRecalcStatement(billId));
+  }
 
   const { error } = await batch(statements);
   if (error) throw new Error(error.message);
-  // 金额/到期日变更会改变「已还 ≥ 生效金额」与逾期判定，服务端联动重算，
-  // 不依赖调用方自觉补调 updateBillStatusChecked（spec §6.3 编辑→重算闭环）。
-  if (patch.amount !== undefined || patch.due_date !== undefined) {
-    await updateBillStatusChecked(billId);
-  }
   const updated = await getBillById(billId);
   if (!updated) throw new RpcDomainError("NOT_FOUND", "账单不存在");
   return updated;
@@ -1302,12 +1323,15 @@ export async function clearOverride(billId: string, fields: string[]): Promise<B
   if (unknown.length > 0) {
     throw new RpcDomainError("VALIDATION_FAILED", `不支持撤销字段 ${unknown.join(", ")}`);
   }
-  const { error } = await batch(
-    fields.map((field) => ({
-      sql: `UPDATE bills SET ${OVERRIDE_COLUMN_BY_FIELD[field as OverridableField]} = NULL WHERE id = ?`,
-      params: [billId],
-    })),
-  );
+  const statements: { sql: string; params: unknown[] }[] = fields.map((field) => ({
+    sql: `UPDATE bills SET ${OVERRIDE_COLUMN_BY_FIELD[field as OverridableField]} = NULL WHERE id = ?`,
+    params: [billId],
+  }));
+  // 撤销 amount/due_date 钉住后生效金额或生效到期日回落，必须在同一事务内联动重算状态。
+  if (fields.includes("amount") || fields.includes("due_date")) {
+    statements.push(buildAtomicBillStatusRecalcStatement(billId));
+  }
+  const { error } = await batch(statements);
   if (error) throw new Error(error.message);
   const updated = await getBillById(billId);
   if (!updated) throw new RpcDomainError("NOT_FOUND", "账单不存在");
@@ -1346,20 +1370,10 @@ export async function updateBillStatusChecked(
   if (!raw) throw new RpcDomainError("NOT_FOUND", "账单不存在");
 
   const paidAmount = await getPaymentTotal(billId);
-  const amount = effectiveBillAmount(raw);
-  let computed: Bill["status"];
-  if (amount <= 0 || paidAmount >= amount - 0.01) {
-    computed = "paid";
-  } else if (paidAmount > 0) {
-    computed = "partial";
-  } else if (daysUntil(billEffectiveDueDate(raw)) < 0) {
-    computed = "overdue";
-  } else {
-    computed = "unpaid";
-  }
+  const computed = computePaymentDrivenStatus(raw, paidAmount);
 
-  // 显式入参完全覆盖重算值（仅校验枚举合法性，无进一步约束）；
-  // 无入参时落重算值——重算口径见上方注释。
+  // 服务端内部调用可显式传入 status；RPC 表面的 bills.updateBillStatusChecked
+  // 仅转交 billId，避免客户端在无真实还款记录时把账单强行锁进 paid。
   const finalStatus = status ?? computed;
   const { error: updErr } = await execute("UPDATE bills SET status = ? WHERE id = ?", [
     finalStatus,

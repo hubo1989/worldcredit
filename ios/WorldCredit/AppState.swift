@@ -760,7 +760,8 @@ public final class AppState {
 
     public func savePayable(_ draft: PayableDraft, existing: PayableItem?) async throws {
         if let existing {
-            _ = try await payablesService.update(payableId: existing.id, draft: draft)
+            _ = try await payablesService.update(
+                payableId: existing.id, draft: draft, originalCurrency: existing.currency)
         } else {
             let user: SessionUser
             if let currentUser { user = currentUser }

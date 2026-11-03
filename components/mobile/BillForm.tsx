@@ -6,9 +6,15 @@ import { Button } from '@/components/obsidian/controls'
 import { TextField, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
 import { format } from 'date-fns'
-import { createBill, updateBill, updateBillStatusChecked, getBillByCardMonth } from '@/lib/api/bills'
+import { createBill, updateBillFields, getBillByCardMonth } from '@/lib/api/bills'
 import { getAllCardsWithProduct } from '@/lib/api/cards'
-import { formatCardTail } from '@/lib/utils'
+import {
+  formatCardTail,
+  billEffectiveMinPayment,
+  billEffectiveStatementDate,
+  billEffectiveDueDate,
+  isValidCalendarDate,
+} from '@/lib/utils'
 import type { CreditCard, CardProduct, Bill } from '@/lib/types'
 import { AiFillBox } from '@/components/mobile/AiFillBox'
 
@@ -31,6 +37,10 @@ interface Props {
 
 // 服务端 joinRowToCard 会把卡级别覆盖写进顶层 card_name，这里如实声明以便选卡器显示生效名称
 type CardWithProduct = CreditCard & { card_product: CardProduct; card_name?: string }
+
+function isPresent(value: unknown): boolean {
+  return value !== null && value !== undefined
+}
 
 const EMPTY: BillFormData = {
   card_id: '',
@@ -60,13 +70,15 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
   useEffect(() => {
     if (!open) return
     if (existingBill) {
+      const effectiveMinPayment = billEffectiveMinPayment(existingBill)
+      const effectiveStatementDate = billEffectiveStatementDate(existingBill)
       setForm({
         card_id: existingBill.card_id,
         bill_month: existingBill.bill_month,
         bill_amount: String(existingBill.bill_amount),
-        min_payment: existingBill.min_payment != null ? String(existingBill.min_payment) : '',
-        statement_date: existingBill.statement_date ?? existingBill.statement_end ?? format(new Date(), 'yyyy-MM-dd'),
-        due_date: existingBill.due_date,
+        min_payment: isPresent(effectiveMinPayment) ? String(effectiveMinPayment) : '',
+        statement_date: effectiveStatementDate ?? existingBill.statement_end ?? format(new Date(), 'yyyy-MM-dd'),
+        due_date: billEffectiveDueDate(existingBill),
       })
       setExistingBillId(existingBill.id)
     } else {
@@ -82,13 +94,20 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
     getBillByCardMonth(form.card_id, form.bill_month)
       .then(data => {
         if (data) {
+          const dupWithOverrides = data as typeof data & {
+            min_payment_override?: number | null
+            statement_date_override?: string | null
+            due_date_override?: string | null
+          }
+          const effectiveMinPayment = billEffectiveMinPayment(dupWithOverrides)
+          const effectiveStatementDate = billEffectiveStatementDate(dupWithOverrides)
           setExistingBillId(data.id)
           setForm(prev => ({
             ...prev,
             bill_amount: String(data.bill_amount ?? ''),
-            min_payment: data.min_payment != null ? String(data.min_payment) : '',
-            statement_date: data.statement_date ?? prev.statement_date,
-            due_date: data.due_date ?? prev.due_date,
+            min_payment: isPresent(effectiveMinPayment) ? String(effectiveMinPayment) : '',
+            statement_date: effectiveStatementDate ?? prev.statement_date,
+            due_date: billEffectiveDueDate(dupWithOverrides) || prev.due_date,
           }))
         } else {
           setExistingBillId(null)
@@ -107,30 +126,40 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
       return
     }
 
-    const billAmt = parseFloat(form.bill_amount)
-    const minPay = form.min_payment ? parseFloat(form.min_payment) : undefined
+    const billAmt = Number(form.bill_amount.trim())
+    const trimmedMinPay = form.min_payment.trim()
+    const minPay = trimmedMinPay ? Number(trimmedMinPay) : undefined
+    const trimmedStatementDate = form.statement_date.trim()
+    const trimmedDueDate = form.due_date.trim()
 
-    if (isNaN(billAmt) || billAmt < 0) {
+    if (!Number.isFinite(billAmt) || billAmt < 0) {
       setError('账单金额必须是有效数字')
+      return
+    }
+    if (minPay !== undefined && (!Number.isFinite(minPay) || minPay < 0)) {
+      setError('最低还款额必须是不小于 0 的数字')
+      return
+    }
+    if (!isValidCalendarDate(trimmedDueDate)) {
+      setError('到期日应为 YYYY-MM-DD 格式的真实日历日')
+      return
+    }
+    if (trimmedStatementDate && !isValidCalendarDate(trimmedStatementDate)) {
+      setError('账单日应为 YYYY-MM-DD 格式的真实日历日')
       return
     }
 
     setSubmitting(true)
     try {
       if (existingBillId) {
-        // 更新已有账单。不传 status：编辑金额/日期不该把已还账单重置回
-        // unpaid（spec §5.3 缺陷）。updateBill 只做直接 UPDATE、不重算状态，
-        // 保存后显式按已还总额重算（允许 paid 回退）。
-        // 注意：此处直写 bill_amount 原列；若账单已被 BillEditForm 写入
-        // bill_amount_override，展示按生效金额仍取 override——两个编辑入口
-        // 的分工见 spec §6.1（本表单走基础值，钉住值由编辑表单管理）。
-        await updateBill(existingBillId, {
-          bill_amount: billAmt,
-          min_payment: minPay,
-          statement_date: form.statement_date || undefined,
-          due_date: form.due_date,
+        // 统一走单个 updateBillFields RPC：写入 *_override 列保持防导入覆盖语义，
+        // 且服务端在同一 batch 内联动重算状态，避免两次 RPC 中途失败产生半保存状态。
+        await updateBillFields(existingBillId, {
+          amount: billAmt,
+          min_payment: minPay ?? null,
+          statement_date: trimmedStatementDate || null,
+          due_date: trimmedDueDate,
         })
-        await updateBillStatusChecked(existingBillId)
       } else {
         // 创建新账单（补充账期首末日）
         const [year, month] = form.bill_month.split('-').map(Number)
@@ -142,10 +171,10 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
           bill_month: form.bill_month,
           statement_start: firstDay,
           statement_end: lastDay,
-          statement_date: form.statement_date || undefined,
+          statement_date: trimmedStatementDate || undefined,
           bill_amount: billAmt,
           min_payment: minPay,
-          due_date: form.due_date,
+          due_date: trimmedDueDate,
           status: 'unpaid',
         })
       }
@@ -186,8 +215,8 @@ export function BillForm({ open, onClose, onSuccess, existingBill }: Props) {
         <AiFillBox mode="bill" onFill={(data) => {
           setForm(prev => ({
             ...prev,
-            ...(data.bill_amount != null ? { bill_amount: String(data.bill_amount).replace(/[,¥元\s]/g, '') } : {}),
-            ...(data.min_payment != null ? { min_payment: String(data.min_payment).replace(/[,¥元\s]/g, '') } : {}),
+            ...(isPresent(data.bill_amount) ? { bill_amount: String(data.bill_amount).replace(/[,¥元\s]/g, '') } : {}),
+            ...(isPresent(data.min_payment) ? { min_payment: String(data.min_payment).replace(/[,¥元\s]/g, '') } : {}),
             ...(data.due_date ? { due_date: String(data.due_date).slice(0, 10) } : {}),
             ...(data.statement_date ? { statement_date: String(data.statement_date).slice(0, 10) } : {}),
             ...(data.bill_month ? { bill_month: String(data.bill_month).slice(0, 7) } : {}),

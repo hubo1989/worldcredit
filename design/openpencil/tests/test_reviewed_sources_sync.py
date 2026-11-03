@@ -58,6 +58,46 @@ class ReviewedSourcesSyncTests(unittest.TestCase):
         cls.foundations = json.loads(FOUNDATIONS_PATH.read_text(encoding="utf-8"))
         cls.token_map = json.loads(TOKEN_MAP_PATH.read_text(encoding="utf-8"))
 
+    def test_bill_editing_dialog_actions_fit_measured_content(self) -> None:
+        """引擎实测：还款弹窗需 443px，状态弹窗需 432px（均含底部 padding）。"""
+        page = page_by_name(self.doc, "16 · Bill Editing")
+        for mode in ("dark", "light"):
+            for suffix, minimum in (("payment-edit", 443), ("status", 432)):
+                board = one_node(page["children"], f"candidate.ios.bill-editing-{suffix} · {mode} · 440×956")
+                nodes = list(walk(board))
+                scene = one_node(nodes, "dialog scene")
+                dialog = one_node(nodes, "dialog")
+                self.assertGreaterEqual(dialog["height"], minimum)
+                self.assertGreaterEqual(dialog["y"], 0)
+                self.assertLessEqual(dialog["y"] + dialog["height"], scene["height"])
+                self.assertEqual(one_node(nodes, "dialog actions")["layout"], "horizontal")
+
+    def test_bill_editing_sheet_contains_all_five_actions(self) -> None:
+        """操作内容实测 397px；面板底边必须与 scene 底边对齐，不能靠裁切遮盖。"""
+        page = page_by_name(self.doc, "16 · Bill Editing")
+        for mode in ("dark", "light"):
+            board = one_node(page["children"], f"candidate.ios.bill-editing-sheet · {mode} · 440×956")
+            nodes = list(walk(board))
+            scene = one_node(nodes, "dialog scene")
+            sheet = one_node(nodes, "action sheet")
+            self.assertGreaterEqual(sheet["height"], 397)
+            self.assertEqual(sheet["y"] + sheet["height"], scene["height"])
+            actions = one_node(nodes, "action list")["children"]
+            self.assertEqual(len(actions), 5)
+            self.assertTrue(any(n.get("content") == "删除账单" for n in walk(actions[-1])))
+
+    def test_bill_editing_replay_contains_prior_review_fixes(self) -> None:
+        page = page_by_name(self.doc, "16 · Bill Editing")
+        for mode in ("dark", "light"):
+            board = one_node(page["children"], f"candidate.ios.bill-editing · {mode} · 440×956")
+            self.assertEqual(one_node(list(walk(board)), "status card")["layout"], "vertical")
+        for board in page["children"]:
+            for node in walk(board):
+                if node.get("name") == "navigation header":
+                    for button in node.get("children", []):
+                        if button.get("name", "").startswith("btn / "):
+                            self.assertTrue(button.get("children"), board["name"])
+
     def test_detail_and_extended_bottom_navs_are_vertical_in_op(self) -> None:
         navs = []
         for page_name in ("11 · Mobile Details", "12 · Mobile Extended"):

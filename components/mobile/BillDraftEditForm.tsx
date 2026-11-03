@@ -19,11 +19,15 @@ export interface BillDraftFieldValues {
 
 type Errors = Partial<Record<keyof BillDraftFieldValues, string>>
 
+function isPresent(value: unknown): boolean {
+  return value !== null && value !== undefined
+}
+
 function toInputValues(draft: BillImportDraft): BillDraftFieldValues {
   const p = draft.parsed_payload
   return {
-    bill_amount: p.bill_amount != null ? String(p.bill_amount) : '',
-    min_payment: p.min_payment != null ? String(p.min_payment) : '',
+    bill_amount: isPresent(p.bill_amount) ? String(p.bill_amount) : '',
+    min_payment: isPresent(p.min_payment) ? String(p.min_payment) : '',
     bill_month: p.bill_month ?? '',
     due_date: p.due_date ?? '',
     statement_date: p.statement_date ?? '',

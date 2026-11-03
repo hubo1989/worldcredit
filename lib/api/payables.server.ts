@@ -5,7 +5,8 @@
 
 import { query, queryOne, execute, uuid, now } from '../db'
 import { payablePeriodOf, payableDueDate, nextPayablePeriodOf, diffInCalendarDays } from '../utils'
-import { isPayableCurrency, type PayableCategory } from './payables.shared'
+import { normalizePayableCurrency, type PayableCategory } from './payables.shared'
+import { RpcDomainError } from './errors'
 
 export type { PayableCategory } from './payables.shared'
 
@@ -141,18 +142,21 @@ export async function getRecurringPayables(
 export async function createRecurringPayable(
   input: CreateRecurringPayableInput
 ): Promise<PayableWithStatus> {
-  if (!input.name?.trim()) throw new Error('请填写名称')
-  if (!Number.isFinite(input.amount) || input.amount < 0) throw new Error('金额必须是不小于 0 的数字')
-  if (!Number.isInteger(input.due_day) || input.due_day < 1 || input.due_day > 31) {
-    throw new Error('每月应付日必须在 1–31 之间')
+  if (!input.name?.trim()) throw new RpcDomainError('VALIDATION_FAILED', '请填写名称')
+  if (!Number.isFinite(input.amount) || input.amount < 0) {
+    throw new RpcDomainError('VALIDATION_FAILED', '金额必须是不小于 0 的数字')
   }
-  if (!isPayableCurrency(input.currency)) throw new Error('币种必须是 CNY / USD / HKD 之一')
+  if (!Number.isInteger(input.due_day) || input.due_day < 1 || input.due_day > 31) {
+    throw new RpcDomainError('VALIDATION_FAILED', '每月应付日必须在 1–31 之间')
+  }
+  const currency = normalizePayableCurrency(input.currency)
+  if (!currency) throw new RpcDomainError('VALIDATION_FAILED', '币种必须是 CNY / USD / HKD 之一')
   const id = uuid()
   const { error } = await execute(
     `INSERT INTO recurring_payables (id, created_by, name, category, amount, currency, due_day, holder_id, note, bank_account, is_active, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     [id, input.created_by, input.name.trim(), input.category, input.amount,
-     input.currency || 'CNY', input.due_day, input.holder_id || null, input.note || null,
+     currency, input.due_day, input.holder_id || null, input.note || null,
      input.bank_account?.trim() || null, now()]
   )
   if (error) throw new Error(error.message)
@@ -165,8 +169,10 @@ export async function updateRecurringPayable(
   id: string,
   patch: Partial<RecurringPayableInput> & { is_active?: number }
 ): Promise<PayableWithStatus> {
-  if (patch.currency !== undefined && !isPayableCurrency(patch.currency)) {
-    throw new Error('币种必须是 CNY / USD / HKD 之一')
+  if (patch.currency !== undefined) {
+    const currency = normalizePayableCurrency(patch.currency)
+    if (!currency) throw new RpcDomainError('VALIDATION_FAILED', '币种必须是 CNY / USD / HKD 之一')
+    patch = { ...patch, currency }
   }
   const fields: string[] = []
   const params: unknown[] = []

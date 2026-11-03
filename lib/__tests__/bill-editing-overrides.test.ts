@@ -14,6 +14,7 @@ import {
   updateBillStatusChecked,
   deleteBill,
 } from '../api/bills.server'
+import { RPC_REGISTRY } from '../api/registry'
 
 let db: ReturnType<typeof createOpportunityDb>
 
@@ -184,6 +185,63 @@ describe('clearOverride：清空回落导入值', () => {
     expect(raw?.due_date_override).toBe('2026-11-05')
   })
 
+  it('撤销 amount/due_date 钉住后在同一事务内联动重算状态（paid 回退 / overdue 暴露）', async () => {
+    await db.exec(`
+      INSERT INTO payments (id, bill_id, amount, paid_at, idempotency_key)
+      VALUES ('p_clr', 'b_ed', 800, '2026-10-10', 'k_clr');
+    `)
+    await updateBillFields('b_ed', { amount: 800 })
+    expect((await row())?.status).toBe('paid')
+
+    const afterAmountClear = await clearOverride('b_ed', ['amount'])
+    expect(afterAmountClear.bill_amount).toBe(1200)
+    expect(afterAmountClear.status).toBe('partial')
+    expect((await row())?.status).toBe('partial')
+
+    await db.exec(
+      "DELETE FROM payments WHERE id = 'p_clr'; UPDATE bills SET due_date = '2020-01-01', status = 'unpaid' WHERE id = 'b_ed';",
+    )
+    await updateBillFields('b_ed', { due_date: '2099-01-01' })
+    expect((await row())?.status).toBe('unpaid')
+
+    const afterDueClear = await clearOverride('b_ed', ['due_date'])
+    expect(afterDueClear.status).toBe('overdue')
+    expect((await row())?.status).toBe('overdue')
+  })
+
+  it('updateBillFields 把字段写入与状态重算放进同一次 batch（第二条语句失败时字段一并回滚）', async () => {
+    await db.exec(`
+      INSERT INTO payments (id, bill_id, amount, paid_at, idempotency_key)
+      VALUES ('p_atomic', 'b_ed', 800, '2026-10-10', 'k_atomic');
+      UPDATE bills SET status = 'partial' WHERE id = 'b_ed';
+    `)
+
+    let sawSingleAtomicBatch = false
+    const origBatch = db.batch.bind(db)
+    let injectRollback = true
+    db.batch = (async <T = unknown>(stmts: D1PreparedStatement[]) => {
+      if (injectRollback) {
+        injectRollback = false
+        sawSingleAtomicBatch = stmts.length >= 2
+        // 追加一条非法状态写入，验证同一事务内状态更新失败会把前面的 override 写入一起回滚
+        return origBatch<T>([
+          ...stmts,
+          db.prepare("UPDATE bills SET status = 'invalid_status' WHERE id = 'b_ed'"),
+        ])
+      }
+      return origBatch<T>(stmts)
+    }) as typeof db.batch
+
+    await expect(updateBillFields('b_ed', { amount: 800 })).rejects.toThrow()
+    expect(sawSingleAtomicBatch).toBe(true)
+    const rolledBack = await row()
+    expect(rolledBack?.bill_amount_override).toBeNull()
+    expect(rolledBack?.status).toBe('partial')
+
+    const updated = await updateBillFields('b_ed', { amount: 800 })
+    expect(updated.status).toBe('paid')
+  })
+
   it('不支持的字段被拒', async () => {
     await expect(clearOverride('b_ed', ['bill_month'])).rejects.toThrow('不支持撤销字段')
     await expect(clearOverride('b_ed', [])).rejects.toThrow('没有需要撤销的字段')
@@ -209,13 +267,19 @@ describe('updateBillStatusChecked：去掉 paid 短路，允许回退', () => {
     expect(downgraded.status).toBe('partial')
   })
 
-  it('无还款且到期日已过 → overdue；显式入参覆盖重算值', async () => {
+  it('无还款且到期日已过 → overdue；服务端内部可显式覆盖，RPC 表面忽略额外 status', async () => {
     await db.exec("UPDATE bills SET due_date = '2026-09-25'")
     const overdue = await updateBillStatusChecked('b_ed')
     expect(overdue.status).toBe('overdue')
 
     const forced = await updateBillStatusChecked('b_ed', 'unpaid')
     expect(forced.status).toBe('unpaid')
+
+    const rpcImpl = RPC_REGISTRY.bills?.updateBillStatusChecked?.impl
+    expect(typeof rpcImpl).toBe('function')
+    if (typeof rpcImpl !== 'function') throw new Error('RPC 入口缺失')
+    const viaRpc = (await rpcImpl('b_ed', 'paid')) as { status: string }
+    expect(viaRpc.status).toBe('overdue')
   })
 
   it('overdue 判定用生效到期日（override 优先）', async () => {

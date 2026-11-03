@@ -169,11 +169,7 @@ function BillCard({
 
   return (
     <div
-      role='button'
-      tabIndex={0}
-      aria-label={`查看 ${bankName} 卡片详情`}
       onClick={() => router.push(`/cards/${item.card.id}`)}
-      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/cards/${item.card.id}`) } }}
       className='cursor-pointer rounded-2xl border border-d-border bg-d-surface p-4 transition-colors active:bg-d-subtle/60'
     >
       {/* 主行：银行名 + 账户模式标签 + 状态徽章 */}
@@ -181,9 +177,14 @@ function BillCard({
         <div className='min-w-0 flex-1'>
           <div className='flex min-w-0 items-center gap-2'>
             <BankIcon size={16} className='shrink-0 text-d-accent-light' />
-            <p className='min-w-0 truncate text-[16px] font-bold leading-[22px] text-d-text'>
+            <button
+              type='button'
+              aria-label={`查看 ${bankName} 卡片详情`}
+              onClick={e => { e.stopPropagation(); router.push(`/cards/${item.card.id}`) }}
+              className='min-w-0 truncate text-left text-[16px] font-bold leading-[22px] text-d-text'
+            >
               {bankName}
-            </p>
+            </button>
             <span
               className={
                 'shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-semibold leading-[14px] ' +
@@ -312,32 +313,33 @@ function BillCard({
               {item.historyBills.map(b => {
                 const bPaid = b.computed_status === 'paid'
                 const bMonth = b.bill_month || (b.due_date ? b.due_date.slice(0, 7) : '账单')
+                const HistoryLabel = bPaid ? 'span' : 'button'
+                const goToBill = (e: { stopPropagation: () => void }) => {
+                  e.stopPropagation()
+                  router.push('/bills/' + b.id)
+                }
                 return (
                   <div
                     key={b.id}
-                    role={bPaid ? undefined : 'button'}
-                    tabIndex={bPaid ? undefined : 0}
                     onClick={e => { e.stopPropagation(); if (!bPaid) onOpenPayment(b) }}
-                    onKeyDown={e => {
-                      if (e.target === e.currentTarget && !bPaid && (e.key === 'Enter' || e.key === ' ')) {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        onOpenPayment(b)
-                      }
-                    }}
                     className={
-                      'flex cursor-pointer items-center justify-between rounded-lg bg-d-subtle p-2.5 text-left' +
-                      (bPaid ? ' cursor-default' : '')
+                      'flex items-center justify-between rounded-lg bg-d-subtle p-2.5 text-left' +
+                      (bPaid ? ' cursor-default' : ' cursor-pointer')
                     }
                   >
-                    <span className='min-w-0'>
+                    <HistoryLabel
+                      type={bPaid ? undefined : 'button'}
+                      aria-label={bPaid ? undefined : `登记 ${bMonth} 期账单还款`}
+                      onClick={bPaid ? undefined : e => { e.stopPropagation(); onOpenPayment(b) }}
+                      className='min-w-0 text-left'
+                    >
                       <span className='block text-[12px] font-semibold leading-4 text-d-text'>
                         {bMonth} 期账单
                       </span>
                       <span className='mt-0.5 block text-[10px] leading-4 text-d-muted'>
                         到期日: {b.due_date ? format(new Date(b.due_date), 'yyyy-MM-dd') : '—'}
                       </span>
-                    </span>
+                    </HistoryLabel>
                     <span className='flex shrink-0 items-center gap-2'>
                       <span className='text-[12px] font-semibold text-d-text'>
                         {currencySymbol(rowCurrency)}
@@ -355,16 +357,13 @@ function BillCard({
                       </span>
                       <button
                         type='button'
-                        onClick={e => { e.stopPropagation(); router.push('/bills/' + b.id) }}
-                        className='text-[11px] font-semibold text-d-accent-light underline underline-offset-2'
+                        onClick={goToBill}
+                        onKeyDown={e => { e.stopPropagation() }}
+                        className='inline-flex items-center gap-0.5 text-[11px] font-semibold text-d-accent-light'
                       >
-                        编辑
+                        <span className='underline underline-offset-2'>编辑</span>
+                        <ChevronRightIcon size={14} className='text-d-muted' />
                       </button>
-                      <ChevronRightIcon
-                        size={14}
-                        className='text-d-muted'
-                        onClick={e => { e.stopPropagation(); router.push('/bills/' + b.id) }}
-                      />
                     </span>
                   </div>
                 )

@@ -11,7 +11,7 @@ struct PayableFormView: View {
     @State private var name = ""
     @State private var category: PayableCategory = .rent
     @State private var amountText = ""
-    @State private var currency = "CNY"
+    @State private var currency: PayableCurrencySelection = .supported(.cny)
     @State private var dueDay = 1
     @State private var note = ""
     @State private var bankAccount = ""
@@ -32,11 +32,20 @@ struct PayableFormView: View {
                     }
                     TextField("金额", text: $amountText)
                         .keyboardType(.decimalPad)
-                    // 币种是封闭枚举（生产库只有 CNY/USD/HKD 三种卡），不再自由输入
                     Picker("币种", selection: $currency) {
-                        Text("人民币 CNY").tag("CNY")
-                        Text("美元 USD").tag("USD")
-                        Text("港币 HKD").tag("HKD")
+                        if let existing, PayableCurrency.normalize(existing.currency) == nil {
+                            let label = existing.currency.trimmingCharacters(in: .whitespacesAndNewlines)
+                            Text("保留 \(label.isEmpty ? "空币种" : label)（历史值）")
+                                .tag(PayableCurrencySelection.legacy(existing.currency))
+                        }
+                        ForEach(PayableCurrency.allCases) { item in
+                            Text(item.label).tag(PayableCurrencySelection.supported(item))
+                        }
+                    }
+                    if let existing, PayableCurrency.normalize(existing.currency) == nil {
+                        Text("可保留历史币种；如需更改，请选择 CNY / USD / HKD，并核对金额。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                     // 点击行弹出滚轮选择（替代 Stepper 加减：从 1 按到 31 不现实）
                     Button {
@@ -126,7 +135,7 @@ struct PayableFormView: View {
         name = existing.name
         category = existing.category
         amountText = String(format: "%.2f", existing.amount)
-        currency = existing.currency
+        currency = PayableCurrencySelection(persistedCurrency: existing.currency)
         dueDay = existing.dueDay
         note = existing.note ?? ""
         bankAccount = existing.bankAccount ?? ""
@@ -137,16 +146,11 @@ struct PayableFormView: View {
             errorMessage = "金额必须是不小于 0 的数字"
             return
         }
-        let trimmedCurrency = currency.trimmingCharacters(in: .whitespaces).uppercased()
-        guard trimmedCurrency.count == 3 else {
-            errorMessage = "币种请填 3 位代码，如 CNY"
-            return
-        }
         let draft = PayableDraft(
             name: name.trimmingCharacters(in: .whitespaces),
             category: category,
             amount: amount,
-            currency: trimmedCurrency,
+            currency: currency.draftCurrency,
             dueDay: dueDay,
             note: note.isEmpty ? nil : note,
             bankAccount: bankAccount.isEmpty ? nil : bankAccount

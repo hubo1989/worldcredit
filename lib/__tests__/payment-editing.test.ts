@@ -223,6 +223,52 @@ describe('payments.updatePayment / deletePayment (spec 13)', () => {
       await expect(updatePayment('p1', null as never)).rejects.toThrow('缺少合法的编辑参数')
       await expect(updatePayment('nope', { amount: 100 })).rejects.toThrow('还款记录不存在')
     })
+
+    it('读取→batch 窗口内并发 INSERT 还款：调大金额触发数据库层超额守卫并整批回滚', async () => {
+      await seedBill('b1', { amount: 1000, due_date: '2026-10-25' })
+      await seedPayment('p1', 'b1', 400)
+      await db.exec(`UPDATE bills SET status = 'partial' WHERE id = 'b1';`)
+
+      const origBatch = db.batch.bind(db)
+      let injected = false
+      db.batch = (async <T = unknown>(stmts: D1PreparedStatement[]) => {
+        if (!injected) {
+          injected = true
+          // 模拟 updatePayment 读完 SUM(400) 后、进入 batch 事务前，另一请求合法插入了 500
+          await seedPayment('p_race', 'b1', 500)
+        }
+        return origBatch<T>(stmts)
+      }) as typeof db.batch
+
+      await expect(updatePayment('p1', { amount: 600 })).rejects.toThrow(
+        /超过该账单剩余应还|超过该账单剩余可还额度/,
+      )
+      expect(await paymentTotal('b1')).toBe(900)
+      const p1 = await db.prepare('SELECT amount FROM payments WHERE id = ?').bind('p1').first<{ amount: number }>()
+      expect(p1?.amount).toBe(400)
+    })
+
+    it('读取→batch 窗口内并发 INSERT 还款：仅改备注时账单状态按事务内最新 Σpayments 重算', async () => {
+      await seedBill('b1', { amount: 1000, due_date: '2026-10-25' })
+      await seedPayment('p1', 'b1', 400)
+      await db.exec(`UPDATE bills SET status = 'partial' WHERE id = 'b1';`)
+
+      const origBatch = db.batch.bind(db)
+      let injected = false
+      db.batch = (async <T = unknown>(stmts: D1PreparedStatement[]) => {
+        if (!injected) {
+          injected = true
+          // 并发还款 600 已把总额推到 1000（结清）
+          await seedPayment('p_race_settled', 'b1', 600)
+          await db.exec(`UPDATE bills SET status = 'paid' WHERE id = 'b1';`)
+        }
+        return origBatch<T>(stmts)
+      }) as typeof db.batch
+
+      await updatePayment('p1', { note: '补备注不应把已结清状态冲回 partial' })
+      expect(await paymentTotal('b1')).toBe(1000)
+      expect(await billStatus('b1')).toBe('paid')
+    })
   })
 
   describe('deletePayment: 状态与统计收敛', () => {
@@ -263,8 +309,29 @@ describe('payments.updatePayment / deletePayment (spec 13)', () => {
       expect(await billStatus('b1')).toBe('overdue')
     })
 
-    it('删除不存在的记录报 NOT_FOUND', async () => {
-      await expect(deletePayment('ghost')).rejects.toThrow('还款记录不存在')
+    it('删除不存在的记录报 NOT_FOUND',
+      async () => {
+        await expect(deletePayment('ghost')).rejects.toThrow('还款记录不存在')
+      })
+
+    it('deletePayment 读取→batch 窗口内并发新增还款时，状态按事务内删除后的真实 Σpayments 重算', async () => {
+      await seedBill('b1', { amount: 1000, due_date: '2099-01-01' })
+      await seedPayment('p1', 'b1', 400)
+      await db.exec(`UPDATE bills SET status = 'partial' WHERE id = 'b1';`)
+
+      const origBatch = db.batch.bind(db)
+      let injected = false
+      db.batch = (async <T = unknown>(stmts: D1PreparedStatement[]) => {
+        if (!injected) {
+          injected = true
+          await seedPayment('p_race_keep', 'b1', 600)
+        }
+        return origBatch<T>(stmts)
+      }) as typeof db.batch
+
+      await deletePayment('p1')
+      expect(await paymentTotal('b1')).toBe(600)
+      expect(await billStatus('b1')).toBe('partial')
     })
   })
 

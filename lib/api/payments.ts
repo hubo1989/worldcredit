@@ -1,10 +1,9 @@
 // lib/api/payments.ts
-import { query, queryOne, execute, batch, uuid } from '../db'
+import { query, queryOne, execute, batch, uuid, today } from '../db'
 import type { Payment, Bill } from '../types'
 import type { PaymentWithBill } from './bills.server'
 import {
   generateIdempotencyKey,
-  computePaymentDrivenStatus,
   effectiveBillAmount,
   isValidCalendarDate,
 } from '../utils'
@@ -55,19 +54,27 @@ export async function assertPaymentAccess(paymentId: unknown, ctx: MemberContext
 
 /**
  * 还款变更（改/删）后的状态落库：变更与状态更新放同一个 batch（D1 隐式事务），
- * 避免「记了还款但状态没改」。状态口径 = computePaymentDrivenStatus
- * （已还 ≥ 生效金额 − 0.01 即 paid，允许从 paid 回退）。
- * projectedTotalPaid 由调用方按「写入后的预期 Σpayments」传入——batch 执行前
- * DB 里还是旧值，现场读 SUM 会拿到变更前的总额。bills 的 sync 触发器
- * （0019 trg_bills_update）会自动补 sync_changes，无需手写。
+ * 且状态在事务内直接按写入后的 `SUM(payments)` 与最新生效金额/生效到期日计算，
+ * 避免读取→batch 窗口内的并发还款或账单改动让预计算的投影状态过期。
+ * 口径与 computePaymentDrivenStatus 一致（已还 ≥ 生效金额 − 0.01 即 paid，允许从 paid 回退）。
+ * bills 的 sync 触发器（0019 trg_bills_update）会自动补 sync_changes，无需手写。
  */
 function withRecalcBillStatus(
   statements: { sql: string; params: unknown[] }[],
-  bill: Bill,
-  projectedTotalPaid: number,
+  billId: string,
 ): void {
-  const nextStatus = computePaymentDrivenStatus(bill, projectedTotalPaid)
-  statements.push({ sql: 'UPDATE bills SET status = ? WHERE id = ?', params: [nextStatus, bill.id] })
+  statements.push({
+    sql: `UPDATE bills SET status = CASE
+      WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) >= COALESCE(bill_amount_override, bill_amount) - 0.01
+      THEN 'paid'
+      WHEN (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE bill_id = ?) > 0
+      THEN 'partial'
+      WHEN COALESCE(due_date_override, due_date) < ?
+      THEN 'overdue'
+      ELSE 'unpaid'
+    END WHERE id = ?`,
+    params: [billId, billId, today(), billId],
+  })
 }
 
 export interface UpdatePaymentPatch {
@@ -177,14 +184,12 @@ export async function updatePayment(paymentId: string, patch: UpdatePaymentPatch
     sql: `UPDATE payments SET ${sets.join(', ')} WHERE id = ?`,
     params: [...params, paymentId],
   })
-  // 状态重算的已还总额：Σpayments（其他还款合计 + 本笔改后金额）。
-  withRecalcBillStatus(statements, bill, otherPaid + nextAmount)
+  withRecalcBillStatus(statements, bill.id)
 
   const { error } = await batch(statements)
   if (error) {
-    // 防御性兜底（正常路径不可达：batch 内只有 UPDATE，0022 只挂 BEFORE INSERT；
-    // batch 是 D1 隐式事务，并发 INSERT 只能落在整个 batch 之前或之后）——
-    // 保留翻译以防未来触发器覆盖面变化。
+    // 0027 trg_payments_guard_overpay_update 在事务内兜底读取→写入窗口中的并发 INSERT：
+    // 若调大本笔金额使事务内 Σpayments 越过生效金额 + 0.01，整批回滚并映射为 409 CONFLICT。
     if (error.message.includes('PAYMENT_EXCEEDS_REMAINING')) {
       throw new RpcDomainError('CONFLICT', '还款金额超过该账单剩余应还，请刷新后重试')
     }
@@ -214,17 +219,10 @@ export async function deletePayment(paymentId: string): Promise<{ ok: true }> {
   if (billErr) throw new Error(billErr.message)
   if (!bill) throw new RpcDomainError('NOT_FOUND', '还款记录所属的账单不存在')
 
-  const { data: totalRow, error: totalErr } = await query<{ total: number | null }>(
-    'SELECT SUM(amount) AS total FROM payments WHERE bill_id = ?',
-    [payment.bill_id]
-  )
-  if (totalErr) throw new Error(totalErr.message)
-  const currentPaid = Number(totalRow?.[0]?.total ?? 0)
-
   const statements: { sql: string; params: unknown[] }[] = [
     { sql: 'DELETE FROM payments WHERE id = ?', params: [paymentId] },
   ]
-  withRecalcBillStatus(statements, bill, currentPaid - payment.amount)
+  withRecalcBillStatus(statements, bill.id)
 
   const { error } = await batch(statements)
   if (error) throw new Error(error.message)

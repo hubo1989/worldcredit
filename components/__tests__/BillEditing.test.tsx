@@ -82,6 +82,10 @@ describe('validateEditableFields', () => {
     expect(validateEditableFields({ ...base, statement_start: '2026-11-31' }).statement_start).toBeTruthy()
   })
 
+  it('拒绝空的还款到期日', () => {
+    expect(validateEditableFields({ ...base, due_date: '   ' }).due_date).toBe('请填写还款到期日')
+  })
+
   it('日期可留空', () => {
     expect(
       validateEditableFields({ ...base, statement_date: '', statement_start: '', statement_end: '' }),
@@ -195,6 +199,64 @@ describe('BillEditForm', () => {
 
     expect(submitFields).not.toHaveBeenCalled()
     expect(screen.getByText('请填写账单金额')).toBeInTheDocument()
+  })
+
+  it('清空必填到期日被前端校验拦截，不会静默提交成功', async () => {
+    const user = userEvent.setup()
+    const submitFields = vi.fn().mockResolvedValue(makeBill())
+    render(<BillEditForm {...defaultProps} onSubmitFields={submitFields} />)
+
+    const dueDate = screen.getByLabelText(/还款到期日/)
+    await user.clear(dueDate)
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    expect(submitFields).not.toHaveBeenCalled()
+    expect(screen.getByText('请填写还款到期日')).toBeInTheDocument()
+  })
+
+  it('撤销单个钉住只回填该字段、保留其他未保存编辑，并清除被撤销字段残留错误', async () => {
+    const user = userEvent.setup()
+    const clearField = vi.fn().mockResolvedValue(makeBill({ bill_amount_override: undefined }))
+    render(
+      <BillEditForm
+        {...defaultProps}
+        bill={makeBill({
+          bill_amount: 4720,
+          bill_amount_override: 4720,
+          min_payment_override: 500,
+        })}
+        onClearOverrideField={clearField}
+      />,
+    )
+
+    const amount = screen.getByLabelText('账单金额')
+    const minPayment = screen.getByLabelText('最低还款额')
+
+    await user.clear(minPayment)
+    await user.type(minPayment, '666')
+    await user.clear(amount)
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(screen.getByText('请填写账单金额')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '撤销账单金额的手动设定' }))
+
+    await waitFor(() => {
+      expect(clearField).toHaveBeenCalledWith('bill-1', ['amount'])
+    })
+    expect(amount).toHaveValue(4800)
+    expect(minPayment).toHaveValue(666)
+    expect(screen.queryByText('请填写账单金额')).not.toBeInTheDocument()
+  })
+
+  it('状态区明确只读，所有状态项标记 aria-disabled', () => {
+    render(<BillEditForm {...defaultProps} />)
+    expect(screen.getByText('状态（只读 · 保存时自动重算）')).toBeInTheDocument()
+    const partialCard = screen.getByText('部分还款').closest('[aria-disabled]')
+    const unpaidCard = screen.getByText('待还').closest('[aria-disabled]')
+    expect(partialCard).toHaveAttribute('aria-disabled', 'true')
+    expect(partialCard).toHaveAttribute('aria-current', 'true')
+    expect(unpaidCard).toHaveAttribute('aria-disabled', 'true')
+    expect(unpaidCard).not.toHaveAttribute('aria-current')
   })
 
   it('撤销金额钉住：调 clearOverride(billId, ["amount"])', async () => {

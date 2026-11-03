@@ -85439,7 +85439,7 @@
                 {
                   "type": "frame",
                   "id": "n110441",
-                  "name": "fields card",
+                  "name": "status card",
                   "width": "fill_container",
                   "layout": "vertical",
                   "padding": [
@@ -87417,9 +87417,9 @@
                   "id": "n110563",
                   "name": "dialog",
                   "x": 20.0,
-                  "y": 222.0,
+                  "y": 190.0,
                   "width": 400.0,
-                  "height": 384.0,
+                  "height": 448.0,
                   "layout": "vertical",
                   "gap": 12.0,
                   "padding": 20.0,
@@ -88149,17 +88149,6 @@
                       "color": "$color.obsidian.text"
                     }
                   ]
-                },
-                {
-                  "type": "frame",
-                  "id": "n110611",
-                  "name": "btn / delete bill",
-                  "width": 44.0,
-                  "height": 44.0,
-                  "layout": "horizontal",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": []
                 }
               ]
             },
@@ -89017,9 +89006,9 @@
                   "id": "n110666",
                   "name": "dialog",
                   "x": 20.0,
-                  "y": 216.0,
+                  "y": 192.0,
                   "width": 400.0,
-                  "height": 396.0,
+                  "height": 444.0,
                   "layout": "vertical",
                   "gap": 12.0,
                   "padding": 20.0,
@@ -90327,17 +90316,6 @@
                       "color": "$color.obsidian.text"
                     }
                   ]
-                },
-                {
-                  "type": "frame",
-                  "id": "n110751",
-                  "name": "btn / delete bill",
-                  "width": 44.0,
-                  "height": 44.0,
-                  "layout": "horizontal",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": []
                 }
               ]
             },
@@ -91185,17 +91163,6 @@
                       "color": "$color.obsidian.text"
                     }
                   ]
-                },
-                {
-                  "type": "frame",
-                  "id": "n110808",
-                  "name": "btn / delete bill",
-                  "width": 44.0,
-                  "height": 44.0,
-                  "layout": "horizontal",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": []
                 }
               ]
             },
@@ -92284,9 +92251,9 @@
                   "id": "n110880",
                   "name": "action sheet",
                   "x": 0.0,
-                  "y": 578.0,
+                  "y": 508.0,
                   "width": 440.0,
-                  "height": 330.0,
+                  "height": 400.0,
                   "layout": "vertical",
                   "gap": 0.0,
                   "padding": [
@@ -93783,7 +93750,7 @@
                 {
                   "type": "frame",
                   "id": "n110984",
-                  "name": "fields card",
+                  "name": "status card",
                   "width": "fill_container",
                   "layout": "vertical",
                   "padding": [
@@ -95761,9 +95728,9 @@
                   "id": "n111106",
                   "name": "dialog",
                   "x": 20.0,
-                  "y": 222.0,
+                  "y": 190.0,
                   "width": 400.0,
-                  "height": 384.0,
+                  "height": 448.0,
                   "layout": "vertical",
                   "gap": 12.0,
                   "padding": 20.0,
@@ -96493,17 +96460,6 @@
                       "color": "$color.text.primary"
                     }
                   ]
-                },
-                {
-                  "type": "frame",
-                  "id": "n111154",
-                  "name": "btn / delete bill",
-                  "width": 44.0,
-                  "height": 44.0,
-                  "layout": "horizontal",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": []
                 }
               ]
             },
@@ -97361,9 +97317,9 @@
                   "id": "n111209",
                   "name": "dialog",
                   "x": 20.0,
-                  "y": 216.0,
+                  "y": 192.0,
                   "width": 400.0,
-                  "height": 396.0,
+                  "height": 444.0,
                   "layout": "vertical",
                   "gap": 12.0,
                   "padding": 20.0,
@@ -98671,17 +98627,6 @@
                       "color": "$color.text.primary"
                     }
                   ]
-                },
-                {
-                  "type": "frame",
-                  "id": "n111294",
-                  "name": "btn / delete bill",
-                  "width": 44.0,
-                  "height": 44.0,
-                  "layout": "horizontal",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": []
                 }
               ]
             },
@@ -99529,17 +99474,6 @@
                       "color": "$color.text.primary"
                     }
                   ]
-                },
-                {
-                  "type": "frame",
-                  "id": "n111351",
-                  "name": "btn / delete bill",
-                  "width": 44.0,
-                  "height": 44.0,
-                  "layout": "horizontal",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": []
                 }
               ]
             },
@@ -100628,9 +100562,9 @@
                   "id": "n111423",
                   "name": "action sheet",
                   "x": 0.0,
-                  "y": 578.0,
+                  "y": 508.0,
                   "width": 440.0,
-                  "height": 330.0,
+                  "height": 400.0,
                   "layout": "vertical",
                   "gap": 0.0,
                   "padding": [
