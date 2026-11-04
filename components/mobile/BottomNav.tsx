@@ -1,16 +1,17 @@
 'use client'
 
 import { usePathname, useRouter } from 'next/navigation'
-import { HomeIcon, BillsIcon, MineIcon } from '@/components/icons/WcIcon'
+import { HomeIcon, BillsIcon, CardIcon, MineIcon } from '@/components/icons/WcIcon'
 
 const navItems = [
-  // §2.1: 3 tab（首页 / 账单 / 我的）；图标统一来自 WcIcon 线性 SVG 库
+  // §2.1: 4 tab（首页 / 账单 / 卡片 / 我的）；图标统一来自 WcIcon 线性 SVG 库
   { label: '首页', icon: <HomeIcon />, path: '/dashboard' },
   { label: '账单', icon: <BillsIcon />, path: '/bills' },
+  { label: '卡片', icon: <CardIcon />, path: '/cards' },
   { label: '我的', icon: <MineIcon />, path: '/settings' },
 ]
 
-/** 底部导航（暗色）。3 tab，选中态顶部品牌色短线沿用 §7.3 语义。 */
+/** 底部导航（暗色）。4 tab，选中态顶部品牌色短线沿用 §7.3 语义。 */
 export function BottomNav() {
   const pathname = usePathname()
   const router = useRouter()

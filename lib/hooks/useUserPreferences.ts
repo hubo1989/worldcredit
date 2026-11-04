@@ -43,10 +43,12 @@ export function useUserPreferences() {
   })
 
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const loadPreferences = useCallback(async () => {
     if (!user?.id) return
     setLoading(true)
+    setLoadError(null)
     try {
       const prefs = await getUserPreferences(user.id)
       setDisplayConfig(prefs.display_config)
@@ -56,6 +58,7 @@ export function useUserPreferences() {
       }
     } catch (err) {
       console.error('Failed to load user preferences:', err)
+      setLoadError(err instanceof Error ? err.message : '加载偏好设置失败')
     } finally {
       setLoading(false)
     }
@@ -66,9 +69,10 @@ export function useUserPreferences() {
   }, [loadPreferences])
 
   const updateDisplay = async (updates: Partial<UserDisplayConfig>) => {
+    const prev = displayConfig
     const nextDisplay = { ...displayConfig, ...updates }
     setDisplayConfig(nextDisplay)
-    
+
     // Update local cache immediately for snappy UI
     if (typeof window !== 'undefined') {
       const currentCache = JSON.parse(localStorage.getItem(PREF_CACHE_KEY) || '{}')
@@ -76,11 +80,22 @@ export function useUserPreferences() {
     }
 
     if (user?.id) {
-      await updateUserPreferences(user.id, { display_config: nextDisplay })
+      try {
+        await updateUserPreferences(user.id, { display_config: nextDisplay })
+      } catch (err) {
+        // Rollback on write failure
+        setDisplayConfig(prev)
+        if (typeof window !== 'undefined') {
+          const currentCache = JSON.parse(localStorage.getItem(PREF_CACHE_KEY) || '{}')
+          localStorage.setItem(PREF_CACHE_KEY, JSON.stringify({ ...currentCache, display_config: prev }))
+        }
+        throw err
+      }
     }
   }
 
   const updateReminder = async (updates: Partial<UserReminderConfig>) => {
+    const prev = reminderConfig
     const nextReminder = { ...reminderConfig, ...updates }
     setReminderConfig(nextReminder)
 
@@ -90,7 +105,17 @@ export function useUserPreferences() {
     }
 
     if (user?.id) {
-      await updateUserPreferences(user.id, { reminder_config: nextReminder })
+      try {
+        await updateUserPreferences(user.id, { reminder_config: nextReminder })
+      } catch (err) {
+        // Rollback on write failure
+        setReminderConfig(prev)
+        if (typeof window !== 'undefined') {
+          const currentCache = JSON.parse(localStorage.getItem(PREF_CACHE_KEY) || '{}')
+          localStorage.setItem(PREF_CACHE_KEY, JSON.stringify({ ...currentCache, reminder_config: prev }))
+        }
+        throw err
+      }
     }
   }
 
@@ -102,9 +127,11 @@ export function useUserPreferences() {
     displayConfig,
     reminderConfig,
     loading,
+    loadError,
     updateDisplay,
     updateReminder,
     togglePrivacyMode,
-    refreshPreferences: loadPreferences
+    refreshPreferences: loadPreferences,
+    reload: loadPreferences
   }
 }

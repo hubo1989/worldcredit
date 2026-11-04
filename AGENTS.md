@@ -16,7 +16,7 @@
 
 - 浏览器端**不写 SQL**：组件只调 `lib/api/*.ts` 包装函数，走 `/api/rpc/<module>/<fn>` 命名白名单路由（`lib/api/rpc-client.ts` + `lib/api/registry.ts`）
 - UI 用 ObsidianUI 暗色体系：`components/obsidian/` 原语 + `globals.css` 的 `d-*` token（Tailwind v4 `@theme`）。不要再引入 MUI
-- 设计源在 `design/openpencil/`：`.op` 文件是唯一真源，token 三方对齐（foundations.json ↔ .op ↔ globals.css），CI 门禁 `verify-batch.sh --source-only` 会拦漂移
+- 设计源在 `design/baoyu/`：baoyu-design（`canvas.json` + `.dc.html` 画板）是现行唯一真源，token 三方对齐（`tokens.json` ↔ `foundations.json` ↔ `globals.css`），CI 门禁 `verify-batch.sh --source-only` 会拦漂移；`design/openpencil/` 与 `.op` 文件保留为历史存档，不再对其进行写操作
 - 部署：`npx vinext deploy`（本地构建 + 上传）；密钥用 `wrangler secret put`
 - `db/seed*.ts`、`scripts/*.mjs` 里残留的 `@insforge/sdk` 脚本是历史存档，SDK 已从依赖移除，跑不动了——别照着它们写新代码
 
@@ -26,7 +26,7 @@
 npm run typecheck   # tsc --noEmit
 npm run lint        # eslint --max-warnings=0
 npm test            # vitest run
-bash design/openpencil/verify-batch.sh --source-only   # 设计源五项检查
+bash design/openpencil/verify-batch.sh --source-only   # 设计源质量门禁（baoyu-design 画板/Token/热区）
 ```
 
 CI（`.github/workflows/ci.yml`）：代码质量 + 设计源质量，PR 到 main 时跑。

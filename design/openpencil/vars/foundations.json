@@ -1,18 +1,60 @@
 {
-  "color.obsidian.canvas": { "type": "color", "value": "#0A0F1E" },
-  "color.obsidian.surface": { "type": "color", "value": "#131A2A" },
-  "color.obsidian.subtle": { "type": "color", "value": "#1A2334" },
-  "color.obsidian.border": { "type": "color", "value": "#26304A" },
-  "color.obsidian.text": { "type": "color", "value": "#F5F7FA" },
-  "color.obsidian.muted": { "type": "color", "value": "#9AA6BC" },
-  "color.obsidian.accent": { "type": "color", "value": "#3B6FE0" },
-  "color.obsidian.gold": { "type": "color", "value": "#F0C75E" },
-  "color.obsidian.goldSoft": { "type": "color", "value": "#3A3320" },
-  "color.obsidian.warningInk": { "type": "color", "value": "#FFC46B" },
-  "color.obsidian.dangerInk": { "type": "color", "value": "#FF8A8A" },
-  "color.obsidian.dangerSoft": { "type": "color", "value": "#3A222A" },
-  "color.obsidian.successInk": { "type": "color", "value": "#6EE7A0" },
-  "color.obsidian.successSoft": { "type": "color", "value": "#1A332A" },
+  "color.obsidian.canvas": {
+    "type": "color",
+    "value": "#0A0F1E"
+  },
+  "color.obsidian.surface": {
+    "type": "color",
+    "value": "#131A2A"
+  },
+  "color.obsidian.subtle": {
+    "type": "color",
+    "value": "#1A2334"
+  },
+  "color.obsidian.border": {
+    "type": "color",
+    "value": "#26304A"
+  },
+  "color.obsidian.text": {
+    "type": "color",
+    "value": "#F5F7FA"
+  },
+  "color.obsidian.muted": {
+    "type": "color",
+    "value": "#9AA6BC"
+  },
+  "color.obsidian.accent": {
+    "type": "color",
+    "value": "#3B6FE0"
+  },
+  "color.obsidian.gold": {
+    "type": "color",
+    "value": "#F0C75E"
+  },
+  "color.obsidian.goldSoft": {
+    "type": "color",
+    "value": "#3A3320"
+  },
+  "color.obsidian.warningInk": {
+    "type": "color",
+    "value": "#FFC46B"
+  },
+  "color.obsidian.dangerInk": {
+    "type": "color",
+    "value": "#FF8A8A"
+  },
+  "color.obsidian.dangerSoft": {
+    "type": "color",
+    "value": "#3A222A"
+  },
+  "color.obsidian.successInk": {
+    "type": "color",
+    "value": "#6EE7A0"
+  },
+  "color.obsidian.successSoft": {
+    "type": "color",
+    "value": "#1A332A"
+  },
   "color.brand.navy800": {
     "type": "color",
     "value": "#0A1F44"
@@ -340,5 +382,85 @@
   "layout.navbar.height": {
     "type": "number",
     "value": 64
+  },
+  "color.obsidian.accentLight": {
+    "type": "color",
+    "value": "#7AADFF"
+  },
+  "color.obsidian.goldDeep": {
+    "type": "color",
+    "value": "#D9A93F"
+  },
+  "color.obsidian.danger": {
+    "type": "color",
+    "value": "#E5484D"
+  },
+  "color.obsidian.light.canvas": {
+    "type": "color",
+    "value": "#F5F7FA"
+  },
+  "color.obsidian.light.surface": {
+    "type": "color",
+    "value": "#FFFFFF"
+  },
+  "color.obsidian.light.subtle": {
+    "type": "color",
+    "value": "#F5F8FF"
+  },
+  "color.obsidian.light.border": {
+    "type": "color",
+    "value": "#E2E8F0"
+  },
+  "color.obsidian.light.text": {
+    "type": "color",
+    "value": "#0A1F44"
+  },
+  "color.obsidian.light.muted": {
+    "type": "color",
+    "value": "#5B6478"
+  },
+  "color.obsidian.light.accent": {
+    "type": "color",
+    "value": "#1E3A8A"
+  },
+  "color.obsidian.light.accentLight": {
+    "type": "color",
+    "value": "#3B6FE0"
+  },
+  "color.obsidian.light.gold": {
+    "type": "color",
+    "value": "#C9A227"
+  },
+  "color.obsidian.light.goldDeep": {
+    "type": "color",
+    "value": "#8A6D1F"
+  },
+  "color.obsidian.light.goldSoft": {
+    "type": "color",
+    "value": "#F5EED8"
+  },
+  "color.obsidian.light.danger": {
+    "type": "color",
+    "value": "#D32F2F"
+  },
+  "color.obsidian.light.dangerSoft": {
+    "type": "color",
+    "value": "#FAE6E6"
+  },
+  "color.obsidian.light.dangerInk": {
+    "type": "color",
+    "value": "#B71C1C"
+  },
+  "color.obsidian.light.warningInk": {
+    "type": "color",
+    "value": "#92400E"
+  },
+  "color.obsidian.light.successSoft": {
+    "type": "color",
+    "value": "#E6EFE6"
+  },
+  "color.obsidian.light.successInk": {
+    "type": "color",
+    "value": "#1B5E20"
   }
 }
