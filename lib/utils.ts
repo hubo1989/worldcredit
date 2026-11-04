@@ -315,31 +315,169 @@ export function canManuallySetBillAmount(
   return remaining >= 0 && remaining < days;
 }
 
-// ── 周期性固定支出（房租 / 贷款 / 其他按月应付） ────────────────────────────
+// ── 周期性固定支出（房租 / 贷款 / 其他周期应付） ────────────────────────────
+
+export interface PayableCycleConfig {
+  cycle_type?: "monthly" | "every_n_months" | "yearly" | null;
+  cycle_months?: number | null;
+  due_month?: number | null;
+  due_day?: number | null;
+  anchor_period?: string | null;
+  created_at?: string | null;
+}
+
+function formatPayableYearMonth(year: number, month1Based: number): string {
+  return `${year}-${String(month1Based).padStart(2, "0")}`;
+}
+
+function parsePayableYearMonth(period: string | null | undefined): { year: number; month: number } | null {
+  if (typeof period !== "string") return null;
+  const m = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(period.trim());
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  if (year < 1970 || year > 2100) return null;
+  return { year, month };
+}
+
+/** 账期按月平移（months 可正可负），返回 'YYYY-MM'。 */
+export function addMonthsToPayablePeriod(period: string, months: number): string {
+  const parsed = parsePayableYearMonth(period);
+  if (!parsed) {
+    const [year, month] = period.split("-").map(Number);
+    const next = addMonths(new Date(year, month - 1, 1), months);
+    return formatPayableYearMonth(next.getFullYear(), next.getMonth() + 1);
+  }
+  const totalMonths = parsed.year * 12 + (parsed.month - 1) + months;
+  const nextYear = Math.floor(totalMonths / 12);
+  const nextMonth = (((totalMonths % 12) + 12) % 12) + 1;
+  return formatPayableYearMonth(nextYear, nextMonth);
+}
 
 /**
  * 某个应付事项在 today 所处的账期（'YYYY-MM'）。
  *
- * 账期按「应付日所在的那个月」定义，不做「过了应付日就算下期」的滚动：
- * 房租 15 号到期，16 号仍然属于本月账期（只是已逾期），下个月才换期。
- * 这样逾期才表达得出来——滚动口径会把「本月该付没付」直接抹掉。
+ * - monthly（默认）：按 today 所在月，不做「过了应付日就算下期」的滚动，保留逾期表达；
+ * - every_n_months：从起算账期 anchor_period 起每 X 个月一档，落在当前档位内直到下一档开始；
+ * - yearly：按每年 due_month 所在月（12 个月一档），未到达首个 anchor_period 前钳制在首期。
  */
-export function payablePeriodOf(today: Date = new Date()): string {
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+export function payablePeriodOf(today: Date = new Date(), cycle?: PayableCycleConfig): string {
+  const todayYear = today.getFullYear();
+  const todayMonth = today.getMonth() + 1;
+  const rawTodayPeriod = formatPayableYearMonth(todayYear, todayMonth);
+
+  if (!cycle || !cycle.cycle_type || cycle.cycle_type === "monthly") {
+    return rawTodayPeriod;
+  }
+
+  if (cycle.cycle_type === "yearly") {
+    const parsedAnchor = parsePayableYearMonth(cycle.anchor_period);
+    const dueMonth =
+      typeof cycle.due_month === "number" &&
+      Number.isInteger(cycle.due_month) &&
+      cycle.due_month >= 1 &&
+      cycle.due_month <= 12
+        ? cycle.due_month
+        : parsedAnchor
+          ? parsedAnchor.month
+          : todayMonth;
+
+    let anchorYear = todayYear;
+    if (parsedAnchor && parsedAnchor.month === dueMonth) {
+      anchorYear = parsedAnchor.year;
+    } else if (typeof cycle.created_at === "string" && cycle.created_at.trim()) {
+      const createdDate = new Date(cycle.created_at);
+      if (!Number.isNaN(createdDate.getTime())) {
+        const createdYear = createdDate.getFullYear();
+        const dueDay =
+          typeof cycle.due_day === "number" && cycle.due_day >= 1 && cycle.due_day <= 31
+            ? cycle.due_day
+            : 1;
+        const candidateDue = payableDueDate(dueDay, formatPayableYearMonth(createdYear, dueMonth));
+        anchorYear = diffInCalendarDays(candidateDue, createdDate) >= 0 ? createdYear : createdYear + 1;
+      }
+    }
+
+    const anchorPeriod = formatPayableYearMonth(anchorYear, dueMonth);
+    const diffMonths = (todayYear - anchorYear) * 12 + (todayMonth - dueMonth);
+    if (diffMonths < 0) return anchorPeriod;
+    const cyclesElapsed = Math.floor(diffMonths / 12);
+    return formatPayableYearMonth(anchorYear + cyclesElapsed, dueMonth);
+  }
+
+  // every_n_months
+  const step =
+    typeof cycle.cycle_months === "number" &&
+    Number.isInteger(cycle.cycle_months) &&
+    cycle.cycle_months >= 2
+      ? cycle.cycle_months
+      : 1;
+  if (step <= 1) return rawTodayPeriod;
+
+  let anchor = parsePayableYearMonth(cycle.anchor_period);
+  if (!anchor && typeof cycle.created_at === "string") {
+    const createdDate = new Date(cycle.created_at);
+    if (!Number.isNaN(createdDate.getTime())) {
+      anchor = { year: createdDate.getFullYear(), month: createdDate.getMonth() + 1 };
+    }
+  }
+  if (!anchor) {
+    anchor = { year: todayYear, month: todayMonth };
+  }
+
+  const anchorStr = formatPayableYearMonth(anchor.year, anchor.month);
+  const diffMonths = (todayYear - anchor.year) * 12 + (todayMonth - anchor.month);
+  if (diffMonths < 0) return anchorStr;
+  const cyclesElapsed = Math.floor(diffMonths / step);
+  return addMonthsToPayablePeriod(anchorStr, cyclesElapsed * step);
 }
 
-/** 某账期内该应付事项的到期日（处理 due_day > 当月天数，如 31 日）。 */
+/** 某账期内该应付事项的到期日（处理 due_day > 当月天数，如 31 日或平年 2 月 29 日）。 */
 export function payableDueDate(dueDay: number, period: string): Date {
   const [year, month] = period.split("-").map(Number);
   const monthDate = new Date(year, month - 1, 1);
   return getActualBillingDate(dueDay, monthDate);
 }
 
-/** 当前账期的下一期（'YYYY-MM'）：本期已结清后用它指向下期应付日。 */
-export function nextPayablePeriodOf(period: string): string {
-  const [year, month] = period.split("-").map(Number);
-  const next = addMonths(new Date(year, month - 1, 1), 1);
-  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+/** 当前账期的下一期（'YYYY-MM'）：每月 +1 月，每 X 月 +X 月，每年同月（年份 +1）。 */
+export function nextPayablePeriodOf(period: string, cycle?: PayableCycleConfig): string {
+  if (!cycle || !cycle.cycle_type || cycle.cycle_type === "monthly") {
+    return addMonthsToPayablePeriod(period, 1);
+  }
+  if (cycle.cycle_type === "yearly") {
+    const parsed = parsePayableYearMonth(period);
+    const baseYear = parsed ? parsed.year : Number(period.split("-")[0]);
+    const fallbackMonth = parsed ? parsed.month : Number(period.split("-")[1]);
+    const month =
+      typeof cycle.due_month === "number" &&
+      Number.isInteger(cycle.due_month) &&
+      cycle.due_month >= 1 &&
+      cycle.due_month <= 12
+        ? cycle.due_month
+        : fallbackMonth;
+    return formatPayableYearMonth(baseYear + 1, month);
+  }
+  const step =
+    typeof cycle.cycle_months === "number" &&
+    Number.isInteger(cycle.cycle_months) &&
+    cycle.cycle_months >= 2
+      ? cycle.cycle_months
+      : 1;
+  return addMonthsToPayablePeriod(period, step);
+}
+
+/**
+ * 推导下一期到期日：
+ *   - monthly：下月同日（月末收拢）；
+ *   - every_n_months：间隔 X 个月后的同日（月末收拢）；
+ *   - yearly：次年同月同日（如闰年 02-29 → 平年 02-28，遇闰年恢复 02-29）。
+ */
+export function nextPayableDueDate(
+  dueDay: number,
+  period: string,
+  cycle?: PayableCycleConfig,
+): Date {
+  return payableDueDate(dueDay, nextPayablePeriodOf(period, cycle));
 }
 
 /**
@@ -522,6 +660,7 @@ export function payableNextCycleStatus(
   period: string,
   today: Date = new Date(),
   statementLeadDays = 30,
+  cycle?: PayableCycleConfig,
 ): {
   phase: "awaiting_statement" | "awaiting_payment";
   /** awaiting_statement → 出账日；awaiting_payment → 还款日 */
@@ -529,8 +668,8 @@ export function payableNextCycleStatus(
   /** 距该日期的天数 */
   days: number;
 } {
-  // 下期还款日按「due_day + 下期账期」算（月末收拢：31 日 → 下月最后一天）
-  const due = payableDueDate(dueDay, nextPayablePeriodOf(period));
+  // 下期还款日按「due_day + 下期账期（含周期步长/每年同月）」算（月末收拢）
+  const due = payableDueDate(dueDay, nextPayablePeriodOf(period, cycle));
   const days = diffInCalendarDays(due, today);
   if (days >= statementLeadDays) {
     const statementDate = addDays(due, -statementLeadDays);
@@ -599,15 +738,21 @@ export function payableToSortCard(
     due_date: string;
     days_until_due: number;
     due_day: number;
+    period?: string;
+    cycle_type?: "monthly" | "every_n_months" | "yearly" | null;
+    cycle_months?: number | null;
+    due_month?: number | null;
+    anchor_period?: string | null;
   },
   _today: Date = new Date(),
 ): BillsListCard & { payableSource: true } {
   const status: CardUrgencyStatus = payable.status === "paid" ? "unissued" : payable.status;
   // 下期应付日按「due_day + 下期账期」重算，而不是 due_date 顺延一个月：
   // setMonth 在 10-31 这类日期会溢出成 12-01，收拢口径要求落在 11-30。
+  const currentPeriod = payable.period ?? payable.due_date.slice(0, 7);
   const nextDue = payableDueDate(
     payable.due_day,
-    nextPayablePeriodOf(payable.due_date.slice(0, 7)),
+    nextPayablePeriodOf(currentPeriod, payable),
   );
   return {
     status,

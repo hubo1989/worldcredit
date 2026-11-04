@@ -262,6 +262,8 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
   payables: {
     // 周期应付（房租/贷款）：一律绑定会话用户，成员只能碰自己创建的记录。
     getRecurringPayables: { impl: payablesServer.getRecurringPayables, bindUser: 0 },
+    getPayableCustomCategories: { impl: payablesServer.getPayableCustomCategories, bindUser: 0 },
+    savePayableCustomCategory: { impl: payablesServer.savePayableCustomCategory, bindUser: 0 },
     createRecurringPayable: {
       impl: payablesServer.createRecurringPayable,
       bindField: { arg: 0, field: 'created_by' },

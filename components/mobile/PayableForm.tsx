@@ -1,14 +1,36 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Modal } from '@/components/obsidian/overlays'
 import { Button } from '@/components/obsidian/controls'
 import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
-import { createRecurringPayable, updateRecurringPayable, PAYABLE_CATEGORIES, PAYABLE_CURRENCIES, PAYABLE_CURRENCY_LABELS, normalizePayableCurrency, type PayableCategory, type PayableWithStatus } from '@/lib/api/payables'
+import {
+  createRecurringPayable,
+  updateRecurringPayable,
+  getPayableCustomCategories,
+  CUSTOM_CATEGORY_SENTINEL,
+  MAX_CUSTOM_CATEGORY_LENGTH,
+  MIN_PAYABLE_CYCLE_MONTHS,
+  MAX_PAYABLE_CYCLE_MONTHS,
+  PAYABLE_CATEGORIES,
+  PAYABLE_CYCLE_OPTIONS,
+  PAYABLE_CURRENCIES,
+  PAYABLE_CURRENCY_LABELS,
+  dedupeCustomCategories,
+  isValidEveryNMonths,
+  isValidPayablePeriod,
+  normalizeCustomCategoryName,
+  normalizePayableCurrency,
+  resolvePresetPayableCategory,
+  type PayableCategory,
+  type PayableCycleType,
+  type PayableWithStatus,
+} from '@/lib/api/payables'
 import { getHolders } from '@/lib/api/holders'
 import { getBankNames } from '@/lib/api/banks'
 import { currencySymbol } from '@/lib/fx'
+import { payablePeriodOf } from '@/lib/utils'
 import type { CardHolder } from '@/lib/types'
 import { useAuth } from '@/lib/auth'
 
@@ -24,6 +46,9 @@ async function loadBankNames(): Promise<string[]> {
 /** Select 里代表「保留历史未知币种」的哨兵值。 */
 const LEGACY_CURRENCY = '__legacy__'
 
+/** Select 里已持久化的自定义分类 option value 前缀，避免与预设值/哨兵值碰撞。 */
+const SAVED_CUSTOM_PREFIX = 'custom:'
+
 interface Props {
   open: boolean
   onClose: () => void
@@ -33,7 +58,7 @@ interface Props {
 }
 
 /**
- * 新增/编辑周期性固定支出（房租、贷款等按月应付）。
+ * 新增/编辑周期性固定支出（支持每月 / 每 X 月 / 每年，以及自定义分类）。
  *
  * 有意不复用 BillForm：账单的 card_id 是必填外键，房租没有卡。塞进信用卡账单
  * 会污染卡数、额度与免息期口径（见 migrations/d1/0009）。
@@ -42,7 +67,13 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
   const { user } = useAuth()
   const [holders, setHolders] = useState<CardHolder[]>([])
   const [name, setName] = useState('')
-  const [category, setCategory] = useState<PayableCategory>('rent')
+  const [categorySelection, setCategorySelection] = useState<string>('rent')
+  const [customCategoryInput, setCustomCategoryInput] = useState('')
+  const [customCategories, setCustomCategories] = useState<string[]>([])
+  const [cycleType, setCycleType] = useState<PayableCycleType>('monthly')
+  const [cycleMonths, setCycleMonths] = useState('')
+  const [dueMonth, setDueMonth] = useState(() => String(new Date().getMonth() + 1))
+  const [anchorPeriod, setAnchorPeriod] = useState(() => payablePeriodOf())
   const [amount, setAmount] = useState('')
   const [currency, setCurrency] = useState('CNY')
   const [dueDay, setDueDay] = useState('')
@@ -67,15 +98,48 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
     loadBankNames()
       .then(list => { if (!cancelled) setBankOptions(list) })
       .catch(() => { if (!cancelled) setBankOptions([]) })
+    getPayableCustomCategories(user?.id)
+      .then(list => {
+        if (!cancelled && Array.isArray(list)) {
+          setCustomCategories(prev => dedupeCustomCategories([...list, ...prev]))
+        }
+      })
+      .catch(() => {
+        // 离线或未模拟该 RPC 时保留当前会话内已缓存的自定义分类
+      })
     return () => { cancelled = true }
-  }, [open])
+  }, [open, user?.id])
 
   useEffect(() => {
     if (!open) return
     setError(null)
+    const defaultPeriod = payablePeriodOf()
+    const defaultMonth = String(new Date().getMonth() + 1)
+
     if (existing) {
       setName(existing.name)
-      setCategory(existing.category)
+      const existingCustom = normalizeCustomCategoryName(existing.custom_category)
+      const matchedPreset = existingCustom ? resolvePresetPayableCategory(existingCustom) : null
+      if (existingCustom && !matchedPreset) {
+        setCategorySelection(`${SAVED_CUSTOM_PREFIX}${existingCustom}`)
+        setCustomCategoryInput('')
+      } else {
+        setCategorySelection(matchedPreset ?? existing.category)
+        setCustomCategoryInput('')
+      }
+      const existingCycle = existing.cycle_type ?? 'monthly'
+      setCycleType(existingCycle)
+      setCycleMonths(
+        existingCycle === 'every_n_months' && existing.cycle_months
+          ? String(existing.cycle_months)
+          : ''
+      )
+      const fallbackYearlyMonth =
+        existing.anchor_period && isValidPayablePeriod(existing.anchor_period)
+          ? String(Number(existing.anchor_period.slice(5, 7)))
+          : defaultMonth
+      setDueMonth(existing.due_month ? String(existing.due_month) : fallbackYearlyMonth)
+      setAnchorPeriod(existing.anchor_period || defaultPeriod)
       setAmount(String(existing.amount))
       setCurrency(normalizePayableCurrency(existing.currency) ?? LEGACY_CURRENCY)
       setDueDay(String(existing.due_day))
@@ -85,7 +149,12 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       setBankAccount(existing.bank_account || '')
     } else {
       setName('')
-      setCategory('rent')
+      setCategorySelection('rent')
+      setCustomCategoryInput('')
+      setCycleType('monthly')
+      setCycleMonths('')
+      setDueMonth(defaultMonth)
+      setAnchorPeriod(defaultPeriod)
       setAmount('')
       setCurrency('CNY')
       setDueDay('')
@@ -96,14 +165,98 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
     }
   }, [open, existing])
 
+  const mergedCustomCategories = useMemo(
+    () => dedupeCustomCategories([...customCategories, existing?.custom_category]),
+    [customCategories, existing?.custom_category]
+  )
+
+  const categoryOptions = useMemo(
+    () => [
+      ...PAYABLE_CATEGORIES.map(c => ({ value: c.value, label: c.label })),
+      ...mergedCustomCategories.map(item => ({
+        value: `${SAVED_CUSTOM_PREFIX}${item}`,
+        label: item,
+      })),
+      { value: CUSTOM_CATEGORY_SENTINEL, label: '自定义' },
+    ],
+    [mergedCustomCategories]
+  )
+
   const handleSubmit = async () => {
     setError(null)
     const parsedAmount = parseFloat(amount)
-    const parsedDay = parseInt(dueDay, 10)
+    const rawDay = dueDay.trim()
+    const parsedDay = rawDay === '' ? NaN : Number(rawDay)
+
     if (!name.trim()) return setError('请填写名称')
-    if (!Number.isFinite(parsedAmount) || parsedAmount < 0) return setError('金额必须是不小于 0 的数字')
+    if (!Number.isFinite(parsedAmount) || parsedAmount < 0) {
+      return setError('金额必须是不小于 0 的数字')
+    }
     if (!Number.isInteger(parsedDay) || parsedDay < 1 || parsedDay > 31) {
-      return setError('每月应付日必须在 1–31 之间')
+      return setError(
+        cycleType === 'monthly' ? '每月应付日必须在 1–31 之间' : '应付日必须在 1–31 之间'
+      )
+    }
+
+    // 1. 解析并校验分类（预设 / 已保存自定义 / 新输入自定义）
+    let resolvedCategory: PayableCategory
+    let resolvedCustomCategory: string | null = null
+    if (categorySelection === CUSTOM_CATEGORY_SENTINEL) {
+      const normalizedCustom = normalizeCustomCategoryName(customCategoryInput)
+      if (!normalizedCustom) {
+        return setError('请填写自定义分类名称')
+      }
+      if (normalizedCustom.length > MAX_CUSTOM_CATEGORY_LENGTH) {
+        return setError(`自定义分类名称不能超过 ${MAX_CUSTOM_CATEGORY_LENGTH} 个字符`)
+      }
+      const matchedPreset = resolvePresetPayableCategory(normalizedCustom)
+      if (matchedPreset) {
+        resolvedCategory = matchedPreset
+        resolvedCustomCategory = null
+      } else {
+        resolvedCategory = 'other'
+        resolvedCustomCategory = normalizedCustom
+      }
+    } else if (categorySelection.startsWith(SAVED_CUSTOM_PREFIX)) {
+      const savedName = normalizeCustomCategoryName(
+        categorySelection.slice(SAVED_CUSTOM_PREFIX.length)
+      )
+      if (!savedName) {
+        return setError('请选择合法的支出分类')
+      }
+      resolvedCategory = 'other'
+      resolvedCustomCategory = savedName
+    } else {
+      resolvedCategory = categorySelection as PayableCategory
+      resolvedCustomCategory = null
+    }
+
+    // 2. 解析并校验周期参数
+    let resolvedCycleMonths = 1
+    let resolvedDueMonth: number | null = null
+    let resolvedAnchorPeriod: string | null = null
+
+    if (cycleType === 'every_n_months') {
+      const rawMonths = cycleMonths.trim()
+      const parsedMonths = rawMonths === '' ? NaN : Number(rawMonths)
+      if (!isValidEveryNMonths(parsedMonths)) {
+        return setError(
+          `间隔月数必须是 ${MIN_PAYABLE_CYCLE_MONTHS}–${MAX_PAYABLE_CYCLE_MONTHS} 之间的整数`
+        )
+      }
+      resolvedCycleMonths = parsedMonths
+      const trimmedAnchor = anchorPeriod.trim()
+      if (trimmedAnchor && !isValidPayablePeriod(trimmedAnchor)) {
+        return setError('起算月份格式必须为 YYYY-MM')
+      }
+      resolvedAnchorPeriod = trimmedAnchor || payablePeriodOf()
+    } else if (cycleType === 'yearly') {
+      const parsedMonth = Number(dueMonth)
+      if (!Number.isInteger(parsedMonth) || parsedMonth < 1 || parsedMonth > 12) {
+        return setError('每年应付月份必须是 1–12 之间的整数')
+      }
+      resolvedCycleMonths = 12
+      resolvedDueMonth = parsedMonth
     }
 
     const normalizedCurrency = normalizePayableCurrency(currency)
@@ -111,13 +264,19 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
     if (!normalizedCurrency && !keepLegacyCurrency) {
       return setError('币种必须是 CNY / USD / HKD 之一')
     }
+
     setSubmitting(true)
     try {
       const payload = {
         name: name.trim(),
-        category,
+        category: resolvedCategory,
+        custom_category: resolvedCustomCategory,
         amount: parsedAmount,
+        cycle_type: cycleType,
+        cycle_months: resolvedCycleMonths,
+        due_month: resolvedDueMonth,
         due_day: parsedDay,
+        ...(cycleType === 'every_n_months' ? { anchor_period: resolvedAnchorPeriod } : {}),
         holder_id: holderId || null,
         note: note.trim() || null,
         bank_name: bankName.trim() || null,
@@ -141,6 +300,9 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
           created_by: user?.id ?? '',
         })
       }
+      if (resolvedCustomCategory) {
+        setCustomCategories(prev => dedupeCustomCategories([...prev, resolvedCustomCategory]))
+      }
       onSuccess()
       onClose()
     } catch (err) {
@@ -149,6 +311,9 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       setSubmitting(false)
     }
   }
+
+  const amountLabel =
+    cycleType === 'yearly' ? '每年金额' : cycleType === 'every_n_months' ? '每期金额' : '每月金额'
 
   return (
     <Modal
@@ -175,15 +340,57 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
         />
         <SelectField
           label="类型"
-          value={category}
-          onChange={e => setCategory(e.target.value as PayableCategory)}
-          options={PAYABLE_CATEGORIES.map(c => ({ value: c.value, label: c.label }))}
+          value={categorySelection}
+          onChange={e => setCategorySelection(e.target.value)}
+          options={categoryOptions}
         />
+        {categorySelection === CUSTOM_CATEGORY_SENTINEL && (
+          <TextField
+            label="自定义分类"
+            value={customCategoryInput}
+            onChange={e => setCustomCategoryInput(e.target.value)}
+            placeholder="输入新分类名称，如：宽带、车位费"
+            maxLength={MAX_CUSTOM_CATEGORY_LENGTH}
+            helperText="保存后自动去重记住，下次添加可直接选用"
+          />
+        )}
+        <SelectField
+          label="周期"
+          value={cycleType}
+          onChange={e => setCycleType(e.target.value as PayableCycleType)}
+          options={PAYABLE_CYCLE_OPTIONS}
+        />
+        {cycleType === 'every_n_months' && (
+          <div className='flex items-start gap-3'>
+            <div className='min-w-0 flex-1'>
+              <TextField
+                type="number"
+                label="间隔月数"
+                value={cycleMonths}
+                onChange={e => setCycleMonths(e.target.value)}
+                placeholder={`${MIN_PAYABLE_CYCLE_MONTHS}–${MAX_PAYABLE_CYCLE_MONTHS}`}
+                helperText="填写整数，如 3 表示每 3 个月"
+                inputMode='numeric'
+                min={MIN_PAYABLE_CYCLE_MONTHS}
+                max={MAX_PAYABLE_CYCLE_MONTHS}
+              />
+            </div>
+            <div className='w-40 shrink-0'>
+              <TextField
+                type="month"
+                label="起算月份"
+                value={anchorPeriod}
+                onChange={e => setAnchorPeriod(e.target.value)}
+                helperText="首个应付账期"
+              />
+            </div>
+          </div>
+        )}
         <div className='flex items-start gap-3'>
           <div className='min-w-0 flex-1'>
             <TextField
               type="number"
-              label="每月金额"
+              label={amountLabel}
               value={amount}
               onChange={e => setAmount(e.target.value)}
               startAdornment={
@@ -213,15 +420,42 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
             />
           </div>
         </div>
-        <TextField
-          type="number"
-          label="每月应付日"
-          value={dueDay}
-          onChange={e => setDueDay(e.target.value)}
-          placeholder="1–31"
-          helperText="超过当月天数时按月最后一天计算"
-          inputMode='numeric' min={1} max={31}
-        />
+        {cycleType === 'yearly' ? (
+          <div className='flex items-start gap-3'>
+            <div className='w-32 shrink-0'>
+              <SelectField
+                label="应付月份"
+                value={dueMonth}
+                onChange={e => setDueMonth(e.target.value)}
+                options={Array.from({ length: 12 }, (_, idx) => ({
+                  value: String(idx + 1),
+                  label: `${idx + 1} 月`,
+                }))}
+              />
+            </div>
+            <div className='min-w-0 flex-1'>
+              <TextField
+                type="number"
+                label="应付日"
+                value={dueDay}
+                onChange={e => setDueDay(e.target.value)}
+                placeholder="1–31"
+                helperText="每年按同月同日推导下一次（超过当月天数按月末算）"
+                inputMode='numeric' min={1} max={31}
+              />
+            </div>
+          </div>
+        ) : (
+          <TextField
+            type="number"
+            label={cycleType === 'monthly' ? '每月应付日' : '应付日'}
+            value={dueDay}
+            onChange={e => setDueDay(e.target.value)}
+            placeholder="1–31"
+            helperText="超过当月天数时按月最后一天计算"
+            inputMode='numeric' min={1} max={31}
+          />
+        )}
         {holders.length > 0 && (
           <SelectField
             label="归属（可选）"
@@ -261,7 +495,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
         />
         {/* 与卡账分开是刻意的，说清楚避免用户以为「没进账单就是没生效」 */}
         <p className='text-[13px] leading-5 text-d-muted'>
-          固定支出不占用信用卡额度，单独计入每月应付；与卡账分开统计。
+          固定支出不占用信用卡额度，单独计入当期应付；与卡账分开统计。
         </p>
         {error && <Alert severity="error">{error}</Alert>}
       </div>

@@ -42,6 +42,7 @@ const SYNCABLE_TABLES = {
     owner: `EXISTS (SELECT 1 FROM recurring_payables rp
       WHERE rp.id = t.payable_id AND rp.created_by = ?)`,
   },
+  payable_custom_categories: { pk: "id", owner: "t.user_id = ?" },
 } as const;
 
 type SyncTable = keyof typeof SYNCABLE_TABLES;
