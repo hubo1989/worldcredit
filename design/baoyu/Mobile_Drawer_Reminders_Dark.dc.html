@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>移动端 · 提醒偏好抽屉 (暗色)</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", "PingFang SC", "Segoe UI", Roboto, sans-serif;
+      background: #060913;
+      color: #F5F7FA;
+      -webkit-font-smoothing: antialiased;
+      box-sizing: border-box;
+      user-select: none;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    .phone-shell {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      margin: 0 auto;
+      background: #0A0F1E;
+      border-radius: 40px;
+      overflow: hidden;
+      border: 1px solid #26304A;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7);
+      display: flex;
+      flex-direction: column;
+    }
+    .status-bar {
+      height: 44px;
+      padding: 0 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+      font-weight: 600;
+      color: #F5F7FA;
+    }
+    .dynamic-island {
+      width: 96px;
+      height: 24px;
+      background: #000;
+      border-radius: 20px;
+      position: absolute;
+      top: 10px;
+      left: 147px;
+    }
+    .bg-dimmed {
+      flex: 1;
+      background: #0A0F1E;
+      opacity: 0.25;
+      padding: 16px;
+    }
+    .sheet-card {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #131A2A;
+      border-top: 1px solid #26304A;
+      border-radius: 24px 24px 0 0;
+      box-shadow: 0 -12px 48px rgba(0, 0, 0, 0.6);
+      display: flex;
+      flex-direction: column;
+      max-height: 800px;
+    }
+    .sheet-handle {
+      width: 36px;
+      height: 4px;
+      background: #26304A;
+      border-radius: 2px;
+      margin: 10px auto 4px auto;
+    }
+    .sheet-header {
+      padding: 12px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #1A2334;
+    }
+    .sheet-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #F5F7FA;
+      margin: 0;
+    }
+    .sheet-close-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 16px;
+      background: #1A2334;
+      border: none;
+      color: #9AA6BC;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .sheet-body {
+      padding: 16px 20px 40px 20px;
+      overflow-y: auto;
+    }
+    .sheet-body::-webkit-scrollbar {
+      display: none;
+    }
+    .section-title {
+      font-size: 14px;
+      font-weight: 700;
+      margin: 0 0 8px 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .panel-box {
+      background: #0A0F1E;
+      border: 1px solid #26304A;
+      border-radius: 16px;
+      padding: 14px;
+      margin-bottom: 16px;
+    }
+    .field-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #9AA6BC;
+      margin-bottom: 6px;
+      display: block;
+    }
+    .chips-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+      margin-bottom: 10px;
+    }
+    .chip-item {
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      background: #1A2334;
+      color: #9AA6BC;
+      border: 1px solid #26304A;
+      cursor: pointer;
+    }
+    .chip-item.active {
+      background: #3B6FE0;
+      color: #FFF;
+      border-color: #3B6FE0;
+    }
+    .chip-item.active-gold {
+      background: #8A6D1F;
+      color: #F0C75E;
+      border-color: #F0C75E;
+    }
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+    }
+    .switch-btn {
+      width: 48px;
+      height: 28px;
+      border-radius: 14px;
+      background: #26304A;
+      border: none;
+      position: relative;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .switch-btn.on {
+      background: #3B6FE0;
+    }
+    .switch-btn.on-gold {
+      background: #C9A227;
+    }
+    .switch-thumb {
+      width: 22px;
+      height: 22px;
+      border-radius: 11px;
+      background: #FFF;
+      position: absolute;
+      top: 3px;
+      left: 3px;
+    }
+    .switch-btn.on .switch-thumb, .switch-btn.on-gold .switch-thumb {
+      left: 23px;
+    }
+    .input-field, .select-field {
+      width: 100%;
+      height: 44px;
+      background: #131A2A;
+      border: 1px solid #26304A;
+      border-radius: 12px;
+      color: #F5F7FA;
+      padding: 0 12px;
+      font-size: 16px;
+      outline: none;
+    }
+    .action-btn {
+      width: 100%;
+      height: 44px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 1px solid #26304A;
+      background: #1A2334;
+      color: #7AADFF;
+      margin-top: 10px;
+    }
+  </style>
+</helmet>
+
+<div class="phone-shell">
+  <div class="dynamic-island"></div>
+  <div class="status-bar">
+    <span>9:41</span>
+    <span style="display: flex; gap: 4px; align-items: center;">
+      <span>●●●●</span>
+      <span>WiFi</span>
+      <span>100%</span>
+    </span>
+  </div>
+
+  <div class="bg-dimmed">
+    <h2 style="font-size: 24px; font-weight: 700; color: #9AA6BC; margin: 0 0 12px 0;">我的</h2>
+    <div style="background: #131A2A; height: 60px; border-radius: 16px; margin-bottom: 12px;"></div>
+    <div style="background: #131A2A; height: 160px; border-radius: 16px; margin-bottom: 12px;"></div>
+    <div style="background: #131A2A; height: 160px; border-radius: 16px;"></div>
+  </div>
+
+  <!-- BottomSheet Open State -->
+  <div class="sheet-card">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title">提醒偏好配置</h3>
+      <button type="button" class="sheet-close-btn">✕</button>
+    </div>
+    <div class="sheet-body">
+      <!-- 区块一：账单还款提醒（平级，无嵌套卡片） -->
+      <h4 class="section-title" style="color: #7AADFF;">
+        <span>💳</span>
+        <span>账单还款提醒</span>
+      </h4>
+      <div class="panel-box">
+        <span class="field-label">还款日前提醒节点（多选）：</span>
+        <div class="chips-row">
+          <button type="button" class="chip-item active">提前 3 天</button>
+          <button type="button" class="chip-item active">提前 1 天</button>
+          <button type="button" class="chip-item active">还款日当天</button>
+          <button type="button" class="chip-item">提前 7 天</button>
+        </div>
+
+        <div class="toggle-row" style="border-top: 1px solid #1A2334; padding-top: 10px;">
+          <div>
+            <p style="font-size: 14px; font-weight: 600; color: #F5F7FA; margin: 0;">Web Push 浏览器通道</p>
+            <p style="font-size: 12px; color: #9AA6BC; margin: 2px 0 0 0;">通过系统通知中心直达设备</p>
+          </div>
+          <button type="button" class="switch-btn on">
+            <span class="switch-thumb"></span>
+          </button>
+        </div>
+
+        <div style="display: flex; gap: 8px; margin-top: 8px;">
+          <div style="flex: 1;">
+            <span class="field-label">免打扰起始</span>
+            <input type="time" class="input-field" value="22:00" />
+          </div>
+          <div style="flex: 1;">
+            <span class="field-label">免打扰结束</span>
+            <input type="time" class="input-field" value="08:00" />
+          </div>
+        </div>
+
+        <button type="button" class="action-btn">
+          <span>🔔 发送测试通知 (真实 /api/push/test)</span>
+        </button>
+      </div>
+
+      <!-- 区块二：权益机会提醒（平级，独立子开关） -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <h4 class="section-title" style="color: #F0C75E; margin: 0;">
+          <span>👑</span>
+          <span>权益机会提醒</span>
+        </h4>
+        <button type="button" class="switch-btn on-gold">
+          <span class="switch-thumb"></span>
+        </button>
+      </div>
+      <div class="panel-box">
+        <div style="margin-bottom: 12px;">
+          <span class="field-label">提醒时区 (标准下拉)</span>
+          <select class="select-field">
+            <option selected>Asia/Shanghai (中国标准时间 UTC+8)</option>
+            <option>America/New_York (美东时间 UTC-5)</option>
+            <option>Europe/London (格林威治 UTC+0)</option>
+            <option>Asia/Tokyo (日本标准时间 UTC+9)</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom: 12px;">
+          <span class="field-label">每日提醒推送时间</span>
+          <input type="time" class="input-field" value="09:00" />
+        </div>
+
+        <span class="field-label">权益到期提醒节点：</span>
+        <div class="chips-row">
+          <button type="button" class="chip-item active-gold">到期当天</button>
+          <button type="button" class="chip-item active-gold">提前 3 天</button>
+          <button type="button" class="chip-item">提前 7 天</button>
+          <button type="button" class="chip-item">提前 15 天</button>
+        </div>
+
+        <span class="field-label">权益领取截止提醒节点：</span>
+        <div class="chips-row" style="margin-bottom: 0;">
+          <button type="button" class="chip-item active-gold">截止前 1 天</button>
+          <button type="button" class="chip-item active-gold">截止当天</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

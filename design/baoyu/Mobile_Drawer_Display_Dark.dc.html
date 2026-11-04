@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>移动端 · 显示偏好抽屉 (暗色)</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", "PingFang SC", "Segoe UI", Roboto, sans-serif;
+      background: #060913;
+      color: #F5F7FA;
+      -webkit-font-smoothing: antialiased;
+      box-sizing: border-box;
+      user-select: none;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    .phone-shell {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      margin: 0 auto;
+      background: #0A0F1E;
+      border-radius: 40px;
+      overflow: hidden;
+      border: 1px solid #26304A;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7);
+      display: flex;
+      flex-direction: column;
+    }
+    .status-bar {
+      height: 44px;
+      padding: 0 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+      font-weight: 600;
+      color: #F5F7FA;
+    }
+    .dynamic-island {
+      width: 96px;
+      height: 24px;
+      background: #000;
+      border-radius: 20px;
+      position: absolute;
+      top: 10px;
+      left: 147px;
+    }
+    .bg-dimmed {
+      flex: 1;
+      background: #0A0F1E;
+      opacity: 0.25;
+      padding: 16px;
+    }
+    .sheet-card {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #131A2A;
+      border-top: 1px solid #26304A;
+      border-radius: 24px 24px 0 0;
+      box-shadow: 0 -12px 48px rgba(0, 0, 0, 0.6);
+      display: flex;
+      flex-direction: column;
+      max-height: 780px;
+    }
+    .sheet-handle {
+      width: 36px;
+      height: 4px;
+      background: #26304A;
+      border-radius: 2px;
+      margin: 10px auto 4px auto;
+    }
+    .sheet-header {
+      padding: 12px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #1A2334;
+    }
+    .sheet-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #F5F7FA;
+      margin: 0;
+    }
+    .sheet-close-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 16px;
+      background: #1A2334;
+      border: none;
+      color: #9AA6BC;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .sheet-body {
+      padding: 18px 20px 40px 20px;
+      overflow-y: auto;
+    }
+    .panel-box {
+      background: #0A0F1E;
+      border: 1px solid #26304A;
+      border-radius: 16px;
+      padding: 14px;
+      margin-bottom: 16px;
+    }
+    .field-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #9AA6BC;
+      margin-bottom: 6px;
+      display: block;
+    }
+    .select-field {
+      width: 100%;
+      height: 44px;
+      background: #0A0F1E;
+      border: 1px solid #26304A;
+      border-radius: 12px;
+      color: #F5F7FA;
+      padding: 0 12px;
+      font-size: 16px;
+      outline: none;
+    }
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+    }
+    .toggle-row:not(:last-child) {
+      border-bottom: 1px solid #1A2334;
+    }
+    .toggle-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #F5F7FA;
+      margin: 0;
+    }
+    .toggle-desc {
+      font-size: 12px;
+      color: #9AA6BC;
+      margin: 2px 0 0 0;
+    }
+    .switch-btn {
+      width: 48px;
+      height: 28px;
+      border-radius: 14px;
+      background: #26304A;
+      border: none;
+      position: relative;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .switch-btn.on {
+      background: #3B6FE0;
+    }
+    .switch-thumb {
+      width: 22px;
+      height: 22px;
+      border-radius: 11px;
+      background: #FFF;
+      position: absolute;
+      top: 3px;
+      left: 3px;
+    }
+    .switch-btn.on .switch-thumb {
+      left: 23px;
+    }
+    .badge-open {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #3A3320;
+      color: #F0C75E;
+      border: 1px solid #8A6D1F;
+      margin-left: 6px;
+    }
+  </style>
+</helmet>
+
+<div class="phone-shell">
+  <div class="dynamic-island"></div>
+  <div class="status-bar">
+    <span>9:41</span>
+    <span style="display: flex; gap: 4px; align-items: center;">
+      <span>●●●●</span>
+      <span>WiFi</span>
+      <span>100%</span>
+    </span>
+  </div>
+
+  <div class="bg-dimmed">
+    <h2 style="font-size: 24px; font-weight: 700; color: #9AA6BC; margin: 0 0 12px 0;">我的</h2>
+    <div style="background: #131A2A; height: 60px; border-radius: 16px; margin-bottom: 12px;"></div>
+    <div style="background: #131A2A; height: 160px; border-radius: 16px; margin-bottom: 12px;"></div>
+    <div style="background: #131A2A; height: 160px; border-radius: 16px;"></div>
+  </div>
+
+  <!-- BottomSheet Open State -->
+  <div class="sheet-card">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title">显示与币种偏好</h3>
+      <button type="button" class="sheet-close-btn">✕</button>
+    </div>
+    <div class="sheet-body">
+      <!-- 隐私模式卡片 -->
+      <div class="panel-box">
+        <div class="toggle-row" style="border-bottom: none; padding: 0;">
+          <div style="flex: 1; padding-right: 12px;">
+            <p class="toggle-title">高斯模糊隐私模式</p>
+            <p class="toggle-desc">在看板及账单列表平滑遮罩敏感金额，防止公开场合被窥视</p>
+          </div>
+          <button type="button" class="switch-btn on">
+            <span class="switch-thumb"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 开放的 default_currency 目标折算币种 -->
+      <div class="panel-box">
+        <div style="display: flex; align-items: center; margin-bottom: 6px;">
+          <label class="field-label" style="margin: 0;">综合看板折算币种</label>
+          <span class="badge-open">开放字段</span>
+        </div>
+        <select class="select-field">
+          <option selected>CNY · 人民币 (¥)</option>
+          <option>USD · 美元 ($)</option>
+          <option>HKD · 港币 (HK$)</option>
+          <option>JPY · 日元 (円)</option>
+          <option>EUR · 欧元 (€)</option>
+          <option>GBP · 英镑 (£)</option>
+        </select>
+        <p style="font-size: 11px; color: #9AA6BC; margin: 6px 0 0 0; line-height: 1.4;">
+          所有持卡人的外币消费与未出账明细将实时折算为该基础币种，便于全局资产概览。
+        </p>
+      </div>
+
+      <!-- 账单卡片显隐要素定制（含开放的 show_annual_fee） -->
+      <div class="panel-box">
+        <p class="field-label" style="margin-bottom: 8px;">账单卡片字段定制：</p>
+
+        <div class="toggle-row">
+          <div>
+            <p class="toggle-title">最低还款额</p>
+            <p class="toggle-desc">显示最低还款额度提示</p>
+          </div>
+          <button type="button" class="switch-btn on">
+            <span class="switch-thumb"></span>
+          </button>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <p class="toggle-title">账单日</p>
+            <p class="toggle-desc">卡片展示出账日期</p>
+          </div>
+          <button type="button" class="switch-btn on">
+            <span class="switch-thumb"></span>
+          </button>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <p class="toggle-title">卡号后 4 位</p>
+            <p class="toggle-desc">展示末四位尾号用于核对</p>
+          </div>
+          <button type="button" class="switch-btn on">
+            <span class="switch-thumb"></span>
+          </button>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <div style="display: flex; align-items: center;">
+              <p class="toggle-title">卡片年费信息 (show_annual_fee)</p>
+              <span class="badge-open">开放字段</span>
+            </div>
+            <p class="toggle-desc">常驻年费收取周期与减免达标进度</p>
+          </div>
+          <button type="button" class="switch-btn on">
+            <span class="switch-thumb"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

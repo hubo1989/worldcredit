@@ -1,0 +1,1059 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>移动端 · 设置主页 (亮色)</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", "PingFang SC", "Segoe UI", Roboto, sans-serif;
+      background: #E8ECF2;
+      color: #0A1F44;
+      -webkit-font-smoothing: antialiased;
+      box-sizing: border-box;
+      user-select: none;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    .phone-shell {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      margin: 0 auto;
+      background: #F5F7FA;
+      border-radius: 40px;
+      overflow: hidden;
+      border: 1px solid #D8DFE9;
+      box-shadow: 0 25px 60px rgba(10, 31, 68, 0.18);
+      display: flex;
+      flex-direction: column;
+    }
+    .status-bar {
+      height: 44px;
+      padding: 0 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+      font-weight: 600;
+      color: #0A1F44;
+      shrink: 0;
+      z-index: 10;
+    }
+    .dynamic-island {
+      width: 96px;
+      height: 24px;
+      background: #000;
+      border-radius: 20px;
+      position: absolute;
+      top: 10px;
+      left: 147px;
+    }
+    .scroll-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 16px 88px 16px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .scroll-content::-webkit-scrollbar {
+      display: none;
+    }
+    .header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .page-title {
+      font-size: 24px;
+      font-weight: 700;
+      color: #0A1F44;
+      margin: 0;
+      letter-spacing: -0.5px;
+    }
+    .account-card {
+      background: #FFFFFF;
+      border: 1px solid #E2E8F0;
+      border-radius: 16px;
+      padding: 14px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 2px 8px rgba(10, 31, 68, 0.04);
+    }
+    .avatar-circle {
+      width: 48px;
+      height: 48px;
+      border-radius: 24px;
+      background: #F0F4FA;
+      border: 1px solid #1E3A8A;
+      color: #1E3A8A;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .account-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .account-email {
+      font-size: 15px;
+      font-weight: 600;
+      color: #0A1F44;
+      margin: 0 0 4px 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .account-badge-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .gold-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: #F5EED8;
+      border: 1px solid #C9A227;
+      color: #8A6D1F;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+    .admin-link-btn {
+      background: transparent;
+      border: none;
+      color: #1E3A8A;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+    }
+    .section-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #5B6478;
+      margin: 14px 4px 6px 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .card-group {
+      background: #FFFFFF;
+      border: 1px solid #E2E8F0;
+      border-radius: 16px;
+      overflow: hidden;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 8px rgba(10, 31, 68, 0.04);
+    }
+    .menu-row {
+      display: flex;
+      align-items: center;
+      padding: 12px 14px;
+      min-height: 52px;
+      background: #FFFFFF;
+      border: none;
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      color: inherit;
+    }
+    .menu-row:not(:last-child) {
+      border-bottom: 1px solid #F0F4FA;
+    }
+    .menu-row:active {
+      background: #F5F8FF;
+    }
+    .menu-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: #F5F8FF;
+      color: #1E3A8A;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      margin-right: 12px;
+      flex-shrink: 0;
+    }
+    .menu-text {
+      flex: 1;
+      min-width: 0;
+    }
+    .menu-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #0A1F44;
+      margin: 0;
+      line-height: 1.3;
+    }
+    .menu-subtitle {
+      font-size: 12px;
+      color: #5B6478;
+      margin: 2px 0 0 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .status-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 999px;
+      margin-right: 6px;
+      white-space: nowrap;
+    }
+    .pill-green {
+      background: #E6EFE6;
+      color: #1B5E20;
+      border: 1px solid rgba(27, 94, 32, 0.2);
+    }
+    .pill-blue {
+      background: #E6F1F8;
+      color: #01579B;
+      border: 1px solid rgba(1, 87, 155, 0.2);
+    }
+    .pill-amber {
+      background: #FEF2D1;
+      color: #92400E;
+      border: 1px solid rgba(146, 64, 14, 0.2);
+    }
+    .chevron-right {
+      color: #A0A8B8;
+      font-size: 14px;
+    }
+    .logout-card {
+      background: #FFFFFF;
+      border: 1px solid #E2E8F0;
+      border-radius: 16px;
+      overflow: hidden;
+      margin-top: 6px;
+      margin-bottom: 20px;
+    }
+    .logout-btn {
+      width: 100%;
+      height: 48px;
+      background: transparent;
+      border: none;
+      color: #B71C1C;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .logout-btn:active {
+      background: #FAE6E6;
+    }
+    .bottom-nav {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 60px;
+      background: #FFFFFF;
+      border-top: 1px solid #E2E8F0;
+      display: flex;
+      align-items: center;
+      z-index: 20;
+      box-sizing: border-box;
+    }
+    .nav-item {
+      flex: 1;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      height: 60px;
+      min-width: 44px;
+      min-height: 44px;
+      color: #5B6478;
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+      box-sizing: border-box;
+      text-decoration: none;
+      -webkit-tap-highlight-color: transparent;
+      transition: color 0.15s ease;
+    }
+    .nav-item.active {
+      color: #1E3A8A;
+    }
+    .nav-item.active .nav-indicator {
+      display: block;
+    }
+    .nav-indicator {
+      display: none;
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 24px;
+      height: 3px;
+      border-radius: 9999px;
+      background: #1E3A8A;
+    }
+    .nav-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+    }
+    .nav-icon svg {
+      display: block;
+    }
+    .nav-label {
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 400;
+    }
+    .nav-item.active .nav-label {
+      font-weight: 600;
+    }
+    .sheet-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 31, 68, 0.45);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+    }
+    .sheet-card {
+      background: #FFFFFF;
+      border-top: 1px solid #E2E8F0;
+      border-radius: 20px 20px 0 0;
+      max-height: 82%;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 -10px 40px rgba(10, 31, 68, 0.2);
+    }
+    .sheet-handle {
+      width: 36px;
+      height: 4px;
+      background: #CBD5E1;
+      border-radius: 2px;
+      margin: 10px auto 4px auto;
+    }
+    .sheet-header {
+      padding: 10px 18px 12px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #F0F4FA;
+    }
+    .sheet-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: #0A1F44;
+      margin: 0;
+    }
+    .sheet-close-btn {
+      width: 30px;
+      height: 30px;
+      border-radius: 15px;
+      background: #F0F4FA;
+      border: none;
+      color: #5B6478;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .sheet-body {
+      padding: 16px 18px 30px 18px;
+      overflow-y: auto;
+      font-size: 14px;
+    }
+    .sheet-body::-webkit-scrollbar {
+      display: none;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .field-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #5B6478;
+      margin-bottom: 6px;
+      display: block;
+    }
+    .input-field, .select-field {
+      width: 100%;
+      height: 44px;
+      background: #F5F7FA;
+      border: 1px solid #D8DFE9;
+      border-radius: 12px;
+      color: #0A1F44;
+      padding: 0 14px;
+      font-size: 16px;
+      outline: none;
+      box-sizing: border-box;
+    }
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+    }
+    .toggle-info {
+      flex: 1;
+      padding-right: 12px;
+    }
+    .toggle-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #0A1F44;
+      margin: 0;
+    }
+    .toggle-desc {
+      font-size: 12px;
+      color: #5B6478;
+      margin: 2px 0 0 0;
+    }
+    .switch-btn {
+      width: 48px;
+      height: 28px;
+      border-radius: 14px;
+      background: #CBD5E1;
+      border: none;
+      position: relative;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .switch-btn.on {
+      background: #1E3A8A;
+    }
+    .switch-thumb {
+      width: 22px;
+      height: 22px;
+      border-radius: 11px;
+      background: #FFF;
+      position: absolute;
+      top: 3px;
+      left: 3px;
+    }
+    .switch-btn.on .switch-thumb {
+      left: 23px;
+    }
+    .action-btn {
+      width: 100%;
+      height: 44px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: none;
+      margin-top: 8px;
+    }
+    .btn-primary {
+      background: #1E3A8A;
+      color: #FFF;
+    }
+    .btn-secondary {
+      background: #F0F4FA;
+      color: #1E3A8A;
+      border: 1px solid #D8DFE9;
+    }
+    .btn-danger {
+      background: #FAE6E6;
+      color: #B71C1C;
+      border: 1px solid #D32F2F;
+    }
+    .chips-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+    .chip-item {
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      background: #F0F4FA;
+      color: #5B6478;
+      border: 1px solid #D8DFE9;
+      cursor: pointer;
+    }
+    .chip-item.active {
+      background: #1E3A8A;
+      color: #FFF;
+      border-color: #1E3A8A;
+    }
+    .dialog-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 31, 68, 0.5);
+      backdrop-filter: blur(4px);
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .dialog-card {
+      background: #FFFFFF;
+      border: 1px solid #E2E8F0;
+      border-radius: 20px;
+      padding: 20px;
+      width: 100%;
+      max-width: 320px;
+      text-align: center;
+      box-shadow: 0 20px 50px rgba(10, 31, 68, 0.2);
+    }
+    .dialog-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: #0A1F44;
+      margin: 0 0 8px 0;
+    }
+    .dialog-desc {
+      font-size: 13px;
+      color: #5B6478;
+      margin: 0 0 18px 0;
+    }
+    .dialog-actions {
+      display: flex;
+      gap: 10px;
+    }
+    .dialog-btn {
+      flex: 1;
+      height: 44px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+    }
+    .toast-pill {
+      position: absolute;
+      top: 54px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #E6EFE6;
+      border: 1px solid #1B5E20;
+      color: #1B5E20;
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      z-index: 300;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 8px 24px rgba(10, 31, 68, 0.12);
+    }
+  </style>
+</helmet>
+
+<div class="phone-shell">
+  <div class="dynamic-island"></div>
+  <div class="status-bar">
+    <span>9:41</span>
+    <span style="display: flex; gap: 4px; align-items: center;">
+      <span>●●●●</span>
+      <span>WiFi</span>
+      <span>100%</span>
+    </span>
+  </div>
+
+  <sc-if condition="{{toastMessage}}">
+    <div class="toast-pill">
+      <span>✓</span>
+      <span>{{toastMessage}}</span>
+    </div>
+  </sc-if>
+
+  <div class="scroll-content">
+    <div class="header-row">
+      <h1 class="page-title">我的</h1>
+      <span class="gold-badge" style="cursor: pointer;">☀️ 亮色对齐</span>
+    </div>
+
+    <div class="account-card">
+      <div class="avatar-circle">A</div>
+      <div class="account-info">
+        <p class="account-email">alex.admin@worldcredit.com</p>
+        <div class="account-badge-row">
+          <span class="gold-badge">◆ 管理员</span>
+          <button type="button" class="admin-link-btn" click-handler="openAdmin">
+            进入后台 →
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">卡包与权益管理</div>
+    <div class="card-group">
+      <button type="button" class="menu-row" click-handler="routeHolders">
+        <div class="menu-icon">👥</div>
+        <div class="menu-text">
+          <p class="menu-title">家庭管理</p>
+          <p class="menu-subtitle">持卡人与卡片额度管理</p>
+        </div>
+        <span class="chevron-right">›</span>
+      </button>
+
+      <button type="button" class="menu-row" click-handler="routePromos">
+        <div class="menu-icon">🎁</div>
+        <div class="menu-text">
+          <p class="menu-title">优惠活动</p>
+          <p class="menu-subtitle">可用返现、商户立减与积分翻倍</p>
+        </div>
+        <span class="chevron-right">›</span>
+      </button>
+
+      <button type="button" class="menu-row" click-handler="routeBenefits">
+        <div class="menu-icon">👑</div>
+        <div class="menu-text">
+          <p class="menu-title">我的权益</p>
+          <p class="menu-subtitle">机场贵宾厅、接送机与延误险进度</p>
+        </div>
+        <span class="chevron-right">›</span>
+      </button>
+    </div>
+
+    <div class="section-label">数据同步与偏好设置</div>
+    <div class="card-group">
+      <button type="button" class="menu-row" click-handler="openGmailDrawer">
+        <div class="menu-icon">✉️</div>
+        <div class="menu-text">
+          <p class="menu-title">邮箱账单导入</p>
+          <p class="menu-subtitle">Gmail 直连拉取与专属 .eml 补录</p>
+        </div>
+        <span class="status-pill pill-green">{{gmailSummary}}</span>
+        <span class="chevron-right">›</span>
+      </button>
+
+      <button type="button" class="menu-row" click-handler="openReminderDrawer">
+        <div class="menu-icon">🔔</div>
+        <div class="menu-text">
+          <p class="menu-title">提醒偏好</p>
+          <p class="menu-subtitle">还款节点、权益到期与免打扰时段</p>
+        </div>
+        <span class="status-pill pill-blue">{{reminderSummary}}</span>
+        <span class="chevron-right">›</span>
+      </button>
+
+      <button type="button" class="menu-row" click-handler="openDisplayDrawer">
+        <div class="menu-icon">⚙️</div>
+        <div class="menu-text">
+          <p class="menu-title">显示与币种</p>
+          <p class="menu-subtitle">折算目标币种、卡面字段与隐私遮罩</p>
+        </div>
+        <span class="status-pill pill-amber">{{displaySummary}}</span>
+        <span class="chevron-right">›</span>
+      </button>
+    </div>
+
+    <div class="logout-card">
+      <button type="button" class="logout-btn" click-handler="promptLogout">
+        <span>⎋</span>
+        <span>退出登录</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Bottom Navigation Bar (4 Tab: 首页 / 账单 / 卡片 / 我的) -->
+  <div class="bottom-nav">
+    <button type="button" class="nav-item" click-handler="routeDashboard">
+      <span class="nav-indicator"></span>
+      <span class="nav-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 10.5 12 3l9 7.5"></path>
+          <path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"></path>
+          <path d="M9.5 21v-6h5v6"></path>
+        </svg>
+      </span>
+      <span class="nav-label">首页</span>
+    </button>
+    <button type="button" class="nav-item" click-handler="routeBills">
+      <span class="nav-indicator"></span>
+      <span class="nav-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path>
+          <path d="M14 3v5h5"></path>
+          <path d="M8.5 13h7"></path>
+          <path d="M8.5 16.5h7"></path>
+          <path d="M8.5 9.5h3"></path>
+        </svg>
+      </span>
+      <span class="nav-label">账单</span>
+    </button>
+    <button type="button" class="nav-item" click-handler="routeCards">
+      <span class="nav-indicator"></span>
+      <span class="nav-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+          <path d="M3 10h18"></path>
+          <path d="M7 15h4"></path>
+        </svg>
+      </span>
+      <span class="nav-label">卡片</span>
+    </button>
+    <button type="button" class="nav-item active" click-handler="routeSettings">
+      <span class="nav-indicator"></span>
+      <span class="nav-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="8" r="3.5"></circle>
+          <path d="M5 20a7 7 0 0 1 14 0"></path>
+        </svg>
+      </span>
+      <span class="nav-label">我的</span>
+    </button>
+  </div>
+
+  <!-- BottomSheet: 邮箱账单导入 -->
+  <sc-if condition="{{showGmailSheet}}">
+    <div class="sheet-backdrop" click-handler="closeSheet">
+      <div class="sheet-card" click-handler="stopProp">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <p class="sheet-title">邮箱账单导入</p>
+          <button type="button" class="sheet-close-btn" click-handler="closeSheet">✕</button>
+        </div>
+        <div class="sheet-body">
+          <div style="background: #F5F7FA; border: 1px solid #E2E8F0; border-radius: 14px; padding: 14px; margin-bottom: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-weight: 700; font-size: 15px; color: #0A1F44;">bills.alex@gmail.com</span>
+              <span class="status-pill pill-green">● 已授权</span>
+            </div>
+            <p style="font-size: 12px; color: #5B6478; margin: 0 0 10px 0;">上次同步：今天 16:20 ｜ 新增 4 笔账单</p>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" class="action-btn btn-primary" style="flex: 2; margin-top: 0;" click-handler="triggerSync">
+                <span>{{syncLabel}}</span>
+              </button>
+              <button type="button" class="action-btn btn-danger" style="flex: 1; margin-top: 0;" click-handler="promptDisconnect">
+                断开
+              </button>
+            </div>
+          </div>
+
+          <button type="button" class="action-btn btn-secondary" style="margin-bottom: 14px;" click-handler="routeLedger">
+            <span>📋 查看邮箱账单明细流水 →</span>
+          </button>
+
+          <div style="background: #F5F7FA; border: 1px solid #E2E8F0; border-radius: 14px; padding: 14px;">
+            <p style="font-weight: 700; font-size: 14px; color: #0A1F44; margin: 0 0 4px 0;">专属收账单邮箱（补录）</p>
+            <p style="font-size: 12px; color: #5B6478; margin: 0 0 10px 0;">仅用于手动转发 .eml 邮件附件，请勿配置自动转发规则。</p>
+            <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 10px; padding: 10px; display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-family: monospace; font-size: 12px; color: #8A6D1F; word-break: break-all;">bills+usr_92a8f@20160325.xyz</span>
+              <button type="button" class="action-btn btn-secondary" style="width: auto; height: 32px; padding: 0 12px; margin-top: 0; font-size: 12px;" click-handler="copyAddress">
+                复制
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- BottomSheet: 提醒偏好 -->
+  <sc-if condition="{{showReminderSheet}}">
+    <div class="sheet-backdrop" click-handler="closeSheet">
+      <div class="sheet-card" click-handler="stopProp">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <p class="sheet-title">提醒偏好配置</p>
+          <button type="button" class="sheet-close-btn" click-handler="closeSheet">✕</button>
+        </div>
+        <div class="sheet-body">
+          <div style="margin-bottom: 18px;">
+            <p style="font-weight: 700; font-size: 14px; color: #1E3A8A; margin: 0 0 10px 0;">💳 账单还款提醒</p>
+            <div style="background: #F5F7FA; border: 1px solid #E2E8F0; border-radius: 14px; padding: 12px;">
+              <p class="field-label">还款日前提醒节点：</p>
+              <div class="chips-row">
+                <button type="button" class="chip-item active">提前 3 天</button>
+                <button type="button" class="chip-item active">提前 1 天</button>
+                <button type="button" class="chip-item active">还款日当天</button>
+                <button type="button" class="chip-item">提前 7 天</button>
+              </div>
+
+              <div class="toggle-row" style="margin-top: 12px; border-top: 1px solid #E2E8F0; padding-top: 10px;">
+                <div class="toggle-info">
+                  <p class="toggle-title">Web Push 浏览器通道</p>
+                  <p class="toggle-desc">桌面与手机浏览器系统级通知</p>
+                </div>
+                <button type="button" class="switch-btn on">
+                  <span class="switch-thumb"></span>
+                </button>
+              </div>
+
+              <div style="display: flex; gap: 8px; margin-top: 10px;">
+                <div style="flex: 1;">
+                  <span class="field-label">免打扰起始</span>
+                  <input type="time" class="input-field" value="22:00" />
+                </div>
+                <div style="flex: 1;">
+                  <span class="field-label">免打扰结束</span>
+                  <input type="time" class="input-field" value="08:00" />
+                </div>
+              </div>
+
+              <button type="button" class="action-btn btn-secondary" style="margin-top: 12px;" click-handler="testPushNotification">
+                <span>🔔 发送测试通知 (真实 /api/push/test)</span>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <p style="font-weight: 700; font-size: 14px; color: #8A6D1F; margin: 0;">👑 权益机会提醒</p>
+              <button type="button" class="switch-btn on">
+                <span class="switch-thumb"></span>
+              </button>
+            </div>
+            <div style="background: #F5F7FA; border: 1px solid #E2E8F0; border-radius: 14px; padding: 12px;">
+              <div class="form-group">
+                <label class="field-label">提醒时区</label>
+                <select class="select-field">
+                  <option selected>Asia/Shanghai (中国标准时间 UTC+8)</option>
+                  <option>America/New_York (美东时间 UTC-5)</option>
+                  <option>Europe/London (格林威治 UTC+0)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label class="field-label">每日提醒推送时间</label>
+                <input type="time" class="input-field" value="09:00" />
+              </div>
+
+              <p class="field-label">权益到期提醒节点：</p>
+              <div class="chips-row" style="margin-bottom: 10px;">
+                <button type="button" class="chip-item active">到期当天</button>
+                <button type="button" class="chip-item active">提前 3 天</button>
+                <button type="button" class="chip-item">提前 7 天</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- BottomSheet: 显示与币种偏好 -->
+  <sc-if condition="{{showDisplaySheet}}">
+    <div class="sheet-backdrop" click-handler="closeSheet">
+      <div class="sheet-card" click-handler="stopProp">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <p class="sheet-title">显示与币种偏好</p>
+          <button type="button" class="sheet-close-btn" click-handler="closeSheet">✕</button>
+        </div>
+        <div class="sheet-body">
+          <div style="background: #F5F7FA; border: 1px solid #E2E8F0; border-radius: 14px; padding: 12px; margin-bottom: 14px;">
+            <div class="toggle-row" style="padding: 0;">
+              <div class="toggle-info">
+                <p class="toggle-title">高斯模糊隐私模式</p>
+                <p class="toggle-desc">开启后看板与账单关键金额将被平滑遮罩，防止公开场所窥屏</p>
+              </div>
+              <button type="button" class="switch-btn on" click-handler="togglePrivacy">
+                <span class="switch-thumb"></span>
+              </button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="field-label">综合看板折算币种 (default_currency)</label>
+            <select class="select-field">
+              <option selected>CNY · 人民币 (¥)</option>
+              <option>USD · 美元 ($)</option>
+              <option>HKD · 港币 (HK$)</option>
+              <option>JPY · 日元 (円)</option>
+            </select>
+          </div>
+
+          <div style="background: #F5F7FA; border: 1px solid #E2E8F0; border-radius: 14px; padding: 12px;">
+            <p class="field-label" style="margin-bottom: 8px;">账单卡片信息字段定制：</p>
+
+            <div class="toggle-row" style="border-bottom: 1px solid #E2E8F0; padding: 8px 0;">
+              <div class="toggle-info">
+                <p class="toggle-title">最低还款额 (show_min_payment)</p>
+              </div>
+              <button type="button" class="switch-btn on" click-handler="noop">
+                <span class="switch-thumb"></span>
+              </button>
+            </div>
+
+            <div class="toggle-row" style="border-bottom: 1px solid #E2E8F0; padding: 8px 0;">
+              <div class="toggle-info">
+                <p class="toggle-title">账单日 (show_statement_date)</p>
+              </div>
+              <button type="button" class="switch-btn on" click-handler="noop">
+                <span class="switch-thumb"></span>
+              </button>
+            </div>
+
+            <div class="toggle-row" style="border-bottom: 1px solid #E2E8F0; padding: 8px 0;">
+              <div class="toggle-info">
+                <p class="toggle-title">卡号后 4 位 (show_card_last4)</p>
+              </div>
+              <button type="button" class="switch-btn on" click-handler="noop">
+                <span class="switch-thumb"></span>
+              </button>
+            </div>
+
+            <div class="toggle-row" style="padding: 8px 0;">
+              <div class="toggle-info">
+                <p class="toggle-title">卡片年费信息 (show_annual_fee)</p>
+                <p class="toggle-desc">常驻年费收取周期与减免达标进度</p>
+              </div>
+              <button type="button" class="switch-btn on" click-handler="noop">
+                <span class="switch-thumb"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ConfirmDialog -->
+  <sc-if condition="{{showLogoutDialog}}">
+    <div class="dialog-overlay" click-handler="closeDialog">
+      <div class="dialog-card" click-handler="stopProp">
+        <h3 class="dialog-title">退出登录</h3>
+        <p class="dialog-desc">确定要退出当前账号吗？本地缓存与偏好配置将安全保留。</p>
+        <div class="dialog-actions">
+          <button type="button" class="dialog-btn" style="background: #F0F4FA; color: #5B6478;" click-handler="closeDialog">
+            取消
+          </button>
+          <button type="button" class="dialog-btn" style="background: #D32F2F; color: #FFF;" click-handler="confirmLogout">
+            确认退出
+          </button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if condition="{{showDisconnectDialog}}">
+    <div class="dialog-overlay" click-handler="closeDialog">
+      <div class="dialog-card" click-handler="stopProp">
+        <h3 class="dialog-title">断开 Gmail 授权</h3>
+        <p class="dialog-desc">断开后将清除服务端邮箱授权与邮件原文副本，已入库账单不受影响。确定断开吗？</p>
+        <div class="dialog-actions">
+          <button type="button" class="dialog-btn" style="background: #F0F4FA; color: #5B6478;" click-handler="closeDialog">
+            取消
+          </button>
+          <button type="button" class="dialog-btn" style="background: #D32F2F; color: #FFF;" click-handler="confirmDisconnect">
+            确认断开
+          </button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      showGmailSheet: false,
+      showReminderSheet: false,
+      showDisplaySheet: false,
+      showLogoutDialog: false,
+      showDisconnectDialog: false,
+      toastMessage: null,
+      syncing: false,
+      gmailConnected: true,
+      privacyMode: true
+    };
+  }
+
+  showToast(msg) {
+    this.setState({ toastMessage: msg });
+    setTimeout(() => {
+      this.setState({ toastMessage: null });
+    }, 2400);
+  }
+
+  renderVals() {
+    return {
+      gmailSummary: this.state.gmailConnected ? '● 已连接 4封' : '○ 未连接',
+      reminderSummary: '提前3/1/0天 · 权益开启',
+      displaySummary: 'CNY · 隐私开启',
+      syncLabel: this.state.syncing ? '同步中…' : '⚡ 立即同步新账单',
+      showGmailSheet: this.state.showGmailSheet,
+      showReminderSheet: this.state.showReminderSheet,
+      showDisplaySheet: this.state.showDisplaySheet,
+      showLogoutDialog: this.state.showLogoutDialog,
+      showDisconnectDialog: this.state.showDisconnectDialog,
+      toastMessage: this.state.toastMessage,
+
+      routeDashboard: () => {
+        this.showToast('导航至 /dashboard 首页');
+      },
+      routeBills: () => {
+        this.showToast('导航至 /bills 账单');
+      },
+      routeCards: () => {
+        this.showToast('导航至 /cards 卡片');
+      },
+      routeSettings: () => {
+        this.showToast('当前已在 /settings 设置');
+      },
+      openAdmin: () => { this.showToast('跳转管理后台 /admin/settings'); },
+      routeHolders: () => { this.showToast('导航至 /holders 家庭管理'); },
+      routePromos: () => { this.showToast('导航至 /promos 优惠活动'); },
+      routeBenefits: () => { this.showToast('导航至 /benefits 我的权益'); },
+      routeLedger: () => { this.showToast('打开 /gmail-ledger 账单流水'); },
+      openGmailDrawer: () => { this.setState({ showGmailSheet: true }); },
+      openReminderDrawer: () => { this.setState({ showReminderSheet: true }); },
+      openDisplayDrawer: () => { this.setState({ showDisplaySheet: true }); },
+      closeSheet: () => { this.setState({ showGmailSheet: false, showReminderSheet: false, showDisplaySheet: false }); },
+      promptLogout: () => { this.setState({ showLogoutDialog: true }); },
+      closeDialog: () => { this.setState({ showLogoutDialog: false, showDisconnectDialog: false }); },
+      confirmLogout: () => { this.setState({ showLogoutDialog: false }); this.showToast('已退出登录'); },
+      promptDisconnect: () => { this.setState({ showDisconnectDialog: true }); },
+      confirmDisconnect: () => { this.setState({ showDisconnectDialog: false, gmailConnected: false }); this.showToast('已断开连接'); },
+      triggerSync: () => {
+        this.setState({ syncing: true });
+        setTimeout(() => { this.setState({ syncing: false }); this.showToast('同步完成'); }, 1000);
+      },
+      copyAddress: () => { this.showToast('专属地址已复制'); },
+      testPushNotification: () => { this.showToast('测试推送已发出'); },
+      togglePrivacy: () => {
+        const next = !this.state.privacyMode;
+        this.setState({ privacyMode: next });
+        this.showToast(next ? '已开启隐私模式' : '已关闭隐私模式');
+      },
+      stopProp: (e) => { if (e && e.stopPropagation) e.stopPropagation(); },
+      noop: () => {}
+    };
+  }
+}
+</script>
+</body>
+</html>

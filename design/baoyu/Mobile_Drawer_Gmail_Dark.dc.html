@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>移动端 · 邮箱导入抽屉 (暗色)</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", "PingFang SC", "Segoe UI", Roboto, sans-serif;
+      background: #060913;
+      color: #F5F7FA;
+      -webkit-font-smoothing: antialiased;
+      box-sizing: border-box;
+      user-select: none;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    .phone-shell {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      margin: 0 auto;
+      background: #0A0F1E;
+      border-radius: 40px;
+      overflow: hidden;
+      border: 1px solid #26304A;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7);
+      display: flex;
+      flex-direction: column;
+    }
+    .status-bar {
+      height: 44px;
+      padding: 0 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+      font-weight: 600;
+      color: #F5F7FA;
+    }
+    .dynamic-island {
+      width: 96px;
+      height: 24px;
+      background: #000;
+      border-radius: 20px;
+      position: absolute;
+      top: 10px;
+      left: 147px;
+    }
+    /* Dimmed underlying page background */
+    .bg-dimmed {
+      flex: 1;
+      background: #0A0F1E;
+      opacity: 0.25;
+      padding: 16px;
+    }
+    .sheet-card {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #131A2A;
+      border-top: 1px solid #26304A;
+      border-radius: 24px 24px 0 0;
+      box-shadow: 0 -12px 48px rgba(0, 0, 0, 0.6);
+      display: flex;
+      flex-direction: column;
+      max-height: 780px;
+    }
+    .sheet-handle {
+      width: 36px;
+      height: 4px;
+      background: #26304A;
+      border-radius: 2px;
+      margin: 10px auto 4px auto;
+    }
+    .sheet-header {
+      padding: 12px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #1A2334;
+    }
+    .sheet-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #F5F7FA;
+      margin: 0;
+    }
+    .sheet-close-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 16px;
+      background: #1A2334;
+      border: none;
+      color: #9AA6BC;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .sheet-body {
+      padding: 18px 20px 36px 20px;
+      overflow-y: auto;
+    }
+    .card-box {
+      background: #0A0F1E;
+      border: 1px solid #26304A;
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+    .status-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+    .pill-green {
+      background: #1A332A;
+      color: #6EE7A0;
+      border: 1px solid rgba(110, 231, 160, 0.3);
+    }
+    .action-btn {
+      width: 100%;
+      height: 44px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: none;
+    }
+    .btn-primary {
+      background: #3B6FE0;
+      color: #FFF;
+    }
+    .btn-secondary {
+      background: #1A2334;
+      color: #7AADFF;
+      border: 1px solid #26304A;
+    }
+    .btn-danger {
+      background: #3A222A;
+      color: #FF8A8A;
+      border: 1px solid #E5484D;
+    }
+    .info-notice {
+      background: #1A2334;
+      border-left: 3px solid #3B6FE0;
+      padding: 10px 12px;
+      border-radius: 0 10px 10px 0;
+      font-size: 12px;
+      color: #9AA6BC;
+      line-height: 1.4;
+      margin-top: 10px;
+    }
+  </style>
+</helmet>
+
+<div class="phone-shell">
+  <div class="dynamic-island"></div>
+  <div class="status-bar">
+    <span>9:41</span>
+    <span style="display: flex; gap: 4px; align-items: center;">
+      <span>●●●●</span>
+      <span>WiFi</span>
+      <span>100%</span>
+    </span>
+  </div>
+
+  <div class="bg-dimmed">
+    <h2 style="font-size: 24px; font-weight: 700; color: #9AA6BC; margin: 0 0 12px 0;">我的</h2>
+    <div style="background: #131A2A; height: 60px; border-radius: 16px; margin-bottom: 12px;"></div>
+    <div style="background: #131A2A; height: 160px; border-radius: 16px; margin-bottom: 12px;"></div>
+    <div style="background: #131A2A; height: 160px; border-radius: 16px;"></div>
+  </div>
+
+  <!-- BottomSheet Open State -->
+  <div class="sheet-card">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title">邮箱账单导入</h3>
+      <button type="button" class="sheet-close-btn">✕</button>
+    </div>
+    <div class="sheet-body">
+      <!-- 官方直连主卡 -->
+      <div class="card-box">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <span style="font-weight: 700; font-size: 15px; color: #F5F7FA;">bills.alex@gmail.com</span>
+          <span class="status-pill pill-green">● 已授权连接</span>
+        </div>
+        <p style="font-size: 12px; color: #9AA6BC; margin: 0 0 14px 0;">上次同步：今天 16:20 ｜ 新增 4 笔账单，无草稿</p>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" class="action-btn btn-primary" style="flex: 2;">
+            <span>⚡ 立即同步新账单</span>
+          </button>
+          <button type="button" class="action-btn btn-danger" style="flex: 1;">
+            <span>断开</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 流水跳转 -->
+      <button type="button" class="action-btn btn-secondary" style="margin-bottom: 14px;">
+        <span>📋 查看邮箱账单明细流水 →</span>
+      </button>
+
+      <!-- 专属补录地址 -->
+      <div class="card-box">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+          <span style="font-size: 16px;">📥</span>
+          <span style="font-weight: 700; font-size: 14px; color: #F5F7FA;">专属收账单邮箱（补录）</span>
+        </div>
+        <p style="font-size: 12px; color: #9AA6BC; margin: 0 0 10px 0; line-height: 1.4;">
+          把银行邮件以 <b>.eml 附件</b> 形式转发到专属地址。避免自动转发导致 DMARC 拒收。
+        </p>
+        <div style="background: #131A2A; border: 1px solid #26304A; border-radius: 12px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between;">
+          <span style="font-family: monospace; font-size: 12px; color: #F0C75E; word-break: break-all;">bills+usr_92a8f@20160325.xyz</span>
+          <button type="button" class="action-btn btn-secondary" style="width: auto; height: 32px; padding: 0 14px; margin: 0; font-size: 12px;">
+            复制
+          </button>
+        </div>
+        <div class="info-notice">
+          系统根据邮箱唯一哈希将账单自动归属到当前账户，原文入库留证。
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

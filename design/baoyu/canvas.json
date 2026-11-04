@@ -1,0 +1,170 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-11-04T10:55:00.000Z"
+  },
+  "title": "WorldCredit 设置页重设计（候选画板）",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [
+    {
+      "id": "mobile",
+      "name": "移动端 /settings"
+    },
+    {
+      "id": "admin",
+      "name": "管理后台 /admin/settings"
+    }
+  ],
+  "boards": {
+    "Mobile_Settings_Dark.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "移动端 · 设置主页 (暗色)",
+      "page": "mobile",
+      "is_interactive": true,
+      "radius": 40
+    },
+    "Mobile_Drawer_Gmail_Dark.dc.html": {
+      "x": 470,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "移动端 · 邮箱导入抽屉 (暗色)",
+      "page": "mobile",
+      "is_interactive": true,
+      "radius": 40
+    },
+    "Mobile_Drawer_Reminders_Dark.dc.html": {
+      "x": 940,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "移动端 · 提醒偏好抽屉 (暗色)",
+      "page": "mobile",
+      "is_interactive": true,
+      "radius": 40
+    },
+    "Mobile_Drawer_Display_Dark.dc.html": {
+      "x": 1410,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "移动端 · 显示偏好抽屉 (暗色)",
+      "page": "mobile",
+      "is_interactive": true,
+      "radius": 40
+    },
+    "Mobile_Settings_Light.dc.html": {
+      "x": 0,
+      "y": 1200,
+      "w": 390,
+      "h": 844,
+      "title": "移动端 · 设置主页 (亮色)",
+      "page": "mobile",
+      "is_interactive": true,
+      "radius": 40
+    },
+    "Mobile_Drawer_Gmail_Light.dc.html": {
+      "x": 470,
+      "y": 1200,
+      "w": 390,
+      "h": 844,
+      "title": "移动端 · 邮箱导入抽屉 (亮色)",
+      "page": "mobile",
+      "is_interactive": true,
+      "radius": 40
+    },
+    "Mobile_Drawer_Reminders_Light.dc.html": {
+      "x": 940,
+      "y": 1200,
+      "w": 390,
+      "h": 844,
+      "title": "移动端 · 提醒偏好抽屉 (亮色)",
+      "page": "mobile",
+      "is_interactive": true,
+      "radius": 40
+    },
+    "Mobile_Drawer_Display_Light.dc.html": {
+      "x": 1410,
+      "y": 1200,
+      "w": 390,
+      "h": 844,
+      "title": "移动端 · 显示偏好抽屉 (亮色)",
+      "page": "mobile",
+      "is_interactive": true,
+      "radius": 40
+    },
+    "Admin_Settings_Dark.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "管理后台 · 系统设置 (暗色)",
+      "page": "admin",
+      "is_interactive": true,
+      "radius": 12
+    },
+    "Admin_Settings_Light.dc.html": {
+      "x": 0,
+      "y": 1200,
+      "w": 1440,
+      "h": 900,
+      "title": "管理后台 · 系统设置 (亮色)",
+      "page": "admin",
+      "is_interactive": true,
+      "radius": 12
+    }
+  },
+  "order": [
+    "Mobile_Settings_Dark.dc.html",
+    "Mobile_Drawer_Gmail_Dark.dc.html",
+    "Mobile_Drawer_Reminders_Dark.dc.html",
+    "Mobile_Drawer_Display_Dark.dc.html",
+    "Mobile_Settings_Light.dc.html",
+    "Mobile_Drawer_Gmail_Light.dc.html",
+    "Mobile_Drawer_Reminders_Light.dc.html",
+    "Mobile_Drawer_Display_Light.dc.html",
+    "Admin_Settings_Dark.dc.html",
+    "Admin_Settings_Light.dc.html"
+  ],
+  "notes": {
+    "title_mobile_dark": {
+      "x": 0,
+      "y": -280,
+      "text": "移动端 /settings 候选画板（暗色主题 · ObsidianUI 基线）",
+      "kind": "title1",
+      "page": "mobile",
+      "maxW": 1800
+    },
+    "title_mobile_light": {
+      "x": 0,
+      "y": 920,
+      "text": "移动端 /settings 候选画板（亮色主题 · 补充令牌对齐）",
+      "kind": "title1",
+      "page": "mobile",
+      "maxW": 1800
+    },
+    "title_admin_dark": {
+      "x": 0,
+      "y": -280,
+      "text": "管理后台 /admin/settings 候选画板（暗色主题 · ObsidianUI 基线）",
+      "kind": "title1",
+      "page": "admin",
+      "maxW": 1440
+    },
+    "title_admin_light": {
+      "x": 0,
+      "y": 920,
+      "text": "管理后台 /admin/settings 候选画板（亮色主题 · 补充令牌对齐）",
+      "kind": "title1",
+      "page": "admin",
+      "maxW": 1440
+    }
+  },
+  "designSystems": []
+}

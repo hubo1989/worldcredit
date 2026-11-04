@@ -85,6 +85,17 @@ export default tseslint.config(
     },
   },
   {
+    // baoyu-design 工具链画板预览辅助脚本
+    files: ["design/baoyu/**/*.js"],
+    languageOptions: {
+      globals: {
+        window: "readonly",
+        document: "readonly",
+        console: "readonly",
+      },
+    },
+  },
+  {
     // OpenPencil 设计脚本：在 QuickJS 沙箱里执行，`I(parent, node)` 由运行时注入。
     // 只声明真实用到的沙箱全局，其余 lint 规则照常生效，避免整目录失守。
     files: ["design/openpencil/scripts/**/*.js"],
