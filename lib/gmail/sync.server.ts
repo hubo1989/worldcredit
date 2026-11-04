@@ -19,6 +19,8 @@ import {
   upsertBillForCard,
   parkBillAsDraft,
   syncBillingDayFromBill,
+  syncCreditLimitFromBill,
+  evaluateParsedBillDueDate,
   type BillParseResult,
 } from "../email-core";
 import { decryptToken } from "./token-crypto";
@@ -244,15 +246,15 @@ async function routeParsedMessage(params: {
   if (aiResult.email_kind && aiResult.email_kind !== "statement") {
     return { status: "skipped", reason: `非账单邮件（email_kind=${aiResult.email_kind}）` };
   }
-  const zeroBill = Number(aiResult.bill_amount) === 0;
-  if (
-    aiResult.is_bill === false ||
-    !aiResult.bill_month ||
-    aiResult.bill_amount == null ||
-    Number.isNaN(Number(aiResult.bill_amount)) ||
-    (!zeroBill && !aiResult.due_date)
-  ) {
-    return { status: "skipped", reason: "Not a bill email or missing required fields" };
+  const dueEval = evaluateParsedBillDueDate(aiResult);
+  if (!dueEval.ok) {
+    return {
+      status: "skipped",
+      reason:
+        dueEval.kind === "not_a_bill"
+          ? "Not a bill email or missing required fields"
+          : dueEval.reason,
+    };
   }
 
   const scope = await loadHolderScope(db, userId);
@@ -277,9 +279,10 @@ async function routeParsedMessage(params: {
     cardTail: aiResult.card_last4 ?? null,
     bankName: aiResult.bank_name ?? null,
     currency: aiResult.currency ?? null,
+    creditLimit: aiResult.credit_limit ?? null,
     statementDate: aiResult.statement_date ?? null,
     statementDay: aiResult.statement_day ?? null,
-    dueDate: aiResult.due_date ?? null,
+    dueDate: dueEval.dueDate,
     receivedDate: top.headers.date ?? null,
     allowCreate: trusted,
   });
@@ -290,6 +293,7 @@ async function routeParsedMessage(params: {
 
   const outcome = await upsertBillForCard(db, created.cardId, aiResult, { trusted });
   await syncBillingDayFromBill(db, created.cardId, aiResult);
+  await syncCreditLimitFromBill(db, created.cardId, aiResult);
   return {
     status: "bill_written",
     billId: outcome.billId,

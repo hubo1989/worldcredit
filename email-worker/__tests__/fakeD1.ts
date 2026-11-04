@@ -119,6 +119,19 @@ class FakeStatement {
     }
 
     if (/^INSERT INTO credit_cards/i.test(norm)) {
+      if (args.length === 8) {
+        tables.credit_cards.push({
+          id: args[0],
+          holder_id: args[1],
+          card_product_id: args[2],
+          card_number_last4: args[3],
+          credit_limit: args[4],
+          billing_day: args[5],
+          status: args[6],
+          card_type: args[7],
+        })
+        return { success: true }
+      }
       // 注意 credit_limit 在 SQL 里是字面量 0，不占绑定参数位
       tables.credit_cards.push({
         id: args[0],
@@ -178,6 +191,16 @@ class FakeStatement {
       if (!row) throw new Error('FakeD1 UPDATE credit_cards 未命中: ' + String(id))
       if (row.billing_day === notDay) return { success: true }
       row.billing_day = billingDay
+      return { success: true }
+    }
+
+    if (/^UPDATE credit_cards SET credit_limit/i.test(norm)) {
+      const [limit, id] = args
+      const row = tables.credit_cards.find(r => r.id === id)
+      if (!row) throw new Error('FakeD1 UPDATE credit_cards 未命中: ' + String(id))
+      if (row.credit_limit_override == null && (Number(row.credit_limit) || 0) <= 0) {
+        row.credit_limit = limit
+      }
       return { success: true }
     }
 

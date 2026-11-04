@@ -20,7 +20,22 @@ export interface BillParseResult {
   card_last4?: string | null
   bill_amount?: number
   min_payment?: number | null
-  due_date?: string
+  /**
+   * 邮件白纸黑字写出的当期确切完整还款截止日（YYYY-MM-DD）。
+   * 若未提供或仅有宽限期/相对规则，必须为 null，禁止推算或编造。
+   */
+  due_date?: string | null
+  /**
+   * 还款日提取状态：
+   * - exact：邮件明确给出完整日期 YYYY-MM-DD
+   * - ambiguous_or_grace_only：仅给出宽限期（如「账单日后20天」「免息期20天」）或每月固定日无具体年月、日期模糊
+   * - missing：邮件未提及还款日
+   */
+  due_date_status?: 'exact' | 'ambiguous_or_grace_only' | 'missing' | null
+  /**
+   * 邮件正文明确写出的信用额度（正数）；未提及填 null，禁止推算或编造。
+   */
+  credit_limit?: number | null
   bill_month?: string
   statement_date?: string | null
   /**

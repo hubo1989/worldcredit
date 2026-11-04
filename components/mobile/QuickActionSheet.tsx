@@ -183,11 +183,13 @@ export function QuickActionSheet({ open, onClose, onChanged, initialAction }: Pr
 
   const handleCardSubmit = async (data: Omit<CreditCard, "id" | "created_at">) => {
     if (!pickedHolder) return;
+    const limit = Number(data.credit_limit) || 0;
     const created = await createCard({
       holder_id: pickedHolder.id,
       card_product_id: data.card_product_id,
       card_number_last4: data.card_number_last4 || undefined,
-      credit_limit: Number(data.credit_limit) || 0,
+      credit_limit: limit,
+      credit_limit_override: limit > 0 ? limit : null,
       billing_day: Number(data.billing_day) || 1,
       card_type: "credit",
       status: "active",

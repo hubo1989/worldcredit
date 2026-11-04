@@ -1,6 +1,7 @@
 import { query, queryOne, execute, uuid, now } from '../db'
 import { CardProduct, Promo, Benefit, Bank, EmailParseLog } from '../types'
 import { archiveLegacyDefinition } from '../opportunities/legacy.server'
+import { extractValidCreditLimit, isExactDueDate } from '../email-core/due-date'
 
 /**
  * 管理后台通用 API 封装
@@ -44,7 +45,9 @@ interface RawEmailBillPayload {
   card_last4?: string | null
   bill_amount?: number | null
   min_payment?: number | null
-  due_date?: string
+  credit_limit?: number | null
+  due_date?: string | null
+  due_date_status?: 'exact' | 'ambiguous_or_grace_only' | 'missing' | null
   bill_month?: string
   statement_date?: string | null
   currency?: string
@@ -182,6 +185,18 @@ export async function createCardFromEmailParseLog(
   if (parsed.bill_amount == null || !Number.isFinite(amount) || amount < 0) {
     throw new Error('AI 解析结果缺少合法账单金额')
   }
+  const zeroBill = amount === 0
+  const rawDue = typeof parsed.due_date === 'string' ? parsed.due_date.trim() : ''
+  const exactDue =
+    isExactDueDate(rawDue) && parsed.due_date_status !== 'ambiguous_or_grace_only'
+      ? rawDue
+      : null
+  if (!zeroBill && !exactDue) {
+    if (parsed.due_date_status === 'ambiguous_or_grace_only' || rawDue.length > 0) {
+      throw new Error('邮件还款日模糊或仅有宽限期，禁止编造还款日入库')
+    }
+    throw new Error('邮件未提供确切还款日，禁止编造还款日入库')
+  }
 
   const holderSql = params.holderId
     ? `SELECT id, name FROM card_holders
@@ -246,19 +261,19 @@ export async function createCardFromEmailParseLog(
   let createdCard = false
   if (!cardId) {
     cardId = uuid()
+    const initialLimit = extractValidCreditLimit(parsed.credit_limit) ?? 0
     const { error: insertCardError } = await execute(
       `INSERT INTO credit_cards
        (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type)
-       VALUES (?, ?, ?, ?, 0, ?, 'active', 'credit')`,
-      [cardId, holder.id, productId, tail, statementDay(parsed.statement_date)],
+       VALUES (?, ?, ?, ?, ?, ?, 'active', 'credit')`,
+      [cardId, holder.id, productId, tail, initialLimit, statementDay(parsed.statement_date)],
     )
     if (insertCardError) throw new Error(insertCardError.message)
     createdCard = true
   }
 
-  const dueDate = parsed.due_date ?? parsed.statement_date ?? `${billMonth}-28`
+  const dueDate = exactDue ?? parsed.statement_date ?? `${billMonth}-28`
   const minPayment = parsed.min_payment == null ? null : Number(parsed.min_payment)
-  const zeroBill = amount === 0
   const { data: existingBill, error: billError } = await queryOne<{
     id: string
     status: string | null

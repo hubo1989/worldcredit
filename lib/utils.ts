@@ -42,6 +42,37 @@ export function getEffectiveAnnualFee(
 }
 
 /**
+ * 返回卡片实际生效的信用额度（正数）；未获取时返回 null，绝不把兼容值 0 当作真实额度。
+ *
+ * 优先级：credit_limit_override（正数） > credit_limit（正数） > null（未获取）。
+ * credit_cards.credit_limit 在数据库与 iOS 离线库中均为 NOT NULL DEFAULT 0，
+ * 自动建卡/未填额度时存 0 作为兼容值，展示与计算时必须识别为 null（「未获取」）。
+ */
+export function getEffectiveCreditLimit(
+  card: Pick<CreditCard, "credit_limit" | "credit_limit_override"> | undefined | null,
+): number | null {
+  if (!card) return null;
+  if (card.credit_limit_override != null) {
+    const over = Number(card.credit_limit_override);
+    if (Number.isFinite(over) && over > 0) return over;
+  }
+  const raw = Number(card.credit_limit);
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  return null;
+}
+
+/**
+ * 卡片信用额度是否已由用户手动设置（持久化在 credit_limit_override）。
+ */
+export function isCreditLimitManuallySet(
+  card: Pick<CreditCard, "credit_limit_override"> | undefined | null,
+): boolean {
+  if (!card || card.credit_limit_override == null) return false;
+  const over = Number(card.credit_limit_override);
+  return Number.isFinite(over) && over > 0;
+}
+
+/**
  * 返回实际生效的还款规则（优先使用卡级别 override，否则用卡产品默认）
  */
 export function getEffectiveDueConfig(

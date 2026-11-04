@@ -1,5 +1,6 @@
 import { query, queryOne, execute, uuid, now } from '../db'
 import type { Bill, CardHolder, CardProduct, CreditCard } from '../types'
+import { isExactDueDate } from '../email-core/due-date'
 
 type GmailLedgerSyncEntry = {
   id: string
@@ -167,7 +168,7 @@ export async function syncGmailLedgerToCardsAndBills(targetUserId?: string): Pro
     const bankShort = normalizeBank(entry.bank)
     const amount = Number(entry.statement_amount || 0)
     const billMonth = getEntryMonth(entry)
-    if (!tail || !entry.due_date || !billMonth || amount <= 0) continue
+    if (!tail || !isExactDueDate(entry.due_date) || !billMonth || amount <= 0) continue
 
     const cardKey = `${bankShort}:${tail}`
     let card = cardByBankAndTail.get(cardKey) || cardByBankAndTail.get(`:${tail}`) || null
@@ -188,7 +189,7 @@ export async function syncGmailLedgerToCardsAndBills(targetUserId?: string): Pro
       const newCardId = uuid()
       const { error: createCardErr } = await execute(
         `INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type)
-         VALUES (?, ?, ?, ?, 50000, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, 0, ?, ?, ?)`,
         [newCardId, holderId, product.id, tail, pickStatementDay(entry.statement_date), 'active',
          entry.kind?.includes('贷款') ? 'loan' : 'credit']
       )
@@ -196,7 +197,7 @@ export async function syncGmailLedgerToCardsAndBills(targetUserId?: string): Pro
 
       card = {
         id: newCardId, holder_id: holderId, card_product_id: product.id,
-        card_number_last4: tail, credit_limit: 50000, billing_day: pickStatementDay(entry.statement_date),
+        card_number_last4: tail, credit_limit: 0, billing_day: pickStatementDay(entry.statement_date),
         status: 'active', card_type: entry.kind?.includes('贷款') ? 'loan' : 'credit',
         created_at: now(),
         card_product: { bank_name: product.bank_name, card_name: product.card_name },

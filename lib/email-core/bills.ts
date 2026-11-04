@@ -9,6 +9,7 @@
  */
 
 import type { BillParseResult, HolderScopedBill, NestedBillMessage, RawAttachment } from './types'
+import { evaluateParsedBillDueDate, extractValidCreditLimit, isExactDueDate } from './due-date'
 import {
   extractNameFromBody,
   isEmlAttachment,
@@ -176,6 +177,8 @@ export interface FindOrCreateCardParams {
   bankName: string | null
   /** AI 解出的币种，用于在同银行多产品里排除币种不符的候选。 */
   currency: string | null
+  /** 邮件明确写出的信用额度（正数）；缺失或 <= 0 时按未获取存兼容值 0。 */
+  creditLimit?: number | null
   /**
    * false 时只查找不创建：归属不可信（回落默认持卡人）绝不能凭猜测
    * 给某个人名下新建卡——2026-10-16 民生 0872 就这样被挂错了人。
@@ -242,11 +245,18 @@ export async function findOrCreateCardForHolder(
   }
 
   const cardId = crypto.randomUUID()
-  // 额度暂记 0：AI 结果里没有额度字段，宁可留空等用户补，也不猜一个数。
+  // 额度：邮件明确给出正数额度则写入，否则记兼容值 0（credit_limit_override=NULL，界面识别为「未获取」）。
   // 币种不落库在这里——它由 card_product 决定，所以上面必须挑对产品。
-  await db.prepare(
-    'INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type) VALUES (?, ?, ?, ?, 0, ?, ?, ?)'
-  ).bind(cardId, params.holderId, product.id, tail, billingDay, 'active', 'credit').run()
+  const initialLimit = extractValidCreditLimit(params.creditLimit)
+  if (initialLimit !== null) {
+    await db.prepare(
+      'INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(cardId, params.holderId, product.id, tail, initialLimit, billingDay, 'active', 'credit').run()
+  } else {
+    await db.prepare(
+      'INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type) VALUES (?, ?, ?, ?, 0, ?, ?, ?)'
+    ).bind(cardId, params.holderId, product.id, tail, billingDay, 'active', 'credit').run()
+  }
 
   return { ok: true, cardId, created: true }
 }
@@ -321,10 +331,17 @@ export async function upsertBillForCard(
   const amount = Number(parsed.bill_amount)
   const minPayment = parsed.min_payment != null ? Number(parsed.min_payment) : null
   const statementDate = parsed.statement_date ?? null
-  // 0 元账单的 due_date 兜底（bills.due_date NOT NULL）：缺省时用账单日或月末；
-  // 0 元新账单 status 直接置 paid（应还 0 元 = 已还清），与直发路径同口径。
+  // 非 0 元账单必须具备确切 YYYY-MM-DD 还款日，禁止 fallback 到 statementDate 或月末 -28 编造日期；
+  // 仅 0 元账单（无需还款，status=paid）在邮件未给还款日时满足 bills.due_date NOT NULL 存储约束。
   const zeroBill = amount === 0
-  const dueDate = (parsed.due_date as string | null) ?? statementDate ?? (billMonth + '-28')
+  const exactDue = isExactDueDate(parsed.due_date) && parsed.due_date_status !== 'ambiguous_or_grace_only'
+    ? parsed.due_date.trim()
+    : null
+  if (!zeroBill && !exactDue) {
+    const evalDue = evaluateParsedBillDueDate(parsed)
+    throw new Error(!evalDue.ok ? evalDue.reason : '缺少确切还款日（YYYY-MM-DD），禁止编造还款日')
+  }
+  const dueDate = exactDue ?? statementDate ?? (billMonth + '-28')
   const initialStatus = zeroBill ? 'paid' : 'unpaid'
 
   const existing = await db.prepare(
@@ -350,6 +367,33 @@ export async function upsertBillForCard(
     'INSERT INTO bills (id, card_id, bill_month, bill_amount, min_payment, due_date, statement_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ).bind(billId, cardId, billMonth, amount, minPayment, dueDate, statementDate, initialStatus).run()
   return { billId, action: 'inserted', reason: null }
+}
+
+/**
+ * 邮件明确写出正数信用额度时，仅在卡片当前为「未获取」（credit_limit <= 0 且无人工覆盖）时回填。
+ * 绝不触碰 credit_limit_override，也不覆盖用户已设置的额度。
+ */
+export async function syncCreditLimitFromBill(
+  db: D1Database,
+  cardId: string,
+  parsed: BillParseResult
+): Promise<boolean> {
+  const candidate = extractValidCreditLimit(parsed.credit_limit)
+  if (candidate === null) return false
+
+  const card = await db
+    .prepare('SELECT credit_limit, credit_limit_override FROM credit_cards WHERE id = ?')
+    .bind(cardId)
+    .first<{ credit_limit: number | null; credit_limit_override?: number | null }>()
+  if (!card) return false
+  if (card.credit_limit_override != null) return false
+  if ((Number(card.credit_limit) || 0) > 0) return false
+
+  await db
+    .prepare('UPDATE credit_cards SET credit_limit = ? WHERE id = ?')
+    .bind(candidate, cardId)
+    .run()
+  return true
 }
 
 /**
@@ -481,17 +525,11 @@ export async function persistNestedBills(
       continue
     }
 
-    // 转发包里混着「电子对账单已可查阅」这类通知和营销邮件，字段不全的一律跳过
-    // 与直发路径同口径：0 元账单合法（== null 判空，不用 falsy）；
-    // 0 元时 due_date 可缺（无需还款就没有截止日）
-    const zeroBill = Number(parsed.bill_amount) === 0
-    if (
-      parsed.is_bill === false ||
-      !parsed.bill_month ||
-      parsed.bill_amount == null || Number.isNaN(Number(parsed.bill_amount)) ||
-      (!zeroBill && !parsed.due_date)
-    ) {
-      skipped.push({ label: message.label, reason: '非账单或缺少必填字段' })
+    // 转发包里混着「电子对账单已可查阅」这类通知和营销邮件，字段不全的一律跳过；
+    // 非 0 元账单必须有确切 YYYY-MM-DD 还款日，明确区分「邮件未提供」与「日期模糊/只有宽限期」。
+    const dueEval = evaluateParsedBillDueDate(parsed)
+    if (!dueEval.ok) {
+      skipped.push({ label: message.label, reason: dueEval.reason })
       continue
     }
 
@@ -514,10 +552,11 @@ export async function persistNestedBills(
       cardTail: parsed.card_last4 ?? null,
       statementDate: parsed.statement_date ?? null,
       statementDay: parsed.statement_day ?? null,
-      dueDate: parsed.due_date ?? null,
+      dueDate: dueEval.dueDate,
       receivedDate: message.date,
       bankName: parsed.bank_name ?? null,
       currency: parsed.currency ?? null,
+      creditLimit: parsed.credit_limit ?? null,
       // 归属不可信时绝不自动建卡（会挂到默认持卡人头上）；落草稿等人工确认。
       allowCreate: trusted,
     })
@@ -541,6 +580,7 @@ export async function persistNestedBills(
     }
     // 每期账单落库后回写卡档账单日（有出账日证据互相印证才动，见函数注释）
     const billingDayUpdated = await syncBillingDayFromBill(db, card.cardId, parsed)
+    await syncCreditLimitFromBill(db, card.cardId, parsed)
     written.push({
       holderId: resolution.holderId,
       holderName: scope.holders.find(h => h.id === resolution.holderId)?.name ?? '',
