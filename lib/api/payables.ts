@@ -11,10 +11,30 @@ export type {
 } from './payables.server'
 
 // 纯类型与纯函数走 .shared，避免把服务端依赖带进浏览器包。
-export type { PayableCategory, PayableCurrency } from './payables.shared'
+export type {
+  PayableCategory,
+  PayableCurrency,
+  PayableCycleType,
+  PayableCycleSpec,
+} from './payables.shared'
 export {
   categoryLabel,
+  CUSTOM_CATEGORY_SENTINEL,
+  MAX_CUSTOM_CATEGORY_LENGTH,
   PAYABLE_CATEGORIES,
+  isPayableCategory,
+  resolvePresetPayableCategory,
+  normalizeCustomCategoryName,
+  dedupeCustomCategories,
+  PAYABLE_CYCLE_TYPES,
+  PAYABLE_CYCLE_LABELS,
+  PAYABLE_CYCLE_OPTIONS,
+  MIN_PAYABLE_CYCLE_MONTHS,
+  MAX_PAYABLE_CYCLE_MONTHS,
+  isPayableCycleType,
+  isValidEveryNMonths,
+  isValidPayablePeriod,
+  payableCycleLabel,
   PAYABLE_CURRENCIES,
   PAYABLE_CURRENCY_LABELS,
   isPayableCurrency,
@@ -39,4 +59,10 @@ export function payRecurringPayable(...args: Parameters<typeof Server.payRecurri
 }
 export function getPayablePayments(...args: Parameters<typeof Server.getPayablePayments>) {
   return callRpc<typeof Server.getPayablePayments>('payables', 'getPayablePayments', ...args)
+}
+export function getPayableCustomCategories(...args: Parameters<typeof Server.getPayableCustomCategories>) {
+  return callRpc<typeof Server.getPayableCustomCategories>('payables', 'getPayableCustomCategories', ...args)
+}
+export function savePayableCustomCategory(...args: Parameters<typeof Server.savePayableCustomCategory>) {
+  return callRpc<typeof Server.savePayableCustomCategory>('payables', 'savePayableCustomCategory', ...args)
 }
