@@ -14,12 +14,16 @@ export type AccountMode = 'multi' | 'single'
 export function deriveAccountMode(
   holderId: string,
   bankName: string,
-  cards: Pick<CardWithBillsSummary, 'holder_id' | 'card'>[]
+  cards: Pick<CardWithBillsSummary, 'holder_id' | 'card' | 'account'>[]
 ): AccountMode {
-  // 用户手动钉住的账户模式优先（email 导入歧义 / 独立记账的同银行卡）
+  // 实体信用账户模式优先（若所属账户为 merged 则直接判定为 multi）
   const self = cards.find(
     c => c.holder_id === holderId && (c.card.card_product?.bank_name || '') === bankName
   )
+  if (self?.account?.statement_mode) {
+    return self.account.statement_mode === 'merged' ? 'multi' : 'single'
+  }
+  // 用户手动钉住的账户模式优先（email 导入歧义 / 独立记账的同银行卡）
   if (self?.card.account_mode_override) return self.card.account_mode_override
   const sameBankSameHolder = cards.filter(
     c => c.holder_id === holderId && (c.card.card_product?.bank_name || '') === bankName

@@ -19,6 +19,7 @@ interface CronEnv {
 
 interface BillWithCard {
   id: string;
+  account_id: string | null;
   card_id: string;
   bill_month: string;
   bill_amount: number;
@@ -29,6 +30,8 @@ interface BillWithCard {
   created_by: string;
   bank_name: string | null;
   card_name: string | null;
+  card_number_last4: string | null;
+  account_statement_mode: string | null;
   /** 卡级别名称覆盖（NULL = 使用卡产品默认名称）。 */
   name_override: string | null;
 }
@@ -44,24 +47,51 @@ export async function handleScheduled(
   await pruneStaleMutationsAndAuthAttempts(db);
   const today = getLocalTodayString("Asia/Shanghai");
 
-  // 1. Get all unpaid/overdue bills with card + holder info
+  // 1. Get all unpaid/overdue bills with card + holder info + account mode
   const bills = await db
     .prepare(
       `
-    SELECT b.id, b.card_id, b.bill_month,
+    SELECT b.id, b.account_id, b.card_id, b.bill_month,
            COALESCE(b.bill_amount_override, b.bill_amount) AS bill_amount,
            b.min_payment, b.due_date, b.status,
            ch.id AS holder_id, ch.created_by,
-           cp.bank_name, cp.card_name, cc.name_override
+           cp.bank_name, cp.card_name, cc.name_override, cc.card_number_last4,
+           ca.statement_mode AS account_statement_mode
     FROM bills b
     JOIN credit_cards cc ON b.card_id = cc.id
     JOIN card_holders ch ON cc.holder_id = ch.id
     LEFT JOIN card_products cp ON cc.card_product_id = cp.id
+    LEFT JOIN credit_accounts ca ON (b.account_id = ca.id OR (b.account_id IS NULL AND cc.account_id = ca.id))
     WHERE b.status IN ('unpaid', 'partial', 'overdue')
   `,
     )
     .all<BillWithCard>();
   const allBills = bills.results || [];
+
+  // 1.1 批量收集合并账户下的 active 卡信息
+  const mergedAccountIds = Array.from(
+    new Set(
+      allBills
+        .filter((b) => b.account_statement_mode === "merged" && b.account_id)
+        .map((b) => b.account_id as string),
+    ),
+  );
+  const accountCardsMap: Record<string, { count: number; firstTail: string }> = {};
+  if (mergedAccountIds.length > 0) {
+    const placeholders = mergedAccountIds.map(() => "?").join(",");
+    const memberStmt = await db
+      .prepare(
+        `SELECT account_id, card_number_last4 FROM credit_cards WHERE account_id IN (${placeholders}) AND status = 'active' ORDER BY created_at ASC`,
+      )
+      .bind(...mergedAccountIds)
+      .all<{ account_id: string; card_number_last4: string | null }>();
+    for (const mc of memberStmt.results || []) {
+      if (!accountCardsMap[mc.account_id]) {
+        accountCardsMap[mc.account_id] = { count: 0, firstTail: mc.card_number_last4 || "" };
+      }
+      accountCardsMap[mc.account_id].count++;
+    }
+  }
 
   // 2. Get all notification preferences
   const prefs = await db
@@ -119,23 +149,36 @@ export async function handleScheduled(
       let title: string | null = null;
       let body: string | null = null;
       const notificationKey = `bill:${bill.id}:${today}`;
-      // 修改内容优先：卡级别名称覆盖 > 卡产品默认名称
-      const cardName = bill.name_override || bill.card_name || "";
+
+      // 若为合并账户且有多张 active 卡，文案升级为合并账单口径
+      const accInfo = bill.account_id ? accountCardsMap[bill.account_id] : null;
+      const isMultiCardMerged = Boolean(
+        bill.account_statement_mode === "merged" && accInfo && accInfo.count > 1,
+      );
+
+      const bankPrefix = bill.bank_name || "";
+      let cardSubject: string;
+      if (isMultiCardMerged && accInfo) {
+        cardSubject = `${bankPrefix}合并账单（含尾号 ${accInfo.firstTail} 等 ${accInfo.count} 张卡）`;
+      } else {
+        const cardName = bill.name_override || bill.card_name || "";
+        cardSubject = `${bankPrefix} ${cardName}`.trim();
+      }
 
       if (daysUntil < 0 && pref.overdue_enabled === 1) {
-        title = `已逾期：${bill.bank_name || ""} ${cardName}`;
-        body = `账单 ¥${bill.bill_amount} 已逾期 ${Math.abs(daysUntil)} 天`;
+        title = `已逾期：${cardSubject}`;
+        body = `${cardSubject}账单 ¥${bill.bill_amount} 已逾期 ${Math.abs(daysUntil)} 天`;
       } else if (
         daysUntil >= 0 &&
         daysUntil <= pref.due_days_before &&
         pref.bill_due_enabled === 1
       ) {
         if (daysUntil === 0) {
-          title = `今天到期：${bill.bank_name || ""} ${cardName}`;
-          body = `账单 ¥${bill.bill_amount} 今天到期`;
+          title = `今天到期：${cardSubject}`;
+          body = `${cardSubject}账单 ¥${bill.bill_amount} 今天到期`;
         } else {
-          title = `${daysUntil}天后还款：${bill.bank_name || ""} ${cardName}`;
-          body = `账单 ¥${bill.bill_amount} ${daysUntil}天后到期`;
+          title = `${daysUntil}天后还款：${cardSubject}`;
+          body = `${cardSubject}账单 ¥${bill.bill_amount} ${daysUntil}天后到期`;
         }
       }
 

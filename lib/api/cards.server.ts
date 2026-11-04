@@ -1,4 +1,4 @@
-import { query, queryOne, execute, uuid } from '../db'
+import { query, queryOne, execute, batch, uuid, now } from '../db'
 import type { CardProduct, CreditCard, CardHolder, Bill, Benefit, BenefitUsage, CardDueDateResolution } from '@/lib/types'
 import { normalizeAliases } from '../utils'
 import { legacyBenefitPeriodStart } from './benefits.server'
@@ -26,6 +26,7 @@ export type CreditCardWithProduct = CreditCard & {
 interface CardJoinRow {
   id: string
   holder_id: string
+  account_id: string | null
   card_product_id: string
   card_number_last4: string | null
   credit_limit: number
@@ -61,6 +62,7 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
   const card: CreditCardWithProduct = {
     id: row.id,
     holder_id: row.holder_id,
+    account_id: row.account_id || undefined,
     card_product_id: row.card_product_id,
     card_number_last4: row.card_number_last4 || undefined,
     credit_limit: row.credit_limit,
@@ -99,7 +101,7 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
   return card
 }
 
-const CARD_SELECT = `cc.id, cc.holder_id, cc.card_product_id, cc.card_number_last4, cc.credit_limit, cc.credit_limit_override,
+const CARD_SELECT = `cc.id, cc.holder_id, cc.account_id, cc.card_product_id, cc.card_number_last4, cc.credit_limit, cc.credit_limit_override,
   cc.billing_day, cc.status, cc.card_type, cc.loan_due_day, cc.override_billing_day,
   cc.override_due_type, cc.override_due_value, cc.name_override, cc.annual_fee_override, cc.created_at,
   cc.issued_on, cc.activated_on,
@@ -302,6 +304,7 @@ export async function getCardsByHolder(holderId: string): Promise<CreditCardWith
 export type CreateCardInput = {
   holder_id: string
   billing_day: number
+  account_id?: string | null
   card_product_id?: string
   bank_id?: string
   card_number_last4?: string | null
@@ -377,15 +380,85 @@ export async function createCard(card: CreateCardInput): Promise<CreditCardWithP
     : (card.credit_limit && Number(card.credit_limit) > 0 ? Number(card.credit_limit) : null)
   const limitValue = limitOverride ?? (Number(card.credit_limit) || 0)
 
+  // 关联或创建 credit_account
+  let accountId = card.account_id || null
+  if (!accountId) {
+    const currency = product?.currency || 'CNY'
+    const bankKey = product?.bank_id || product?.bank_name || 'UNKNOWN'
+    // 若不是贷款卡，检查是否已有同持卡人同银行同币种的 active merged 账户
+    if ((card.card_type || 'credit') !== 'loan') {
+      const { data: existingAccount } = await queryOne<{ id: string }>(
+        `SELECT id FROM credit_accounts
+         WHERE holder_id = ?
+           AND COALESCE(bank_id, bank_name) = ?
+           AND currency = ?
+           AND statement_mode = 'merged'
+           AND status = 'active'
+         ORDER BY created_at ASC LIMIT 1`,
+        [card.holder_id, bankKey, currency]
+      )
+      if (existingAccount) {
+        accountId = existingAccount.id
+      }
+    }
+
+    if (!accountId) {
+      // 检查发卡行模式
+      let defaultStatementMode: 'merged' | 'independent' = 'independent'
+      let defaultQuotaMode: 'shared' | 'independent' = 'independent'
+      if (product?.bank_id) {
+        const { data: bankRow } = await queryOne<{ statement_mode: string; quota_mode: string }>(
+          'SELECT statement_mode, quota_mode FROM banks WHERE id = ?',
+          [product.bank_id]
+        )
+        if (bankRow?.statement_mode === 'merged') defaultStatementMode = 'merged'
+        if (bankRow?.quota_mode === 'shared') defaultQuotaMode = 'shared'
+      } else if (product?.bank_name) {
+        if (/招商|民生|上海银行|北京银行/.test(product.bank_name)) {
+          defaultStatementMode = 'merged'
+          defaultQuotaMode = 'shared'
+        }
+      }
+
+      if (card.card_type === 'loan') {
+        defaultStatementMode = 'independent'
+        defaultQuotaMode = 'independent'
+      }
+
+      accountId = uuid()
+      await execute(
+        `INSERT INTO credit_accounts (
+          id, holder_id, bank_id, bank_name, currency, statement_mode, quota_mode,
+          shared_credit_limit, billing_day, due_type, due_value, primary_card_id, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'active', ?, ?)`,
+        [
+          accountId,
+          card.holder_id,
+          product?.bank_id || null,
+          product?.bank_name || '未知银行',
+          currency,
+          defaultStatementMode,
+          defaultQuotaMode,
+          limitValue > 0 ? limitValue : null,
+          card.billing_day,
+          card.override_due_type || product?.payment_due_type || 'after_billing',
+          card.override_due_value || product?.payment_due_value || 20,
+          now(),
+          now()
+        ]
+      )
+    }
+  }
+
   const { error } = await execute(
     `INSERT INTO credit_cards (
-      id, holder_id, card_product_id, card_number_last4, credit_limit, credit_limit_override,
+      id, holder_id, account_id, card_product_id, card_number_last4, credit_limit, credit_limit_override,
       billing_day, status, card_type, loan_due_day, override_billing_day,
       override_due_type, override_due_value, name_override, annual_fee_override,
       account_mode_override, issued_on, activated_on
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      id, card.holder_id, productId, card.card_number_last4 || null, limitValue, limitOverride,
+      id, card.holder_id, accountId, productId, card.card_number_last4 || null, limitValue, limitOverride,
       card.billing_day, card.status || 'active', card.card_type || 'credit', card.loan_due_day || null,
       null, // override_billing_day 归一合并后新建卡统一为 null
       card.override_due_type || null, card.override_due_value || null, nameOverride,
@@ -394,6 +467,15 @@ export async function createCard(card: CreateCardInput): Promise<CreditCardWithP
     ]
   )
   if (error) throw new Error(error.message)
+
+  // 确保账户有 primary_card_id 锚点卡
+  if (accountId) {
+    await execute(
+      'UPDATE credit_accounts SET primary_card_id = ? WHERE id = ? AND primary_card_id IS NULL',
+      [id, accountId]
+    )
+  }
+
   const created = await getCardById(id)
   if (!created) throw new Error('卡片创建失败')
   return created
@@ -594,6 +676,61 @@ export async function updateCard(
 }
 
 export async function deleteCard(id: string): Promise<void> {
+  const card = await getCardById(id)
+  if (!card) return
+
+  const accountId = card.account_id
+  if (accountId) {
+    // 检查同账户内是否有其他卡片
+    const { data: siblings } = await query<{ id: string }>(
+      `SELECT id FROM credit_cards
+       WHERE account_id = ? AND id != ?
+       ORDER BY (CASE WHEN status = 'active' THEN 0 ELSE 1 END), created_at ASC`,
+      [accountId, id]
+    )
+
+    if (siblings && siblings.length > 0) {
+      // 仍有其他卡片！检查当前被删卡片是否为 primary_card_id 锚点卡
+      const { data: accountRow } = await queryOne<{ primary_card_id: string }>(
+        'SELECT primary_card_id FROM credit_accounts WHERE id = ?',
+        [accountId]
+      )
+
+      if (accountRow?.primary_card_id === id) {
+        const nextPrimaryCardId = siblings[0].id
+        // 在单一 batch 事务中：将账户锚点及所有 bills.card_id 平滑平移至剩余卡片，再删除目标卡，防止账单误灭失！
+        await batch([
+          {
+            sql: 'UPDATE credit_accounts SET primary_card_id = ?, updated_at = ? WHERE id = ?',
+            params: [nextPrimaryCardId, now(), accountId],
+          },
+          {
+            sql: 'UPDATE bills SET card_id = ? WHERE account_id = ?',
+            params: [nextPrimaryCardId, accountId],
+          },
+          {
+            sql: 'DELETE FROM credit_cards WHERE id = ?',
+            params: [id],
+          },
+        ])
+        return
+      }
+    } else {
+      // 账户内最后一张卡片：删除卡片前，先清理关联账户及账单
+      await batch([
+        {
+          sql: 'DELETE FROM credit_accounts WHERE id = ?',
+          params: [accountId],
+        },
+        {
+          sql: 'DELETE FROM credit_cards WHERE id = ?',
+          params: [id],
+        },
+      ])
+      return
+    }
+  }
+
   const { error } = await execute('DELETE FROM credit_cards WHERE id = ?', [id])
   if (error) throw new Error(error.message)
 }
@@ -604,6 +741,8 @@ export async function deleteCard(id: string): Promise<void> {
  * （与 getCardsWithBillsSummary 同谓词），防止把卡移给别人家或从别人家移入。
  * 卡上挂着权益台账关联时数据库触发器会拒绝（OPPORTUNITY_CARD_OWNERSHIP_CONFLICT），
  * 这里转成可读提示，让用户先去权益页解绑。
+ *
+ * 锚点卡守卫：若卡片在原持卡人的多卡合并账户中，先将其平滑拆出，原账户锚点平移给剩余卡。
  */
 export async function updateCardHolder(
   userId: string,
@@ -626,9 +765,67 @@ export async function updateCardHolder(
     throw new Error('卡片或目标持卡人不存在，或不属于当前账户')
   }
 
+  // 账户移交守卫：若卡片在原持卡人的多卡合并账户中，先将其从原账户拆出
+  let newAccountId = card.account_id || null
+  if (card.account_id) {
+    const { data: oldAccount } = await queryOne<{ statement_mode: string; primary_card_id: string }>(
+      'SELECT statement_mode, primary_card_id FROM credit_accounts WHERE id = ?',
+      [card.account_id]
+    )
+    const { data: remainingCards } = await query<{ id: string }>(
+      'SELECT id FROM credit_cards WHERE account_id = ? AND id != ? ORDER BY (CASE WHEN status = "active" THEN 0 ELSE 1 END), created_at ASC',
+      [card.account_id, cardId]
+    )
+
+    if (remainingCards && remainingCards.length > 0) {
+      // 原账户还有其他卡，原账户平滑切换锚点
+      if (oldAccount?.primary_card_id === cardId) {
+        const nextAnchorId = remainingCards[0].id
+        await batch([
+          {
+            sql: 'UPDATE credit_accounts SET primary_card_id = ?, updated_at = ? WHERE id = ?',
+            params: [nextAnchorId, now(), card.account_id],
+          },
+          {
+            sql: 'UPDATE bills SET card_id = ? WHERE account_id = ?',
+            params: [nextAnchorId, card.account_id],
+          },
+        ])
+      }
+      // 在新持卡人名下新建独立账户
+      newAccountId = uuid()
+      await execute(
+        `INSERT INTO credit_accounts (
+          id, holder_id, bank_id, bank_name, currency, statement_mode, quota_mode,
+          shared_credit_limit, billing_day, due_type, due_value, primary_card_id, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'independent', 'independent', NULL, ?, ?, ?, ?, 'active', ?, ?)`,
+        [
+          newAccountId,
+          newHolderId,
+          card.card_product?.bank_id || null,
+          card.card_product?.bank_name || '未知银行',
+          card.card_product?.currency || 'CNY',
+          card.billing_day,
+          card.override_due_type || card.card_product?.payment_due_type || 'after_billing',
+          card.override_due_value || card.card_product?.payment_due_value || 20,
+          cardId,
+          now(),
+          now(),
+        ]
+      )
+    } else {
+      // 只有这一张卡，直接把该 credit_account 的 holder_id 改为 newHolderId
+      await execute('UPDATE credit_accounts SET holder_id = ?, updated_at = ? WHERE id = ?', [
+        newHolderId,
+        now(),
+        card.account_id,
+      ])
+    }
+  }
+
   const { error } = await execute(
-    'UPDATE credit_cards SET holder_id = ? WHERE id = ? AND holder_id = ?',
-    [newHolderId, cardId, card.holder_id]
+    'UPDATE credit_cards SET holder_id = ?, account_id = ? WHERE id = ? AND holder_id = ?',
+    [newHolderId, newAccountId ?? null, cardId, card.holder_id]
   )
   if (error) {
     if (/OPPORTUNITY_CARD_OWNERSHIP_CONFLICT/.test(error.message)) {

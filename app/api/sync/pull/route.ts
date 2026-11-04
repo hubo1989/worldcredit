@@ -16,6 +16,11 @@ const SYNCABLE_TABLES = {
   benefits: { pk: "id", owner: null },
   promos: { pk: "id", owner: null },
   card_holders: { pk: "id", owner: "t.managed_by = ?" },
+  credit_accounts: {
+    pk: "id",
+    owner: `EXISTS (SELECT 1 FROM card_holders ch
+      WHERE ch.id = t.holder_id AND ch.managed_by = ?)`,
+  },
   credit_cards: {
     pk: "id",
     owner: `EXISTS (SELECT 1 FROM card_holders ch
@@ -26,6 +31,13 @@ const SYNCABLE_TABLES = {
     owner: `EXISTS (SELECT 1 FROM credit_cards cc
       JOIN card_holders ch ON ch.id = cc.holder_id
       WHERE cc.id = t.card_id AND ch.managed_by = ?)`,
+  },
+  bill_card_subtotals: {
+    pk: "id",
+    owner: `EXISTS (SELECT 1 FROM bills b
+      JOIN credit_cards cc ON cc.id = b.card_id
+      JOIN card_holders ch ON ch.id = cc.holder_id
+      WHERE b.id = t.bill_id AND ch.managed_by = ?)`,
   },
   payments: {
     pk: "id",

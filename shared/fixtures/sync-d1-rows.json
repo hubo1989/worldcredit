@@ -79,6 +79,7 @@
           "status": "active",
           "card_type": "credit",
           "loan_due_day": null,
+          "account_id": null,
           "override_billing_day": null,
           "override_due_type": null,
           "override_due_value": null,
@@ -97,6 +98,7 @@
         "row": {
           "id": "sync-fixture-bill",
           "card_id": "sync-fixture-card",
+          "account_id": null,
           "bill_month": "2026-10",
           "statement_start": null,
           "statement_end": null,

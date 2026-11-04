@@ -1,5 +1,5 @@
 import { query, queryOne, execute, batch, uuid, now, today } from "../db";
-import type { Bill, Payment, CreditCard, CardProduct } from "../types";
+import type { Bill, Payment, CreditCard, CardProduct, BillCardSubtotal, CreditAccount } from "../types";
 import {
   getDueDate,
   getLoanNextDueDate,
@@ -23,6 +23,8 @@ export type BillDashboardItem = Bill & {
   days_until_due: number;
   interest_free_days_left: number;
   computed_status: Bill["status"];
+  subtotals?: BillCardSubtotal[];
+  unallocated_amount?: number;
 };
 
 export type BillWithCard = Bill & {
@@ -32,6 +34,8 @@ export type BillWithCard = Bill & {
     card_number_last4?: string;
     card_product?: CardProduct;
   };
+  account?: Partial<CreditAccount>;
+  account_card_tails?: string;
 };
 
 export type PaymentWithBill = Payment & {
@@ -78,6 +82,7 @@ function computeStatus(bill: Bill, paidAmount: number): Bill["status"] {
 interface BillJoinRow extends Record<string, unknown> {
   // bills fields
   id: string;
+  account_id: string | null;
   card_id: string;
   bill_month: string;
   statement_start: string | null;
@@ -124,6 +129,7 @@ function mapJoinRowToDashboard(
 ): BillDashboardItem {
   const bill: Bill = {
     id: row.id,
+    account_id: row.account_id ? String(row.account_id) : undefined,
     card_id: row.card_id,
     bill_month: row.bill_month,
     statement_start: row.statement_start || undefined,
@@ -274,14 +280,18 @@ export async function getBillDashboardItems(
 
   const billIds = rawBills.map((b) => b.id);
 
-  // Batch fetch payments and attachments
-  const [paymentsRes, attachmentsRes] = await Promise.all([
+  // Batch fetch payments, attachments, and card subtotals
+  const [paymentsRes, attachmentsRes, subtotalsRes] = await Promise.all([
     query<Payment & { bill_id: string }>(
       `SELECT id, bill_id, amount, paid_at, channel, note FROM payments WHERE bill_id IN (${billIds.map(() => "?").join(",")})`,
       billIds,
     ),
     query<{ id: string; record_id: string; file_name: string }>(
       `SELECT id, record_id, file_name FROM record_attachments WHERE record_type = 'bill' AND record_id IN (${billIds.map(() => "?").join(",")})`,
+      billIds,
+    ),
+    query<BillCardSubtotal>(
+      `SELECT * FROM bill_card_subtotals WHERE bill_id IN (${billIds.map(() => "?").join(",")})`,
       billIds,
     ),
   ]);
@@ -303,9 +313,14 @@ export async function getBillDashboardItems(
       public_url: `/api/attachments/${a.id}`,
     });
   }
+  const subtotalsByBill: Record<string, BillCardSubtotal[]> = {};
+  for (const s of subtotalsRes.data || []) {
+    if (!subtotalsByBill[s.bill_id]) subtotalsByBill[s.bill_id] = [];
+    subtotalsByBill[s.bill_id].push(s);
+  }
 
-  return rawBills.map((row) =>
-    mapJoinRowToDashboard(
+  return rawBills.map((row) => {
+    const item = mapJoinRowToDashboard(
       row,
       (paymentsByBill[row.id] || []).map((p) => ({
         id: p.id,
@@ -315,8 +330,22 @@ export async function getBillDashboardItems(
         note: p.note,
       })),
       attachmentsByBill[row.id],
-    ),
-  );
+    );
+    const subs = subtotalsByBill[row.id] || [];
+    let unallocated_amount: number | undefined;
+    if (subs.length > 0) {
+      const subSum = subs.reduce((sum, s) => sum + s.subtotal_amount, 0);
+      const diff = item.bill_amount - subSum;
+      if (Math.abs(diff) >= 0.01) {
+        unallocated_amount = Math.round(diff * 100) / 100;
+      }
+    }
+    return {
+      ...item,
+      subtotals: subs,
+      unallocated_amount,
+    };
+  });
 }
 
 export async function getBillById(id: string): Promise<BillWithCard | null> {
@@ -404,6 +433,10 @@ export interface CardWithBillsSummary {
   nextBillingDate: Date;
   nextDueDate: Date;
   historyBills: BillDashboardItem[];
+  account?: CreditAccount;
+  isAnchorCard?: boolean;
+  suppressMissingStatement?: boolean;
+  memberCards?: CreditCard[];
 }
 
 export async function getCardsWithBillsSummary(userId?: string): Promise<CardWithBillsSummary[]> {
@@ -423,6 +456,28 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
   const cards = (rawCards || []) as unknown as CreditCard[];
   if (cards.length === 0) return [];
 
+  // 联查 credit_accounts
+  const accountIds = Array.from(new Set(cards.map((c) => c.account_id).filter(Boolean))) as string[];
+  let accountMap: Record<string, CreditAccount> = {};
+  if (accountIds.length > 0) {
+    const { data: accounts } = await query<CreditAccount>(
+      `SELECT * FROM credit_accounts WHERE id IN (${accountIds.map(() => "?").join(",")})`,
+      accountIds,
+    );
+    if (accounts) {
+      accountMap = accounts.reduce((acc, a) => ({ ...acc, [a.id]: a }), {});
+    }
+  }
+
+  // 按 account_id 聚合同账户成员卡
+  const memberCardsByAccountId: Record<string, CreditCard[]> = {};
+  for (const c of cards) {
+    if (c.account_id) {
+      if (!memberCardsByAccountId[c.account_id]) memberCardsByAccountId[c.account_id] = [];
+      memberCardsByAccountId[c.account_id].push(c);
+    }
+  }
+
   const productIds = Array.from(new Set(cards.map((c) => c.card_product_id).filter(Boolean)));
   let productMap: Record<string, CardProduct> = {};
   if (productIds.length > 0) {
@@ -441,10 +496,16 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
 
   const allBills = await getBillDashboardItems(500, userId);
   const billsByCardId = new Map<string, BillDashboardItem[]>();
+  const billsByAccountId = new Map<string, BillDashboardItem[]>();
   for (const b of allBills) {
     const cid = b.card_id;
     if (!billsByCardId.has(cid)) billsByCardId.set(cid, []);
     billsByCardId.get(cid)!.push(b);
+
+    if (b.account_id) {
+      if (!billsByAccountId.has(b.account_id)) billsByAccountId.set(b.account_id, []);
+      billsByAccountId.get(b.account_id)!.push(b);
+    }
   }
 
   return cards.map((card) => {
@@ -461,7 +522,29 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
     };
     const cardWithProduct = { ...card, card_product: product };
     const graceInfo = calculateCardGracePeriod(cardWithProduct);
-    const cardBills = billsByCardId.get(card.id) || [];
+
+    const account = card.account_id ? accountMap[card.account_id] : undefined;
+    const isMergedAccount = account?.statement_mode === "merged";
+    const isAnchorCard = !isMergedAccount || (account ? account.primary_card_id === card.id : true);
+    const memberCards = card.account_id ? (memberCardsByAccountId[card.account_id] || [card]) : [card];
+
+    // 获取账单列表：合并账户以 account_id 聚合并去重
+    let cardBills: BillDashboardItem[];
+    if (isMergedAccount && card.account_id) {
+      const accBills = billsByAccountId.get(card.account_id) || [];
+      const directBills = billsByCardId.get(card.id) || [];
+      const seen = new Set<string>();
+      cardBills = [];
+      for (const b of [...accBills, ...directBills]) {
+        if (!seen.has(b.id)) {
+          seen.add(b.id);
+          cardBills.push(b);
+        }
+      }
+    } else {
+      cardBills = billsByCardId.get(card.id) || [];
+    }
+
     const normalizeMonth = (m?: string | null) => {
       if (!m) return "";
       const cleaned = m.replace(/[^0-9]/g, "");
@@ -483,16 +566,23 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
       const timeB = new Date(dueB).getTime();
       return timeB - timeA;
     });
+
     const unpaidBills = historyBills.filter((b) => b.computed_status !== "paid");
     const activeBill = unpaidBills.length > 0 ? unpaidBills[0] : historyBills[0] || null;
-    const unpaidAmount = unpaidBills.reduce(
-      (sum, b) => sum + (b.remaining_amount > 0 ? b.remaining_amount : effectiveBillAmount(b)),
-      0,
-    );
+
+    // 非锚点副卡不重复计算待还金额（避免列表按卡累加时额度翻倍）
+    const unpaidAmount = isAnchorCard
+      ? unpaidBills.reduce(
+          (sum, b) => sum + (b.remaining_amount > 0 ? b.remaining_amount : effectiveBillAmount(b)),
+          0,
+        )
+      : 0;
+
     const isUnissuedBill = (b: BillDashboardItem) => {
       const stmt = billEffectiveStatementDate(b) || b.statement_end || b.statement_date;
       return Boolean(stmt && daysUntil(stmt) > 0);
     };
+
     let status: CardWithBillsSummary["status"] = "unissued";
     if (
       unpaidBills.some(
@@ -507,6 +597,10 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
     } else if (unpaidBills.length > 0) {
       status = "unpaid";
     }
+
+    // 合并账户的非锚点卡抑制缺账告警
+    const suppressMissingStatement = isMergedAccount && !isAnchorCard;
+
     return {
       card: cardWithProduct,
       holder_id: card.holder_id,
@@ -518,6 +612,10 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
       nextBillingDate: graceInfo.nextBillingDate,
       nextDueDate: graceInfo.nextDueDate,
       historyBills,
+      account,
+      isAnchorCard,
+      suppressMissingStatement,
+      memberCards,
     };
   });
 }
@@ -539,17 +637,50 @@ export interface BillItemInput {
 }
 
 export async function createBill(
-  bill: Omit<Bill, "id" | "created_at"> & { items?: BillItemInput[] },
+  bill: Omit<Bill, "id" | "created_at"> & {
+    items?: BillItemInput[];
+    subtotals?: Array<{
+      card_id?: string | null;
+      card_tail: string;
+      subtotal_amount: number;
+      currency?: string;
+    }>;
+  },
 ): Promise<Bill> {
   const id = uuid();
-  const { items: _items, ...billRow } = bill;
+  const { items: _items, subtotals, ...billRow } = bill;
   void _items;
+
+  let accountId = billRow.account_id || null;
+  let anchorCardId = billRow.card_id;
+
+  // 若未传 account_id，从所属卡片查出其 account_id
+  const { data: cardRow } = await queryOne<{ account_id: string | null }>(
+    "SELECT account_id FROM credit_cards WHERE id = ?",
+    [billRow.card_id],
+  );
+  if (!accountId && cardRow?.account_id) {
+    accountId = cardRow.account_id;
+  }
+
+  // 若所属账户是 merged，确保 card_id 对齐账户的 primary_card_id
+  if (accountId) {
+    const { data: acc } = await queryOne<{ statement_mode: string; primary_card_id: string | null }>(
+      "SELECT statement_mode, primary_card_id FROM credit_accounts WHERE id = ?",
+      [accountId],
+    );
+    if (acc?.statement_mode === "merged" && acc.primary_card_id) {
+      anchorCardId = acc.primary_card_id;
+    }
+  }
+
   const { error } = await execute(
-    `INSERT INTO bills (id, card_id, bill_month, statement_start, statement_end, statement_date, bill_amount, min_payment, due_date, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO bills (id, account_id, card_id, bill_month, statement_start, statement_end, statement_date, bill_amount, min_payment, due_date, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
-      billRow.card_id,
+      accountId,
+      anchorCardId,
       billRow.bill_month,
       billRow.statement_start || null,
       billRow.statement_end || null,
@@ -561,6 +692,30 @@ export async function createBill(
     ],
   );
   if (error) throw new Error(error.message);
+
+  // 批量保存分卡小计（如果有）
+  if (subtotals && subtotals.length > 0) {
+    for (const sub of subtotals) {
+      const subId = uuid();
+      await execute(
+        `INSERT INTO bill_card_subtotals (id, bill_id, card_id, card_tail, subtotal_amount, currency, source)
+         VALUES (?, ?, ?, ?, ?, ?, 'manual')
+         ON CONFLICT(bill_id, card_tail) DO UPDATE SET
+           card_id = excluded.card_id,
+           subtotal_amount = excluded.subtotal_amount,
+           currency = excluded.currency`,
+        [
+          subId,
+          id,
+          sub.card_id || null,
+          sub.card_tail,
+          sub.subtotal_amount,
+          sub.currency || "CNY",
+        ],
+      );
+    }
+  }
+
   const created = await getBillById(id);
   if (!created) throw new Error("账单创建失败");
   return created as unknown as Bill;
@@ -572,11 +727,20 @@ export interface BillDetail {
       card_product?: CardProduct;
       card_holder?: { id: string; name: string };
     };
+    account?: CreditAccount;
+    subtotals?: BillCardSubtotal[];
+    unallocated_amount?: number;
+    member_cards?: Array<{
+      id: string;
+      card_number_last4?: string;
+      name_override?: string;
+      status: CreditCard["status"];
+    }>;
   };
   payments: Payment[];
 }
 
-/** Bill detail page: bill + card + product + holder + payments in one call. */
+/** Bill detail page: bill + card + product + holder + payments + account + subtotals in one call. */
 export async function getBillDetail(billId: string): Promise<BillDetail> {
   const { data: billRow, error } = await queryOne<Record<string, unknown>>(
     `SELECT b.*, cc.id AS c_id, cc.holder_id AS c_holder_id, cc.card_product_id AS c_card_product_id,
@@ -590,11 +754,19 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
             cp.card_name AS p_card_name, cp.currency AS p_currency, cp.payment_due_type AS p_payment_due_type,
             cp.payment_due_value AS p_payment_due_value, cp.annual_fee AS p_annual_fee,
             cp.annual_fee_waiver AS p_annual_fee_waiver, cp.is_active AS p_is_active, cp.created_at AS p_created_at,
-            ch.id AS h_id, ch.name AS h_name
+            ch.id AS h_id, ch.name AS h_name,
+            ca.id AS ca_id, ca.holder_id AS ca_holder_id, ca.bank_id AS ca_bank_id,
+            ca.bank_name AS ca_bank_name, ca.currency AS ca_currency, ca.account_tail AS ca_account_tail,
+            ca.statement_mode AS ca_statement_mode, ca.quota_mode AS ca_quota_mode,
+            ca.shared_credit_limit AS ca_shared_credit_limit, ca.billing_day AS ca_billing_day,
+            ca.due_type AS ca_due_type, ca.due_value AS ca_due_value,
+            ca.primary_card_id AS ca_primary_card_id, ca.label AS ca_label, ca.status AS ca_status,
+            ca.created_at AS ca_created_at, ca.updated_at AS ca_updated_at
      FROM bills b
      LEFT JOIN credit_cards cc ON b.card_id = cc.id
      LEFT JOIN card_products cp ON cc.card_product_id = cp.id
      LEFT JOIN card_holders ch ON cc.holder_id = ch.id
+     LEFT JOIN credit_accounts ca ON (b.account_id = ca.id OR (b.account_id IS NULL AND cc.account_id = ca.id))
      WHERE b.id = ?`,
     [billId],
   );
@@ -651,6 +823,67 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
       card.card_holder = { id: row.h_id as string, name: (row.h_name as string) || "" };
     }
     bill.card = card;
+  }
+
+  // 组装 account
+  if (row.ca_id) {
+    bill.account = {
+      id: row.ca_id as string,
+      holder_id: row.ca_holder_id as string,
+      bank_id: (row.ca_bank_id as string) || undefined,
+      bank_name: (row.ca_bank_name as string) || "",
+      currency: (row.ca_currency as string) || "CNY",
+      account_tail: (row.ca_account_tail as string) || undefined,
+      statement_mode: row.ca_statement_mode as CreditAccount["statement_mode"],
+      quota_mode: row.ca_quota_mode as CreditAccount["quota_mode"],
+      shared_credit_limit:
+        row.ca_shared_credit_limit != null ? (row.ca_shared_credit_limit as number) : undefined,
+      billing_day: row.ca_billing_day as number,
+      due_type: row.ca_due_type as CreditAccount["due_type"],
+      due_value: row.ca_due_value as number,
+      primary_card_id: (row.ca_primary_card_id as string) || undefined,
+      label: (row.ca_label as string) || undefined,
+      status: row.ca_status as CreditAccount["status"],
+      created_at: row.ca_created_at as string,
+      updated_at: row.ca_updated_at as string,
+    };
+  }
+
+  // 查询分卡小计
+  const { data: subtotals } = await query<BillCardSubtotal>(
+    "SELECT * FROM bill_card_subtotals WHERE bill_id = ? ORDER BY card_tail ASC",
+    [billId],
+  );
+  const subs = subtotals || [];
+  bill.subtotals = subs;
+
+  // 计算未归卡差额
+  if (subs.length > 0) {
+    const sum = subs.reduce((acc, s) => acc + s.subtotal_amount, 0);
+    const diff = bill.bill_amount - sum;
+    if (Math.abs(diff) >= 0.01) {
+      bill.unallocated_amount = Math.round(diff * 100) / 100;
+    }
+  }
+
+  // 查询同账户成员卡
+  const targetAccountId = bill.account_id || (row.ca_id as string | undefined);
+  if (targetAccountId) {
+    const { data: memberCards } = await query<{
+      id: string;
+      card_number_last4: string | null;
+      name_override: string | null;
+      status: string;
+    }>(
+      "SELECT id, card_number_last4, name_override, status FROM credit_cards WHERE account_id = ?",
+      [targetAccountId],
+    );
+    bill.member_cards = (memberCards || []).map((m) => ({
+      id: m.id,
+      card_number_last4: m.card_number_last4 || undefined,
+      name_override: m.name_override || undefined,
+      status: m.status as CreditCard["status"],
+    }));
   }
 
   const { data: paymentRows, error: payError } = await query<Payment>(
@@ -875,7 +1108,13 @@ export async function setCardManualBillAmount(cardId: string, amount: number): P
 }
 
 export async function getBillsByHolder(holderId: string): Promise<BillWithCard[]> {
-  const { data, error } = await query<BillJoinRow>(
+  const { data, error } = await query<
+    BillJoinRow & {
+      ca_id?: string | null;
+      ca_statement_mode?: string | null;
+      ca_quota_mode?: string | null;
+    }
+  >(
     `SELECT b.*, cc.id AS cc_id, cc.holder_id AS cc_holder_id, cc.card_product_id AS cc_card_product_id,
             cc.card_number_last4 AS cc_card_number_last4, cc.credit_limit AS cc_credit_limit,
             cc.billing_day AS cc_billing_day, cc.status AS cc_status, cc.card_type AS cc_card_type,
@@ -886,21 +1125,58 @@ export async function getBillsByHolder(holderId: string): Promise<BillWithCard[]
             cp.id AS cp_id, cp.bank_name AS cp_bank_name, cp.card_name AS cp_card_name,
             cp.currency AS cp_currency, cp.country AS cp_country,
             cp.payment_due_type AS cp_payment_due_type, cp.payment_due_value AS cp_payment_due_value,
-            cp.is_active AS cp_is_active, cp.created_at AS cp_created_at
+            cp.is_active AS cp_is_active, cp.created_at AS cp_created_at,
+            ca.id AS ca_id, ca.statement_mode AS ca_statement_mode, ca.quota_mode AS ca_quota_mode
      FROM bills b
      JOIN credit_cards cc ON b.card_id = cc.id
      LEFT JOIN card_products cp ON cc.card_product_id = cp.id
+     LEFT JOIN credit_accounts ca ON (b.account_id = ca.id OR (b.account_id IS NULL AND cc.account_id = ca.id))
      WHERE cc.holder_id = ?
      ORDER BY b.bill_month DESC`,
     [holderId],
   );
   if (error) throw new Error(error.message);
-  return (data || []).map((row) => {
+
+  const rawRows = data || [];
+  // 查找涉及的合并账户，收集同账户卡尾号
+  const mergedAccountIds = Array.from(
+    new Set(
+      rawRows
+        .filter((r) => r.ca_statement_mode === "merged" && r.ca_id)
+        .map((r) => r.ca_id as string),
+    ),
+  );
+  const tailsByAccountId: Record<string, string[]> = {};
+  if (mergedAccountIds.length > 0) {
+    const { data: memberCards } = await query<{ account_id: string; card_number_last4: string | null }>(
+      `SELECT account_id, card_number_last4 FROM credit_cards WHERE account_id IN (${mergedAccountIds.map(() => "?").join(",")})`,
+      mergedAccountIds,
+    );
+    for (const mc of memberCards || []) {
+      if (mc.card_number_last4) {
+        if (!tailsByAccountId[mc.account_id]) tailsByAccountId[mc.account_id] = [];
+        tailsByAccountId[mc.account_id].push(mc.card_number_last4);
+      }
+    }
+  }
+
+  return rawRows.map((row) => {
     const dashboard = mapJoinRowToDashboard(row, []);
+    const accountTails = row.ca_id && tailsByAccountId[row.ca_id]
+      ? tailsByAccountId[row.ca_id].join(" / ")
+      : undefined;
     return withCreditCardProductFields({
       ...dashboard,
       credit_cards: dashboard.card,
-    } as BillWithCard);
+      account: row.ca_id
+        ? {
+            id: row.ca_id,
+            statement_mode: row.ca_statement_mode,
+            quota_mode: row.ca_quota_mode,
+          }
+        : undefined,
+      account_card_tails: accountTails,
+    } as unknown as BillWithCard);
   });
 }
 

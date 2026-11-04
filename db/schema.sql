@@ -83,10 +83,36 @@ CREATE TABLE IF NOT EXISTS card_holders (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- 信用账户（多卡统一聚合层）
+CREATE TABLE IF NOT EXISTS credit_accounts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  holder_id UUID NOT NULL REFERENCES card_holders(id) ON DELETE CASCADE,
+  bank_id UUID REFERENCES banks(id) ON DELETE SET NULL,
+  bank_name TEXT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  account_tail TEXT,
+  statement_mode TEXT NOT NULL DEFAULT 'independent'
+    CHECK (statement_mode IN ('merged', 'independent')),
+  quota_mode TEXT NOT NULL DEFAULT 'independent'
+    CHECK (quota_mode IN ('shared', 'independent')),
+  shared_credit_limit NUMERIC,
+  billing_day INT CHECK (billing_day BETWEEN 1 AND 31),
+  due_type TEXT DEFAULT 'after_billing'
+    CHECK (due_type IN ('fixed', 'after_billing', 'fixed_before_billing')),
+  due_value INT DEFAULT 20,
+  primary_card_id UUID REFERENCES credit_cards(id) ON DELETE SET NULL,
+  label TEXT,
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active', 'archived')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- 用户持有的信用卡
 CREATE TABLE IF NOT EXISTS credit_cards (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   holder_id UUID NOT NULL REFERENCES card_holders(id) ON DELETE CASCADE,
+  account_id UUID REFERENCES credit_accounts(id) ON DELETE SET NULL,
   card_product_id UUID NOT NULL REFERENCES card_products(id) ON DELETE RESTRICT,
   card_number_last4 TEXT,
   credit_limit NUMERIC NOT NULL DEFAULT 0,
@@ -117,6 +143,7 @@ CREATE TABLE IF NOT EXISTS credit_cards (
 -- 账单
 CREATE TABLE IF NOT EXISTS bills (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  account_id UUID REFERENCES credit_accounts(id) ON DELETE RESTRICT,
   card_id UUID NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
   bill_month TEXT NOT NULL,  -- '2026-03'
   statement_start DATE,
@@ -129,6 +156,19 @@ CREATE TABLE IF NOT EXISTS bills (
     CHECK (status IN ('unpaid', 'partial', 'paid', 'overdue')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(card_id, bill_month)
+);
+
+-- 账单分卡小计（多卡合并账单归因明细）
+CREATE TABLE IF NOT EXISTS bill_card_subtotals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bill_id UUID NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
+  card_id UUID REFERENCES credit_cards(id) ON DELETE SET NULL,
+  card_tail TEXT NOT NULL,
+  subtotal_amount NUMERIC NOT NULL,
+  currency TEXT DEFAULT 'CNY',
+  source TEXT DEFAULT 'email' CHECK (source IN ('email', 'manual')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(bill_id, card_tail)
 );
 
 -- 还款记录

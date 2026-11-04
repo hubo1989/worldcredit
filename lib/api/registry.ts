@@ -10,6 +10,7 @@
 //   - memberFilter: response filter applied to member results
 
 import * as adminServer from './admin.server'
+import * as accountsServer from './accounts.server'
 import * as aiServer from './ai.server'
 import * as analyticsServer from './analytics.server'
 import * as attachmentsServer from './attachments.server'
@@ -37,6 +38,7 @@ import * as remindersServer from './reminders.server'
 import * as syncGmailServer from './sync-gmail.server'
 import {
   applyAnalyticsScope,
+  assertAccountAccess,
   assertBenefitAccess,
   assertBillAccess,
   assertBillListAccess,
@@ -130,6 +132,33 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     // （写库由调用方在界面上确认后走 admin.updateBank）。仅管理员可用。
     enrichBankFromWeb: { impl: aiServer.enrichBankFromWeb, admin: true },
     suggestPromosFromWeb: { impl: aiServer.suggestPromosFromWeb, admin: true },
+  },
+  accounts: {
+    getCreditAccounts: { impl: accountsServer.getCreditAccounts, bindUser: 0 },
+    getCreditAccountDetail: {
+      impl: accountsServer.getCreditAccountDetail,
+      memberGuard: async (args, ctx) => assertAccountAccess(args[0], ctx),
+    },
+    mergeCardsIntoAccount: {
+      impl: accountsServer.mergeCardsIntoAccount,
+      memberGuard: async (args, ctx) => {
+        await assertAccountAccess(args[0], ctx);
+        const cardIds = args[1] as string[];
+        if (Array.isArray(cardIds)) {
+          for (const cid of cardIds) {
+            await assertCardAccess(cid, ctx);
+          }
+        }
+      },
+    },
+    splitCardFromAccount: {
+      impl: accountsServer.splitCardFromAccount,
+      memberGuard: async (args, ctx) => assertCardAccess(args[0], ctx),
+    },
+    updateCreditAccount: {
+      impl: accountsServer.updateCreditAccount,
+      memberGuard: async (args, ctx) => assertAccountAccess(args[0], ctx),
+    },
   },
   analytics: {
     getAnalyticsSummary: { impl: analyticsServer.getAnalyticsSummary, memberGuard: (args, ctx) => applyAnalyticsScope(args[0], ctx) },
