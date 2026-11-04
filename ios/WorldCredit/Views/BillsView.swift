@@ -593,10 +593,6 @@ struct BillsView: View {
             .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 16))
         } else {
             LazyVStack(spacing: 12) {
-                ForEach(presentation.missingStatements) { missing in
-                    missingStatementCard(group: missing.group, missingDays: missing.days)
-                }
-
                 // 账单与固定支出统一混合展示（按还款日排序）
                 ForEach(presentation.entries) { entry in
                     switch entry {
@@ -607,6 +603,11 @@ struct BillsView: View {
                     case .unbilledCard(let card):
                         unbilledCardView(card)
                     }
+                }
+
+                // 缺账单提醒放在列表最末：先看账单数据，再看采集异常
+                ForEach(presentation.missingStatements) { missing in
+                    missingStatementCard(group: missing.group, missingDays: missing.days)
                 }
             }
         }
