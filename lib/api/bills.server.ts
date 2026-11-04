@@ -63,9 +63,13 @@ function computeStatus(bill: Bill, paidAmount: number): Bill["status"] {
   // 一律用生效金额：用户手填值优先，否则已还金额会跟展示的金额对不上
   // （屏幕上写着 800、状态却按导入的 1200 判定部分还款）。
   const amount = effectiveBillAmount(bill);
-  if (amount <= 0 || paidAmount >= amount) return "paid";
+  if (amount <= 0 || paidAmount >= amount - 0.01) return "paid";
   if (paidAmount > 0) return "partial";
-  if (daysUntil(bill.due_date) < 0) return "overdue";
+  // 待出账保护：未出账前绝无逾期概念，状态为 unpaid
+  const stmtDate = billEffectiveStatementDate(bill) || bill.statement_end;
+  if (stmtDate && daysUntil(stmtDate) > 0) return "unpaid";
+  const dueDate = billEffectiveDueDate(bill) || bill.due_date;
+  if (dueDate && daysUntil(dueDate) < 0) return "overdue";
   return "unpaid";
 }
 
@@ -458,9 +462,25 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
     const cardWithProduct = { ...card, card_product: product };
     const graceInfo = calculateCardGracePeriod(cardWithProduct);
     const cardBills = billsByCardId.get(card.id) || [];
+    const normalizeMonth = (m?: string | null) => {
+      if (!m) return "";
+      const cleaned = m.replace(/[^0-9]/g, "");
+      return cleaned.length === 6 ? `${cleaned.slice(0, 4)}-${cleaned.slice(4, 6)}` : m;
+    };
     const historyBills = [...cardBills].sort((a, b) => {
-      const timeA = new Date(a.due_date || a.statement_end || "2000-01-01").getTime();
-      const timeB = new Date(b.due_date || b.statement_end || "2000-01-01").getTime();
+      const mA = normalizeMonth(a.bill_month);
+      const mB = normalizeMonth(b.bill_month);
+      if (mA && mB && mA !== mB) {
+        return mB.localeCompare(mA);
+      }
+      if (mA && !mB) return -1;
+      if (!mA && mB) return 1;
+      const dueA =
+        billEffectiveDueDate(a) || a.due_date || a.statement_end || a.statement_date || "2000-01-01";
+      const dueB =
+        billEffectiveDueDate(b) || b.due_date || b.statement_end || b.statement_date || "2000-01-01";
+      const timeA = new Date(dueA).getTime();
+      const timeB = new Date(dueB).getTime();
       return timeB - timeA;
     });
     const unpaidBills = historyBills.filter((b) => b.computed_status !== "paid");
@@ -469,11 +489,16 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
       (sum, b) => sum + (b.remaining_amount > 0 ? b.remaining_amount : effectiveBillAmount(b)),
       0,
     );
+    const isUnissuedBill = (b: BillDashboardItem) => {
+      const stmt = billEffectiveStatementDate(b) || b.statement_end || b.statement_date;
+      return Boolean(stmt && daysUntil(stmt) > 0);
+    };
     let status: CardWithBillsSummary["status"] = "unissued";
     if (
       unpaidBills.some(
         (b) =>
-          b.computed_status === "overdue" || (b.days_until_due < 0 && b.computed_status !== "paid"),
+          b.computed_status === "overdue" ||
+          (b.days_until_due < 0 && b.computed_status !== "paid" && !isUnissuedBill(b)),
       )
     ) {
       status = "overdue";

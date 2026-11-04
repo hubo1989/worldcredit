@@ -27,7 +27,20 @@ function computeBillProgress(bill: BillDetail) {
   const amount = Number(bill.bill_amount) || 0
   const remaining = Math.max(0, amount - paid)
   // 与服务端落库、还款重算共用同一个状态函数，避免 0 / 0.01 边界两套口径
-  const status = computePaymentDrivenStatus(bill, paid)
+  let status = computePaymentDrivenStatus(bill, paid)
+  // 保护：历史存量已还款账单（数据库存 status = 'paid'）或无流水但已标记 paid，保留 paid 状态
+  if (bill.status === 'paid' && paid === 0) {
+    status = 'paid'
+  } else if (status === 'overdue') {
+    // 待出账保护：未到出账日绝无逾期
+    const isUnissued = Boolean(
+      (bill.statement_date && new Date(bill.statement_date).getTime() > Date.now()) ||
+      (bill.statement_end && new Date(bill.statement_end).getTime() > Date.now())
+    )
+    if (isUnissued) {
+      status = 'unpaid'
+    }
+  }
   return { paid, remaining, status }
 }
 
@@ -165,7 +178,11 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     if (!start || !end) return 0
     return Math.max(0, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 86400000))
   })()
-  const billPaid = status === 'paid'
+  const isSettled = status === 'paid' || bill.status === 'paid' || remaining <= 0
+  const isUnissued = Boolean(
+    (bill.statement_date && new Date(bill.statement_date).getTime() > Date.now()) ||
+    (bill.statement_end && new Date(bill.statement_end).getTime() > Date.now())
+  )
   const graceRemaining = bill.due_date
     ? Math.round((new Date(bill.due_date).getTime() - Date.now()) / 86400000)
     : null
@@ -249,18 +266,18 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                 : '—'
             }
           />
-          {!billPaid && graceRemaining !== null && (
-            <p
-              className={
-                'mt-0.5 inline-flex items-center gap-1 text-[12px] font-semibold leading-4 ' +
-                (graceRemaining < 0 ? 'text-d-danger-ink' : 'text-d-gold')
-              }
-            >
-              <ClockIcon size={12} />
-              {graceRemaining >= 0
-                ? `剩 ${graceRemaining} 天免息（逾期未还将计息）`
-                : `已逾期 ${-graceRemaining} 天`}
-            </p>
+          {!isSettled && graceRemaining !== null && (
+            graceRemaining >= 0 ? (
+              <p className='mt-0.5 inline-flex items-center gap-1 text-[12px] font-semibold leading-4 text-d-gold'>
+                <ClockIcon size={12} />
+                剩 {graceRemaining} 天免息（逾期未还将计息）
+              </p>
+            ) : !isUnissued ? (
+              <p className='mt-0.5 inline-flex items-center gap-1 text-[12px] font-semibold leading-4 text-d-danger-ink'>
+                <ClockIcon size={12} />
+                已逾期 {-graceRemaining} 天
+              </p>
+            ) : null
           )}
         </div>
       </Section>
