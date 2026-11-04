@@ -109,6 +109,7 @@ export interface BillsViewProps {
   onOpenPayment: (bill: BillDashboardItem) => void
   onManualAmount: (item: CardWithBillsSummary) => void
   onAddBill: () => void
+  onAddCard?: () => void
 }
 
 function FilterPill({
@@ -394,7 +395,7 @@ export function BillsView(vm: BillsViewProps) {
     onClearStatuses, statusCounts, entityCounts, tagCounts, dimension, onDimension,
     selectedTag, onSelectedTag, holderTags, bankTags,
     loading, loadError, onRetry, onEmptySync, payables, cards, allCards, holderMap,
-    bankGroups, onOpenPayment, onManualAmount, onAddBill, sortMode, onSortMode,
+    bankGroups, onOpenPayment, onManualAmount, onAddBill, onAddCard, sortMode, onSortMode,
     payablePayments, payableHistoryErrors, payableHistoryLoading,
     expandedPayableIds, onTogglePayableHistory,
     onEditPayable, onPayPayable,
@@ -489,22 +490,34 @@ export function BillsView(vm: BillsViewProps) {
 
   return (
     <div className='obsidian-dashboard min-h-dvh bg-d-bg pb-24 text-d-text'>
-      {/* 页头：标题 + 同步 */}
+      {/* 页头：标题 + 操作（新增卡片 + 同步） */}
       <div className='flex items-center justify-between px-5 pt-4'>
         <p className='text-[20px] font-bold leading-7 text-d-text'>卡片与账单</p>
-        <button
-          id='sync-bills-btn'
-          type='button'
-          aria-label='同步账单'
-          onClick={onSync}
-          disabled={syncing}
-          className='flex h-11 w-11 items-center justify-center rounded-xl border border-d-border bg-d-surface disabled:opacity-60'
-        >
-          <SyncIcon
-            size={20}
-            className={syncing ? 'animate-spin text-d-accent-light' : 'text-d-accent-light'}
-          />
-        </button>
+        <div className='flex items-center gap-2'>
+          {onAddCard && (
+            <button
+              type='button'
+              onClick={onAddCard}
+              className='flex h-11 items-center gap-1 rounded-xl bg-d-accent px-3 text-[13px] font-semibold text-white active:opacity-90'
+            >
+              <PlusIcon size={16} />
+              <span>新增卡片</span>
+            </button>
+          )}
+          <button
+            id='sync-bills-btn'
+            type='button'
+            aria-label='同步账单'
+            onClick={onSync}
+            disabled={syncing}
+            className='flex h-11 w-11 items-center justify-center rounded-xl border border-d-border bg-d-surface disabled:opacity-60'
+          >
+            <SyncIcon
+              size={20}
+              className={syncing ? 'animate-spin text-d-accent-light' : 'text-d-accent-light'}
+            />
+          </button>
+        </div>
       </div>
 
       <div className='mt-4 flex flex-col gap-3 px-5'>
@@ -708,13 +721,24 @@ export function BillsView(vm: BillsViewProps) {
           <div className='rounded-2xl border border-d-border bg-d-surface px-6 py-10 text-center'>
             <p className='text-[15px] font-semibold text-d-text'>没有找到卡片记录</p>
             <p className='mt-1 text-[12px] text-d-muted'>可以手动录入卡片或导入邮箱账单</p>
-            <button
-              type='button'
-              onClick={onEmptySync}
-              className='mt-4 h-11 rounded-xl bg-d-accent px-5 text-xs font-semibold text-white'
-            >
-              立即同步
-            </button>
+            <div className='mt-4 flex items-center justify-center gap-3'>
+              {onAddCard && (
+                <button
+                  type='button'
+                  onClick={onAddCard}
+                  className='h-11 rounded-xl bg-d-accent px-5 text-xs font-semibold text-white'
+                >
+                  新增卡片
+                </button>
+              )}
+              <button
+                type='button'
+                onClick={onEmptySync}
+                className='h-11 rounded-xl border border-d-border bg-d-surface px-5 text-xs font-semibold text-d-text'
+              >
+                立即同步
+              </button>
+            </div>
           </div>
         ) : (
           renderCards()

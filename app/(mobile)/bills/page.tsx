@@ -15,6 +15,7 @@ import { syncGmailLedgerToCardsAndBills } from '@/lib/api/sync-gmail'
 import { getHolders } from '@/lib/api/holders'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
+import { CardCreateModal } from '@/components/mobile/CardCreateModal'
 import { BillDraftsPanel } from '@/components/mobile/BillDraftsPanel'
 import { ManualBillAmountDialog } from '@/components/mobile/ManualBillAmountDialog'
 import { PayableForm } from '@/components/mobile/PayableForm'
@@ -97,6 +98,7 @@ export default function BillsPage() {
   const [paymentOpen, setPaymentOpen] = useState(false)
   const [selectedBill, setSelectedBill] = useState<BillDashboardItem | null>(null)
   const [billFormOpen, setBillFormOpen] = useState(false)
+  const [cardCreateOpen, setCardCreateOpen] = useState(false)
   // 手填金额：只针对「卡」，账单可能还没生成，因此传的是 card，不是 bill
   const [manualTarget, setManualTarget] = useState<CardWithBillsSummary | null>(null)
   // 固定支出（房租/贷款等按月应付）
@@ -618,6 +620,13 @@ export default function BillsPage() {
         onOpenPayment={openPaymentForBill}
         onManualAmount={setManualTarget}
         onAddBill={() => setBillFormOpen(true)}
+        onAddCard={() => setCardCreateOpen(true)}
+      />
+
+      <CardCreateModal
+        open={cardCreateOpen}
+        onClose={() => setCardCreateOpen(false)}
+        onSuccess={loadData}
       />
 
       {selectedBill && (

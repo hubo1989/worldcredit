@@ -3,8 +3,11 @@
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { getCardDetail, updateCard, updateCardHolder } from '@/lib/api/cards'
+import { getCardDetail, updateCard, updateCardHolder, type CreditCardWithProduct } from '@/lib/api/cards'
+import { getHolders } from '@/lib/api/holders'
 import { CardForm } from '@/components/mobile/CardForm'
+import { CardDefinitionModal } from '@/components/mobile/CardDefinitionModal'
+import { CardAccountModal } from '@/components/mobile/CardAccountModal'
 import { ChevronLeftIcon, ClockIcon } from '@/components/icons/WcIcon'
 import { getEffectiveBillingDay, getEffectiveDueConfig, formatCardTail, getEffectiveCardName, getEffectiveAnnualFee, getEffectiveCreditLimit, isCreditLimitManuallySet } from '@/lib/utils'
 import type { CreditCard, CardProduct, CardHolder, Bill, Benefit, CardDueDateResolution } from '@/lib/types'
@@ -80,8 +83,9 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
 
   // 编辑表单状态
   const [cardFormOpen, setCardFormOpen] = useState(false)
-  // 持卡人选项已改由 updateCardHolder 专用通道处理，这里只剩展示名
-  const [holders] = useState<Array<{ id: string; name: string }>>([])
+  const [cardDefOpen, setCardDefOpen] = useState(false)
+  const [cardAccountOpen, setCardAccountOpen] = useState(false)
+  const [holders, setHolders] = useState<Array<{ id: string; name: string }>>([])
 
   const load = useCallback(async () => {
     try {
@@ -89,11 +93,15 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       setError(null)
 
       // 卡 + 卡产品 + 持卡人 + 最近账单（含已还聚合）+ 权益使用进度 + 还款日确切原因，一次 RPC 返回
-      const detail = await getCardDetail(id)
+      const [detail, holderList] = await Promise.all([
+        getCardDetail(id),
+        getHolders(),
+      ])
       setCard({
         ...detail.card,
         card_holders: detail.card.card_holder,
       } as unknown as CardDetail)
+      setHolders(holderList.map(h => ({ id: h.id, name: h.name })))
       setBills(detail.bills as unknown as BillWithPaid[])
       setBenefits(detail.benefits)
       setOpportunities(detail.opportunities ?? [])
@@ -343,7 +351,6 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
           holderId={card.holder_id}
           holders={holders}
           initial={card}
-          lockProduct
           onSubmit={async data => {
             // 归属变化走专用通道（双端 scope 校验 + 权益关联冲突提示），其余字段原路更新
             if (data.holder_id !== card.holder_id) {
@@ -354,6 +361,24 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
             await updateCard(card.id, rest)
             await load()
           }}
+        />
+      )}
+
+      {card && (
+        <CardDefinitionModal
+          open={cardDefOpen}
+          onClose={() => setCardDefOpen(false)}
+          card={card as CreditCardWithProduct}
+          onSaved={load}
+        />
+      )}
+
+      {card && (
+        <CardAccountModal
+          open={cardAccountOpen}
+          onClose={() => setCardAccountOpen(false)}
+          card={card as CreditCardWithProduct}
+          onSaved={load}
         />
       )}
 

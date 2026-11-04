@@ -4,16 +4,23 @@ import WorldCreditCore
 struct CardsView: View {
     @Environment(AppState.self) private var appState
     @State private var editingCard: CardDisplayItem?
+    @State private var showingCreateCardSheet: Bool = false
 
     var body: some View {
         NavigationStack {
             List {
                 if appState.cards.isEmpty {
-                    ContentUnavailableView(
-                        "暂无卡片数据",
-                        systemImage: "creditcard",
-                        description: Text("下拉可同步最新卡片数据")
-                    )
+                    ContentUnavailableView {
+                        Label("暂无卡片数据", systemImage: "creditcard")
+                    } description: {
+                        Text("点击右上角或下方按钮新增卡片，也可下拉同步最新数据")
+                    } actions: {
+                        Button("新增卡片") {
+                            showingCreateCardSheet = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("cards.emptyAddCard")
+                    }
                 } else {
                     ForEach(appState.cards) { card in
                         Button {
@@ -28,6 +35,16 @@ struct CardsView: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("卡片")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showingCreateCardSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityIdentifier("cards.addCard")
+                }
+            }
             .refreshable {
                 await appState.sync()
             }
@@ -35,6 +52,9 @@ struct CardsView: View {
                 CardEditSheetView(card: card) { input in
                     try await appState.updateCard(cardId: card.id, input: input)
                 }
+            }
+            .sheet(isPresented: $showingCreateCardSheet) {
+                CardCreateSheetView()
             }
         }
     }

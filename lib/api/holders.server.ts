@@ -187,12 +187,17 @@ async function syncHolderAuthUser(holderId: string, email?: string | null): Prom
   await execute('UPDATE card_holders SET auth_user_id = ? WHERE id = ?', [data?.id ?? null, holderId])
 }
 
-export async function createHolder(holder: Omit<CardHolder, 'id' | 'created_at'>): Promise<CardHolder> {
+export type CreateHolderInput = Omit<CardHolder, 'id' | 'created_at' | 'created_by'> & {
+  created_by?: string
+}
+
+export async function createHolder(holder: CreateHolderInput): Promise<CardHolder> {
   const id = uuid()
   const ts = now()
+  const createdBy = holder.created_by || ''
   const { error } = await execute(
     'INSERT INTO card_holders (id, created_by, managed_by, name, phone, email, avatar_color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, holder.created_by, holder.created_by, holder.name, holder.phone || null, holder.email || null, holder.avatar_color || '#1976d2', ts]
+    [id, createdBy, createdBy, holder.name, holder.phone || null, holder.email || null, holder.avatar_color || '#1976d2', ts]
   )
   if (error) throw new Error(error.message)
   await syncHolderAuthUser(id, holder.email)

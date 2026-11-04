@@ -242,13 +242,14 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
   },
   banks: {
     getBankNames: { impl: banksServer.getBankNames },
+    getBanks: { impl: banksServer.getBanks },
   },
   holders: {
     getHolders: { impl: holdersServer.getHolders, bindUser: 0 },
     getHolder: { impl: holdersServer.getHolder, memberGuard: guardHolder(0) },
     getHolderStatsPageData: { impl: holdersServer.getHolderStatsPageData, memberGuard: guardHolder(0) },
     getHolderCardCounts: { impl: holdersServer.getHolderCardCounts, memberGuard: async (args, ctx) => assertHolderIdsAccess(args[0], ctx) },
-    createHolder: { impl: holdersServer.createHolder, bindField: { arg: 0, field: "created_by" }, admin: true },
+    createHolder: { impl: holdersServer.createHolder, bindField: { arg: 0, field: "created_by" } },
     updateHolder: { impl: holdersServer.updateHolder, admin: true },
     mergeHolders: { impl: holdersServer.mergeHolders, admin: true },
   },

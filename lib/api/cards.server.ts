@@ -299,20 +299,99 @@ export async function getCardsByHolder(holderId: string): Promise<CreditCardWith
   return (data || []).map(joinRowToCard)
 }
 
-export async function createCard(card: Omit<CreditCard, 'id' | 'created_at'>): Promise<CreditCardWithProduct> {
+export type CreateCardInput = {
+  holder_id: string
+  billing_day: number
+  card_product_id?: string
+  bank_id?: string
+  card_number_last4?: string | null
+  credit_limit?: number
+  credit_limit_override?: number | null
+  status?: CreditCard['status']
+  card_type?: CreditCard['card_type']
+  loan_due_day?: number | null
+  override_billing_day?: number | null
+  override_due_type?: CreditCard['override_due_type']
+  override_due_value?: number | null
+  name_override?: string | null
+  annual_fee_override?: number | null
+  account_mode_override?: CreditCard['account_mode_override']
+  issued_on?: string | null
+  activated_on?: string | null
+}
+
+export async function createCard(card: CreateCardInput): Promise<CreditCardWithProduct> {
   const id = uuid()
+  let productId = card.card_product_id
+  let product: CardProduct | null = null
+
+  if (productId) {
+    const { data } = await queryOne<CardProduct>('SELECT * FROM card_products WHERE id = ?', [productId])
+    product = data
+  }
+
+  if (!product && card.bank_id) {
+    // 优先匹配默认卡产品，其次匹配该银行首个活跃卡产品
+    const { data: defaultProduct } = await queryOne<CardProduct>(
+      'SELECT * FROM card_products WHERE bank_id = ? AND is_active = 1 ORDER BY (CASE WHEN id = ? THEN 0 ELSE 1 END), created_at ASC LIMIT 1',
+      [card.bank_id, `cp_default_${card.bank_id}`]
+    )
+    product = defaultProduct
+    if (!product) {
+      // 银行存在但尚无卡产品（如测试新灌数据或新银行），动态兜底创建一条基础卡产品
+      const { data: bank } = await queryOne<{ id: string; name: string; country?: string }>(
+        'SELECT id, name, country FROM banks WHERE id = ?',
+        [card.bank_id]
+      )
+      if (bank) {
+        const defId = `cp_default_${bank.id}`
+        await execute(
+          `INSERT OR IGNORE INTO card_products (id, country, bank_id, bank_name, card_name, currency, payment_due_type, payment_due_value, annual_fee, is_active)
+           VALUES (?, ?, ?, ?, ?, 'CNY', 'after_billing', 20, 0, 1)`,
+          [defId, bank.country || 'CN', bank.id, bank.name, '标准信用卡']
+        )
+        const { data: createdProd } = await queryOne<CardProduct>('SELECT * FROM card_products WHERE id = ?', [defId])
+        product = createdProd
+      }
+    }
+    if (product) {
+      productId = product.id
+    }
+  }
+
+  if (!productId) {
+    throw new Error('缺少卡产品或所属银行')
+  }
+
+  // 名称覆盖清洗：若与产品名称相同则置空，否则去除首尾空格
+  let nameOverride: string | null = null
+  if (card.name_override && card.name_override.trim()) {
+    const trimmed = card.name_override.trim()
+    if (!product || trimmed !== product.card_name) {
+      nameOverride = trimmed
+    }
+  }
+
   const limitOverride = card.credit_limit_override != null
     ? (Number(card.credit_limit_override) > 0 ? Number(card.credit_limit_override) : null)
     : (card.credit_limit && Number(card.credit_limit) > 0 ? Number(card.credit_limit) : null)
   const limitValue = limitOverride ?? (Number(card.credit_limit) || 0)
 
   const { error } = await execute(
-    `INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, credit_limit_override, billing_day, status, card_type, loan_due_day, override_billing_day, override_due_type, override_due_value, issued_on, activated_on)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, card.holder_id, card.card_product_id, card.card_number_last4 || null, limitValue, limitOverride,
-     card.billing_day, card.status || 'active', card.card_type || 'credit', card.loan_due_day || null,
-     card.override_billing_day || null, card.override_due_type || null, card.override_due_value || null,
-     card.issued_on ?? null, card.activated_on ?? null]
+    `INSERT INTO credit_cards (
+      id, holder_id, card_product_id, card_number_last4, credit_limit, credit_limit_override,
+      billing_day, status, card_type, loan_due_day, override_billing_day,
+      override_due_type, override_due_value, name_override, annual_fee_override,
+      account_mode_override, issued_on, activated_on
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id, card.holder_id, productId, card.card_number_last4 || null, limitValue, limitOverride,
+      card.billing_day, card.status || 'active', card.card_type || 'credit', card.loan_due_day || null,
+      null, // override_billing_day 归一合并后新建卡统一为 null
+      card.override_due_type || null, card.override_due_value || null, nameOverride,
+      card.annual_fee_override ?? null, card.account_mode_override ?? null,
+      card.issued_on ?? null, card.activated_on ?? null
+    ]
   )
   if (error) throw new Error(error.message)
   const created = await getCardById(id)
@@ -328,10 +407,104 @@ async function getCardById(id: string): Promise<CreditCardWithProduct | null> {
   return joinRowToCard(data)
 }
 
+export type UpdateCardPatch = Partial<Omit<CreditCard, 'id' | 'created_at'>> & {
+  bank_id?: string
+  card_product_id?: string
+}
+
 export async function updateCard(
   id: string,
-  patch: Partial<Omit<CreditCard, 'id' | 'created_at'>>
+  patch: UpdateCardPatch
 ): Promise<CreditCardWithProduct> {
+  const currentCard = await getCardById(id)
+  if (!currentCard) throw new Error('卡片不存在')
+
+  let targetProductId = patch.card_product_id
+
+  // 1. 若传了 card_product_id 且试图换绑产品/银行
+  if (targetProductId && targetProductId !== currentCard.card_product_id) {
+    const { data: targetProduct, error: pError } = await queryOne<CardProduct>(
+      'SELECT * FROM card_products WHERE id = ?',
+      [targetProductId]
+    )
+    if (pError || !targetProduct) {
+      throw new Error('目标卡产品不存在')
+    }
+
+    // Q3 同币种限制：若已有历史账单，只允许同币种切换
+    const { data: billRows } = await queryOne<{ cnt: number }>(
+      'SELECT COUNT(*) as cnt FROM bills WHERE card_id = ?',
+      [id]
+    )
+    const hasBills = (billRows?.cnt ?? 0) > 0
+    const curCurrency = currentCard.card_product?.currency || 'CNY'
+    const targetCurrency = targetProduct.currency || 'CNY'
+    if (hasBills && curCurrency !== targetCurrency) {
+      throw new Error('该卡已有历史账单，仅允许切换到同币种卡产品；如需更换币种，请新建卡片')
+    }
+
+    // 机会台账冲突检查
+    const { data: oppAccounts } = await query<{ account_id: string }>(
+      'SELECT account_id FROM opportunity_account_cards WHERE card_id = ? AND retired_at IS NULL',
+      [id]
+    )
+    if (oppAccounts && oppAccounts.length > 0) {
+      if (currentCard.card_product?.bank_id && targetProduct.bank_id && currentCard.card_product.bank_id !== targetProduct.bank_id) {
+        throw new Error('这张卡关联了原银行的权益台账，请先去「我的权益」解绑后再换银行')
+      }
+    }
+  } else if (!targetProductId && patch.bank_id && currentCard.card_product?.bank_id !== patch.bank_id) {
+    // 仅传 bank_id 且试图更换所属银行
+    let defaultProduct = (await queryOne<CardProduct>(
+      'SELECT * FROM card_products WHERE bank_id = ? AND is_active = 1 ORDER BY (CASE WHEN id = ? THEN 0 ELSE 1 END), created_at ASC LIMIT 1',
+      [patch.bank_id, `cp_default_${patch.bank_id}`]
+    )).data
+    if (!defaultProduct) {
+      const { data: bank } = await queryOne<{ id: string; name: string; country?: string }>(
+        'SELECT id, name, country FROM banks WHERE id = ?',
+        [patch.bank_id]
+      )
+      if (bank) {
+        const defId = `cp_default_${bank.id}`
+        await execute(
+          `INSERT OR IGNORE INTO card_products (id, country, bank_id, bank_name, card_name, currency, payment_due_type, payment_due_value, annual_fee, is_active)
+           VALUES (?, ?, ?, ?, ?, 'CNY', 'after_billing', 20, 0, 1)`,
+          [defId, bank.country || 'CN', bank.id, bank.name, '标准信用卡']
+        )
+        defaultProduct = (await queryOne<CardProduct>('SELECT * FROM card_products WHERE id = ?', [defId])).data
+      }
+    }
+    if (!defaultProduct) {
+      throw new Error('所选银行暂无可用卡产品')
+    }
+    targetProductId = defaultProduct.id
+
+    const { data: billRows } = await queryOne<{ cnt: number }>(
+      'SELECT COUNT(*) as cnt FROM bills WHERE card_id = ?',
+      [id]
+    )
+    const hasBills = (billRows?.cnt ?? 0) > 0
+    const curCurrency = currentCard.card_product?.currency || 'CNY'
+    const targetCurrency = defaultProduct.currency || 'CNY'
+    if (hasBills && curCurrency !== targetCurrency) {
+      throw new Error('该卡已有历史账单，仅允许切换到同币种卡产品；如需更换币种，请新建卡片')
+    }
+  }
+
+  // 2. 持卡人变更校验（防止越权）
+  if (patch.holder_id && patch.holder_id !== currentCard.holder_id) {
+    const { data: holders } = await query<{ id: string; created_by: string; auth_user_id: string }>(
+      'SELECT id, created_by, auth_user_id FROM card_holders WHERE id IN (?, ?)',
+      [currentCard.holder_id, patch.holder_id]
+    )
+    const curH = holders?.find(h => h.id === currentCard.holder_id)
+    const newH = holders?.find(h => h.id === patch.holder_id)
+    if (!curH || !newH || (curH.created_by && newH.created_by && curH.created_by !== newH.created_by)) {
+      throw new Error('卡片或目标持卡人不存在，或不属于同一账户')
+    }
+  }
+
+  // 3. 额度计算（复用 Task B 逻辑）
   let limitOverrideVal = patch.credit_limit_override
   let limitVal = patch.credit_limit
 
@@ -355,9 +528,34 @@ export async function updateCard(
     }
   }
 
+  // 4. Q2 账单日合并收口：若更新 billing_day，强制清空 override_billing_day
+  let effectiveOverrideBillingDay = patch.override_billing_day
+  if (patch.billing_day !== undefined) {
+    effectiveOverrideBillingDay = null
+  }
+
+  // 5. 卡片名称覆盖更新处理
+  let finalNameOverride = patch.name_override
+  if (finalNameOverride !== undefined) {
+    if (finalNameOverride && finalNameOverride.trim()) {
+      const trimmed = finalNameOverride.trim()
+      const effectiveProduct = targetProductId
+        ? (await queryOne<CardProduct>('SELECT * FROM card_products WHERE id = ?', [targetProductId]))?.data
+        : currentCard.card_product
+      if (effectiveProduct && trimmed === effectiveProduct.card_name) {
+        finalNameOverride = null
+      } else {
+        finalNameOverride = trimmed
+      }
+    } else {
+      finalNameOverride = null
+    }
+  }
+
   const fields: string[] = []
   const params: unknown[] = []
   const fieldMap: Record<string, unknown> = {
+    card_product_id: targetProductId,
     holder_id: patch.holder_id,
     card_number_last4: patch.card_number_last4,
     credit_limit: limitVal,
@@ -366,10 +564,10 @@ export async function updateCard(
     status: patch.status,
     card_type: patch.card_type,
     loan_due_day: patch.loan_due_day,
-    override_billing_day: patch.override_billing_day,
+    override_billing_day: effectiveOverrideBillingDay,
     override_due_type: patch.override_due_type,
     override_due_value: patch.override_due_value,
-    name_override: patch.name_override,
+    name_override: finalNameOverride,
     annual_fee_override: patch.annual_fee_override,
     account_mode_override: patch.account_mode_override,
     issued_on: patch.issued_on,
@@ -384,7 +582,12 @@ export async function updateCard(
   if (fields.length === 0) throw new Error('没有需要更新的字段')
   params.push(id)
   const { error } = await execute(`UPDATE credit_cards SET ${fields.join(', ')} WHERE id = ?`, params)
-  if (error) throw new Error(error.message)
+  if (error) {
+    if (/OPPORTUNITY_CARD_OWNERSHIP_CONFLICT/.test(error.message)) {
+      throw new Error('该卡已关联权益台账账户，请先在「我的权益」解绑后再更换持卡人')
+    }
+    throw new Error(error.message)
+  }
   const updated = await getCardById(id)
   if (!updated) throw new Error('卡片更新失败')
   return updated

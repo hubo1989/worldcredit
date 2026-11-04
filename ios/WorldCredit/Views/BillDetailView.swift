@@ -56,7 +56,7 @@ struct BillDetailView: View {
                             Text(item.cardTitle)
                                 .font(.headline)
                                 .foregroundStyle(WCColors.textPrimary)
-                            Text("\(item.bankName) · \(item.holderName) · 尾号 \(item.last4.isEmpty ? "-" : item.last4)")
+                            Text(item.bankName)
                                 .font(.caption)
                                 .foregroundStyle(WCColors.textSecondary)
                         }
@@ -73,27 +73,37 @@ struct BillDetailView: View {
                 }
                 .accessibilityIdentifier("bill.detail.editCard")
 
-                if let card = matchedCard {
-                    let billingDay = card.card.overrideBillingDay ?? card.card.billingDay
-                    // 多币种卡：额度符号按卡片币种（缺产品信息时回落 CNY），不硬编码人民币
-                    let limitSymbol = DashboardMoney.currencySymbol(card.product?.currency ?? "CNY")
-                    LabeledContent("信用额度", value: "\(limitSymbol)\(String(format: "%.0f", card.card.creditLimit))")
-                    LabeledContent("每月账单日", value: "\(billingDay) 日")
-                    LabeledContent("今日刷卡免息", value: "\(card.interestFreeDaysToday) 天")
-                }
+                let graceDays = matchedCard?.interestFreeDaysToday ?? item.interestFreeDaysToday
+                LabeledContent("今日刷卡免息", value: "\(graceDays) 天")
             }
 
-            // 账单基本信息
-            Section("账单信息") {
-                LabeledContent("银行/卡片", value: "\(item.bankName) · \(item.cardTitle)")
-                LabeledContent("卡号尾号", value: item.last4.isEmpty ? "-" : item.last4)
+            // 账单基本信息与人+卡账户属性
+            Section {
                 LabeledContent("持卡人", value: item.holderName)
+                LabeledContent("卡号尾号", value: item.last4.isEmpty ? "-" : item.last4)
+                let limitSymbol = DashboardMoney.currencySymbol(item.currency)
+                let limit = matchedCard?.card.creditLimit ?? item.card.creditLimit
+                LabeledContent("信用额度", value: "\(limitSymbol)\(String(format: "%.0f", limit))")
+                let bDay = matchedCard?.card.billingDay ?? item.card.billingDay
+                LabeledContent("每月账单日", value: "\(bDay) 日")
+
                 LabeledContent("账单周期", value: item.bill.billMonth)
                 if let stmtDate = item.bill.statementDate {
                     LabeledContent("出账日", value: stmtDate)
                 }
                 LabeledContent("还款日", value: item.bill.dueDate)
                 LabeledContent("距还款日", value: item.distanceLabel)
+            } header: {
+                HStack {
+                    Text("账单信息（人+卡）")
+                    Spacer()
+                    Button("修改") {
+                        showingCardEditSheet = true
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(WCColors.primaryAccent)
+                    .accessibilityIdentifier("bill.detail.editAccount")
+                }
             }
 
             // 金额信息

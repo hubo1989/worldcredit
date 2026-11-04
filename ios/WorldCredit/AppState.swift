@@ -1174,6 +1174,57 @@ public final class AppState {
         }
     }
 
+    @discardableResult
+    public func createHolder(name: String) async throws -> CardHolder {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else {
+            throw NSError(domain: "WorldCredit", code: 400, userInfo: [NSLocalizedDescriptionKey: "持卡人姓名不能为空"])
+        }
+        let payload: [String: AnyCodable] = ["name": AnyCodable(trimmed)]
+        let holder: CardHolder = try await apiClient.rpc(module: "holders", function: "createHolder", args: [AnyCodable(payload)])
+        await self.sync()
+        return holder
+    }
+
+    @discardableResult
+    public func createCard(
+        holderId: String,
+        bankId: String,
+        cardProductId: String?,
+        cardName: String,
+        last4: String?,
+        creditLimit: Double,
+        billingDay: Int
+    ) async throws -> CreditCard {
+        var payload: [String: AnyCodable] = [
+            "holder_id": AnyCodable(holderId),
+            "bank_id": AnyCodable(bankId),
+            "billing_day": AnyCodable(billingDay),
+            "credit_limit": AnyCodable(creditLimit),
+        ]
+        if let cardProductId, !cardProductId.isEmpty {
+            payload["card_product_id"] = AnyCodable(cardProductId)
+        }
+        let trimmedName = cardName.trimmingCharacters(in: .whitespaces)
+        if !trimmedName.isEmpty {
+            payload["name_override"] = AnyCodable(trimmedName)
+        }
+        if let last4 = last4?.trimmingCharacters(in: .whitespaces), !last4.isEmpty {
+            payload["card_number_last4"] = AnyCodable(last4)
+        }
+        let card: CreditCard = try await apiClient.rpc(module: "cards", function: "createCard", args: [AnyCodable(payload)])
+        await self.sync()
+        return card
+    }
+
+    public func allBanks() async -> [Bank] {
+        (try? await queryService.fetchBanks()) ?? []
+    }
+
+    public func cardProducts(for bankId: String? = nil) async -> [CardProduct] {
+        (try? await queryService.fetchCardProducts(bankId: bankId)) ?? []
+    }
+
     public func loadDemoData(onlyIfNeeded: Bool = false) async {
         let now = ISO8601DateFormatter().string(from: Date())
         // 演示账单的还款日相对当天生成：固定历史日期会随真实日期漂移，

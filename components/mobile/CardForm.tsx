@@ -69,7 +69,7 @@ function CardTypeSegment({
   )
 }
 
-export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, lockProduct = false }: Props) {
+export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, lockProduct: _lockProduct = false }: Props) {
   const [products, setProducts] = useState<CardProduct[]>([])
   const [selectedBank, setSelectedBank] = useState('')
   const [productId, setProductId] = useState(initial?.card_product_id ?? '')
@@ -94,11 +94,9 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
 
   // 还款规则覆盖
   const [overrideEnabled, setOverrideEnabled] = useState(
-    !!(initial?.override_due_type || initial?.override_billing_day)
+    !!(initial?.override_due_type || initial?.override_due_value)
   )
-  const [overrideBillingDay, setOverrideBillingDay] = useState(
-    initial?.override_billing_day?.toString() ?? ''
-  )
+  const [cardName, setCardName] = useState(initial?.name_override ?? '')
   const [overrideDueType, setOverrideDueType] = useState<DueType>(
     (initial?.override_due_type as DueType) ?? 'after_billing'
   )
@@ -130,6 +128,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
         setSelectedBank(match.bank_name)
       }
       setProductId(initial.card_product_id)
+      setCardName(initial.name_override || match?.card_name || '')
       setLast4(initial.card_number_last4 ?? '')
       const eff = getEffectiveCreditLimit(initial)
       setLimit(eff != null ? eff.toString() : '')
@@ -138,14 +137,14 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
       setLoanDueDay(initial.loan_due_day?.toString() ?? '')
       setIssuedOn(initial.issued_on ?? '')
       setActivatedOn(initial.activated_on ?? '')
-      setOverrideEnabled(!!(initial.override_due_type || initial.override_billing_day))
-      setOverrideBillingDay(initial.override_billing_day?.toString() ?? '')
+      setOverrideEnabled(!!(initial.override_due_type || initial.override_due_value))
       setOverrideDueType((initial.override_due_type as DueType) ?? 'after_billing')
       setOverrideDueValue(initial.override_due_value?.toString() ?? '')
       setAccountModeOverride(initial.account_mode_override ?? 'auto')
     } else if (!initial) {
       setSelectedBank('')
       setProductId('')
+      setCardName('')
       setLast4('')
       setLimit('')
       setBillingDay('')
@@ -154,7 +153,6 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
       setIssuedOn('')
       setActivatedOn('')
       setOverrideEnabled(false)
-      setOverrideBillingDay('')
       setOverrideDueType('after_billing')
       setOverrideDueValue('')
       setAccountModeOverride('auto')
@@ -166,8 +164,10 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
     const filtered = products.filter(p => p.bank_name === bank)
     if (filtered.length > 0) {
       setProductId(filtered[0].id)
+      setCardName(filtered[0].card_name)
     } else {
       setProductId('')
+      setCardName('')
     }
   }
 
@@ -200,7 +200,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
         status: 'active',
         card_type: cardType,
         loan_due_day: isLoan && loanDueDay ? parseInt(loanDueDay) : undefined,
-        override_billing_day: overrideEnabled && overrideBillingDay ? parseInt(overrideBillingDay) : undefined,
+        name_override: cardName.trim() || undefined,
         override_due_type: overrideEnabled ? overrideDueType : null,
         override_due_value: overrideEnabled && overrideDueValue ? parseInt(overrideDueValue) : undefined,
         account_mode_override: accountModeOverride === 'auto' ? null : accountModeOverride,
@@ -279,21 +279,42 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
           required
           value={selectedBank}
           onChange={e => handleBankChange(e.target.value)}
-          disabled={lockProduct}
-          helperText={lockProduct ? '银行与卡产品编辑时不可更换，如需更换请删卡重建' : undefined}
           options={bankOptions.map(bank => ({ value: bank, label: bank }))}
         />
 
-        {/* 卡片名称选择 */}
-        <SelectField
-          label="卡片名称"
-          required
-          value={productId}
-          onChange={e => setProductId(e.target.value)}
-          disabled={!selectedBank || lockProduct}
-          helperText={lockProduct ? '卡片名称在管理页（卡产品）维护' : !selectedBank ? '请先选择发卡银行' : undefined}
-          options={availableProducts.map(p => ({ value: p.id, label: p.card_name }))}
-        />
+        {/* 卡片名称输入与常用卡种快捷点选 */}
+        <div>
+          <TextField
+            label="卡片名称"
+            required
+            placeholder="输入卡片名称，或点选下方卡种"
+            value={cardName}
+            onChange={e => setCardName(e.target.value)}
+          />
+
+          {availableProducts.length > 0 && (
+            <div className='mt-2 flex flex-wrap gap-1.5'>
+              {availableProducts.slice(0, 6).map((p) => (
+                <button
+                  key={p.id}
+                  type='button'
+                  onClick={() => {
+                    setProductId(p.id)
+                    setCardName(p.card_name)
+                  }}
+                  className={
+                    'rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ' +
+                    (productId === p.id && cardName === p.card_name
+                      ? 'bg-d-accent text-white'
+                      : 'border border-d-border bg-d-subtle text-d-muted hover:text-d-text')
+                  }
+                >
+                  {p.card_name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* ---- 信用卡模式 ---- */}
         {isCredit && (
@@ -356,16 +377,6 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
             {overrideEnabled && (
               // 分组缩进线：1px d-border
               <div className='flex flex-col gap-4 border-l border-d-border pl-2'>
-                <TextField
-                  label="账单日（覆盖）"
-                  type="number"
-                  placeholder="留空则使用上方账单日"
-                  value={overrideBillingDay}
-                  onChange={e => setOverrideBillingDay(e.target.value)}
-                  helperText="可选，覆盖卡产品的默认账单日"
-                  endAdornment={<span>日</span>}
-                />
-
                 <SelectField
                   label="还款规则"
                   value={overrideDueType}

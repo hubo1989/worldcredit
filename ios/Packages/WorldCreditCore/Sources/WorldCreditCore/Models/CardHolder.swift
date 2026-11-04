@@ -39,6 +39,21 @@ public struct CardHolder: Codable, FetchableRecord, TableRecord, PersistableReco
         self.createdAt = createdAt
     }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        let cb = try container.decodeIfPresent(String.self, forKey: .createdBy) ?? ""
+        createdBy = cb
+        managedBy = try container.decodeIfPresent(String.self, forKey: .managedBy) ?? cb
+        name = try container.decode(String.self, forKey: .name)
+        phone = try container.decodeIfPresent(String.self, forKey: .phone)
+        email = try container.decodeIfPresent(String.self, forKey: .email)
+        aliases = try container.decodeIfPresent(String.self, forKey: .aliases)
+        avatarColor = try container.decodeIfPresent(String.self, forKey: .avatarColor) ?? "#1976d2"
+        authUserId = try container.decodeIfPresent(String.self, forKey: .authUserId)
+        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, name, phone, email, aliases
         case createdBy = "created_by"

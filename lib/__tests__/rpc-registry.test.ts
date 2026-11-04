@@ -104,10 +104,10 @@ describe("RPC registry contract", () => {
     ["gmail-ledger", "updateLedgerAmount"],
     ["gmail-ledger", "getGmailLedgerBanks"],
     ["sync-gmail", "syncGmailLedgerToCardsAndBills"],
+    ["holders", "createHolder"],
   ];
 
   const ADMIN_ONLY: Array<[string, string]> = [
-    ["holders", "createHolder"],
     ["holders", "updateHolder"],
     ["holders", "mergeHolders"],
     ["promos", "createUserPromo"],
@@ -153,6 +153,7 @@ describe("RPC registry contract", () => {
       "cards.getCardProducts",
       // 公开只读银行目录：无用户数据、无写操作，成员选归属银行时需要
       "banks.getBankNames",
+      "banks.getBanks",
     ]);
     for (const [moduleName, mod] of Object.entries(RPC_REGISTRY)) {
       for (const [fn, entry] of Object.entries(mod)) {
