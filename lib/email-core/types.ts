@@ -52,6 +52,30 @@ export interface BillParseResult {
   email_kind?: 'statement' | 'autopay_scheduled' | 'payment_reminder' | 'other' | null
   currency?: string
   confidence?: number
+  /**
+   * 账单范围：
+   * - account_merged: 个人消费账户/多卡统一账单
+   * - single_card: 独立单卡账单
+   * - unknown: 未知/未指定
+   */
+  statement_scope?: 'account_merged' | 'single_card' | 'unknown' | null
+  /** 账户尾号（若银行区分账户号与卡号） */
+  account_tail?: string | null
+  /** 分卡消费/应还小计列表 */
+  card_subtotals?: Array<{
+    card_last4: string
+    card_name?: string | null
+    amount: number
+    currency?: string | null
+  }>
+  /** 应还公式分解（上期/还款/新增/调整/利息） */
+  formula_breakdown?: {
+    previous_balance?: number | null
+    previous_payment?: number | null
+    new_charges?: number | null
+    adjustment?: number | null
+    interest?: number | null
+  } | null
 }
 
 export interface BillRow {

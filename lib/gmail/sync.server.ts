@@ -21,6 +21,8 @@ import {
   syncBillingDayFromBill,
   syncCreditLimitFromBill,
   evaluateParsedBillDueDate,
+  isCmbStatement,
+  parseCmbStatement,
   type BillParseResult,
 } from "../email-core";
 import { decryptToken } from "./token-crypto";
@@ -103,7 +105,10 @@ export async function syncUserGmail(
   if (!conn.data) throw new Error("未连接 Gmail 或连接已停用");
 
   const deps: SyncDeps = depsOverride ?? {
-    parse: async (text) => parseBillWithAI(await loadAiConfig(db), text),
+    parse: async (text) =>
+      isCmbStatement({ text })
+        ? parseCmbStatement(text)
+        : parseBillWithAI(await loadAiConfig(db), text),
   };
   const secret = resolveSecret(deps.sessionSecret);
   const env = getWorkerEnv() as {

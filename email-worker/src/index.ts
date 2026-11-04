@@ -25,6 +25,7 @@ import {
 import { evaluateParsedBillDueDate } from '../../lib/email-core/due-date'
 import { extractNameFromBody, resolveHolder } from '../../lib/email-core/holders'
 import { loadAiConfig, parseBillWithAI } from '../../lib/email-core/ai'
+import { isCmbStatement, parseCmbStatement } from '../../lib/email-core/cmb'
 import { scheduleBillSync } from './push'
 
 export default {
@@ -72,10 +73,11 @@ export default {
       const raw = await streamToBytes(message.raw)
       const parsedTop = parseRawMessage(raw)
       const emailBody = parsedTop.text
+      const isCmbDirect = isCmbStatement({ fromEmail, subject, text: emailBody })
 
       // 3. Fetch AI config（转发包路径里每封附件也要用它，所以提前到分支之前）
       const aiConfig = await loadAiConfig(db)
-      if (!aiConfig.apiKey) {
+      if (!isCmbDirect && !aiConfig.apiKey) {
         throw new Error('AI API Key 未配置（system_settings.ai_api_key）')
       }
 
@@ -87,7 +89,9 @@ export default {
         db,
         userId,
         top: parsedTop,
-        parse: body => parseBillWithAI(aiConfig, body),
+        parse: body => isCmbStatement({ text: body })
+          ? Promise.resolve(parseCmbStatement(body))
+          : parseBillWithAI(aiConfig, body),
       })
       if (bundle) {
         // billsWritten = 0 也算「处理过但没什么可写」，用 skipped 与失败的解析区分开
@@ -106,8 +110,10 @@ export default {
         return
       }
 
-      // 5. Parse bill with AI
-      const aiResult = await parseBillWithAI(aiConfig, emailBody)
+      // 5. Parse bill with CMB dedicated parser or AI
+      const aiResult = isCmbDirect
+        ? parseCmbStatement(emailBody)
+        : await parseBillWithAI(aiConfig, emailBody)
       log.raw_ai_response = JSON.stringify(aiResult)
 
       // 邮件类型门禁：自动扣款通知 / 还款提醒不是新一期账单。Chase 7491 的

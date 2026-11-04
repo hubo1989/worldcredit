@@ -12,6 +12,8 @@ export interface FakeDbTables {
   card_holders: Row[]
   credit_cards: Row[]
   card_products: Row[]
+  credit_accounts?: Row[]
+  bill_card_subtotals?: Row[]
   bills: Row[]
   bill_import_drafts: Row[]
   system_settings: Row[]
@@ -84,6 +86,26 @@ class FakeStatement {
       return { results: results.slice(0, 1) as T[], success: true }
     }
 
+    if (/FROM credit_accounts/i.test(norm)) {
+      const accs = tables.credit_accounts || []
+      if (/WHERE id = \?/i.test(norm)) {
+        return { results: accs.filter(r => r.id === args[0]) as T[], success: true }
+      }
+      if (/WHERE holder_id = \?/i.test(norm)) {
+        const results = accs.filter(r => r.holder_id === args[0] && r.statement_mode === 'merged' && r.status === 'active')
+        return { results: results.slice(0, 1) as T[], success: true }
+      }
+      return { results: accs as T[], success: true }
+    }
+
+    if (/FROM bill_card_subtotals/i.test(norm)) {
+      const subs = tables.bill_card_subtotals || []
+      if (/WHERE bill_id = \?/i.test(norm)) {
+        return { results: subs.filter(r => r.bill_id === args[0]) as T[], success: true }
+      }
+      return { results: subs as T[], success: true }
+    }
+
     if (/FROM bills/i.test(norm)) {
       // syncBillingDayFromBill 找「本期之前、有出账日」的历史账单
       if (/bill_month < \?/i.test(norm)) {
@@ -119,6 +141,35 @@ class FakeStatement {
     }
 
     if (/^INSERT INTO credit_cards/i.test(norm)) {
+      const hasAccountId = /account_id/i.test(norm)
+      if (hasAccountId) {
+        if (args.length === 9) {
+          tables.credit_cards.push({
+            id: args[0],
+            holder_id: args[1],
+            account_id: args[2],
+            card_product_id: args[3],
+            card_number_last4: args[4],
+            credit_limit: args[5],
+            billing_day: args[6],
+            status: args[7],
+            card_type: args[8],
+          })
+          return { success: true }
+        }
+        tables.credit_cards.push({
+          id: args[0],
+          holder_id: args[1],
+          account_id: args[2],
+          card_product_id: args[3],
+          card_number_last4: args[4],
+          credit_limit: 0,
+          billing_day: args[5],
+          status: args[6],
+          card_type: args[7],
+        })
+        return { success: true }
+      }
       if (args.length === 8) {
         tables.credit_cards.push({
           id: args[0],
@@ -147,6 +198,20 @@ class FakeStatement {
     }
 
     if (/^INSERT INTO bills/i.test(norm)) {
+      if (args.length === 9) {
+        tables.bills.push({
+          id: args[0],
+          account_id: args[1],
+          card_id: args[2],
+          bill_month: args[3],
+          bill_amount: args[4],
+          min_payment: args[5],
+          due_date: args[6],
+          statement_date: args[7],
+          status: args[8],
+        })
+        return { success: true }
+      }
       tables.bills.push({
         id: args[0],
         card_id: args[1],
@@ -157,6 +222,56 @@ class FakeStatement {
         statement_date: args[6],
         status: args[7],
       })
+      return { success: true }
+    }
+
+    if (/^INSERT INTO credit_accounts/i.test(norm)) {
+      tables.credit_accounts = tables.credit_accounts || []
+      tables.credit_accounts.push({
+        id: args[0],
+        holder_id: args[1],
+        bank_id: args[2],
+        bank_name: args[3],
+        currency: args[4],
+        statement_mode: args[5] || 'merged',
+        quota_mode: args[6] || 'shared',
+        shared_credit_limit: args[7],
+        billing_day: args[8],
+        due_type: args[9],
+        due_value: args[10],
+        primary_card_id: args[11],
+        status: args[12] || 'active',
+      })
+      return { success: true }
+    }
+
+    if (/^INSERT INTO bill_card_subtotals/i.test(norm)) {
+      tables.bill_card_subtotals = tables.bill_card_subtotals || []
+      const [id, bill_id, card_id, card_tail, subtotal_amount, currency, source] = args
+      const existingIdx = tables.bill_card_subtotals.findIndex(
+        s => s.bill_id === bill_id && s.card_tail === card_tail
+      )
+      if (existingIdx !== -1) {
+        Object.assign(tables.bill_card_subtotals[existingIdx], { card_id, subtotal_amount, currency })
+      } else {
+        tables.bill_card_subtotals.push({
+          id, bill_id, card_id, card_tail, subtotal_amount, currency, source: source || 'email'
+        })
+      }
+      return { success: true }
+    }
+
+    if (/^UPDATE credit_accounts/i.test(norm)) {
+      const [limit, id] = args
+      const row = (tables.credit_accounts || []).find(r => r.id === id)
+      if (row) row.shared_credit_limit = limit
+      return { success: true }
+    }
+
+    if (/^UPDATE credit_cards SET account_id/i.test(norm)) {
+      const [accountId, id] = args
+      const row = tables.credit_cards.find(r => r.id === id)
+      if (row) row.account_id = accountId
       return { success: true }
     }
 
@@ -218,6 +333,8 @@ export function createFakeD1(seed: Partial<FakeDbTables> = {}): FakeDb {
     card_holders: [],
     credit_cards: [],
     card_products: [],
+    credit_accounts: [],
+    bill_card_subtotals: [],
     bills: [],
     bill_import_drafts: [],
     system_settings: [],
