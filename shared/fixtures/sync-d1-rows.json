@@ -74,6 +74,7 @@
           "card_product_id": "sync-fixture-product",
           "card_number_last4": null,
           "credit_limit": 50000.0,
+          "credit_limit_override": null,
           "billing_day": 5,
           "status": "active",
           "card_type": "credit",

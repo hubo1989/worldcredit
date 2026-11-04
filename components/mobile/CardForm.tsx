@@ -6,6 +6,7 @@ import { Button, Toggle } from '@/components/obsidian/controls'
 import { TextField, SelectField } from '@/components/obsidian/fields'
 import type { CreditCard, CardProduct } from '@/lib/types'
 import { getCardProducts } from '@/lib/api/cards'
+import { getEffectiveCreditLimit, isCreditLimitManuallySet } from '@/lib/utils'
 import { AiFillBox } from '@/components/mobile/AiFillBox'
 
 interface Props {
@@ -73,7 +74,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
   const [selectedBank, setSelectedBank] = useState('')
   const [productId, setProductId] = useState(initial?.card_product_id ?? '')
   const [last4, setLast4] = useState(initial?.card_number_last4 ?? '')
-  const [limit, setLimit] = useState(initial?.credit_limit.toString() ?? '')
+  const initialEffLimit = getEffectiveCreditLimit(initial)
+  const [limit, setLimit] = useState(initialEffLimit != null ? initialEffLimit.toString() : '')
   const [billingDay, setBillingDay] = useState(initial?.billing_day.toString() ?? '')
   const [submitting, setSubmitting] = useState(false)
   // 编辑态下可改归属；新建仍固定为传入的 holderId
@@ -129,7 +131,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
       }
       setProductId(initial.card_product_id)
       setLast4(initial.card_number_last4 ?? '')
-      setLimit(initial.credit_limit.toString())
+      const eff = getEffectiveCreditLimit(initial)
+      setLimit(eff != null ? eff.toString() : '')
       setBillingDay(initial.billing_day.toString())
       setCardType(initial.card_type ?? 'credit')
       setLoanDueDay(initial.loan_due_day?.toString() ?? '')
@@ -172,8 +175,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
   const isCredit = cardType === 'credit'
   const isLoan = cardType === 'loan'
 
-  // 信用卡模式校验
-  const creditValid = !!selectedBank && !!productId && !!limit && !!billingDay
+  // 信用卡模式校验：新建卡必填额度；编辑既有卡允许仅改其他信息，或补充输入额度
+  const creditValid = !!selectedBank && !!productId && !!billingDay && (!!initial || !!limit.trim())
   // 贷款类模式校验（产品和还款日必填，额度选填）
   const loanValid = !!selectedBank && !!productId && !!loanDueDay
 
@@ -183,11 +186,16 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
     if (!canSubmit) return
     setSubmitting(true)
     try {
+      const parsedLimit = limit.trim() ? parseFloat(limit) : null
+      const validLimit = parsedLimit && parsedLimit > 0 ? parsedLimit : 0
+      const limitOverride = parsedLimit && parsedLimit > 0 ? parsedLimit : (limit.trim() ? null : (initial?.credit_limit_override ?? null))
+
       const base: Omit<CreditCard, 'id' | 'created_at'> = {
         holder_id: ownerId,
         card_product_id: productId,
         card_number_last4: last4 || undefined,
-        credit_limit: limit ? parseFloat(limit) : 0,
+        credit_limit: validLimit,
+        credit_limit_override: limitOverride,
         billing_day: billingDay ? parseInt(billingDay) : 1,
         status: 'active',
         card_type: cardType,
@@ -293,10 +301,17 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
             <TextField
               label="额度"
               type="number"
-              placeholder="例如：50000"
+              placeholder={initial && getEffectiveCreditLimit(initial) === null ? "未获取，请输入信用额度" : "例如：50000"}
               value={limit}
               onChange={e => setLimit(e.target.value)}
-              required
+              required={!initial}
+              helperText={
+                initial && isCreditLimitManuallySet(initial)
+                  ? "已手动设置（不会被邮件同步覆盖）"
+                  : initial && getEffectiveCreditLimit(initial) === null
+                  ? "邮件未获取到额度，请输入并保存"
+                  : undefined
+              }
               startAdornment={<span>¥</span>}
             />
 

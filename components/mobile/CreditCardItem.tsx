@@ -2,7 +2,7 @@
 'use client'
 
 import type { CreditCard, CardProduct } from '@/lib/types'
-import { formatCardTail } from '@/lib/utils'
+import { formatCardTail, getEffectiveCreditLimit, isCreditLimitManuallySet } from '@/lib/utils'
 import { CardIcon, CalendarIcon } from '@/components/icons/WcIcon'
 
 interface Props {
@@ -12,6 +12,8 @@ interface Props {
 
 export function CreditCardItem({ card, onClick }: Props) {
   const product = card.card_product
+  const effLimit = getEffectiveCreditLimit(card)
+  const isManual = isCreditLimitManuallySet(card)
 
   return (
     <div
@@ -46,8 +48,17 @@ export function CreditCardItem({ card, onClick }: Props) {
 
       <div className='flex items-center justify-between'>
         <div>
-          <p className='text-[14.5px] leading-[18px] opacity-70'>额度</p>
-          <p className='num-tabular text-[19px] font-semibold leading-6'>¥{Number(card.credit_limit).toLocaleString()}</p>
+          <p className='flex items-center gap-1.5 text-[14.5px] leading-[18px] opacity-70'>
+            <span>额度</span>
+            {isManual && (
+              <span className='rounded bg-white/20 px-1 py-0.5 text-[10px] font-semibold leading-none text-white'>
+                已设置
+              </span>
+            )}
+          </p>
+          <p className='num-tabular text-[19px] font-semibold leading-6'>
+            {effLimit !== null ? `¥${effLimit.toLocaleString()}` : '未获取'}
+          </p>
         </div>
         <div className='text-right'>
           <p className='text-[14.5px] leading-[18px] opacity-70'>账单日</p>

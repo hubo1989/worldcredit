@@ -121,6 +121,8 @@ export interface CreditCard {
   card_product_id: string
   card_number_last4?: string
   credit_limit: number
+  /** 用户手动设置的信用额度（非空正数表示已手动设置；NULL 且 credit_limit <= 0 表示未获取） */
+  credit_limit_override?: number | null
   billing_day: number
   status: 'active' | 'frozen' | 'cancelled'
   /** 卡类型：信用卡 / 贷款类 */
@@ -245,6 +247,49 @@ export interface EmailParseLog {
   error_msg?: string
   raw_ai_response?: string
   created_at: string
+}
+
+/**
+ * 还款日缺失原因枚举（严禁编造日期，无确切日期时归入以下四类）
+ */
+export type DueDateMissingReasonCode =
+  | 'missing_in_email'
+  | 'parse_failed'
+  | 'ambiguous_or_grace_only'
+  | 'unsynced'
+
+export interface CardDueDateEmailEvidence {
+  source: 'email_parse_log' | 'gmail_sync' | 'bill_draft'
+  id: string
+  subject?: string | null
+  from_email?: string | null
+  created_at: string
+  reason_code: DueDateMissingReasonCode
+  reason_label: string
+  detail: string
+}
+
+export interface CardDueDateResolution {
+  /** 是否存在邮件或账单人工覆盖提供的确切还款日期（YYYY-MM-DD） */
+  has_exact_due_date: boolean
+  /** 确切还款日期（YYYY-MM-DD）；无确切日期时为 null，绝不编造 */
+  exact_due_date: string | null
+  /** 确切还款日期来源：账单邮件落库 / 账单人工覆盖 */
+  exact_source: 'bill_email' | 'bill_override' | null
+  /** 对应的账单月份（如 '2026-09'） */
+  exact_bill_month: string | null
+  /** 若无确切账单日期，用户是否在卡片上配置了明确的每月固定还款日（1-31） */
+  manual_fixed_day: number | null
+  /** 无确切还款日期时的主原因分类 */
+  reason_code: DueDateMissingReasonCode | null
+  /** 主原因中文标签（邮件未提供 / 解析失败 / 日期模糊/只有宽限期 / 未同步） */
+  reason_label: string | null
+  /** 面向用户展示的一句话原因汇总 */
+  summary: string
+  /** 关联邮件/草稿的原因明细 */
+  email_evidences: CardDueDateEmailEvidence[]
+  /** 四类原因各自的命中邮件数 */
+  reason_counts: Record<DueDateMissingReasonCode, number>
 }
 
 /**

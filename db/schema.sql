@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS credit_cards (
   card_product_id UUID NOT NULL REFERENCES card_products(id) ON DELETE RESTRICT,
   card_number_last4 TEXT,
   credit_limit NUMERIC NOT NULL DEFAULT 0,
+  credit_limit_override NUMERIC, -- 用户手动设置的信用额度（NULL 且 credit_limit <= 0 表示未获取）
   billing_day INT NOT NULL CHECK (billing_day BETWEEN 1 AND 31),
   status TEXT NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'frozen', 'cancelled')),

@@ -1,11 +1,21 @@
 import { query, queryOne, execute, uuid } from '../db'
-import type { CardProduct, CreditCard, CardHolder, Bill, Benefit, BenefitUsage } from '@/lib/types'
+import type { CardProduct, CreditCard, CardHolder, Bill, Benefit, BenefitUsage, CardDueDateResolution } from '@/lib/types'
 import { normalizeAliases } from '../utils'
 import { legacyBenefitPeriodStart } from './benefits.server'
 import { localDateInZone } from '../opportunities/dates'
 import type { OpportunityActor } from '../opportunities/types'
 import type { OpportunityDto } from '../opportunities/queries.server'
 import { getCardOpportunities } from '../opportunities/queries.server'
+import {
+  loadCardDueDateResolution,
+  buildDueDateReasonReport,
+  type DueDateReasonReport,
+  type CardForDueDateSummary,
+  type BillForDueDateSummary,
+  type GmailSyncMessageLite,
+  type BillImportDraftLite,
+} from '../due-date-summary'
+import type { EmailParseLog } from '../types'
 
 export type CreditCardWithProduct = CreditCard & {
   card_product?: CardProduct
@@ -19,6 +29,7 @@ interface CardJoinRow {
   card_product_id: string
   card_number_last4: string | null
   credit_limit: number
+  credit_limit_override: number | null
   billing_day: number
   status: string
   card_type: string
@@ -53,6 +64,7 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
     card_product_id: row.card_product_id,
     card_number_last4: row.card_number_last4 || undefined,
     credit_limit: row.credit_limit,
+    credit_limit_override: row.credit_limit_override != null ? Number(row.credit_limit_override) : undefined,
     billing_day: row.billing_day,
     status: row.status as CreditCard['status'],
     card_type: row.card_type as CreditCard['card_type'],
@@ -87,7 +99,7 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
   return card
 }
 
-const CARD_SELECT = `cc.id, cc.holder_id, cc.card_product_id, cc.card_number_last4, cc.credit_limit,
+const CARD_SELECT = `cc.id, cc.holder_id, cc.card_product_id, cc.card_number_last4, cc.credit_limit, cc.credit_limit_override,
   cc.billing_day, cc.status, cc.card_type, cc.loan_due_day, cc.override_billing_day,
   cc.override_due_type, cc.override_due_value, cc.name_override, cc.annual_fee_override, cc.created_at,
   cc.issued_on, cc.activated_on,
@@ -154,6 +166,8 @@ export interface CardDetail {
   benefits: CardDetailBenefit[]
   /** 统一机会 DTO（Task 11）：默认最多 3 条，完整列表走机会页。 */
   opportunities: OpportunityDto[]
+  /** 还款日确切性与四类缺失原因解析（严格区分，绝不编造日期） */
+  dueDateResolution?: CardDueDateResolution
 }
 
 function computeBillStatus(billAmount: number, paid: number, dueDate: string): Bill['status'] {
@@ -266,7 +280,14 @@ export async function getCardDetail(
     opportunities = []
   }
 
-  return { card, bills: billList, benefits, opportunities }
+  let dueDateResolution: CardDueDateResolution | undefined
+  try {
+    dueDateResolution = await loadCardDueDateResolution(card)
+  } catch (err) {
+    console.error('加载卡片还款日解析失败:', err)
+  }
+
+  return { card, bills: billList, benefits, opportunities, dueDateResolution }
 }
 
 export async function getCardsByHolder(holderId: string): Promise<CreditCardWithProduct[]> {
@@ -280,10 +301,15 @@ export async function getCardsByHolder(holderId: string): Promise<CreditCardWith
 
 export async function createCard(card: Omit<CreditCard, 'id' | 'created_at'>): Promise<CreditCardWithProduct> {
   const id = uuid()
+  const limitOverride = card.credit_limit_override != null
+    ? (Number(card.credit_limit_override) > 0 ? Number(card.credit_limit_override) : null)
+    : (card.credit_limit && Number(card.credit_limit) > 0 ? Number(card.credit_limit) : null)
+  const limitValue = limitOverride ?? (Number(card.credit_limit) || 0)
+
   const { error } = await execute(
-    `INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type, loan_due_day, override_billing_day, override_due_type, override_due_value, issued_on, activated_on)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, card.holder_id, card.card_product_id, card.card_number_last4 || null, card.credit_limit,
+    `INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, credit_limit_override, billing_day, status, card_type, loan_due_day, override_billing_day, override_due_type, override_due_value, issued_on, activated_on)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, card.holder_id, card.card_product_id, card.card_number_last4 || null, limitValue, limitOverride,
      card.billing_day, card.status || 'active', card.card_type || 'credit', card.loan_due_day || null,
      card.override_billing_day || null, card.override_due_type || null, card.override_due_value || null,
      card.issued_on ?? null, card.activated_on ?? null]
@@ -306,12 +332,36 @@ export async function updateCard(
   id: string,
   patch: Partial<Omit<CreditCard, 'id' | 'created_at'>>
 ): Promise<CreditCardWithProduct> {
+  let limitOverrideVal = patch.credit_limit_override
+  let limitVal = patch.credit_limit
+
+  if (patch.credit_limit !== undefined && patch.credit_limit_override === undefined) {
+    const num = Number(patch.credit_limit)
+    if (Number.isFinite(num) && num > 0) {
+      limitOverrideVal = num
+      limitVal = num
+    } else {
+      limitOverrideVal = null
+      limitVal = 0
+    }
+  } else if (patch.credit_limit_override !== undefined && patch.credit_limit === undefined) {
+    const num = Number(patch.credit_limit_override)
+    if (Number.isFinite(num) && num > 0) {
+      limitVal = num
+      limitOverrideVal = num
+    } else {
+      limitVal = 0
+      limitOverrideVal = null
+    }
+  }
+
   const fields: string[] = []
   const params: unknown[] = []
   const fieldMap: Record<string, unknown> = {
     holder_id: patch.holder_id,
     card_number_last4: patch.card_number_last4,
-    credit_limit: patch.credit_limit,
+    credit_limit: limitVal,
+    credit_limit_override: limitOverrideVal,
     billing_day: patch.billing_day,
     status: patch.status,
     card_type: patch.card_type,
@@ -388,4 +438,108 @@ export async function updateCardHolder(
     throw new Error('归属转移未生效（并发修改），请刷新后重试')
   }
   return moved
+}
+
+/**
+ * 汇总当前用户全部卡片及邮件日志/Gmail同步记录的还款日状态与四类缺失原因。
+ * 绝不编造日期，按卡/邮件分类汇总给前端与审计入口。
+ */
+export async function getDueDateReasonReport(userId?: string): Promise<DueDateReasonReport> {
+  let cardCondition = ''
+  const cardParams: unknown[] = []
+  if (userId) {
+    cardCondition = 'WHERE (ch.created_by = ? OR ch.auth_user_id = ?)'
+    cardParams.push(userId, userId)
+  }
+  const { data: rawCards } = await query<Record<string, unknown>>(
+    `SELECT cc.*, cp.bank_name, cp.card_name, cp.payment_due_type, cp.payment_due_value
+     FROM credit_cards cc
+     JOIN card_holders ch ON cc.holder_id = ch.id
+     LEFT JOIN card_products cp ON cc.card_product_id = cp.id
+     ${cardCondition}
+     ORDER BY cc.created_at DESC`,
+    cardParams
+  )
+  const cards: CardForDueDateSummary[] = (rawCards ?? []).map((row) => ({
+    id: String(row.id),
+    holder_id: String(row.holder_id),
+    card_number_last4: row.card_number_last4 ? String(row.card_number_last4) : null,
+    billing_day: Number(row.billing_day) || 1,
+    card_type: (row.card_type === 'loan' ? 'loan' : 'credit') as 'credit' | 'loan',
+    loan_due_day: row.loan_due_day ? Number(row.loan_due_day) : null,
+    override_due_type: row.override_due_type as CardForDueDateSummary['override_due_type'],
+    override_due_value: row.override_due_value ? Number(row.override_due_value) : null,
+    bank_name: row.bank_name ? String(row.bank_name) : null,
+    card_name: row.name_override ? String(row.name_override) : (row.card_name ? String(row.card_name) : null),
+    card_product: row.bank_name ? {
+      bank_name: String(row.bank_name),
+      card_name: String(row.card_name ?? ''),
+      payment_due_type: (row.payment_due_type ?? 'after_billing') as CardProduct['payment_due_type'],
+      payment_due_value: Number(row.payment_due_value) || 20,
+    } : null,
+  }))
+
+  const cardIds = cards.map((c) => c.id)
+  let bills: BillForDueDateSummary[] = []
+  if (cardIds.length > 0) {
+    const placeholders = cardIds.map(() => '?').join(',')
+    const { data: billRows } = await query<BillForDueDateSummary>(
+      `SELECT id, card_id, bill_month, COALESCE(bill_amount_override, bill_amount) AS bill_amount,
+              statement_date, due_date, due_date_override, created_at
+       FROM bills WHERE card_id IN (${placeholders}) ORDER BY bill_month DESC LIMIT 500`,
+      cardIds
+    )
+    bills = billRows ?? []
+  }
+
+  let emailLogs: EmailParseLog[]
+  let gmailMessages: GmailSyncMessageLite[]
+  let billDrafts: BillImportDraftLite[]
+
+  const ownerIds = userId ? [userId] : []
+  if (ownerIds.length > 0) {
+    const placeholders = ownerIds.map(() => '?').join(',')
+    const [logsRes, gmailRes, draftsRes] = await Promise.all([
+      query<EmailParseLog>(
+        `SELECT * FROM email_parse_logs WHERE user_id IN (${placeholders}) ORDER BY created_at DESC LIMIT 300`,
+        ownerIds,
+      ),
+      query<GmailSyncMessageLite>(
+        `SELECT gmail_message_id, user_id, from_email, subject, status, bill_id, draft_id, error_msg, created_at
+         FROM gmail_sync_messages WHERE user_id IN (${placeholders}) ORDER BY created_at DESC LIMIT 300`,
+        ownerIds,
+      ),
+      query<BillImportDraftLite>(
+        `SELECT id, created_by, card_id, source_type, parsed_payload, status, created_at
+         FROM bill_import_drafts WHERE created_by IN (${placeholders}) ORDER BY created_at DESC LIMIT 300`,
+        ownerIds,
+      ),
+    ])
+    emailLogs = logsRes.data ?? []
+    gmailMessages = gmailRes.data ?? []
+    billDrafts = draftsRes.data ?? []
+  } else {
+    const [logsRes, gmailRes, draftsRes] = await Promise.all([
+      query<EmailParseLog>(`SELECT * FROM email_parse_logs ORDER BY created_at DESC LIMIT 300`),
+      query<GmailSyncMessageLite>(
+        `SELECT gmail_message_id, user_id, from_email, subject, status, bill_id, draft_id, error_msg, created_at
+         FROM gmail_sync_messages ORDER BY created_at DESC LIMIT 300`
+      ),
+      query<BillImportDraftLite>(
+        `SELECT id, created_by, card_id, source_type, parsed_payload, status, created_at
+         FROM bill_import_drafts ORDER BY created_at DESC LIMIT 300`
+      ),
+    ])
+    emailLogs = logsRes.data ?? []
+    gmailMessages = gmailRes.data ?? []
+    billDrafts = draftsRes.data ?? []
+  }
+
+  return buildDueDateReasonReport({
+    cards,
+    bills,
+    emailLogs,
+    gmailMessages,
+    billDrafts,
+  })
 }

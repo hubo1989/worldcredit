@@ -85,6 +85,7 @@ export interface CreditCardRow {
   card_product_id: string
   card_number_last4: string | null
   credit_limit: number
+  credit_limit_override: number | null
   billing_day: number
   status: 'active' | 'frozen' | 'cancelled'
   card_type: 'credit' | 'loan'
