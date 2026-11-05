@@ -33,7 +33,8 @@ export function CreditCardVisual({ card, usedAmount = 0, onClick }: Props) {
   const effLimit = getEffectiveCreditLimit(card)
   const isManual = isCreditLimitManuallySet(card)
   const hasLimit = effLimit !== null
-  const available = hasLimit ? effLimit - usedAmount : null
+  // 可用额度与详情页口径一致，超额时截断为 0，避免负数展示
+  const available = hasLimit ? Math.max(0, effLimit - usedAmount) : null
   const usagePercent = hasLimit && effLimit > 0 ? (usedAmount / effLimit) * 100 : 0
   const bankName = card.bank_name ?? card.card_product?.bank_name ?? '银行卡'
   const cardName = card.card_name ?? card.card_product?.card_name ?? '信用卡'

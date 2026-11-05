@@ -20,12 +20,6 @@ interface Props {
    */
   holders?: Array<{ id: string; name: string }>
   initial?: CreditCard
-  /**
-   * 编辑已有卡时锁定归属：银行与卡产品（含卡名）是建档时就定下的身份，
-   * 录错了应删卡重建，而不是换产品——换产品会让历史账单挂到错误的
-   * 账单日/还款规则上。产品级信息（名称/描述/权益）在管理页维护。
-   */
-  lockProduct?: boolean
 }
 
 type DueType = 'after_billing' | 'fixed' | 'fixed_before_billing'
@@ -69,7 +63,7 @@ function CardTypeSegment({
   )
 }
 
-export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, lockProduct: _lockProduct = false }: Props) {
+export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }: Props) {
   const [products, setProducts] = useState<CardProduct[]>([])
   const [selectedBank, setSelectedBank] = useState('')
   const [productId, setProductId] = useState(initial?.card_product_id ?? '')
@@ -188,7 +182,17 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
     try {
       const parsedLimit = limit.trim() ? parseFloat(limit) : null
       const validLimit = parsedLimit && parsedLimit > 0 ? parsedLimit : 0
-      const limitOverride = parsedLimit && parsedLimit > 0 ? parsedLimit : (limit.trim() ? null : (initial?.credit_limit_override ?? null))
+
+      // limitOverride 三段式语义推导（与 R2 统一口径）：
+      // 1. 输入正数 (parsedLimit > 0)：同步写入 credit_limit 与 credit_limit_override 手动覆盖值
+      // 2. 清空输入 (!limit.trim())：保留旧 override（initial?.credit_limit_override ?? null，视为不修改该字段）
+      // 3. 显式输入 0 或非法值 (limit.trim() 有值但 parsedLimit <= 0)：清除手动 override（写入 null）
+      const limitOverride =
+        parsedLimit && parsedLimit > 0
+          ? parsedLimit
+          : limit.trim()
+            ? null
+            : (initial?.credit_limit_override ?? null)
 
       const base: Omit<CreditCard, 'id' | 'created_at'> = {
         holder_id: ownerId,

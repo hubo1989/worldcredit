@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { getCardDetail, updateCard, updateCardHolder, type CreditCardWithProduct } from '@/lib/api/cards'
 import { getHolders } from '@/lib/api/holders'
 import { CardForm } from '@/components/mobile/CardForm'
@@ -93,9 +92,13 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       setError(null)
 
       // 卡 + 卡产品 + 持卡人 + 最近账单（含已还聚合）+ 权益使用进度 + 还款日确切原因，一次 RPC 返回
+      // getHolders 降级为空列表，避免次要选项数据失败拖垮卡片主页面
       const [detail, holderList] = await Promise.all([
         getCardDetail(id),
-        getHolders(),
+        getHolders().catch(err => {
+          console.warn('加载持卡人列表失败，降级为空列表:', err)
+          return []
+        }),
       ])
       setCard({
         ...detail.card,
@@ -159,6 +162,17 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
   const isLimitManual = isCreditLimitManuallySet(card)
   const available = effLimit != null ? Math.max(0, effLimit - used) : null
 
+  let limitBadge: React.ReactNode = null
+  if (isLimitManual) {
+    limitBadge = (
+      <span className='rounded bg-d-accent-soft px-1 text-[10px] font-semibold text-d-accent-light'>已设置</span>
+    )
+  } else if (effLimit === null) {
+    limitBadge = (
+      <span className='rounded bg-d-warn-soft px-1 text-[10px] font-semibold text-d-warn-ink'>去设置</span>
+    )
+  }
+
   const billingDay = getEffectiveBillingDay(card)
   const dueConfig = getEffectiveDueConfig(card, product)
   const dueDayOfMonth =
@@ -208,11 +222,21 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
               )}
             </p>
           </div>
-          {card.status !== 'active' && (
-            <span className='rounded-full bg-white/15 px-2.5 py-0.5 text-[12px] font-semibold leading-4'>
-              {card.status === 'frozen' ? '已冻结' : '已注销'}
-            </span>
-          )}
+          <div className='flex items-center gap-2'>
+            {card.status !== 'active' && (
+              <span className='rounded-full bg-white/15 px-2.5 py-0.5 text-[12px] font-semibold leading-4'>
+                {card.status === 'frozen' ? '已冻结' : '已注销'}
+              </span>
+            )}
+            <button
+              type='button'
+              onClick={() => setCardDefOpen(true)}
+              aria-label='修改卡片信息'
+              className='rounded-lg bg-white/15 px-2.5 py-1 text-[12px] font-semibold text-white transition-colors active:bg-white/25'
+            >
+              修改卡片信息
+            </button>
+          </div>
         </div>
         <div className='relative z-10'>
           <p className='num-tabular mb-0.5 text-[17px] tracking-widest'>
@@ -228,17 +252,14 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       <div className='mb-2.5 grid grid-cols-3 gap-0.5 rounded-2xl border border-d-border bg-d-surface p-2'>
         <button
           type='button'
-          onClick={() => setCardFormOpen(true)}
+          onClick={() => setCardAccountOpen(true)}
           className='rounded-xl p-1 text-center transition-colors active:bg-d-subtle'
           title='点击修改或设置额度'
+          aria-label='修改额度与账户'
         >
           <p className='mb-0.5 flex items-center justify-center gap-1 text-[12px] leading-4 text-d-muted'>
             <span>总额度</span>
-            {isLimitManual ? (
-              <span className='rounded bg-d-accent-soft px-1 text-[10px] font-semibold text-d-accent-light'>已设置</span>
-            ) : effLimit === null ? (
-              <span className='rounded bg-d-warn-soft px-1 text-[10px] font-semibold text-d-warn-ink'>去设置</span>
-            ) : null}
+            {limitBadge}
           </p>
           <p className={'num-tabular text-[15px] font-bold ' + (effLimit === null ? 'text-d-warn-ink' : 'text-d-text')}>
             {effLimit !== null ? `¥${effLimit.toLocaleString()}` : '未获取'}
@@ -262,7 +283,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
         action={
           <button
             type='button'
-            onClick={() => setCardFormOpen(true)}
+            onClick={() => setCardAccountOpen(true)}
             aria-label='编辑卡片'
             className='rounded-lg bg-d-accent px-3 py-1 text-[12px] font-semibold text-white active:opacity-80'
           >
@@ -400,7 +421,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
         <Section title='可用机会'>
           <div className='flex flex-col gap-2'>
             {opportunities.map(o => (
-              <Link
+              <a
                 key={o.account_id}
                 href={`/promos?card=${o.card_ids[0] ?? ''}`}
                 className='flex items-center justify-between rounded-xl bg-d-subtle px-3 py-2'
@@ -414,14 +435,14 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
                 <span className='num-tabular shrink-0 text-[12px] font-semibold text-d-accent-light'>
                   {o.remaining_count !== null ? `剩 ${o.remaining_count} ${o.unit_label}` : '可用'}
                 </span>
-              </Link>
+              </a>
             ))}
-            <Link
+            <a
               href={`/promos?card=${card.id}`}
               className='self-center text-[12px] font-semibold text-d-accent-light'
             >
               查看全部机会 ›
-            </Link>
+            </a>
           </div>
         </Section>
       )}
