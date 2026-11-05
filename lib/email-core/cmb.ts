@@ -143,10 +143,10 @@ export function parseCmbStatement(text: string): BillParseResult {
         currency: 'CNY',
       })
     } else if (uniqueTails.length > 1) {
-      // 多卡时各尾号求和（分期 + 消费新增额），与总额差额作为未归卡差额呈现，不反向覆写总额
+      // 多卡时各尾号求和（含还款/分期/消费全部分段），与总额差额按 PRD 归「上期结转/账户级调整」，不反向覆写总额
       cardLast4 = uniqueTails[0]
       for (const tail of uniqueTails) {
-        const tailItems = items.filter(i => i.cardTail === tail && i.kind !== 'payment')
+        const tailItems = items.filter(i => i.cardTail === tail)
         const sum = tailItems.reduce((acc, i) => acc + i.amount, 0)
         subtotals.push({
           card_last4: tail,

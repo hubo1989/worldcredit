@@ -4,6 +4,7 @@ import { isCmbStatement, parseCmbStatement } from '../../lib/email-core/cmb'
 import {
   CMB_SINGLE_CARD_SYNTHETIC,
   CMB_MULTI_CARD_SYNTHETIC,
+  CMB_MULTI_CARD_ALL_SECTIONS_SYNTHETIC,
   CMB_YEAR_ROLLOVER_SYNTHETIC,
 } from './fixtures/cmb-synthetic'
 
@@ -119,6 +120,26 @@ describe('招商银行账单识别与专用解析器 (Phase 3)', () => {
       const subtotalsSum = (card6688?.amount ?? 0) + (card7799?.amount ?? 0)
       expect(subtotalsSum).toBe(24500.0)
       expect(res.bill_amount).toBe(25000.0)
+    })
+
+    it('多卡含还款/分期/消费全部分段时按尾号代数聚合求和', () => {
+      const res = parseCmbStatement(CMB_MULTI_CARD_ALL_SECTIONS_SYNTHETIC)
+
+      expect(res.bill_amount).toBe(20000.0)
+      expect(res.card_subtotals).toHaveLength(2)
+
+      const card6688 = res.card_subtotals?.find((s) => s.card_last4 === '6688')
+      const card7799 = res.card_subtotals?.find((s) => s.card_last4 === '7799')
+
+      // 6688: 还款 -1,000 + 分期 2,000 + 消费 10,000 = 11,000
+      expect(card6688?.amount).toBe(11000.0)
+      // 7799: 分期 3,000 + 消费 5,000 = 8,000
+      expect(card7799?.amount).toBe(8000.0)
+
+      // 总和 19,000，与总额 20,000 差额 1,000，总额不反向覆写
+      const sum = (card6688?.amount ?? 0) + (card7799?.amount ?? 0)
+      expect(sum).toBe(19000.0)
+      expect(res.bill_amount).toBe(20000.0)
     })
   })
 
