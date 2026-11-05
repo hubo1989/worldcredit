@@ -1,4 +1,5 @@
 // components/mobile/card-form-shared.ts
+import type { CardProduct } from '@/lib/types'
 
 /**
  * ObsidianUI 持卡人默认头像颜色（对应 d-accent-light，暗色面板上清晰辨识）
@@ -33,6 +34,7 @@ export function validateBillingDay(dayInput: string | number | undefined | null)
 
 /**
  * 校验还款规则覆盖
+ * - 未识别类型显式返回 invalid（封闭函数，#7）
  */
 export function validateDueRule(
   enabled: boolean,
@@ -63,8 +65,29 @@ export function validateDueRule(
     if (val < 1 || val > 31) {
       return { valid: false, error: '固定还款日必须在 1 到 31 之间' }
     }
+  } else {
+    return { valid: false, error: `不支持的还款规则类型: ${type}` }
   }
   return { valid: true, value: val }
+}
+
+/**
+ * 新建时信用额度校验（#3）：必须为大于 0 的正数
+ */
+export function validateLimitOnCreate(limitInput: string | number | undefined | null): {
+  valid: boolean
+  value?: number
+  error?: string
+} {
+  const str = String(limitInput ?? '').trim()
+  if (!str) {
+    return { valid: false, error: '请输入有效的信用额度' }
+  }
+  const num = parseFloat(str)
+  if (isNaN(num) || num <= 0) {
+    return { valid: false, error: '请输入有效的信用额度' }
+  }
+  return { valid: true, value: num }
 }
 
 /**
@@ -125,4 +148,70 @@ export function parseLast4(last4Input: string | undefined | null): {
     return { valid: false, error: '卡号尾号必须为 1 到 4 位数字' }
   }
   return { valid: true, value: trimmed }
+}
+
+/**
+ * 过滤尾号输入：只允许数字，最多 4 位（#5）
+ */
+export function sanitizeLast4Input(value: string): string {
+  return value.replace(/[^\d]/g, '').slice(0, 4)
+}
+
+/**
+ * 银行变更时的产品回填与卡片名称推导（#4）
+ */
+export function resolveBankChange(
+  bankProducts: CardProduct[],
+  hasCustomName: boolean,
+  currentCardName: string,
+  fallbackCardName = '标准信用卡'
+): {
+  productId: string
+  cardName: string
+} {
+  if (bankProducts.length > 0) {
+    const first = bankProducts[0]
+    return {
+      productId: first.id,
+      cardName: hasCustomName ? currentCardName : first.card_name,
+    }
+  }
+  return {
+    productId: '',
+    cardName: hasCustomName ? currentCardName : fallbackCardName,
+  }
+}
+
+/**
+ * 点选卡产品时的状态推导（选中产品、回填产品名、重置 hasCustomName）（#4）
+ */
+export function resolveProductSelect(prod: CardProduct): {
+  productId: string
+  cardName: string
+  hasCustomName: boolean
+} {
+  return {
+    productId: prod.id,
+    cardName: prod.card_name,
+    hasCustomName: false,
+  }
+}
+
+/**
+ * 判定卡片名称是否属于自定义覆盖（#4）：
+ * 若未自定义（!hasCustomName）或卡名与当前选定产品名称相同，则返回 null（表示不覆盖/清空 override）
+ */
+export function resolveNameOverride(
+  cardName: string,
+  selectedProduct: CardProduct | undefined,
+  hasCustomName: boolean
+): string | null {
+  const trimmed = cardName.trim()
+  if (!trimmed || !hasCustomName) {
+    return null
+  }
+  if (selectedProduct && trimmed === selectedProduct.card_name) {
+    return null
+  }
+  return trimmed
 }

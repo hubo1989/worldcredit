@@ -10,6 +10,9 @@ import type { CardProduct } from '@/lib/types'
 import { getEffectiveCardName } from '@/lib/utils'
 import {
   validateDueRule,
+  resolveBankChange,
+  resolveProductSelect,
+  resolveNameOverride,
   DUE_TYPE_LABELS,
 } from './card-form-shared'
 
@@ -83,24 +86,16 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
 
     // 找到新银行下的卡产品
     const bankProds = products.filter((p) => p.bank_id === bankId)
-    if (bankProds.length > 0) {
-      setSelectedProductId(bankProds[0].id)
-      if (!hasCustomName) {
-        setCardName(bankProds[0].card_name)
-      }
-    } else {
-      // Finding 6: 无产品银行不再在客户端合成伪造 ID，置空让服务端按同口径兜底
-      setSelectedProductId('')
-      if (!hasCustomName) {
-        setCardName('标准信用卡')
-      }
-    }
+    const next = resolveBankChange(bankProds, hasCustomName, cardName)
+    setSelectedProductId(next.productId)
+    setCardName(next.cardName)
   }
 
   const handleSelectProduct = (prod: CardProduct) => {
-    setSelectedProductId(prod.id)
-    setCardName(prod.card_name)
-    setHasCustomName(false)
+    const next = resolveProductSelect(prod)
+    setSelectedProductId(next.productId)
+    setCardName(next.cardName)
+    setHasCustomName(next.hasCustomName)
   }
 
   const handleSubmit = async () => {
@@ -118,7 +113,7 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
 
     // Finding 9: 判定名称是否自定义；若未自定义或与选定产品同名，则提交 null 清空 override
     const currentProd = products.find((p) => p.id === selectedProductId)
-    const isCustom = hasCustomName && (!currentProd || cardName.trim() !== currentProd.card_name)
+    const finalNameOverride = resolveNameOverride(cardName, currentProd, hasCustomName)
 
     setError(null)
     setSubmitting(true)
@@ -126,7 +121,7 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
       await updateCard(card.id, {
         card_product_id: selectedProductId || undefined,
         bank_id: selectedBankId || undefined,
-        name_override: isCustom ? cardName.trim() : null,
+        name_override: finalNameOverride,
         override_due_type: overrideEnabled ? overrideDueType : null,
         override_due_value: overrideEnabled ? dueCheck.value : undefined,
       })

@@ -20,6 +20,17 @@ interface Props {
   onSuccess: () => void
 }
 
+function getMergeCardRowClassName(isBelongToTarget: boolean, isChecked: boolean): string {
+  const base = 'flex items-center justify-between rounded-xl border p-3 transition-colors '
+  if (isBelongToTarget) {
+    return base + 'cursor-not-allowed opacity-60 border-d-border bg-d-subtle'
+  }
+  if (isChecked) {
+    return base + 'cursor-pointer border-d-accent bg-d-accent-light/10'
+  }
+  return base + 'cursor-pointer border-d-border bg-d-subtle'
+}
+
 export function AccountMergeWizardModal({
   open,
   onClose,
@@ -216,14 +227,7 @@ export function AccountMergeWizardModal({
                   return (
                     <label
                       key={c.id}
-                      className={
-                        'flex items-center justify-between rounded-xl border p-3 transition-colors ' +
-                        (isBelongToTarget
-                          ? 'cursor-not-allowed opacity-60 border-d-border bg-d-subtle'
-                          : isChecked
-                          ? 'cursor-pointer border-d-accent bg-d-accent-light/10'
-                          : 'cursor-pointer border-d-border bg-d-subtle')
-                      }
+                      className={getMergeCardRowClassName(isBelongToTarget, isChecked)}
                     >
                       <div className='flex items-center gap-2.5'>
                         <input

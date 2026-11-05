@@ -8,6 +8,14 @@ import type { CreditCard, CardProduct } from '@/lib/types'
 import { getCardProducts } from '@/lib/api/cards'
 import { getEffectiveCreditLimit, isCreditLimitManuallySet } from '@/lib/utils'
 import { AiFillBox } from '@/components/mobile/AiFillBox'
+import {
+  resolveLimitOnEdit,
+  validateLimitOnCreate,
+  sanitizeLast4Input,
+  resolveBankChange,
+  resolveProductSelect,
+  resolveNameOverride,
+} from './card-form-shared'
 
 interface Props {
   open: boolean
@@ -63,6 +71,78 @@ function CardTypeSegment({
   )
 }
 
+/**
+ * 额度解析与语义推导（#1, #2 具名函数化，消灭 handleSubmit 中的嵌套三元）
+ * - 编辑既有卡：统一走 resolveLimitOnEdit（留空=undefined 不修改，0=清除，正数=覆盖）
+ * - 新建信用卡：正数必填（validateLimitOnCreate）
+ * - 新建贷款类：选填（留空为 0 / null，正数为覆盖）
+ */
+export function resolveCardFormLimit(
+  limitStr: string,
+  isCredit: boolean,
+  initial?: CreditCard
+): {
+  valid: boolean
+  credit_limit?: number
+  credit_limit_override?: number | null
+  error?: string
+} {
+  if (initial) {
+    return resolveLimitOnEdit(limitStr)
+  }
+
+  if (isCredit) {
+    const check = validateLimitOnCreate(limitStr)
+    if (!check.valid) {
+      return { valid: false, error: check.error || '请输入有效的信用额度' }
+    }
+    return {
+      valid: true,
+      credit_limit: check.value,
+      credit_limit_override: check.value,
+    }
+  }
+
+  const trimmed = limitStr.trim()
+  if (!trimmed) {
+    return {
+      valid: true,
+      credit_limit: 0,
+      credit_limit_override: null,
+    }
+  }
+  const num = parseFloat(trimmed)
+  if (isNaN(num) || num < 0) {
+    return { valid: false, error: '信用额度必须为非负数' }
+  }
+  if (num === 0) {
+    return {
+      valid: true,
+      credit_limit: 0,
+      credit_limit_override: null,
+    }
+  }
+  return {
+    valid: true,
+    credit_limit: num,
+    credit_limit_override: num,
+  }
+}
+
+/**
+ * 额度输入框辅助提示（#2 具名函数化，消灭 helperText 嵌套三元）
+ */
+export function getCardFormLimitHelperText(initial?: CreditCard): string | undefined {
+  if (!initial) return undefined
+  if (isCreditLimitManuallySet(initial)) {
+    return '已手动设置（不会被邮件同步覆盖）'
+  }
+  if (getEffectiveCreditLimit(initial) === null) {
+    return '邮件未获取到额度，请输入并保存'
+  }
+  return undefined
+}
+
 export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }: Props) {
   const [products, setProducts] = useState<CardProduct[]>([])
   const [selectedBank, setSelectedBank] = useState('')
@@ -91,6 +171,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
     !!(initial?.override_due_type || initial?.override_due_value)
   )
   const [cardName, setCardName] = useState(initial?.name_override ?? '')
+  const [hasCustomName, setHasCustomName] = useState(false)
   const [overrideDueType, setOverrideDueType] = useState<DueType>(
     (initial?.override_due_type as DueType) ?? 'after_billing'
   )
@@ -123,6 +204,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
       }
       setProductId(initial.card_product_id)
       setCardName(initial.name_override || match?.card_name || '')
+      setHasCustomName(!!initial.name_override)
       setLast4(initial.card_number_last4 ?? '')
       const eff = getEffectiveCreditLimit(initial)
       setLimit(eff != null ? eff.toString() : '')
@@ -139,6 +221,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
       setSelectedBank('')
       setProductId('')
       setCardName('')
+      setHasCustomName(false)
       setLast4('')
       setLimit('')
       setBillingDay('')
@@ -156,13 +239,16 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
   const handleBankChange = (bank: string) => {
     setSelectedBank(bank)
     const filtered = products.filter(p => p.bank_name === bank)
-    if (filtered.length > 0) {
-      setProductId(filtered[0].id)
-      setCardName(filtered[0].card_name)
-    } else {
-      setProductId('')
-      setCardName('')
-    }
+    const next = resolveBankChange(filtered, hasCustomName, cardName)
+    setProductId(next.productId)
+    setCardName(next.cardName)
+  }
+
+  const handleSelectProduct = (p: CardProduct) => {
+    const next = resolveProductSelect(p)
+    setProductId(next.productId)
+    setCardName(next.cardName)
+    setHasCustomName(next.hasCustomName)
   }
 
   const showOwnerSelect = !!initial && !!holders && holders.length > 0
@@ -178,41 +264,37 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
 
   const handleSubmit = async () => {
     if (!canSubmit) return
+
+    const limitResolution = resolveCardFormLimit(limit, isCredit, initial)
+    if (!limitResolution.valid) {
+      alert(limitResolution.error || '请输入有效的信用额度')
+      return
+    }
+
     setSubmitting(true)
     try {
-      const parsedLimit = limit.trim() ? parseFloat(limit) : null
-      const validLimit = parsedLimit && parsedLimit > 0 ? parsedLimit : 0
+      const currentProd = products.find(p => p.id === productId)
+      const finalNameOverride = resolveNameOverride(cardName, currentProd, hasCustomName)
 
-      // limitOverride 三段式语义推导（与 R2 统一口径）：
-      // 1. 输入正数 (parsedLimit > 0)：同步写入 credit_limit 与 credit_limit_override 手动覆盖值
-      // 2. 清空输入 (!limit.trim())：保留旧 override（initial?.credit_limit_override ?? null，视为不修改该字段）
-      // 3. 显式输入 0 或非法值 (limit.trim() 有值但 parsedLimit <= 0)：清除手动 override（写入 null）
-      const limitOverride =
-        parsedLimit && parsedLimit > 0
-          ? parsedLimit
-          : limit.trim()
-            ? null
-            : (initial?.credit_limit_override ?? null)
-
-      const base: Omit<CreditCard, 'id' | 'created_at'> = {
+      const base = {
         holder_id: ownerId,
         card_product_id: productId,
         card_number_last4: last4 || undefined,
-        credit_limit: validLimit,
-        credit_limit_override: limitOverride,
-        billing_day: billingDay ? parseInt(billingDay) : 1,
-        status: 'active',
+        credit_limit: limitResolution.credit_limit,
+        credit_limit_override: limitResolution.credit_limit_override,
+        billing_day: billingDay ? parseInt(billingDay, 10) : 1,
+        status: 'active' as const,
         card_type: cardType,
-        loan_due_day: isLoan && loanDueDay ? parseInt(loanDueDay) : undefined,
-        name_override: cardName.trim() || undefined,
+        loan_due_day: isLoan && loanDueDay ? parseInt(loanDueDay, 10) : undefined,
+        name_override: finalNameOverride ?? undefined,
         override_due_type: overrideEnabled ? overrideDueType : null,
-        override_due_value: overrideEnabled && overrideDueValue ? parseInt(overrideDueValue) : undefined,
+        override_due_value: overrideEnabled && overrideDueValue ? parseInt(overrideDueValue, 10) : undefined,
         account_mode_override: accountModeOverride === 'auto' ? null : accountModeOverride,
         issued_on: issuedOn || null,
         activated_on: activatedOn || null,
       }
 
-      await onSubmit(base)
+      await onSubmit(base as unknown as Omit<CreditCard, 'id' | 'created_at'>)
       onClose()
     } catch (err: unknown) {
       console.error(err)
@@ -240,7 +322,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
       <div className='flex flex-col gap-4'>
         <AiFillBox mode="card" onFill={(data) => {
           if (data.bank_name) setSelectedBank(String(data.bank_name))
-          if (data.card_number_last4) setLast4(String(data.card_number_last4))
+          if (data.card_number_last4) setLast4(sanitizeLast4Input(String(data.card_number_last4)))
           if (data.billing_day) {
             const d = String(data.billing_day).replace(/\D/g, '')
             if (d) setBillingDay(d)
@@ -293,7 +375,10 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
             required
             placeholder="输入卡片名称，或点选下方卡种"
             value={cardName}
-            onChange={e => setCardName(e.target.value)}
+            onChange={e => {
+              setCardName(e.target.value)
+              setHasCustomName(true)
+            }}
           />
 
           {availableProducts.length > 0 && (
@@ -302,10 +387,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
                 <button
                   key={p.id}
                   type='button'
-                  onClick={() => {
-                    setProductId(p.id)
-                    setCardName(p.card_name)
-                  }}
+                  onClick={() => handleSelectProduct(p)}
                   className={
                     'rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ' +
                     (productId === p.id && cardName === p.card_name
@@ -330,13 +412,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
               value={limit}
               onChange={e => setLimit(e.target.value)}
               required={!initial}
-              helperText={
-                initial && isCreditLimitManuallySet(initial)
-                  ? "已手动设置（不会被邮件同步覆盖）"
-                  : initial && getEffectiveCreditLimit(initial) === null
-                  ? "邮件未获取到额度，请输入并保存"
-                  : undefined
-              }
+              helperText={getCardFormLimitHelperText(initial)}
               startAdornment={<span>¥</span>}
             />
 
@@ -450,8 +526,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
           label="卡号末4位"
           placeholder="选填"
           value={last4}
-          onChange={e => setLast4(e.target.value)}
-          maxLength={6}
+          onChange={e => setLast4(sanitizeLast4Input(e.target.value))}
+          maxLength={4}
         />
       </div>
     </Modal>
