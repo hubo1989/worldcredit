@@ -16,7 +16,7 @@ describe('F5 设置页重设计 · 双主题 Token 契约', () => {
     expect(css).toContain('--color-d-light-gold:')
     expect(css).toContain('--color-d-light-danger:')
     expect(css).toMatch(/\.theme-light,\s*\[data-theme="light"\]/)
-    expect(css).toMatch(/--color-d-bg:\s*#f5f7fa;/)
+    expect(css).toMatch(/--color-d-bg:\s*var\(--color-d-light-bg\);/)
   })
 
   it('foundations.json 补齐暗色缺失令牌并收录亮色令牌', () => {

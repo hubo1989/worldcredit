@@ -3,35 +3,72 @@
 import { useState, useEffect, useCallback } from 'react'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
+export type ResolvedTheme = 'light' | 'dark'
 
-const THEME_STORAGE_KEY = 'worldcredit_theme_mode'
+export const THEME_STORAGE_KEY = 'worldcredit_theme_mode'
+
+/** 根据当前设定与系统偏好推导最终生效的亮暗主题（去嵌套三元） */
+export function resolveTheme(mode: ThemeMode): ResolvedTheme {
+  if (mode === 'light') return 'light'
+  if (mode === 'dark') return 'dark'
+  // mode === 'system'
+  if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    return 'dark'
+  }
+  return 'light'
+}
+
+/** 写入 DOM 属性与类名，保证与 Tailwind / globals.css 契约一致 */
+export function applyResolvedTheme(resolved: ResolvedTheme): void {
+  if (typeof document === 'undefined') return
+  document.documentElement.setAttribute('data-theme', resolved)
+  if (resolved === 'light') {
+    document.documentElement.classList.add('theme-light')
+    document.documentElement.classList.remove('theme-dark')
+  } else {
+    document.documentElement.classList.add('theme-dark')
+    document.documentElement.classList.remove('theme-light')
+  }
+}
+
+/** 获取初始 ThemeMode（客户端优先读 localStorage） */
+export function getStoredThemeMode(): ThemeMode {
+  if (typeof window === 'undefined') return 'system'
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY) as ThemeMode | null
+    if (saved === 'light' || saved === 'dark' || saved === 'system') {
+      return saved
+    }
+  } catch {
+    // ignore
+  }
+  return 'system'
+}
+
+/** 获取初始 ResolvedTheme（优先读取水合前内联脚本已设置的 DOM 状态，彻底告别硬编码 dark） */
+export function getInitialResolvedTheme(): ResolvedTheme {
+  if (typeof document !== 'undefined') {
+    const attr = document.documentElement.getAttribute('data-theme')
+    if (attr === 'light' || attr === 'dark') return attr
+    if (document.documentElement.classList.contains('theme-light')) return 'light'
+    if (document.documentElement.classList.contains('theme-dark')) return 'dark'
+  }
+  return resolveTheme(getStoredThemeMode())
+}
 
 export function useTheme() {
-  const [theme, setThemeState] = useState<ThemeMode>('system')
-  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('dark')
+  const [theme, setThemeState] = useState<ThemeMode>(getStoredThemeMode)
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(getInitialResolvedTheme)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const saved = localStorage.getItem(THEME_STORAGE_KEY) as ThemeMode | null
-    const initialTheme: ThemeMode = saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'system'
+    const initialTheme = getStoredThemeMode()
     setThemeState(initialTheme)
 
     const applyTheme = (mode: ThemeMode) => {
-      const resolved: 'light' | 'dark' =
-        mode === 'system'
-          ? window.matchMedia('(prefers-color-scheme: dark)').matches
-            ? 'dark'
-            : 'light'
-          : mode
+      const resolved = resolveTheme(mode)
       setResolvedTheme(resolved)
-      document.documentElement.setAttribute('data-theme', resolved)
-      if (resolved === 'light') {
-        document.documentElement.classList.add('theme-light')
-        document.documentElement.classList.remove('theme-dark')
-      } else {
-        document.documentElement.classList.add('theme-dark')
-        document.documentElement.classList.remove('theme-light')
-      }
+      applyResolvedTheme(resolved)
     }
 
     applyTheme(initialTheme)
@@ -51,23 +88,14 @@ export function useTheme() {
   const setTheme = useCallback((newTheme: ThemeMode) => {
     setThemeState(newTheme)
     if (typeof window === 'undefined') return
-    localStorage.setItem(THEME_STORAGE_KEY, newTheme)
-
-    const resolved: 'light' | 'dark' =
-      newTheme === 'system'
-        ? window.matchMedia('(prefers-color-scheme: dark)').matches
-          ? 'dark'
-          : 'light'
-        : newTheme
-    setResolvedTheme(resolved)
-    document.documentElement.setAttribute('data-theme', resolved)
-    if (resolved === 'light') {
-      document.documentElement.classList.add('theme-light')
-      document.documentElement.classList.remove('theme-dark')
-    } else {
-      document.documentElement.classList.add('theme-dark')
-      document.documentElement.classList.remove('theme-light')
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, newTheme)
+    } catch {
+      // ignore
     }
+    const resolved = resolveTheme(newTheme)
+    setResolvedTheme(resolved)
+    applyResolvedTheme(resolved)
   }, [])
 
   const cycleTheme = useCallback(() => {

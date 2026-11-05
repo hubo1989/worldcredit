@@ -24,16 +24,22 @@ export const viewport: Viewport = {
   themeColor: '#0a0f1e',
 }
 
+const THEME_INIT_SCRIPT = `(function(){try{var m=localStorage.getItem('worldcredit_theme_mode');var r=(m==='light'||m==='dark')?m:(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',r);if(r==='light'){document.documentElement.classList.add('theme-light');document.documentElement.classList.remove('theme-dark');}else{document.documentElement.classList.add('theme-dark');document.documentElement.classList.remove('theme-light');}}catch(e){}})();`
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" suppressHydrationWarning>
       <head>
         <link rel="icon" href="/favicon.ico" />
         <link rel="apple-touch-icon" href="/icon-192.png" />
+        <script
+          id="theme-init"
+          dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }}
+        />
       </head>
       <body>
         <ThemeRegistry>

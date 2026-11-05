@@ -6,7 +6,7 @@ import { BottomSheet, ConfirmDialog, Toast } from '@/components/obsidian/overlay
 import { Alert, Spinner } from '@/components/obsidian/feedback'
 import { useAuth } from '@/lib/auth'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
-import { useTheme } from '@/lib/hooks/useTheme'
+import { useTheme, type ThemeMode } from '@/lib/hooks/useTheme'
 import { DisplayPreferencesCard } from '@/components/settings/DisplayPreferencesCard'
 import { ReminderPreferencesCard } from '@/components/settings/ReminderPreferencesCard'
 import { GmailConnectPanel } from '@/components/mobile/GmailConnectPanel'
@@ -58,10 +58,22 @@ function SettingsMenuRow({
   )
 }
 
+const THEME_LABELS: Record<ThemeMode, string> = {
+  dark: '🌙 暗色',
+  light: '☀️ 亮色',
+  system: '💻 跟随系统',
+}
+
+function formatGmailSummary(status: GmailConnectionStatus | null): string {
+  if (status?.connected) return '已连接'
+  if (status?.last_error) return '需重连'
+  return '未连接'
+}
+
 export default function SettingsPage() {
   const { user, signOut } = useAuth()
   const router = useRouter()
-  const { theme, setTheme } = useTheme()
+  const { theme, cycleTheme } = useTheme()
   const {
     displayConfig,
     reminderConfig,
@@ -69,7 +81,7 @@ export default function SettingsPage() {
     updateReminder,
     loading: loadingPrefs,
     loadError,
-    reload,
+    refreshPreferences,
   } = useUserPreferences()
 
   const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null)
@@ -129,19 +141,14 @@ export default function SettingsPage() {
     }
   }
 
-  const cycleTheme = () => {
-    if (theme === 'system') setTheme('dark')
-    else if (theme === 'dark') setTheme('light')
-    else setTheme('system')
-  }
+  const themeLabel = THEME_LABELS[theme] ?? '💻 跟随系统'
 
-  const themeLabel = theme === 'dark' ? '🌙 暗色' : theme === 'light' ? '☀️ 亮色' : '💻 跟随系统'
-
-  // 计算偏好摘要胶囊文案
-  const gmailSummary = gmailStatus?.connected ? '已连接' : gmailStatus?.last_error ? '需重连' : '未连接'
+  // 计算偏好摘要胶囊文案（映射表/函数化，去嵌套三元；完整展示已选节点）
+  const gmailSummary = formatGmailSummary(gmailStatus)
   const billDays = reminderConfig?.remind_days_before ?? [3, 1, 0]
   const oppEnabled = reminderConfig?.opportunities?.enabled !== false
-  const reminderSummary = `提前${billDays.slice(0, 3).join('/')}天 · 权益${oppEnabled ? '开' : '关'}`
+  const billDaysLabel = billDays.length > 0 ? `提前${billDays.join('/')}天` : '未设提醒'
+  const reminderSummary = `${billDaysLabel} · 权益${oppEnabled ? '开' : '关'}`
   const displaySummary = `${displayConfig?.default_currency || 'CNY'} · ${displayConfig?.privacy_mode ? '隐私开启' : '隐私关闭'}`
 
   return (
@@ -167,7 +174,7 @@ export default function SettingsPage() {
               <span className='text-[12px]'>偏好设置加载失败，已展示默认或本地缓存项</span>
               <button
                 type='button'
-                onClick={() => reload()}
+                onClick={() => refreshPreferences()}
                 className='shrink-0 rounded-lg border border-d-border bg-d-subtle px-2.5 py-1 text-[11px] font-semibold text-d-accent-light'
               >
                 重试
