@@ -132,6 +132,5 @@ export function useUserPreferences() {
     updateReminder,
     togglePrivacyMode,
     refreshPreferences: loadPreferences,
-    reload: loadPreferences
   }
 }

@@ -7,6 +7,7 @@ import { Alert, Spinner } from '@/components/obsidian/feedback'
 import { Toast, ConfirmDialog } from '@/components/obsidian/overlays'
 import { CheckIcon } from '@/components/icons/WcIcon'
 import { getSystemSettings, updateSystemSettings } from '@/lib/api/admin'
+import { CURRENCY_OPTIONS } from '@/components/settings/shared'
 
 interface SystemSettings {
   platformName: string
@@ -30,15 +31,6 @@ const DEFAULT_SETTINGS: SystemSettings = {
   ai_base_url: 'https://api.openai.com/v1',
   ai_model: 'gpt-4o',
 }
-
-const CURRENCY_OPTIONS = [
-  { value: 'CNY', label: 'CNY · 人民币 (¥)' },
-  { value: 'USD', label: 'USD · 美元 ($)' },
-  { value: 'HKD', label: 'HKD · 港币 (HK$)' },
-  { value: 'JPY', label: 'JPY · 日元 (円)' },
-  { value: 'EUR', label: 'EUR · 欧元 (€)' },
-  { value: 'GBP', label: 'GBP · 英镑 (£)' },
-]
 
 type DraftKey = 'platformName' | 'supportEmail' | 'defaultCurrency' | 'ai_base_url' | 'ai_model'
 const DRAFT_KEYS: DraftKey[] = ['platformName', 'supportEmail', 'defaultCurrency', 'ai_base_url', 'ai_model']
@@ -122,20 +114,83 @@ export default function AdminSettingsPage() {
 
     setSaving(true)
     try {
-      // 提交所有 dirty 字段
-      await Promise.all(
-        dirtyKeys.map((k) => updateSystemSettings(k, formSettings[k] as string | boolean))
+      // 1. 提交所有 dirty 字段（逐 key 并行提交）
+      const results = await Promise.allSettled(
+        dirtyKeys.map(async (k) => {
+          await updateSystemSettings(k, formSettings[k] as string | boolean)
+          return k
+        })
       )
 
-      // 若用户输入了新的 API Key，一并保存
-      if (aiApiKeyInput.trim()) {
-        await updateSystemSettings('ai_api_key', aiApiKeyInput.trim())
-        setAiApiKeyInput('')
-        setAiKeyConfigured(true)
+      const succeededKeys: DraftKey[] = []
+      const failedKeys: DraftKey[] = []
+
+      results.forEach((res, idx) => {
+        const k = dirtyKeys[idx]
+        if (res.status === 'fulfilled') {
+          succeededKeys.push(k)
+        } else {
+          failedKeys.push(k)
+          console.error(`Failed to save setting ${k}:`, res.reason)
+        }
+      })
+
+      // 仅将成功的字段合并到 serverSettings，失败字段仍保留在 dirty 状态
+      if (succeededKeys.length > 0) {
+        setServerSettings((prev) => {
+          if (!prev) return prev
+          const updated = { ...prev }
+          for (const k of succeededKeys) {
+            // @ts-expect-error dynamic assign
+            updated[k] = formSettings[k]
+          }
+          return updated
+        })
       }
 
-      setServerSettings({ ...formSettings })
-      setNotice({ open: true, message: '系统设置已保存', severity: 'success' })
+      // 2. 若用户输入了新的 API Key，独立安全更新
+      let aiKeySuccess = true
+      const hasAiKeyInput = Boolean(aiApiKeyInput.trim())
+      if (hasAiKeyInput) {
+        try {
+          await updateSystemSettings('ai_api_key', aiApiKeyInput.trim())
+          setAiApiKeyInput('')
+          setAiKeyConfigured(true)
+        } catch (err) {
+          aiKeySuccess = false
+          console.error('Failed to save ai_api_key:', err)
+        }
+      }
+
+      // 3. 汇总成败提示
+      const baseFailed = failedKeys.length > 0
+      if (!baseFailed && aiKeySuccess) {
+        setNotice({ open: true, message: '系统设置已保存', severity: 'success' })
+      } else if (!baseFailed && !aiKeySuccess) {
+        setNotice({
+          open: true,
+          message: '基础设置已保存，但 AI API 密钥更新失败，请重试',
+          severity: 'error',
+        })
+      } else if (succeededKeys.length > 0) {
+        const keyMsg = `部分设置已保存（${succeededKeys.length} 项成功，${failedKeys.length} 项失败）`
+        const extraMsg = hasAiKeyInput
+          ? aiKeySuccess
+            ? '，API 密钥已保存'
+            : '，API 密钥保存失败'
+          : ''
+        setNotice({
+          open: true,
+          message: `${keyMsg}${extraMsg}，未生效项已保留在编辑态`,
+          severity: 'error',
+        })
+      } else {
+        setNotice({
+          open: true,
+          message: '保存失败，请检查网络或服务状态',
+          severity: 'error',
+        })
+      }
     } catch (err) {
       console.error('Save settings failed:', err)
       setNotice({ open: true, message: '保存失败，请检查网络或服务状态', severity: 'error' })

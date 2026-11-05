@@ -5,6 +5,7 @@ import { BellIcon, ClockIcon } from '@/components/icons/WcIcon'
 import type { UserReminderConfig } from '@/lib/types'
 import { Toggle } from '@/components/obsidian/controls'
 import { ConfirmDialog, Toast } from '@/components/obsidian/overlays'
+import { sendTestPush } from '@/lib/api/push'
 
 interface ReminderPreferencesCardProps {
   config: UserReminderConfig
@@ -51,9 +52,11 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
     onChange({ remind_days_before: toggleDayList(current, day) })
   }
 
-  const isWebPushEnabled = (config.enabled_channels || []).includes('web_push')
+  // 存量用户没有 enabled_channels 字段时，按旧语义默认开启 Web Push
+  const isWebPushEnabled = (config.enabled_channels ?? ['web_push']).includes('web_push')
   const handleToggleWebPush = (enabled: boolean) => {
-    const channels = new Set(config.enabled_channels || [])
+    const currentChannels = config.enabled_channels ?? ['web_push']
+    const channels = new Set(currentChannels)
     if (enabled) channels.add('web_push')
     else channels.delete('web_push')
     onChange({ enabled_channels: Array.from(channels) })
@@ -69,12 +72,16 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
         }
 
         if (perm === 'granted') {
-          try {
-            // 真实触发 POST /api/push/test
-            await fetch('/api/push/test', { method: 'POST' }).catch(() => null)
-          } catch {
-            // ignore network fail, fallback to local Notification
+          const res = await sendTestPush()
+          if (!res.ok) {
+            setTestNotice({
+              open: true,
+              message: `测试推送失败：${res.error || '服务端响应异常'}`,
+              severity: 'error',
+            })
+            return
           }
+
           new Notification('🔔 WorldCredit 适时提醒', {
             body: '这是一条测试还款提醒！您的提醒节点与免打扰时间配置已生效。',
             icon: '/pwa-192x192.png',
@@ -110,6 +117,28 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
   const updateOpp = (patch: Partial<NonNullable<UserReminderConfig['opportunities']>>) =>
     onChange({ opportunities: { ...(opp ?? {}), ...patch } })
 
+  // 存量节点合并：已选但不在预设选项集的值动态追加，支持查看与点击取消
+  const billDayChoices = (() => {
+    const selected = config.remind_days_before || []
+    const choiceDays = new Set(BILL_DAY_CHOICES.map((c) => c.day))
+    const extra = selected
+      .filter((d) => !choiceDays.has(d))
+      .map((d) => ({
+        day: d,
+        label: d === 0 ? '还款日当天' : `提前 ${d} 天`,
+      }))
+    return [...BILL_DAY_CHOICES, ...extra].sort((a, b) => b.day - a.day)
+  })()
+
+  // 存量时区合并：不在白名单内的 IANA 值动态追加为选项，避免存量设置显示空白
+  const timezoneChoices = (() => {
+    const currentTz = opp?.time_zone
+    if (currentTz && !TIMEZONE_OPTIONS.some((opt) => opt.value === currentTz)) {
+      return [...TIMEZONE_OPTIONS, { value: currentTz, label: `${currentTz} (当前设置)` }]
+    }
+    return TIMEZONE_OPTIONS
+  })()
+
   return (
     <div className='flex flex-col gap-5 text-d-text'>
       {/* 区块一：账单还款提醒 */}
@@ -126,7 +155,7 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
               还款日前提醒节点（多选）：
             </label>
             <div className='flex flex-wrap gap-2'>
-              {BILL_DAY_CHOICES.map(({ day, label }) => {
+              {billDayChoices.map(({ day, label }) => {
                 const active = (config.remind_days_before || []).includes(day)
                 return (
                   <button
@@ -177,7 +206,7 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
                   disabled={disabled}
                   value={config.quiet_hours_start || '22:00'}
                   onChange={(e) => onChange({ quiet_hours_start: e.target.value })}
-                  className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text [color-scheme:dark] outline-none focus:border-d-accent disabled:opacity-50'
+                  className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
                 />
               </div>
               <span className='mt-5 text-[13px] text-d-muted'>至</span>
@@ -189,7 +218,7 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
                   disabled={disabled}
                   value={config.quiet_hours_end || '08:00'}
                   onChange={(e) => onChange({ quiet_hours_end: e.target.value })}
-                  className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text [color-scheme:dark] outline-none focus:border-d-accent disabled:opacity-50'
+                  className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
                 />
               </div>
             </div>
@@ -237,7 +266,7 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
                 onChange={(e) => updateOpp({ time_zone: e.target.value })}
                 className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
               >
-                {TIMEZONE_OPTIONS.map((opt) => (
+                {timezoneChoices.map((opt) => (
                   <option key={opt.value} value={opt.value} className='bg-d-surface text-d-text'>
                     {opt.label}
                   </option>
@@ -256,7 +285,7 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
                 value={opp?.local_time ?? '09:00'}
                 disabled={disabled}
                 onChange={(e) => updateOpp({ local_time: e.target.value })}
-                className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text [color-scheme:dark] outline-none focus:border-d-accent disabled:opacity-50'
+                className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
               />
             </div>
 

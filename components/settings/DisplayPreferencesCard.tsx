@@ -2,21 +2,15 @@
 
 import type { UserDisplayConfig } from '@/lib/types'
 import { Toggle } from '@/components/obsidian/controls'
+import { CURRENCY_OPTIONS } from './shared'
+
+export { CURRENCY_OPTIONS }
 
 interface DisplayPreferencesCardProps {
   config: UserDisplayConfig
   onChange: (updates: Partial<UserDisplayConfig>) => void
   disabled?: boolean
 }
-
-const CURRENCY_OPTIONS = [
-  { value: 'CNY', label: 'CNY · 人民币 (¥)' },
-  { value: 'USD', label: 'USD · 美元 ($)' },
-  { value: 'HKD', label: 'HKD · 港币 (HK$)' },
-  { value: 'JPY', label: 'JPY · 日元 (円)' },
-  { value: 'EUR', label: 'EUR · 欧元 (€)' },
-  { value: 'GBP', label: 'GBP · 英镑 (£)' },
-]
 
 /** 显示要素与币种偏好抽屉（移动端 BottomSheet 内置）。零硬编码色值，使用 d-* 令牌。 */
 export function DisplayPreferencesCard({ config, onChange, disabled }: DisplayPreferencesCardProps) {

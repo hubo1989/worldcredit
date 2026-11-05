@@ -241,23 +241,23 @@
 }
 .theme-light,
 [data-theme="light"] {
-  --color-d-bg: #f5f7fa;
-  --color-d-surface: #ffffff;
-  --color-d-subtle: #f5f8ff;
-  --color-d-border: #e2e8f0;
-  --color-d-text: #0a1f44;
-  --color-d-muted: #5b6478;
-  --color-d-accent: #1e3a8a;
-  --color-d-accent-light: #3b6fe0;
-  --color-d-gold: #c9a227;
-  --color-d-gold-deep: #8a6d1f;
-  --color-d-gold-soft: #f5eed8;
-  --color-d-danger: #d32f2f;
-  --color-d-danger-soft: #fae6e6;
-  --color-d-danger-ink: #b71c1c;
-  --color-d-warn-ink: #92400e;
-  --color-d-success-soft: #e6efe6;
-  --color-d-success-ink: #1b5e20;
+  --color-d-bg: var(--color-d-light-bg);
+  --color-d-surface: var(--color-d-light-surface);
+  --color-d-subtle: var(--color-d-light-subtle);
+  --color-d-border: var(--color-d-light-border);
+  --color-d-text: var(--color-d-light-text);
+  --color-d-muted: var(--color-d-light-muted);
+  --color-d-accent: var(--color-d-light-accent);
+  --color-d-accent-light: var(--color-d-light-accent-light);
+  --color-d-gold: var(--color-d-light-gold);
+  --color-d-gold-deep: var(--color-d-light-gold-deep);
+  --color-d-gold-soft: var(--color-d-light-gold-soft);
+  --color-d-danger: var(--color-d-light-danger);
+  --color-d-danger-soft: var(--color-d-light-danger-soft);
+  --color-d-danger-ink: var(--color-d-light-danger-ink);
+  --color-d-warn-ink: var(--color-d-light-warn-ink);
+  --color-d-success-soft: var(--color-d-light-success-soft);
+  --color-d-success-ink: var(--color-d-light-success-ink);
   color-scheme: light;
 }
 .theme-dark,
