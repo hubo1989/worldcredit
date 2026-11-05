@@ -152,7 +152,7 @@ export async function mergeCardsIntoAccount(
 
   const placeholders = cardIds.map(() => "?").join(",");
   const { data: rawCards } = await query<Record<string, unknown>>(
-    `SELECT cc.*, cp.currency
+    `SELECT cc.*, cp.currency, cp.bank_name
      FROM credit_cards cc
      LEFT JOIN card_products cp ON cc.card_product_id = cp.id
      WHERE cc.id IN (${placeholders})`,
@@ -163,10 +163,19 @@ export async function mergeCardsIntoAccount(
     throw new RpcDomainError("VALIDATION_FAILED", "部分待合并卡片不存在");
   }
 
-  // 1. 同一持卡人与同币种校验
+  // 1. 同一持卡人、同银行与同币种校验
+  const targetBank = targetAccount.bank_name?.trim();
+  const firstCardBank = String(cards[0]?.bank_name || "").trim();
   for (const c of cards) {
     if (String(c.holder_id) !== targetAccount.holder_id) {
       throw new RpcDomainError("VALIDATION_FAILED", "不可跨持卡人合并信用账户与信用卡");
+    }
+    const cardBank = String(c.bank_name || "").trim();
+    if (targetBank && cardBank && cardBank !== targetBank) {
+      throw new RpcDomainError("VALIDATION_FAILED", "不可跨银行合并信用卡至同一账户");
+    }
+    if (cardBank && firstCardBank && cardBank !== firstCardBank) {
+      throw new RpcDomainError("VALIDATION_FAILED", "待合并卡片归属不同银行，无法合并至同一账户");
     }
     const cardCurrency = String(c.currency || "CNY");
     if (cardCurrency !== targetAccount.currency) {

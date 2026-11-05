@@ -8,6 +8,13 @@ import { getBanks, type BankItem } from '@/lib/api/banks'
 import { getCardProducts, createCard } from '@/lib/api/cards'
 import { getHolders, createHolder } from '@/lib/api/holders'
 import type { CardProduct, CardHolder } from '@/lib/types'
+import {
+  validateBillingDay,
+  validateDueRule,
+  parseLast4,
+  DEFAULT_HOLDER_AVATAR_COLOR,
+  DUE_TYPE_LABELS,
+} from './card-form-shared'
 
 interface Props {
   open: boolean
@@ -16,13 +23,7 @@ interface Props {
   initialHolderId?: string
 }
 
-type DueType = 'after_billing' | 'fixed' | 'fixed_before_billing'
-
-const DUE_TYPE_LABELS: Record<DueType, string> = {
-  after_billing: '账单日后 X 天',
-  fixed: '每月固定还款日',
-  fixed_before_billing: '每月固定还款日（账单日倒推）',
-}
+type DueType = 'after_billing' | 'fixed'
 
 export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: Props) {
   const [banks, setBanks] = useState<BankItem[]>([])
@@ -76,7 +77,7 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
             setSelectedProductId(firstBankProds[0].id)
             setCardName(firstBankProds[0].card_name)
           } else {
-            setSelectedProductId(`cp_default_${firstBank.id}`)
+            setSelectedProductId('')
             setCardName('标准信用卡')
           }
           setHasCustomName(false)
@@ -111,7 +112,7 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
         setCardName(bankProds[0].card_name)
       }
     } else {
-      setSelectedProductId(`cp_default_${bankId}`)
+      setSelectedProductId('')
       if (!hasCustomName) {
         setCardName('标准信用卡')
       }
@@ -137,32 +138,20 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
       return
     }
 
-    let finalHolderId = selectedHolderId
+    // 1. 本地字段校验先行（Finding 5, 7, 8）
     if (isCreatingHolder) {
       if (!newHolderName.trim()) {
         setError('请输入新建持卡人姓名')
         return
       }
-      try {
-        const created = await createHolder({
-          name: newHolderName.trim(),
-          avatar_color: '#3b82f6',
-        })
-        finalHolderId = created.id
-      } catch (err) {
-        setError(err instanceof Error ? err.message : '新建持卡人失败')
-        return
-      }
-    }
-
-    if (!finalHolderId) {
+    } else if (!selectedHolderId) {
       setError('请选择或新建持卡人')
       return
     }
 
-    const dayNum = parseInt(billingDay, 10)
-    if (isNaN(dayNum) || dayNum < 1 || dayNum > 31) {
-      setError('每月账单日必须在 1 到 31 之间')
+    const dayCheck = validateBillingDay(billingDay)
+    if (!dayCheck.valid) {
+      setError(dayCheck.error || '每月账单日必须在 1 到 31 之间')
       return
     }
 
@@ -172,18 +161,52 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
       return
     }
 
+    const dueCheck = validateDueRule(overrideEnabled, overrideDueType, overrideDueValue)
+    if (!dueCheck.valid) {
+      setError(dueCheck.error || '还款规则校验失败')
+      return
+    }
+
+    const last4Check = parseLast4(last4)
+    if (!last4Check.valid) {
+      setError(last4Check.error || '卡号尾号必须为 1 到 4 位数字')
+      return
+    }
+
     setSubmitting(true)
+
+    // 2. 全部校验通过后再创建持卡人，并退出新建态（Finding 5, 12）
+    let finalHolderId = selectedHolderId
+    if (isCreatingHolder) {
+      try {
+        const created = await createHolder({
+          name: newHolderName.trim(),
+          avatar_color: DEFAULT_HOLDER_AVATAR_COLOR,
+        })
+        finalHolderId = created.id
+        setSelectedHolderId(created.id)
+        setIsCreatingHolder(false)
+        setNewHolderName('')
+        setHolders(prev => [created, ...prev])
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '新建持卡人失败')
+        setSubmitting(false)
+        return
+      }
+    }
+
+    // 3. 执行新建，若未自定义名称则提交 undefined，防止冻结产品名快照（Finding 7, 9）
     try {
       await createCard({
         holder_id: finalHolderId,
         bank_id: selectedBankId,
         card_product_id: selectedProductId || undefined,
-        name_override: cardName.trim(),
-        card_number_last4: last4.trim() || null,
+        name_override: hasCustomName && cardName.trim() ? cardName.trim() : undefined,
+        card_number_last4: last4Check.value,
         credit_limit: limitNum,
-        billing_day: dayNum,
+        billing_day: dayCheck.value!,
         override_due_type: overrideEnabled ? overrideDueType : null,
-        override_due_value: overrideEnabled && overrideDueValue ? parseInt(overrideDueValue, 10) : undefined,
+        override_due_value: overrideEnabled ? dueCheck.value : undefined,
       })
 
       onSuccess()

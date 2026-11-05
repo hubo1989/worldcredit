@@ -323,6 +323,29 @@ export type CreateCardInput = {
   activated_on?: string | null
 }
 
+export async function ensureDefaultCardProductForBank(bankId: string): Promise<CardProduct | null> {
+  const { data: defaultProduct } = await queryOne<CardProduct>(
+    'SELECT * FROM card_products WHERE bank_id = ? AND is_active = 1 ORDER BY (CASE WHEN id = ? THEN 0 ELSE 1 END), created_at ASC LIMIT 1',
+    [bankId, `cp_default_${bankId}`]
+  )
+  if (defaultProduct) return defaultProduct
+
+  const { data: bank } = await queryOne<{ id: string; name: string; country?: string }>(
+    'SELECT id, name, country FROM banks WHERE id = ?',
+    [bankId]
+  )
+  if (!bank) return null
+
+  const defId = `cp_default_${bank.id}`
+  await execute(
+    `INSERT OR IGNORE INTO card_products (id, country, bank_id, bank_name, card_name, currency, payment_due_type, payment_due_value, annual_fee, is_active)
+     VALUES (?, ?, ?, ?, ?, 'CNY', 'after_billing', 20, 0, 1)`,
+    [defId, bank.country || 'CN', bank.id, bank.name, '标准信用卡']
+  )
+  const { data: createdProd } = await queryOne<CardProduct>('SELECT * FROM card_products WHERE id = ?', [defId])
+  return createdProd || null
+}
+
 export async function createCard(card: CreateCardInput): Promise<CreditCardWithProduct> {
   const id = uuid()
   let productId = card.card_product_id
@@ -334,29 +357,7 @@ export async function createCard(card: CreateCardInput): Promise<CreditCardWithP
   }
 
   if (!product && card.bank_id) {
-    // 优先匹配默认卡产品，其次匹配该银行首个活跃卡产品
-    const { data: defaultProduct } = await queryOne<CardProduct>(
-      'SELECT * FROM card_products WHERE bank_id = ? AND is_active = 1 ORDER BY (CASE WHEN id = ? THEN 0 ELSE 1 END), created_at ASC LIMIT 1',
-      [card.bank_id, `cp_default_${card.bank_id}`]
-    )
-    product = defaultProduct
-    if (!product) {
-      // 银行存在但尚无卡产品（如测试新灌数据或新银行），动态兜底创建一条基础卡产品
-      const { data: bank } = await queryOne<{ id: string; name: string; country?: string }>(
-        'SELECT id, name, country FROM banks WHERE id = ?',
-        [card.bank_id]
-      )
-      if (bank) {
-        const defId = `cp_default_${bank.id}`
-        await execute(
-          `INSERT OR IGNORE INTO card_products (id, country, bank_id, bank_name, card_name, currency, payment_due_type, payment_due_value, annual_fee, is_active)
-           VALUES (?, ?, ?, ?, ?, 'CNY', 'after_billing', 20, 0, 1)`,
-          [defId, bank.country || 'CN', bank.id, bank.name, '标准信用卡']
-        )
-        const { data: createdProd } = await queryOne<CardProduct>('SELECT * FROM card_products WHERE id = ?', [defId])
-        product = createdProd
-      }
-    }
+    product = await ensureDefaultCardProductForBank(card.bank_id)
     if (product) {
       productId = product.id
     }
@@ -364,6 +365,28 @@ export async function createCard(card: CreateCardInput): Promise<CreditCardWithP
 
   if (!productId) {
     throw new Error('缺少卡产品或所属银行')
+  }
+
+  // 自定义还款规则范围校验
+  if (card.override_due_type) {
+    if (card.override_due_value === undefined || card.override_due_value === null) {
+      throw new Error('启用自定义还款规则时必须提供有效的还款日数值')
+    }
+    const val = Number(card.override_due_value)
+    if (!Number.isInteger(val)) {
+      throw new Error('还款日数值必须为整数')
+    }
+    if (card.override_due_type === 'after_billing') {
+      if (val < 0) {
+        throw new Error('账单日后还款天数必须大于或等于 0')
+      }
+    } else if (card.override_due_type === 'fixed') {
+      if (val < 1 || val > 31) {
+        throw new Error('固定还款日必须在 1 到 31 之间')
+      }
+    } else {
+      throw new Error('不支持的还款规则类型')
+    }
   }
 
   // 名称覆盖清洗：若与产品名称相同则置空，否则去除首尾空格
@@ -502,17 +525,34 @@ export async function updateCard(
   if (!currentCard) throw new Error('卡片不存在')
 
   let targetProductId = patch.card_product_id
+  let targetProduct: CardProduct | null = null
 
-  // 1. 若传了 card_product_id 且试图换绑产品/银行
+  // 1. 若传了 card_product_id 且试图换绑产品/银行，或仅传 bank_id 且试图更换所属银行
   if (targetProductId && targetProductId !== currentCard.card_product_id) {
-    const { data: targetProduct, error: pError } = await queryOne<CardProduct>(
+    const { data: tp } = await queryOne<CardProduct>(
       'SELECT * FROM card_products WHERE id = ?',
       [targetProductId]
     )
-    if (pError || !targetProduct) {
+    targetProduct = tp
+    if (!targetProduct && (targetProductId.startsWith('cp_default_') || patch.bank_id)) {
+      const bId = patch.bank_id || targetProductId.replace('cp_default_', '')
+      targetProduct = await ensureDefaultCardProductForBank(bId)
+      if (targetProduct) {
+        targetProductId = targetProduct.id
+      }
+    }
+    if (!targetProduct) {
       throw new Error('目标卡产品不存在')
     }
+  } else if (!targetProductId && patch.bank_id && currentCard.card_product?.bank_id !== patch.bank_id) {
+    targetProduct = await ensureDefaultCardProductForBank(patch.bank_id)
+    if (!targetProduct) {
+      throw new Error('所选银行暂无可用卡产品')
+    }
+    targetProductId = targetProduct.id
+  }
 
+  if (targetProduct) {
     // Q3 同币种限制：若已有历史账单，只允许同币种切换
     const { data: billRows } = await queryOne<{ cnt: number }>(
       'SELECT COUNT(*) as cnt FROM bills WHERE card_id = ?',
@@ -535,41 +575,27 @@ export async function updateCard(
         throw new Error('这张卡关联了原银行的权益台账，请先去「我的权益」解绑后再换银行')
       }
     }
-  } else if (!targetProductId && patch.bank_id && currentCard.card_product?.bank_id !== patch.bank_id) {
-    // 仅传 bank_id 且试图更换所属银行
-    let defaultProduct = (await queryOne<CardProduct>(
-      'SELECT * FROM card_products WHERE bank_id = ? AND is_active = 1 ORDER BY (CASE WHEN id = ? THEN 0 ELSE 1 END), created_at ASC LIMIT 1',
-      [patch.bank_id, `cp_default_${patch.bank_id}`]
-    )).data
-    if (!defaultProduct) {
-      const { data: bank } = await queryOne<{ id: string; name: string; country?: string }>(
-        'SELECT id, name, country FROM banks WHERE id = ?',
-        [patch.bank_id]
-      )
-      if (bank) {
-        const defId = `cp_default_${bank.id}`
-        await execute(
-          `INSERT OR IGNORE INTO card_products (id, country, bank_id, bank_name, card_name, currency, payment_due_type, payment_due_value, annual_fee, is_active)
-           VALUES (?, ?, ?, ?, ?, 'CNY', 'after_billing', 20, 0, 1)`,
-          [defId, bank.country || 'CN', bank.id, bank.name, '标准信用卡']
-        )
-        defaultProduct = (await queryOne<CardProduct>('SELECT * FROM card_products WHERE id = ?', [defId])).data
-      }
-    }
-    if (!defaultProduct) {
-      throw new Error('所选银行暂无可用卡产品')
-    }
-    targetProductId = defaultProduct.id
+  }
 
-    const { data: billRows } = await queryOne<{ cnt: number }>(
-      'SELECT COUNT(*) as cnt FROM bills WHERE card_id = ?',
-      [id]
-    )
-    const hasBills = (billRows?.cnt ?? 0) > 0
-    const curCurrency = currentCard.card_product?.currency || 'CNY'
-    const targetCurrency = defaultProduct.currency || 'CNY'
-    if (hasBills && curCurrency !== targetCurrency) {
-      throw new Error('该卡已有历史账单，仅允许切换到同币种卡产品；如需更换币种，请新建卡片')
+  // 自定义还款规则范围校验
+  if (patch.override_due_type) {
+    if (patch.override_due_value === undefined || patch.override_due_value === null) {
+      throw new Error('启用自定义还款规则时必须提供有效的还款日数值')
+    }
+    const val = Number(patch.override_due_value)
+    if (!Number.isInteger(val)) {
+      throw new Error('还款日数值必须为整数')
+    }
+    if (patch.override_due_type === 'after_billing') {
+      if (val < 0) {
+        throw new Error('账单日后还款天数必须大于或等于 0')
+      }
+    } else if (patch.override_due_type === 'fixed') {
+      if (val < 1 || val > 31) {
+        throw new Error('固定还款日必须在 1 到 31 之间')
+      }
+    } else {
+      throw new Error('不支持的还款规则类型')
     }
   }
 
@@ -634,12 +660,16 @@ export async function updateCard(
     }
   }
 
+  const cleanedLast4 = patch.card_number_last4 !== undefined
+    ? (patch.card_number_last4 && patch.card_number_last4.trim() ? patch.card_number_last4.trim() : null)
+    : undefined
+
   const fields: string[] = []
   const params: unknown[] = []
   const fieldMap: Record<string, unknown> = {
     card_product_id: targetProductId,
     holder_id: patch.holder_id,
-    card_number_last4: patch.card_number_last4,
+    card_number_last4: cleanedLast4,
     credit_limit: limitVal,
     credit_limit_override: limitOverrideVal,
     billing_day: patch.billing_day,
