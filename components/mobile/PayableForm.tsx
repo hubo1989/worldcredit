@@ -49,6 +49,38 @@ const LEGACY_CURRENCY = '__legacy__'
 /** Select 里已持久化的自定义分类 option value 前缀，避免与预设值/哨兵值碰撞。 */
 const SAVED_CUSTOM_PREFIX = 'custom:'
 
+export interface ResolvedPayableCategorySelection {
+  category: PayableCategory
+  customCategory: string | null
+}
+
+/**
+ * 将自定义分类名称解析为「预设分类」或「归一化的自定义分类」。
+ *
+ * 若输入同义于预设分类（如「房租」），自动收拢为预设枚举，避免产生重复的自定义分类；
+ * 若为有效的新自定义分类，归一化后保留为 customCategory；
+ * 若输入为空或全空白，返回 null。
+ */
+export function resolvePayableCategorySelection(
+  rawCustom: unknown,
+  fallbackCategory: PayableCategory = 'other'
+): ResolvedPayableCategorySelection | null {
+  const normalized = normalizeCustomCategoryName(rawCustom)
+  if (!normalized) return null
+  const matchedPreset = resolvePresetPayableCategory(normalized)
+  if (matchedPreset) {
+    return { category: matchedPreset, customCategory: null }
+  }
+  return { category: fallbackCategory, customCategory: normalized }
+}
+
+/** 周期类型对应的金额输入标签文案映射表（规避嵌套三元）。 */
+const CYCLE_AMOUNT_LABELS: Record<PayableCycleType, string> = {
+  monthly: '每月金额',
+  every_n_months: '每期金额',
+  yearly: '每年金额',
+}
+
 interface Props {
   open: boolean
   onClose: () => void
@@ -118,15 +150,13 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
 
     if (existing) {
       setName(existing.name)
-      const existingCustom = normalizeCustomCategoryName(existing.custom_category)
-      const matchedPreset = existingCustom ? resolvePresetPayableCategory(existingCustom) : null
-      if (existingCustom && !matchedPreset) {
-        setCategorySelection(`${SAVED_CUSTOM_PREFIX}${existingCustom}`)
-        setCustomCategoryInput('')
+      const resolvedCustom = resolvePayableCategorySelection(existing.custom_category)
+      if (resolvedCustom?.customCategory) {
+        setCategorySelection(`${SAVED_CUSTOM_PREFIX}${resolvedCustom.customCategory}`)
       } else {
-        setCategorySelection(matchedPreset ?? existing.category)
-        setCustomCategoryInput('')
+        setCategorySelection(resolvedCustom?.category ?? existing.category)
       }
+      setCustomCategoryInput('')
       const existingCycle = existing.cycle_type ?? 'monthly'
       setCycleType(existingCycle)
       setCycleMonths(
@@ -202,30 +232,23 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
     let resolvedCategory: PayableCategory
     let resolvedCustomCategory: string | null = null
     if (categorySelection === CUSTOM_CATEGORY_SENTINEL) {
-      const normalizedCustom = normalizeCustomCategoryName(customCategoryInput)
-      if (!normalizedCustom) {
+      const resolved = resolvePayableCategorySelection(customCategoryInput)
+      if (!resolved) {
         return setError('请填写自定义分类名称')
       }
-      if (normalizedCustom.length > MAX_CUSTOM_CATEGORY_LENGTH) {
+      if (resolved.customCategory && resolved.customCategory.length > MAX_CUSTOM_CATEGORY_LENGTH) {
         return setError(`自定义分类名称不能超过 ${MAX_CUSTOM_CATEGORY_LENGTH} 个字符`)
       }
-      const matchedPreset = resolvePresetPayableCategory(normalizedCustom)
-      if (matchedPreset) {
-        resolvedCategory = matchedPreset
-        resolvedCustomCategory = null
-      } else {
-        resolvedCategory = 'other'
-        resolvedCustomCategory = normalizedCustom
-      }
+      resolvedCategory = resolved.category
+      resolvedCustomCategory = resolved.customCategory
     } else if (categorySelection.startsWith(SAVED_CUSTOM_PREFIX)) {
-      const savedName = normalizeCustomCategoryName(
-        categorySelection.slice(SAVED_CUSTOM_PREFIX.length)
-      )
-      if (!savedName) {
+      const savedName = categorySelection.slice(SAVED_CUSTOM_PREFIX.length)
+      const resolved = resolvePayableCategorySelection(savedName)
+      if (!resolved || !resolved.customCategory) {
         return setError('请选择合法的支出分类')
       }
-      resolvedCategory = 'other'
-      resolvedCustomCategory = savedName
+      resolvedCategory = resolved.category
+      resolvedCustomCategory = resolved.customCategory
     } else {
       resolvedCategory = categorySelection as PayableCategory
       resolvedCustomCategory = null
@@ -312,8 +335,7 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
     }
   }
 
-  const amountLabel =
-    cycleType === 'yearly' ? '每年金额' : cycleType === 'every_n_months' ? '每期金额' : '每月金额'
+  const amountLabel = CYCLE_AMOUNT_LABELS[cycleType] ?? '每月金额'
 
   return (
     <Modal

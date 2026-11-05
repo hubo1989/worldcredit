@@ -9,6 +9,7 @@ import {
   type PayableWithStatus,
   type PayablePaymentRecord,
 } from '@/lib/api/payables'
+import { NEXT_BILL_LEAD_DAYS } from '@/lib/api/payables.shared'
 import { payableNextCycleStatus } from '@/lib/utils'
 import { badgeToneClass, type BillBadgeTone } from '@/lib/bills-view-model'
 import { currencySymbol } from '@/lib/fx'
@@ -117,12 +118,15 @@ export function PayableRow({
         ? { text: '今天应付', tone: 'warn' }
         : { text: '待还款', tone: 'warn' }
 
-  // 底部细节行：待出账给出下期出账日（还款日 − 30），其余给本期应付日
+  // 底部细节行：待出账给出下期出账日（还款日 − NEXT_BILL_LEAD_DAYS），其余给本期应付日。
+  // 日期口径设计意图：
+  // - 月度周期（monthly）：高频且在当年/邻近月份，用 MM-DD 保持紧凑扫读；
+  // - 非月周期（yearly / every_n_months）：周期较长易跨年，刻意展示完整 YYYY-MM-DD 消除年份歧义。
   const isMonthly = (p.cycle_type ?? 'monthly') === 'monthly'
   const detail = (() => {
     const due = isMonthly ? p.due_date.slice(5) : p.due_date
     if (paid) {
-      const next = payableNextCycleStatus(p.due_day, p.period, undefined, 30, p)
+      const next = payableNextCycleStatus(p.due_day, p.period, undefined, NEXT_BILL_LEAD_DAYS, p)
       const mm = String(next.date.getMonth() + 1).padStart(2, '0')
       const dd = String(next.date.getDate()).padStart(2, '0')
       const formattedNext = isMonthly ? `${mm}-${dd}` : `${next.date.getFullYear()}-${mm}-${dd}`

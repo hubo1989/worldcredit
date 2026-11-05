@@ -201,3 +201,6 @@ export function isPayableCurrency(value: unknown): value is PayableCurrency {
 
 /** 历史还款返回上限：服务端列表与前端「最近 N 笔」文案共用同一常量。 */
 export const PAYABLE_HISTORY_LIMIT = 60
+
+/** 固定支出下期出账提醒提前天数（默认在还款日前 30 天出账/提醒）。 */
+export const NEXT_BILL_LEAD_DAYS = 30
