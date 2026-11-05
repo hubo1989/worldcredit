@@ -57,6 +57,7 @@ import { getCardDetail } from '@/lib/api/cards'
 import { getHolders } from '@/lib/api/holders'
 import CardDetailPage from '@/app/(mobile)/cards/[id]/page'
 import { CreditCardVisual } from '@/components/mobile/CreditCardVisual'
+import type { OpportunityDto } from '@/lib/opportunities/queries.server'
 
 const mockedGetCardDetail = vi.mocked(getCardDetail)
 const mockedGetHolders = vi.mocked(getHolders)
@@ -93,7 +94,7 @@ function makeMockDetail(overrides: Record<string, unknown> = {}) {
     },
     bills: [],
     benefits: [],
-    opportunities: [],
+    opportunities: [] as OpportunityDto[],
     dueDateResolution: {
       has_exact_due_date: true,
       exact_due_date: '2026-11-25',
@@ -172,7 +173,7 @@ describe('CardDetailPage 与卡片组件回归测试', () => {
     expect(mockedGetCardDetail.mock.calls.length).toBeGreaterThan(initialCalls)
   })
 
-  it('getHolders 失败时独立降级为空列表，不拖垮卡片主页面渲染', async () => {
+  it('CardDetailPage 仅拉取卡片详情，不再发起多余的 getHolders 请求 (#3)', async () => {
     mockedGetHolders.mockRejectedValueOnce(new Error('Network Error'))
     mockedGetCardDetail.mockResolvedValue(makeMockDetail() as unknown as Awaited<ReturnType<typeof getCardDetail>>)
 
@@ -183,6 +184,34 @@ describe('CardDetailPage 与卡片组件回归测试', () => {
     expect(screen.getByText('招商银行')).toBeInTheDocument()
     expect(screen.getByText('经典白金卡')).toBeInTheDocument()
     expect(screen.getByText('张三 · 信用卡')).toBeInTheDocument()
+    // 死代码清理验证：确认页面不再调用 getHolders
+    expect(mockedGetHolders).not.toHaveBeenCalled()
+  })
+
+  it('可用机会入口恢复使用 next/link 实现客户端导航与预取 (#4)', async () => {
+    const detailWithOpps = makeMockDetail()
+    detailWithOpps.opportunities = [
+      {
+        account_id: 'acc-1',
+        card_ids: ['card-1'],
+        title: '周三 5 折餐饮',
+        status: 'available',
+        reason: '本周可用',
+        remaining_count: 2,
+        unit_label: '次',
+      } as unknown as OpportunityDto,
+    ]
+    mockedGetCardDetail.mockResolvedValue(detailWithOpps as unknown as Awaited<ReturnType<typeof getCardDetail>>)
+
+    await renderCardDetailPage()
+
+    const oppLink = screen.getByRole('link', { name: /周三 5 折餐饮/ })
+    expect(oppLink).toBeInTheDocument()
+    expect(oppLink).toHaveAttribute('href', '/promos?card=card-1')
+
+    const allLink = screen.getByRole('link', { name: '查看全部机会 ›' })
+    expect(allLink).toBeInTheDocument()
+    expect(allLink).toHaveAttribute('href', '/promos?card=card-1')
   })
 
   it('CreditCardVisual 在已用额度超额时截断为 0，不显示负数可用额度', () => {

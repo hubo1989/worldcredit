@@ -14,6 +14,9 @@ import {
   resolveProductSelect,
   resolveNameOverride,
   DUE_TYPE_LABELS,
+  normalizeDueType,
+  buildDueRulePayload,
+  type DueRuleType,
 } from './card-form-shared'
 
 interface Props {
@@ -23,8 +26,6 @@ interface Props {
   onSaved: () => void
 }
 
-type DueType = 'after_billing' | 'fixed'
-
 export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
   const [banks, setBanks] = useState<BankItem[]>([])
   const [products, setProducts] = useState<CardProduct[]>([])
@@ -33,12 +34,12 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
   const [cardName, setCardName] = useState<string>('')
   const [hasCustomName, setHasCustomName] = useState<boolean>(false)
 
-  // 还款规则覆盖
+  // 还款规则覆盖：只看 override_due_type，避免残留 value 导致关闭后复活
   const [overrideEnabled, setOverrideEnabled] = useState(
-    !!(card.override_due_type || card.override_due_value)
+    !!card.override_due_type
   )
-  const [overrideDueType, setOverrideDueType] = useState<DueType>(
-    (card.override_due_type as DueType) ?? 'after_billing'
+  const [overrideDueType, setOverrideDueType] = useState<DueRuleType>(
+    normalizeDueType(card.override_due_type)
   )
   const [overrideDueValue, setOverrideDueValue] = useState(
     card.override_due_value?.toString() ?? ''
@@ -65,8 +66,8 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
         setCardName(effName)
         setHasCustomName(!!card.name_override)
 
-        setOverrideEnabled(!!(card.override_due_type || card.override_due_value))
-        setOverrideDueType((card.override_due_type as DueType) ?? 'after_billing')
+        setOverrideEnabled(!!card.override_due_type)
+        setOverrideDueType(normalizeDueType(card.override_due_type))
         setOverrideDueValue(card.override_due_value?.toString() ?? '')
       })
       .catch((err) => {
@@ -111,6 +112,8 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
       return
     }
 
+    const dueRulePayload = buildDueRulePayload(overrideEnabled, overrideDueType, dueCheck.value)
+
     // Finding 9: 判定名称是否自定义；若未自定义或与选定产品同名，则提交 null 清空 override
     const currentProd = products.find((p) => p.id === selectedProductId)
     const finalNameOverride = resolveNameOverride(cardName, currentProd, hasCustomName)
@@ -122,8 +125,7 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
         card_product_id: selectedProductId || undefined,
         bank_id: selectedBankId || undefined,
         name_override: finalNameOverride,
-        override_due_type: overrideEnabled ? overrideDueType : null,
-        override_due_value: overrideEnabled ? dueCheck.value : undefined,
+        ...dueRulePayload,
       })
       onSaved()
       onClose()
@@ -215,8 +217,8 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
             <SelectField
               label='还款规则'
               value={overrideDueType}
-              onChange={(e) => setOverrideDueType(e.target.value as DueType)}
-              options={(Object.keys(DUE_TYPE_LABELS) as DueType[]).map((t) => ({
+              onChange={(e) => setOverrideDueType(e.target.value as DueRuleType)}
+              options={(Object.keys(DUE_TYPE_LABELS) as DueRuleType[]).map((t) => ({
                 value: t,
                 label: DUE_TYPE_LABELS[t],
               }))}

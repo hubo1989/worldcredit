@@ -98,13 +98,16 @@ export function CardAccountModal({ open, onClose, card, onSaved }: Props) {
 
     // 2. 全部校验通过后再创建持卡人，并立即退出创建态（Finding 5, 12）
     let finalHolderId = selectedHolderId
+    let createdHolderName: string | null = null
     if (isCreatingHolder) {
+      const trimmedName = newHolderName.trim()
       try {
         const created = await createHolder({
-          name: newHolderName.trim(),
+          name: trimmedName,
           avatar_color: DEFAULT_HOLDER_AVATAR_COLOR,
         })
         finalHolderId = created.id
+        createdHolderName = created.name || trimmedName
         setSelectedHolderId(created.id)
         setIsCreatingHolder(false)
         setNewHolderName('')
@@ -134,10 +137,17 @@ export function CardAccountModal({ open, onClose, card, onSaved }: Props) {
       onSaved()
       onClose()
     } catch (err) {
-      if (holderUpdated) {
-        setError('持卡人已变更，但卡片其余字段保存失败：' + (err instanceof Error ? err.message : String(err)))
+      const errMsg = err instanceof Error ? err.message : String(err)
+      if (createdHolderName) {
+        if (holderUpdated) {
+          setError(`已创建持卡人「${createdHolderName}」并变更归属，但卡片其余字段保存失败：${errMsg}`)
+        } else {
+          setError(`已创建持卡人「${createdHolderName}」但卡片更新失败，可在下拉中重选：${errMsg}`)
+        }
+      } else if (holderUpdated) {
+        setError('持卡人已变更，但卡片其余字段保存失败：' + errMsg)
       } else {
-        setError(err instanceof Error ? err.message : '保存失败')
+        setError(errMsg || '保存失败')
       }
     } finally {
       setSubmitting(false)

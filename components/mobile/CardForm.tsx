@@ -15,6 +15,11 @@ import {
   resolveBankChange,
   resolveProductSelect,
   resolveNameOverride,
+  normalizeDueType,
+  buildDueRulePayload,
+  validateDueRule,
+  DUE_TYPE_LABELS,
+  type DueRuleType,
 } from './card-form-shared'
 
 interface Props {
@@ -28,14 +33,6 @@ interface Props {
    */
   holders?: Array<{ id: string; name: string }>
   initial?: CreditCard
-}
-
-type DueType = 'after_billing' | 'fixed' | 'fixed_before_billing'
-
-const DUE_TYPE_LABELS: Record<DueType, string> = {
-  after_billing: '账单日后 X 天',
-  fixed: '每月固定还款日',
-  fixed_before_billing: '每月固定还款日（账单日倒推）',
 }
 
 /** 卡类型分段选择（对应 MUI ToggleButtonGroup exclusive 的暗色版）。 */
@@ -166,14 +163,14 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
   const [issuedOn, setIssuedOn] = useState(initial?.issued_on ?? '')
   const [activatedOn, setActivatedOn] = useState(initial?.activated_on ?? '')
 
-  // 还款规则覆盖
+  // 还款规则覆盖：只看 override_due_type，避免残留 value 导致关闭后复活
   const [overrideEnabled, setOverrideEnabled] = useState(
-    !!(initial?.override_due_type || initial?.override_due_value)
+    !!initial?.override_due_type
   )
   const [cardName, setCardName] = useState(initial?.name_override ?? '')
   const [hasCustomName, setHasCustomName] = useState(false)
-  const [overrideDueType, setOverrideDueType] = useState<DueType>(
-    (initial?.override_due_type as DueType) ?? 'after_billing'
+  const [overrideDueType, setOverrideDueType] = useState<DueRuleType>(
+    normalizeDueType(initial?.override_due_type)
   )
   const [overrideDueValue, setOverrideDueValue] = useState(
     initial?.override_due_value?.toString() ?? ''
@@ -213,8 +210,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
       setLoanDueDay(initial.loan_due_day?.toString() ?? '')
       setIssuedOn(initial.issued_on ?? '')
       setActivatedOn(initial.activated_on ?? '')
-      setOverrideEnabled(!!(initial.override_due_type || initial.override_due_value))
-      setOverrideDueType((initial.override_due_type as DueType) ?? 'after_billing')
+      setOverrideEnabled(!!initial.override_due_type)
+      setOverrideDueType(normalizeDueType(initial.override_due_type))
       setOverrideDueValue(initial.override_due_value?.toString() ?? '')
       setAccountModeOverride(initial.account_mode_override ?? 'auto')
     } else if (!initial) {
@@ -271,10 +268,19 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
       return
     }
 
+    if (isCredit) {
+      const dueCheck = validateDueRule(overrideEnabled, overrideDueType, overrideDueValue)
+      if (!dueCheck.valid) {
+        alert(dueCheck.error || '还款规则校验失败')
+        return
+      }
+    }
+
     setSubmitting(true)
     try {
       const currentProd = products.find(p => p.id === productId)
       const finalNameOverride = resolveNameOverride(cardName, currentProd, hasCustomName)
+      const dueRulePayload = buildDueRulePayload(overrideEnabled, overrideDueType, overrideDueValue)
 
       const base = {
         holder_id: ownerId,
@@ -287,8 +293,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
         card_type: cardType,
         loan_due_day: isLoan && loanDueDay ? parseInt(loanDueDay, 10) : undefined,
         name_override: finalNameOverride ?? undefined,
-        override_due_type: overrideEnabled ? overrideDueType : null,
-        override_due_value: overrideEnabled && overrideDueValue ? parseInt(overrideDueValue, 10) : undefined,
+        ...dueRulePayload,
         account_mode_override: accountModeOverride === 'auto' ? null : accountModeOverride,
         issued_on: issuedOn || null,
         activated_on: activatedOn || null,
@@ -460,8 +465,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
                 <SelectField
                   label="还款规则"
                   value={overrideDueType}
-                  onChange={e => setOverrideDueType(e.target.value as DueType)}
-                  options={(Object.keys(DUE_TYPE_LABELS) as DueType[]).map(t => ({
+                  onChange={e => setOverrideDueType(e.target.value as DueRuleType)}
+                  options={(Object.keys(DUE_TYPE_LABELS) as DueRuleType[]).map(t => ({
                     value: t,
                     label: DUE_TYPE_LABELS[t],
                   }))}

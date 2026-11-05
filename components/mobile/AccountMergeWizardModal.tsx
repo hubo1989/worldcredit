@@ -222,7 +222,7 @@ export function AccountMergeWizardModal({
               <div className='flex flex-col gap-2'>
                 {bankCards.map(c => {
                   const isBelongToTarget = !!targetAccountId && (c.account_id === targetAccountId || c.account?.id === targetAccountId)
-                  const isTargetAnchor = isBelongToTarget && (c.account?.primary_card_id === c.id || bankCards.find(bc => (bc.account_id === targetAccountId || bc.account?.id === targetAccountId))?.id === c.id)
+                  const isTargetAnchor = isBelongToTarget && !!c.account?.primary_card_id && c.account.primary_card_id === c.id
                   const isChecked = !isBelongToTarget && selectedCardIds.includes(c.id)
                   return (
                     <label
@@ -248,7 +248,7 @@ export function AccountMergeWizardModal({
                             </span>
                           ) : isBelongToTarget ? (
                             <span className='text-[10px] text-d-muted font-medium'>
-                              已在当前目标账户中
+                              已在目标账户中
                             </span>
                           ) : null}
                         </div>

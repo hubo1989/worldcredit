@@ -14,6 +14,60 @@ export const DUE_TYPE_LABELS = {
 export type DueRuleType = 'after_billing' | 'fixed'
 
 /**
+ * 归一化还款规则类型：
+ * - 'fixed' 或遗留的 'fixed_before_billing' 归一到 'fixed'
+ * - 其它合法类型或缺省默认返回 'after_billing'
+ */
+export function normalizeDueType(type?: string | null): DueRuleType {
+  if (type === 'fixed' || type === 'fixed_before_billing') {
+    return 'fixed'
+  }
+  return 'after_billing'
+}
+
+export interface DueRulePayload {
+  override_due_type: DueRuleType | null
+  override_due_value: number | null
+}
+
+/**
+ * 构建还款规则 payload：
+ * - enabled 为 false 时：两字段显式提交 null（服务端 SET NULL，避免残留导致复活）
+ * - enabled 为 true 时：提交 normalized 后的 type 与整数 value（若 value 无效则返回 null）
+ */
+export function buildDueRulePayload(
+  enabled: boolean,
+  type?: string | null,
+  valueInput?: string | number | null
+): DueRulePayload {
+  if (!enabled) {
+    return {
+      override_due_type: null,
+      override_due_value: null,
+    }
+  }
+
+  const normalizedType = normalizeDueType(type)
+  let val: number | null = null
+  if (typeof valueInput === 'number') {
+    val = Number.isInteger(valueInput) ? valueInput : Math.trunc(valueInput)
+  } else if (typeof valueInput === 'string') {
+    const trimmed = valueInput.trim()
+    if (trimmed) {
+      const parsed = parseInt(trimmed, 10)
+      if (!isNaN(parsed) && Number.isInteger(parsed)) {
+        val = parsed
+      }
+    }
+  }
+
+  return {
+    override_due_type: normalizedType,
+    override_due_value: val,
+  }
+}
+
+/**
  * 校验每月账单日（1-31）
  */
 export function validateBillingDay(dayInput: string | number | undefined | null): {
