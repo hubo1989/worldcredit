@@ -1,5 +1,5 @@
 import { query, queryOne, execute, batch, uuid, now, today } from "../db";
-import type { Bill, Payment, CreditCard, CardProduct, BillCardSubtotal, CreditAccount } from "../types";
+import type { Bill, Payment, CreditCard, CardProduct, BillCardSubtotal, CreditAccount, CardHolder } from "../types";
 import {
   getDueDate,
   effectiveBillAmount,
@@ -681,7 +681,7 @@ export interface BillDetail {
   bill: Bill & {
     card?: CreditCard & {
       card_product?: CardProduct;
-      card_holder?: { id: string; name: string };
+      card_holder?: CardHolder;
     };
     account?: CreditAccount;
     subtotals?: BillCardSubtotal[];
@@ -711,7 +711,10 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
             cp.card_name AS p_card_name, cp.currency AS p_currency, cp.payment_due_type AS p_payment_due_type,
             cp.payment_due_value AS p_payment_due_value, cp.annual_fee AS p_annual_fee,
             cp.annual_fee_waiver AS p_annual_fee_waiver, cp.is_active AS p_is_active, cp.created_at AS p_created_at,
-            ch.id AS h_id, ch.name AS h_name,
+            ch.id AS h_id, ch.name AS h_name, ch.created_by AS h_created_by,
+            ch.avatar_color AS h_avatar_color, ch.created_at AS h_created_at,
+            ch.phone AS h_phone, ch.email AS h_email, ch.managed_by AS h_managed_by,
+            ch.auth_user_id AS h_auth_user_id,
             ca.id AS ca_id, ca.holder_id AS ca_holder_id, ca.bank_id AS ca_bank_id,
             ca.bank_name AS ca_bank_name, ca.currency AS ca_currency, ca.account_tail AS ca_account_tail,
             ca.statement_mode AS ca_statement_mode, ca.quota_mode AS ca_quota_mode,
@@ -741,7 +744,7 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
   if (row.c_id) {
     const card: CreditCard & {
       card_product?: CardProduct;
-      card_holder?: { id: string; name: string };
+      card_holder?: CardHolder;
     } = {
       id: row.c_id as string,
       holder_id: row.c_holder_id as string,
@@ -779,7 +782,17 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
       };
     }
     if (row.h_id) {
-      card.card_holder = { id: row.h_id as string, name: (row.h_name as string) || "" };
+      card.card_holder = {
+        id: row.h_id as string,
+        name: (row.h_name as string) || "",
+        created_by: (row.h_created_by as string) || "",
+        avatar_color: (row.h_avatar_color as string) || "#1976d2",
+        created_at: (row.h_created_at as string) || "",
+        phone: (row.h_phone as string) || undefined,
+        email: (row.h_email as string) || undefined,
+        managed_by: (row.h_managed_by as string) || undefined,
+        auth_user_id: (row.h_auth_user_id as string) || undefined,
+      };
     }
     bill.card = card;
   }

@@ -214,3 +214,35 @@ describe('PayableForm 归属银行', () => {
     expect(mockedCreate.mock.calls[0][0]).toMatchObject({ bank_name: '招商银行' })
   })
 })
+
+describe('PayableForm category compatibility', () => {
+  it('displays legacy unknown category explicitly and falls back to other on submit', async () => {
+    const user = userEvent.setup()
+    const onSuccess = vi.fn()
+    const onClose = vi.fn()
+    mockedUpdate.mockResolvedValueOnce(makePayable({ category: 'other' }))
+
+    render(
+      <PayableForm
+        open
+        existing={makePayable({ category: 'unknown_legacy_cat' as never })}
+        onClose={onClose}
+        onSuccess={onSuccess}
+      />
+    )
+
+    const typeSelect = screen.getByLabelText('类型')
+    expect(typeSelect).toHaveValue('unknown_legacy_cat')
+    expect(screen.getByRole('option', { name: /unknown_legacy_cat（历史分类）/ })).toBeInTheDocument()
+
+    const nameInput = screen.getByLabelText('名称')
+    await user.clear(nameInput)
+    await user.type(nameInput, '编辑后的名字')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(mockedUpdate).toHaveBeenCalledTimes(1))
+    const [updatedId, patch] = mockedUpdate.mock.calls[0]
+    expect(updatedId).toBe('payable-1')
+    expect(patch.category).toBe('other')
+  })
+})

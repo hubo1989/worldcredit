@@ -230,4 +230,78 @@ describe('BillDetailPage 逾期天数显示规则回归测试', () => {
     // 今日刷卡免息展示正常
     expect(screen.getByText(/今日刷卡免息/)).toBeInTheDocument()
   })
+
+  it('数据库 status=paid 但实际部分还款：徽章显示「部分」，且逾期提示正常展示（不被 isSettled 抑制）', async () => {
+    mockedGetBillDetail.mockResolvedValueOnce(
+      makeBillDetail({
+        statement_date: '2026-08-05',
+        statement_end: '2026-08-05',
+        due_date: '2026-08-25', // 已逾期
+        bill_amount: 1000,
+        status: 'paid', // 数据库错误落库为 paid
+        payments: [{ id: 'p1', amount: 400, paid_at: '2026-08-20' }],
+      }) as never,
+    )
+
+    await renderPage()
+
+    await waitFor(() => {
+      expect(screen.getByText('账单详情')).toBeInTheDocument()
+    })
+
+    // 徽章与重算一致显示「部分」；「已还」仅在金额四格 label 出现 1 次，状态徽章无「已还」
+    expect(screen.getByText('部分')).toBeInTheDocument()
+    expect(screen.getAllByText('已还')).toHaveLength(1)
+
+    // isSettled 由重算状态推导为 false，逾期提示不应被抑制
+    expect(screen.getByText(/已逾期 \d+ 天/)).toBeInTheDocument()
+  })
+
+  it('0 元账单且无流水：重算状态为 paid，状态徽章显示「已还」，且不显示免息/逾期提醒', async () => {
+    mockedGetBillDetail.mockResolvedValueOnce(
+      makeBillDetail({
+        statement_date: '2026-08-05',
+        statement_end: '2026-08-05',
+        due_date: '2026-08-25',
+        bill_amount: 0,
+        status: 'unpaid', // 数据库即便为 unpaid
+        payments: [],
+      }) as never,
+    )
+
+    await renderPage()
+
+    await waitFor(() => {
+      expect(screen.getByText('账单详情')).toBeInTheDocument()
+    })
+
+    // 0 元账单重算为已还：状态徽章与金额四格各 1 次，共 2 次
+    expect(screen.getAllByText('已还')).toHaveLength(2)
+    expect(screen.queryByText('待还')).not.toBeInTheDocument()
+    expect(screen.queryByText(/已逾期/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/剩 \d+ 天免息/)).not.toBeInTheDocument()
+  })
+
+  it('数据库误标 status=paid 且金额>0 但无还款流水：删去兜底盲信后以重算状态为准，不掩盖为已还', async () => {
+    mockedGetBillDetail.mockResolvedValueOnce(
+      makeBillDetail({
+        statement_date: '2026-08-05',
+        statement_end: '2026-08-05',
+        due_date: '2026-08-25', // 已逾期
+        bill_amount: 1000,
+        status: 'paid', // 误标 paid
+        payments: [], // 但无流水
+      }) as never,
+    )
+
+    await renderPage()
+
+    await waitFor(() => {
+      expect(screen.getByText('账单详情')).toBeInTheDocument()
+    })
+
+    // 应根据流水和到期日重算为逾期，而不是盲信数据库的 paid
+    expect(screen.getByText('逾期')).toBeInTheDocument()
+    expect(screen.getAllByText('已还')).toHaveLength(1)
+  })
 })

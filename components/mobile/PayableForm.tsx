@@ -14,6 +14,7 @@ import {
   MIN_PAYABLE_CYCLE_MONTHS,
   MAX_PAYABLE_CYCLE_MONTHS,
   PAYABLE_CATEGORIES,
+  isPayableCategory,
   PAYABLE_CYCLE_OPTIONS,
   PAYABLE_CURRENCIES,
   PAYABLE_CURRENCY_LABELS,
@@ -118,6 +119,13 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
   // 历史未知币种（如 EUR）：只用于显式展示与「保留」选项
   const legacyCurrency =
     existing && normalizePayableCurrency(existing.currency) === null ? existing.currency : null
+  // 历史未知分类：只用于显式展示原值选项
+  const legacyCategory =
+    existing &&
+    !isPayableCategory(existing.category) &&
+    !resolvePayableCategorySelection(existing.custom_category)?.customCategory
+      ? existing.category
+      : null
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -200,17 +208,20 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
     [customCategories, existing?.custom_category]
   )
 
-  const categoryOptions = useMemo(
-    () => [
+  const categoryOptions = useMemo(() => {
+    const opts = [
       ...PAYABLE_CATEGORIES.map(c => ({ value: c.value, label: c.label })),
       ...mergedCustomCategories.map(item => ({
         value: `${SAVED_CUSTOM_PREFIX}${item}`,
         label: item,
       })),
       { value: CUSTOM_CATEGORY_SENTINEL, label: '自定义' },
-    ],
-    [mergedCustomCategories]
-  )
+    ]
+    if (legacyCategory && !opts.some(o => o.value === legacyCategory)) {
+      opts.push({ value: legacyCategory, label: `${legacyCategory}（历史分类）` })
+    }
+    return opts
+  }, [mergedCustomCategories, legacyCategory])
 
   const handleSubmit = async () => {
     setError(null)
@@ -249,8 +260,12 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       }
       resolvedCategory = resolved.category
       resolvedCustomCategory = resolved.customCategory
+    } else if (isPayableCategory(categorySelection)) {
+      resolvedCategory = categorySelection
+      resolvedCustomCategory = null
     } else {
-      resolvedCategory = categorySelection as PayableCategory
+      // 运行时白名单校验：非法存量值回落 other，避免类型断言与非法值落库
+      resolvedCategory = 'other'
       resolvedCustomCategory = null
     }
 
