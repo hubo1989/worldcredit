@@ -600,13 +600,25 @@ export function cardUrgencyRank(status: CardUrgencyStatus): number {
  *
  * 为什么不用毫秒差：'2026-09-16' 这种无时区的日期串按 UTC 解析，在东八区会
  * 落回本地当天 08:00。直接用 (target - now) / 86400000 再取整，在跨日边界会
- * 差一天——用户看到「距离还款日 2 日」而徽章写着「逾期」。所以先把两侧都归一到
- * 本地零点再相减。
+ * 差一天——用户看到「距离还款日 2 日」而徽章写着「逾期」。
+ *
+ * 为什么用固定业务时区而不是进程本地时区：生产跑在 Cloudflare Workers（UTC）、
+ * CI 也是 UTC，用户却在中国。若按进程时区取「今天」，UTC 下东八区凌晨
+ * 00:00-08:00 会比用户日历日早一天，出账日当天被误判为「未出账」。因此两侧
+ * 都归一到 Asia/Shanghai 的日历日（与 getLocalTodayString 同口径）再相减，
+ * 行为在任何运行时区下一致。date-only 字符串（YYYY-MM-DD）本身就是日历日，
+ * 直接透传不经过时区换算。
  */
 export function diffInCalendarDays(target: string | Date, today: Date = new Date()): number {
-  const t = typeof target === "string" ? new Date(target) : target;
-  const localMidnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  return Math.round((localMidnight(t) - localMidnight(today)) / 86_400_000);
+  const BUSINESS_TIME_ZONE = "Asia/Shanghai";
+  const calendarDay = (input: string | Date): string => {
+    if (typeof input === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
+    return getLocalTodayString(BUSINESS_TIME_ZONE, input as Date);
+  };
+  const targetDay = calendarDay(target);
+  const todayDay = calendarDay(today);
+  // 两串都是 YYYY-MM-DD，Date.parse 一律按 UTC 零点解析，差值恒为整日。
+  return Math.round((Date.parse(targetDay) - Date.parse(todayDay)) / 86_400_000);
 }
 
 /**
