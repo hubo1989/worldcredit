@@ -264,8 +264,8 @@ export function PayableForm({ open, onClose, onSuccess, existing }: Props) {
       resolvedCategory = categorySelection
       resolvedCustomCategory = null
     } else {
-      // 运行时白名单校验：非法存量值回落 other，避免类型断言与非法值落库
-      resolvedCategory = 'other'
+      // 历史分类按原值透传，服务端 normalizePayableCategorySelection 负责校验与既有语义，禁止客户端静默改写为 other
+      resolvedCategory = categorySelection as PayableCategory
       resolvedCustomCategory = null
     }
 

@@ -1,11 +1,16 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { BellIcon, ClockIcon } from '@/components/icons/WcIcon'
 import type { UserReminderConfig } from '@/lib/types'
 import { Toggle } from '@/components/obsidian/controls'
 import { ConfirmDialog, Toast } from '@/components/obsidian/overlays'
 import { sendTestPush } from '@/lib/api/push'
+import {
+  isWebPushChannelEnabled,
+  resolveEffectiveChannels,
+  formatTimezoneOptionLabel,
+} from './shared'
 
 interface ReminderPreferencesCardProps {
   config: UserReminderConfig
@@ -22,12 +27,12 @@ const BILL_DAY_CHOICES = [
 
 const OPPORTUNITY_DAY_CHOICES = [0, 1, 3, 7, 15]
 
-const TIMEZONE_OPTIONS = [
-  { value: 'Asia/Shanghai', label: 'Asia/Shanghai (中国标准时间 UTC+8)' },
-  { value: 'America/New_York', label: 'America/New_York (美东时间 UTC-5)' },
-  { value: 'Europe/London', label: 'Europe/London (格林威治时间 UTC+0)' },
-  { value: 'Asia/Tokyo', label: 'Asia/Tokyo (日本标准时间 UTC+9)' },
-  { value: 'Asia/Hong_Kong', label: 'Asia/Hong_Kong (香港时间 UTC+8)' },
+const TIMEZONE_DEFINITIONS = [
+  { value: 'Asia/Shanghai', name: '中国标准时间' },
+  { value: 'America/New_York', name: '美东时间' },
+  { value: 'Europe/London', name: '格林威治时间' },
+  { value: 'Asia/Tokyo', name: '日本标准时间' },
+  { value: 'Asia/Hong_Kong', name: '香港时间' },
 ]
 
 function toggleDayList(list: number[] | undefined, day: number): number[] {
@@ -52,10 +57,18 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
     onChange({ remind_days_before: toggleDayList(current, day) })
   }
 
-  // 存量用户没有 enabled_channels 字段时，按旧语义默认开启 Web Push
-  const isWebPushEnabled = (config.enabled_channels ?? ['web_push']).includes('web_push')
+  // 存量口径判定：若 enabled_channels 未设置而旧 opportunities.web_push_enabled === false 则默认关闭，否则默认开启
+  const isWebPushEnabled = isWebPushChannelEnabled(config)
+
+  // 存量迁移写回：读取到 enabled_channels 未设置且旧 opportunities.web_push_enabled === false 时，写回一次
+  useEffect(() => {
+    if (config.enabled_channels === undefined && config.opportunities?.web_push_enabled === false) {
+      onChange({ enabled_channels: [] })
+    }
+  }, [config.enabled_channels, config.opportunities?.web_push_enabled, onChange])
+
   const handleToggleWebPush = (enabled: boolean) => {
-    const currentChannels = config.enabled_channels ?? ['web_push']
+    const currentChannels = resolveEffectiveChannels(config)
     const channels = new Set(currentChannels)
     if (enabled) channels.add('web_push')
     else channels.delete('web_push')
@@ -63,6 +76,14 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
   }
 
   const handleSendTestPush = async () => {
+    if (!isWebPushEnabled) {
+      setTestNotice({
+        open: true,
+        message: 'Web Push 浏览器通道已关闭，请先开启通道后再测试。',
+        severity: 'info',
+      })
+      return
+    }
     setTesting(true)
     try {
       if (typeof window !== 'undefined' && 'Notification' in window) {
@@ -82,14 +103,10 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
             return
           }
 
-          new Notification('🔔 WorldCredit 适时提醒', {
-            body: '这是一条测试还款提醒！您的提醒节点与免打扰时间配置已生效。',
-            icon: '/pwa-192x192.png',
-            tag: 'worldcredit-test-reminder',
-          })
+          // 服务端真实下发成功后仅用 Toast 提示，不与本地 new Notification 重复
           setTestNotice({
             open: true,
-            message: '测试通知已成功发送至系统通知栏！',
+            message: '测试通知已成功下发至设备通知栏！',
             severity: 'success',
           })
         } else {
@@ -130,13 +147,17 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
     return [...BILL_DAY_CHOICES, ...extra].sort((a, b) => b.day - a.day)
   })()
 
-  // 存量时区合并：不在白名单内的 IANA 值动态追加为选项，避免存量设置显示空白
+  // 存量时区合并：基于 Intl.DateTimeFormat 动态生成夏令时与当前偏移
   const timezoneChoices = (() => {
     const currentTz = opp?.time_zone
-    if (currentTz && !TIMEZONE_OPTIONS.some((opt) => opt.value === currentTz)) {
-      return [...TIMEZONE_OPTIONS, { value: currentTz, label: `${currentTz} (当前设置)` }]
+    const base = TIMEZONE_DEFINITIONS.map((def) => ({
+      value: def.value,
+      label: formatTimezoneOptionLabel(def.value, def.name),
+    }))
+    if (currentTz && !base.some((opt) => opt.value === currentTz)) {
+      return [...base, { value: currentTz, label: `${currentTz} (当前设置)` }]
     }
-    return TIMEZONE_OPTIONS
+    return base
   })()
 
   return (

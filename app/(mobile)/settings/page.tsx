@@ -64,7 +64,13 @@ const THEME_LABELS: Record<ThemeMode, string> = {
   system: '💻 跟随系统',
 }
 
-function formatGmailSummary(status: GmailConnectionStatus | null): string {
+function formatGmailSummary(
+  status: GmailConnectionStatus | null,
+  loading = false,
+  error = false
+): string {
+  if (loading) return '加载中…'
+  if (error) return '加载失败'
   if (status?.connected) return '已连接'
   if (status?.last_error) return '需重连'
   return '未连接'
@@ -85,6 +91,8 @@ export default function SettingsPage() {
   } = useUserPreferences()
 
   const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null)
+  const [gmailLoading, setGmailLoading] = useState(true)
+  const [gmailError, setGmailError] = useState(false)
   const [showGmailSheet, setShowGmailSheet] = useState(false)
   const [showReminderSheet, setShowReminderSheet] = useState(false)
   const [showDisplaySheet, setShowDisplaySheet] = useState(false)
@@ -98,11 +106,16 @@ export default function SettingsPage() {
   })
 
   const loadGmail = useCallback(async () => {
+    setGmailLoading(true)
+    setGmailError(false)
     try {
       const res = await getGmailConnection()
       setGmailStatus(res)
     } catch {
+      setGmailError(true)
       setGmailStatus(null)
+    } finally {
+      setGmailLoading(false)
     }
   }, [])
 
@@ -144,7 +157,7 @@ export default function SettingsPage() {
   const themeLabel = THEME_LABELS[theme] ?? '💻 跟随系统'
 
   // 计算偏好摘要胶囊文案（映射表/函数化，去嵌套三元；完整展示已选节点）
-  const gmailSummary = formatGmailSummary(gmailStatus)
+  const gmailSummary = formatGmailSummary(gmailStatus, gmailLoading, gmailError)
   const billDays = reminderConfig?.remind_days_before ?? [3, 1, 0]
   const oppEnabled = reminderConfig?.opportunities?.enabled !== false
   const billDaysLabel = billDays.length > 0 ? `提前${billDays.join('/')}天` : '未设提醒'
@@ -262,18 +275,48 @@ export default function SettingsPage() {
                 subtitle='Gmail 直连拉取与专属 .eml 补录'
                 onClick={() => setShowGmailSheet(true)}
                 badge={
-                  <span
-                    className={
-                      'mr-0.5 shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ' +
-                      (gmailStatus?.connected
-                        ? 'border border-d-success-ink/30 bg-d-success-soft text-d-success-ink'
-                        : gmailStatus?.last_error
-                        ? 'border border-d-gold-deep/50 bg-d-gold-soft text-d-gold'
-                        : 'border border-d-border bg-d-subtle text-d-muted')
-                    }
-                  >
-                    {gmailSummary}
-                  </span>
+                  gmailLoading ? (
+                    <span className='mr-0.5 shrink-0 rounded-full border border-d-border bg-d-subtle px-2.5 py-0.5 text-[11px] font-semibold text-d-muted'>
+                      加载中…
+                    </span>
+                  ) : gmailError ? (
+                    <div className='mr-0.5 flex items-center gap-1.5'>
+                      <span className='rounded-full border border-d-danger-ink/30 bg-d-danger-soft px-2.5 py-0.5 text-[11px] font-semibold text-d-danger-ink'>
+                        加载失败
+                      </span>
+                      <span
+                        role='button'
+                        tabIndex={0}
+                        aria-label='重试'
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void loadGmail()
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.stopPropagation()
+                            void loadGmail()
+                          }
+                        }}
+                        className='cursor-pointer rounded-md border border-d-border bg-d-subtle px-1.5 py-0.5 text-[11px] font-medium text-d-accent-light active:bg-d-surface hover:border-d-accent/40'
+                      >
+                        重试
+                      </span>
+                    </div>
+                  ) : (
+                    <span
+                      className={
+                        'mr-0.5 shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ' +
+                        (gmailStatus?.connected
+                          ? 'border border-d-success-ink/30 bg-d-success-soft text-d-success-ink'
+                          : gmailStatus?.last_error
+                          ? 'border border-d-gold-deep/50 bg-d-gold-soft text-d-gold'
+                          : 'border border-d-border bg-d-subtle text-d-muted')
+                      }
+                    >
+                      {gmailSummary}
+                    </span>
+                  )
                 }
               />
 

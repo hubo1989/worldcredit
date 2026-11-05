@@ -18,6 +18,26 @@ export interface TestPushResult {
   }
 }
 
+/**
+ * 校验用户的提醒配置是否允许下发 Web Push。
+ * 存量口径：若 enabled_channels 未显式设置，而旧 opportunities.web_push_enabled === false，则不开启。
+ */
+export function isWebPushChannelEnabled(
+  config?: {
+    enabled_channels?: string[]
+    opportunities?: { web_push_enabled?: boolean }
+  } | null
+): boolean {
+  if (!config) return true
+  if (config.enabled_channels !== undefined) {
+    return Array.isArray(config.enabled_channels) && config.enabled_channels.includes('web_push')
+  }
+  if (config.opportunities && config.opportunities.web_push_enabled === false) {
+    return false
+  }
+  return true
+}
+
 /** 触发向当前用户订阅发送测试通知（收敛到统一 API 模块） */
 export async function sendTestPush(): Promise<TestPushResult> {
   try {

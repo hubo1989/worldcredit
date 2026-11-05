@@ -4,8 +4,6 @@ import type { UserDisplayConfig } from '@/lib/types'
 import { Toggle } from '@/components/obsidian/controls'
 import { CURRENCY_OPTIONS } from './shared'
 
-export { CURRENCY_OPTIONS }
-
 interface DisplayPreferencesCardProps {
   config: UserDisplayConfig
   onChange: (updates: Partial<UserDisplayConfig>) => void
@@ -14,6 +12,14 @@ interface DisplayPreferencesCardProps {
 
 /** 显示要素与币种偏好抽屉（移动端 BottomSheet 内置）。零硬编码色值，使用 d-* 令牌。 */
 export function DisplayPreferencesCard({ config, onChange, disabled }: DisplayPreferencesCardProps) {
+  // 存量币种合并：不在白名单内的值动态追加当前值（历史设置），避免原生 select 显示空白
+  const currencyOptions = (() => {
+    const current = config.default_currency
+    if (current && !CURRENCY_OPTIONS.some((opt) => opt.value === current)) {
+      return [...CURRENCY_OPTIONS, { value: current, label: `${current} · 当前值（历史设置）` }]
+    }
+    return CURRENCY_OPTIONS
+  })()
   return (
     <div className='flex flex-col gap-4 text-d-text'>
       {/* 隐私模式卡片 */}
@@ -58,7 +64,7 @@ export function DisplayPreferencesCard({ config, onChange, disabled }: DisplayPr
           disabled={disabled}
           className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none transition-colors focus:border-d-accent disabled:opacity-50'
         >
-          {CURRENCY_OPTIONS.map((opt) => (
+          {currencyOptions.map((opt) => (
             <option key={opt.value} value={opt.value} className='bg-d-surface text-d-text'>
               {opt.label}
             </option>

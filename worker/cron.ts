@@ -17,6 +17,32 @@ interface CronEnv {
   APNS_ENVIRONMENT?: string;
 }
 
+/**
+ * 校验用户的偏好设置是否开启了 Web Push（统一存量兼容口径与迁移判断）。
+ * 若 enabled_channels 未设置而旧 opportunities.web_push_enabled === false，绝不下发。
+ */
+export function isUserWebPushEnabled(reminderConfigRaw?: string | null): boolean {
+  if (!reminderConfigRaw) return true;
+  try {
+    const parsed = JSON.parse(reminderConfigRaw) as {
+      enabled_channels?: string[];
+      opportunities?: { web_push_enabled?: boolean };
+    };
+    if (parsed.enabled_channels !== undefined) {
+      return (
+        Array.isArray(parsed.enabled_channels) &&
+        parsed.enabled_channels.includes("web_push")
+      );
+    }
+    if (parsed.opportunities && parsed.opportunities.web_push_enabled === false) {
+      return false;
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 interface BillWithCard {
   id: string;
   account_id: string | null;
@@ -93,7 +119,7 @@ export async function handleScheduled(
     }
   }
 
-  // 2. Get all notification preferences
+  // 2. Get all notification preferences and user preferences (reminder channels)
   const prefs = await db
     .prepare(
       "SELECT user_id, bill_due_enabled, overdue_enabled, due_days_before FROM notification_preferences",
@@ -105,6 +131,14 @@ export async function handleScheduled(
       due_days_before: number;
     }>();
   const allPrefs = prefs.results || [];
+
+  const userPrefs = await db
+    .prepare("SELECT user_id, reminder_config FROM user_preferences")
+    .all<{ user_id: string; reminder_config: string }>();
+  const reminderConfigMap = new Map<string, string>();
+  for (const row of userPrefs.results || []) {
+    reminderConfigMap.set(row.user_id, row.reminder_config);
+  }
 
   if (!allPrefs.length || !allBills.length) {
     console.log("[cron] No preferences or no bills. Done.");
@@ -193,7 +227,8 @@ export async function handleScheduled(
 
       // 6. Send push notification
       try {
-        if (userSubs.length > 0) {
+        const canSendWebPush = isUserWebPushEnabled(reminderConfigMap.get(userId));
+        if (userSubs.length > 0 && canSendWebPush) {
           const { staleIds } = await sendPushToSubscriptions(env, userSubs, title, body);
           // Drop subscriptions the push service reports as gone (404/410).
           for (const id of staleIds) {
