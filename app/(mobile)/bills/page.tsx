@@ -623,6 +623,7 @@ export default function BillsPage() {
         onManualAmount={setManualTarget}
         onAddBill={() => setBillFormOpen(true)}
         onAddCard={() => setCardCreateOpen(true)}
+        onMergeCards={() => setMergeWizardOpen(true)}
       />
 
       <CardCreateModal

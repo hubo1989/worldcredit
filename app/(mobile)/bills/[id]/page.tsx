@@ -11,40 +11,41 @@ import { CardDefinitionModal } from '@/components/mobile/CardDefinitionModal'
 import { CardAccountModal } from '@/components/mobile/CardAccountModal'
 import type { CreditCardWithProduct } from '@/lib/api/cards'
 import { useAuth } from '@/lib/auth'
-import { computePaymentDrivenStatus, getEffectiveCreditLimit, getEffectiveBillingDay } from '@/lib/utils'
+import {
+  computePaymentDrivenStatus,
+  getEffectiveCreditLimit,
+  getEffectiveBillingDay,
+  formatCardTail,
+  getEffectiveCardName,
+  isBillUnissued,
+  calculateCardGracePeriod,
+} from '@/lib/utils'
 import { ChevronLeftIcon, ChevronRightIcon, ClockIcon } from '@/components/icons/WcIcon'
-import { formatCardTail, getEffectiveCardName } from '@/lib/utils'
-import type { Bill, Payment, CreditCard, CardProduct, CardHolder } from '@/lib/types'
+import type { Bill, Payment, CardHolder } from '@/lib/types'
 
 type BillDetail = Bill & {
-  card: CreditCard & {
+  card?: CreditCardWithProduct & {
     card_holders?: CardHolder
-    card_product: CardProduct
   }
   payments: Payment[]
 }
 
-/** 计算已还 / 剩余 / 状态 */
+/** 计算已还 / 剩余 / 状态 / 是否未出账 */
 function computeBillProgress(bill: BillDetail) {
   const paid = (bill.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0)
   const amount = Number(bill.bill_amount) || 0
   const remaining = Math.max(0, amount - paid)
   // 与服务端落库、还款重算共用同一个状态函数，避免 0 / 0.01 边界两套口径
   let status = computePaymentDrivenStatus(bill, paid)
+  const unissued = isBillUnissued(bill)
   // 保护：历史存量已还款账单（数据库存 status = 'paid'）或无流水但已标记 paid，保留 paid 状态
   if (bill.status === 'paid' && paid === 0) {
     status = 'paid'
-  } else if (status === 'overdue') {
+  } else if (status === 'overdue' && unissued) {
     // 待出账保护：未到出账日绝无逾期
-    const isUnissued = Boolean(
-      (bill.statement_date && new Date(bill.statement_date).getTime() > Date.now()) ||
-      (bill.statement_end && new Date(bill.statement_end).getTime() > Date.now())
-    )
-    if (isUnissued) {
-      status = 'unpaid'
-    }
+    status = 'unpaid'
   }
-  return { paid, remaining, status }
+  return { paid, remaining, status, isUnissued: unissued }
 }
 
 /** 状态徽章（暗色）：淡底 + ink，与 bills 暗色视图同一口径 */
@@ -101,10 +102,17 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
       setError(null)
       // 账单 + 卡 + 卡产品 + 持卡人 + 还款记录，一次 RPC 返回
       const detail = await getBillDetail(id)
-      const card = detail.bill.card
-        ? { ...detail.bill.card, card_holders: detail.bill.card.card_holder }
+      const rawCard = detail.bill.card
+      const card: CreditCardWithProduct | undefined = rawCard && rawCard.card_product
+        ? ({
+            ...rawCard,
+            card_product: rawCard.card_product,
+            card_holders: rawCard.card_holder
+              ? { id: rawCard.card_holder.id, name: rawCard.card_holder.name, user_id: '' }
+              : undefined,
+          } as CreditCardWithProduct)
         : undefined
-      setBill({ ...(detail.bill as Bill), card, payments: detail.payments } as unknown as BillDetail)
+      setBill({ ...(detail.bill as Bill), card, payments: detail.payments })
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载账单失败')
     } finally {
@@ -171,9 +179,15 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const holderName = holder?.name
   const last4 = formatCardTail(card?.card_number_last4)
 
-  const { paid, remaining, status } = computeBillProgress(bill)
+  const { paid, remaining, status, isUnissued } = computeBillProgress(bill)
   const minPayment = bill.min_payment != null ? Number(bill.min_payment) : null
   const billAmount = Number(bill.bill_amount) || 0
+  const effLimit = card ? getEffectiveCreditLimit(card) : null
+  const effBillingDay = card ? getEffectiveBillingDay(card) : null
+  const todayGraceDays =
+    card && card.card_product
+      ? calculateCardGracePeriod({ ...card, card_product: card.card_product }).graceDays
+      : 0
 
   // 免息还款期长度：这一期「出账日 → 还款日」的窗口，是卡产品属性，
   // 与今天无关；剩余免息：今天距还款日还有几天（负数 = 已逾期）。
@@ -184,13 +198,30 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     return Math.max(0, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 86400000))
   })()
   const isSettled = status === 'paid' || bill.status === 'paid' || remaining <= 0
-  const isUnissued = Boolean(
-    (bill.statement_date && new Date(bill.statement_date).getTime() > Date.now()) ||
-    (bill.statement_end && new Date(bill.statement_end).getTime() > Date.now())
-  )
   const graceRemaining = bill.due_date
     ? Math.round((new Date(bill.due_date).getTime() - Date.now()) / 86400000)
     : null
+
+  const renderGraceRemainingNotice = () => {
+    if (isSettled || graceRemaining === null) return null
+    if (graceRemaining >= 0) {
+      return (
+        <p className='mt-0.5 inline-flex items-center gap-1 text-[12px] font-semibold leading-4 text-d-gold'>
+          <ClockIcon size={12} />
+          剩 {graceRemaining} 天免息（逾期未还将计息）
+        </p>
+      )
+    }
+    if (!isUnissued) {
+      return (
+        <p className='mt-0.5 inline-flex items-center gap-1 text-[12px] font-semibold leading-4 text-d-danger-ink'>
+          <ClockIcon size={12} />
+          已逾期 {-graceRemaining} 天
+        </p>
+      )
+    }
+    return null
+  }
 
   const periodStart = bill.statement_start ? format(new Date(bill.statement_start), 'M/d') : ''
   const periodEnd = bill.statement_end ? format(new Date(bill.statement_end), 'M/d') : ''
@@ -248,8 +279,8 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
           <Row
             label='今日刷卡免息'
             value={
-              graceWindow > 0
-                ? `${graceWindow} 天`
+              todayGraceDays > 0
+                ? `${todayGraceDays} 天`
                 : '—'
             }
           />
@@ -273,20 +304,20 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
       >
         <div className='flex flex-col gap-1.5'>
           <Row label='持卡人' value={holderName || '—'} />
-          <Row label='卡片尾号' value={last4 ? `尾号 ${last4}` : '—'} />
+          <Row label='卡片尾号' value={last4 || '—'} />
           <Row
             label='信用额度'
             value={
-              card && getEffectiveCreditLimit(card) != null
-                ? `¥${Number(getEffectiveCreditLimit(card)).toLocaleString()}`
+              effLimit !== null && effLimit !== undefined
+                ? `¥${Number(effLimit).toLocaleString()}`
                 : '—'
             }
           />
           <Row
             label='每月账单日'
             value={
-              card && getEffectiveBillingDay(card)
-                ? `每月 ${getEffectiveBillingDay(card)} 日`
+              effBillingDay !== null && effBillingDay !== undefined && effBillingDay > 0
+                ? `每月 ${effBillingDay} 日`
                 : '—'
             }
           />
@@ -304,19 +335,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                 : '—'
             }
           />
-          {!isSettled && graceRemaining !== null && (
-            graceRemaining >= 0 ? (
-              <p className='mt-0.5 inline-flex items-center gap-1 text-[12px] font-semibold leading-4 text-d-gold'>
-                <ClockIcon size={12} />
-                剩 {graceRemaining} 天免息（逾期未还将计息）
-              </p>
-            ) : !isUnissued ? (
-              <p className='mt-0.5 inline-flex items-center gap-1 text-[12px] font-semibold leading-4 text-d-danger-ink'>
-                <ClockIcon size={12} />
-                已逾期 {-graceRemaining} 天
-              </p>
-            ) : null
-          )}
+          {renderGraceRemainingNotice()}
         </div>
       </Section>
 
@@ -431,7 +450,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         <CardDefinitionModal
           open={cardDefModalOpen}
           onClose={() => setCardDefModalOpen(false)}
-          card={card as CreditCardWithProduct}
+          card={card}
           onSaved={() => load({ silent: true })}
         />
       )}
@@ -441,7 +460,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         <CardAccountModal
           open={cardAccountModalOpen}
           onClose={() => setCardAccountModalOpen(false)}
-          card={card as CreditCardWithProduct}
+          card={card}
           onSaved={() => load({ silent: true })}
         />
       )}

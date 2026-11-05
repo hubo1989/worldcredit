@@ -335,6 +335,73 @@ export function billEffectiveStatementDate(bill: {
   return bill.statement_date_override ?? bill.statement_date ?? null;
 }
 
+/**
+ * 判定账单是否未出账（日历日口径）：
+ * 出账日（优先生效出账日，兜底 statement_end）在今天之后（diffInCalendarDays > 0）即为未出账。
+ * 当天出账（diffInCalendarDays === 0）算已出账。
+ * 未出账前绝无逾期概念。
+ */
+export function isBillUnissued(
+  bill: {
+    statement_date?: string | null;
+    statement_date_override?: string | null;
+    statement_end?: string | null;
+  },
+  today: Date = new Date(),
+): boolean {
+  const stmtDate = billEffectiveStatementDate(bill) || bill.statement_end;
+  if (!stmtDate) return false;
+  return diffInCalendarDays(stmtDate, today) > 0;
+}
+
+/**
+ * 计算卡片今日刷卡的免息期与关键日期（今日交易动态口径）
+ * 今天交易 → 进下一期账单 → 到该期还款日的天数
+ */
+export function calculateCardGracePeriod(
+  card: CreditCard & { card_product: CardProduct },
+  today: Date = new Date(),
+) {
+  const d = new Date(today);
+  d.setHours(0, 0, 0, 0);
+  const billingDay = Number(card.override_billing_day ?? card.billing_day ?? 10);
+  if (card.card_type === "loan" && card.loan_due_day) {
+    const nextDueDate = getLoanNextDueDate(card.loan_due_day, d);
+    const diffMs = nextDueDate.getTime() - d.getTime();
+    return {
+      billingDay,
+      nextBillingDate: nextDueDate,
+      nextDueDate,
+      graceDays: Math.max(1, Math.ceil(diffMs / (24 * 60 * 60 * 1000))),
+    };
+  }
+  let purchaseMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+  const effectiveBillingDay = Math.min(
+    billingDay,
+    new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(),
+  );
+  // 账单日次日起的交易归下一期：账单日当天刷卡当天出账（多数国内行
+  // 口径），当天交易进当期账单、免息最短；账单日后一天刷卡才是最长
+  // 免息的第一天（今天 == 账单日 → purchaseMonth 留在本月，当期出账
+  // 最早、免息天数最小；今天 == 账单日+1 → 归下一期，免息期最长）。
+  if (d.getDate() > effectiveBillingDay) {
+    purchaseMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  }
+  const nextBillingDate = new Date(
+    purchaseMonth.getFullYear(),
+    purchaseMonth.getMonth(),
+    effectiveBillingDay,
+  );
+  const nextDueDate = getDueDate(card, card.card_product, purchaseMonth);
+  const diffMs = nextDueDate.getTime() - d.getTime();
+  return {
+    billingDay,
+    nextBillingDate,
+    nextDueDate,
+    graceDays: Math.max(1, Math.ceil(diffMs / (24 * 60 * 60 * 1000))),
+  };
+}
+
 // 账单日临近判定：距下一次账单日不足 days 天（含当天）时允许手填金额。
 // 用账单日而非到期日——出账前金额还是空的，正是需要用户先记一笔的时候。
 export function canManuallySetBillAmount(

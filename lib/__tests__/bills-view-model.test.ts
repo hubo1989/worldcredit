@@ -85,6 +85,30 @@ describe('deriveAccountMode', () => {
     const cards = [item({ bank: '招商银行', accountModeOverride: 'multi' })]
     expect(deriveAccountMode('h1', '招商银行', cards)).toBe('multi')
   })
+
+  it('实体账户 statement_mode 优先于卡数和 override', () => {
+    // 实体账户为 merged，即使只有 1 张卡也判定为 multi
+    const singleMerged = [
+      {
+        ...item({ bank: '招商银行' }),
+        account: { statement_mode: 'merged' } as unknown as CardWithBillsSummary['account'],
+      },
+    ]
+    expect(deriveAccountMode('h1', '招商银行', singleMerged)).toBe('multi')
+
+    // 实体账户为 separate，即使有 2 张卡也判定为 single
+    const multiSeparate = [
+      {
+        ...item({ bank: '招商银行' }),
+        account: { statement_mode: 'separate' } as unknown as CardWithBillsSummary['account'],
+      },
+      {
+        ...item({ bank: '招商银行' }),
+        account: { statement_mode: 'separate' } as unknown as CardWithBillsSummary['account'],
+      },
+    ]
+    expect(deriveAccountMode('h1', '招商银行', multiSeparate)).toBe('single')
+  })
 })
 
 describe('billBadgeView', () => {

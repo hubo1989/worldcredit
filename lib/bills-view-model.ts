@@ -8,7 +8,11 @@ export type AccountMode = 'multi' | 'single'
 
 /**
  * 多卡一账户 / 单卡单账户 的展示口径：
- * 同一持卡人在同一家银行持有 >1 张卡 → multi；否则 single。
+ * 判定优先级：
+ * 1. 实体信用账户 statement_mode 优先：所属账户存在 statement_mode 时，merged 判定为 multi，否则 single
+ * 2. 用户手动钉住的 account_mode_override 次之
+ * 3. 同持卡人同银行卡数统计兜底：持有 >1 张卡 → multi；否则 single
+ *
  * 这是展示层推导，不改 schema；同一银行跨持卡人仍算各自独立的账户。
  */
 export function deriveAccountMode(
