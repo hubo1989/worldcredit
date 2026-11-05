@@ -192,12 +192,16 @@ export type CreateHolderInput = Omit<CardHolder, 'id' | 'created_at' | 'created_
 }
 
 export async function createHolder(holder: CreateHolderInput): Promise<CardHolder> {
+  const trimmedName = holder.name ? holder.name.trim() : ''
+  if (!trimmedName) {
+    throw new Error('持卡人姓名不能为空')
+  }
   const id = uuid()
   const ts = now()
   const createdBy = holder.created_by || ''
   const { error } = await execute(
     'INSERT INTO card_holders (id, created_by, managed_by, name, phone, email, avatar_color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, createdBy, createdBy, holder.name, holder.phone || null, holder.email || null, holder.avatar_color || '#1976d2', ts]
+    [id, createdBy, createdBy, trimmedName, holder.phone || null, holder.email || null, holder.avatar_color || '#7aadff', ts]
   )
   if (error) throw new Error(error.message)
   await syncHolderAuthUser(id, holder.email)

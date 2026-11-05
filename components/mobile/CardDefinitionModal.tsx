@@ -8,6 +8,10 @@ import { getBanks, type BankItem } from '@/lib/api/banks'
 import { getCardProducts, updateCard, type CreditCardWithProduct } from '@/lib/api/cards'
 import type { CardProduct } from '@/lib/types'
 import { getEffectiveCardName } from '@/lib/utils'
+import {
+  validateDueRule,
+  DUE_TYPE_LABELS,
+} from './card-form-shared'
 
 interface Props {
   open: boolean
@@ -16,13 +20,7 @@ interface Props {
   onSaved: () => void
 }
 
-type DueType = 'after_billing' | 'fixed' | 'fixed_before_billing'
-
-const DUE_TYPE_LABELS: Record<DueType, string> = {
-  after_billing: '账单日后 X 天',
-  fixed: '每月固定还款日',
-  fixed_before_billing: '每月固定还款日（账单日倒推）',
-}
+type DueType = 'after_billing' | 'fixed'
 
 export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
   const [banks, setBanks] = useState<BankItem[]>([])
@@ -91,7 +89,8 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
         setCardName(bankProds[0].card_name)
       }
     } else {
-      setSelectedProductId(`cp_default_${bankId}`)
+      // Finding 6: 无产品银行不再在客户端合成伪造 ID，置空让服务端按同口径兜底
+      setSelectedProductId('')
       if (!hasCustomName) {
         setCardName('标准信用卡')
       }
@@ -109,15 +108,27 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
       setError('请输入卡片名称')
       return
     }
+
+    // Finding 7, 8: 还款规则校验
+    const dueCheck = validateDueRule(overrideEnabled, overrideDueType, overrideDueValue)
+    if (!dueCheck.valid) {
+      setError(dueCheck.error || '还款规则校验失败')
+      return
+    }
+
+    // Finding 9: 判定名称是否自定义；若未自定义或与选定产品同名，则提交 null 清空 override
+    const currentProd = products.find((p) => p.id === selectedProductId)
+    const isCustom = hasCustomName && (!currentProd || cardName.trim() !== currentProd.card_name)
+
     setError(null)
     setSubmitting(true)
     try {
       await updateCard(card.id, {
         card_product_id: selectedProductId || undefined,
         bank_id: selectedBankId || undefined,
-        name_override: cardName.trim(),
+        name_override: isCustom ? cardName.trim() : null,
         override_due_type: overrideEnabled ? overrideDueType : null,
-        override_due_value: overrideEnabled && overrideDueValue ? parseInt(overrideDueValue, 10) : undefined,
+        override_due_value: overrideEnabled ? dueCheck.value : undefined,
       })
       onSaved()
       onClose()

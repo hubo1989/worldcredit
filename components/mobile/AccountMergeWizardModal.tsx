@@ -29,6 +29,7 @@ export function AccountMergeWizardModal({
   const [selectedBank, setSelectedBank] = useState<string>('')
   const [targetAccountId, setTargetAccountId] = useState<string>('')
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([])
+  const [showConfirm, setShowConfirm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -46,6 +47,7 @@ export function AccountMergeWizardModal({
     if (open && bankOptions.length > 0) {
       setSelectedBank(bankOptions[0])
       setSelectedCardIds([])
+      setShowConfirm(false)
       setError(null)
     }
   }, [open, bankOptions])
@@ -77,24 +79,50 @@ export function AccountMergeWizardModal({
   useEffect(() => {
     if (candidateAccounts.length > 0) {
       setTargetAccountId(candidateAccounts[0].id)
-    } else if (bankCards.length > 0 && bankCards[0].account_id) {
-      setTargetAccountId(bankCards[0].account_id)
+    } else {
+      setTargetAccountId('')
     }
-  }, [candidateAccounts, bankCards])
+    setShowConfirm(false)
+  }, [candidateAccounts])
+
+  // 当 targetAccountId 变动时，剔除已属于该目标账户的卡片勾选
+  useEffect(() => {
+    if (targetAccountId) {
+      setSelectedCardIds(prev =>
+        prev.filter(id => {
+          const c = cards.find(item => item.id === id)
+          return c && c.account_id !== targetAccountId && c.account?.id !== targetAccountId
+        })
+      )
+    }
+  }, [targetAccountId, cards])
 
   const toggleCard = (id: string) => {
+    const card = cards.find(c => c.id === id)
+    if (card && (card.account_id === targetAccountId || card.account?.id === targetAccountId)) {
+      return
+    }
+    setShowConfirm(false)
     setSelectedCardIds(prev =>
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     )
   }
 
-  const handleMerge = async () => {
+  const handleStartMerge = () => {
     if (!targetAccountId) {
       setError('请选择合并的目标账户')
       return
     }
     if (selectedCardIds.length === 0) {
       setError('请勾选至少一张待合并卡片')
+      return
+    }
+    setError(null)
+    setShowConfirm(true)
+  }
+
+  const handleConfirmMerge = async () => {
+    if (!targetAccountId || selectedCardIds.length === 0) {
       return
     }
 
@@ -107,6 +135,7 @@ export function AccountMergeWizardModal({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       setError(msg)
+      setShowConfirm(false)
     } finally {
       setLoading(false)
     }
@@ -133,7 +162,12 @@ export function AccountMergeWizardModal({
               </label>
               <select
                 value={selectedBank}
-                onChange={e => setSelectedBank(e.target.value)}
+                onChange={e => {
+                  setSelectedBank(e.target.value)
+                  setSelectedCardIds([])
+                  setShowConfirm(false)
+                  setError(null)
+                }}
                 className='w-full rounded-xl border border-d-border bg-d-subtle px-3 py-2 text-[14px] text-d-text outline-none'
               >
                 {bankOptions.map(b => (
@@ -144,14 +178,21 @@ export function AccountMergeWizardModal({
               </select>
             </div>
 
-            {candidateAccounts.length > 0 && (
+            {candidateAccounts.length === 0 ? (
+              <Alert severity='warning'>
+                该银行名下暂无已创建的账单账户。请先为其中一张卡片配置账户后再进行合并。
+              </Alert>
+            ) : (
               <div>
                 <label className='mb-1.5 block text-[12px] font-semibold text-d-text'>
                   归入的目标账户
                 </label>
                 <select
                   value={targetAccountId}
-                  onChange={e => setTargetAccountId(e.target.value)}
+                  onChange={e => {
+                    setTargetAccountId(e.target.value)
+                    setShowConfirm(false)
+                  }}
                   className='w-full rounded-xl border border-d-border bg-d-subtle px-3 py-2 text-[14px] text-d-text outline-none'
                 >
                   {candidateAccounts.map(acc => (
@@ -169,35 +210,43 @@ export function AccountMergeWizardModal({
               </label>
               <div className='flex flex-col gap-2'>
                 {bankCards.map(c => {
-                  const isChecked = selectedCardIds.includes(c.id)
-                  const isTargetAnchor = c.account?.primary_card_id === c.id
+                  const isBelongToTarget = !!targetAccountId && (c.account_id === targetAccountId || c.account?.id === targetAccountId)
+                  const isTargetAnchor = isBelongToTarget && (c.account?.primary_card_id === c.id || bankCards.find(bc => (bc.account_id === targetAccountId || bc.account?.id === targetAccountId))?.id === c.id)
+                  const isChecked = !isBelongToTarget && selectedCardIds.includes(c.id)
                   return (
                     <label
                       key={c.id}
                       className={
-                        'flex cursor-pointer items-center justify-between rounded-xl border p-3 transition-colors ' +
-                        (isChecked
-                          ? 'border-d-accent bg-d-accent-light/10'
-                          : 'border-d-border bg-d-subtle')
+                        'flex items-center justify-between rounded-xl border p-3 transition-colors ' +
+                        (isBelongToTarget
+                          ? 'cursor-not-allowed opacity-60 border-d-border bg-d-subtle'
+                          : isChecked
+                          ? 'cursor-pointer border-d-accent bg-d-accent-light/10'
+                          : 'cursor-pointer border-d-border bg-d-subtle')
                       }
                     >
                       <div className='flex items-center gap-2.5'>
                         <input
                           type='checkbox'
                           checked={isChecked}
+                          disabled={isBelongToTarget}
                           onChange={() => toggleCard(c.id)}
-                          className='h-4 w-4 rounded border-d-border text-d-accent'
+                          className='h-4 w-4 rounded border-d-border text-d-accent disabled:opacity-50'
                         />
                         <div>
                           <div className='text-[13px] font-semibold text-d-text'>
                             {c.name_override || c.card_product?.card_name || '信用卡'}
                             {c.card_number_last4 && ` (尾号 ${c.card_number_last4})`}
                           </div>
-                          {isTargetAnchor && (
+                          {isTargetAnchor ? (
                             <span className='text-[10px] text-d-accent font-medium'>
-                              当前账户锚点卡
+                              当前账户锚点卡 (已在目标账户中，不可重复合并)
                             </span>
-                          )}
+                          ) : isBelongToTarget ? (
+                            <span className='text-[10px] text-d-muted font-medium'>
+                              已在当前目标账户中
+                            </span>
+                          ) : null}
                         </div>
                       </div>
                     </label>
@@ -206,20 +255,43 @@ export function AccountMergeWizardModal({
               </div>
             </div>
 
+            {showConfirm && (
+              <Alert severity='warning'>
+                确认将已勾选的 {selectedCardIds.length} 张卡片合并入目标账户吗？合并后，候选卡的历史账单归属（card_id）将改写为目标账户主卡，此操作不可撤销。
+              </Alert>
+            )}
+
             <div className='mt-2 flex justify-end gap-2'>
-              <Button variant='secondary' onClick={onClose} disabled={loading}>
-                取消
-              </Button>
               <Button
-                variant='primary'
-                onClick={handleMerge}
-                loading={loading}
+                variant='secondary'
+                onClick={showConfirm ? () => setShowConfirm(false) : onClose}
+                disabled={loading}
               >
-                <span className='inline-flex items-center gap-1.5'>
-                  <MergeIcon size={16} />
-                  <span>确认合并</span>
-                </span>
+                {showConfirm ? '返回修改' : '取消'}
               </Button>
+              {showConfirm ? (
+                <Button
+                  variant='primary'
+                  onClick={handleConfirmMerge}
+                  loading={loading}
+                >
+                  <span className='inline-flex items-center gap-1.5'>
+                    <MergeIcon size={16} />
+                    <span>确认执行合并</span>
+                  </span>
+                </Button>
+              ) : (
+                <Button
+                  variant='primary'
+                  onClick={handleStartMerge}
+                  disabled={candidateAccounts.length === 0 || selectedCardIds.length === 0}
+                >
+                  <span className='inline-flex items-center gap-1.5'>
+                    <MergeIcon size={16} />
+                    <span>确认合并</span>
+                  </span>
+                </Button>
+              )}
             </div>
           </>
         )}

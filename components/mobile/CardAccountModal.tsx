@@ -9,6 +9,12 @@ import { updateCard, updateCardHolder, type CreditCardWithProduct } from '@/lib/
 import { getEffectiveCreditLimit, getEffectiveBillingDay } from '@/lib/utils'
 import { currencySymbol } from '@/lib/fx'
 import type { CardHolder } from '@/lib/types'
+import {
+  validateBillingDay,
+  resolveLimitOnEdit,
+  parseLast4,
+  DEFAULT_HOLDER_AVATAR_COLOR,
+} from './card-form-shared'
 
 interface Props {
   open: boolean
@@ -58,57 +64,80 @@ export function CardAccountModal({ open, onClose, card, onSaved }: Props) {
   const handleSubmit = async () => {
     setError(null)
 
-    let finalHolderId = selectedHolderId
+    // 1. 本地字段校验先行（Finding 5, 8, 11）
     if (isCreatingHolder) {
       if (!newHolderName.trim()) {
         setError('请输入持卡人姓名')
         return
       }
-      try {
-        const created = await createHolder({
-          name: newHolderName.trim(),
-          avatar_color: '#3b82f6',
-        })
-        finalHolderId = created.id
-      } catch (err) {
-        setError(err instanceof Error ? err.message : '创建持卡人失败')
-        return
-      }
-    }
-
-    if (!finalHolderId) {
+    } else if (!selectedHolderId) {
       setError('请选择或新建持卡人')
       return
     }
 
-    const dayNum = parseInt(billingDay, 10)
-    if (isNaN(dayNum) || dayNum < 1 || dayNum > 31) {
-      setError('每月账单日必须在 1 到 31 之间')
+    const dayCheck = validateBillingDay(billingDay)
+    if (!dayCheck.valid) {
+      setError(dayCheck.error || '每月账单日必须在 1 到 31 之间')
       return
     }
 
-    const limitNum = parseFloat(limit)
-    if (limit.trim() && (isNaN(limitNum) || limitNum < 0)) {
-      setError('信用额度必须为非负数')
+    const limitCheck = resolveLimitOnEdit(limit)
+    if (!limitCheck.valid) {
+      setError(limitCheck.error || '信用额度必须为非负数')
+      return
+    }
+
+    const last4Check = parseLast4(last4)
+    if (!last4Check.valid) {
+      setError(last4Check.error || '卡号尾号必须为 1 到 4 位数字')
       return
     }
 
     setSubmitting(true)
+
+    // 2. 全部校验通过后再创建持卡人，并立即退出创建态（Finding 5, 12）
+    let finalHolderId = selectedHolderId
+    if (isCreatingHolder) {
+      try {
+        const created = await createHolder({
+          name: newHolderName.trim(),
+          avatar_color: DEFAULT_HOLDER_AVATAR_COLOR,
+        })
+        finalHolderId = created.id
+        setSelectedHolderId(created.id)
+        setIsCreatingHolder(false)
+        setNewHolderName('')
+        setHolders(prev => [created, ...prev])
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '创建持卡人失败')
+        setSubmitting(false)
+        return
+      }
+    }
+
+    // 3. 执行更新，妥善处理第二步失败时的半提交状态（Finding 10, 11）
+    let holderUpdated = false
     try {
       if (finalHolderId !== card.holder_id) {
         await updateCardHolder(card.id, finalHolderId)
+        holderUpdated = true
       }
 
       await updateCard(card.id, {
-        card_number_last4: last4.trim() || undefined,
-        credit_limit: limit.trim() ? limitNum : 0,
-        billing_day: dayNum,
+        card_number_last4: last4Check.value,
+        credit_limit: limitCheck.credit_limit,
+        credit_limit_override: limitCheck.credit_limit_override,
+        billing_day: dayCheck.value,
       })
 
       onSaved()
       onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存失败')
+      if (holderUpdated) {
+        setError('持卡人已变更，但卡片其余字段保存失败：' + (err instanceof Error ? err.message : String(err)))
+      } else {
+        setError(err instanceof Error ? err.message : '保存失败')
+      }
     } finally {
       setSubmitting(false)
     }
