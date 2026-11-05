@@ -68,7 +68,7 @@ export function CreditCardVisual({ card, usedAmount = 0, onClick }: Props) {
           <span className='inline-flex items-center gap-1'>
             <span>额度 {hasLimit ? formatAmount(effLimit, currency) : '未获取'}</span>
             {isManual && (
-              <span className='rounded bg-d-subtle px-1 py-0.2 text-[9px] font-semibold text-d-text'>
+              <span className='rounded bg-d-subtle px-1 py-0.5 text-[9px] font-semibold text-d-text'>
                 已设置
               </span>
             )}

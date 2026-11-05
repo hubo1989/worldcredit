@@ -13,6 +13,7 @@ import {
   validateBillingDay,
   resolveLimitOnEdit,
   parseLast4,
+  sanitizeLast4Input,
   DEFAULT_HOLDER_AVATAR_COLOR,
 } from './card-form-shared'
 
@@ -221,7 +222,7 @@ export function CardAccountModal({ open, onClose, card, onSaved }: Props) {
           placeholder='例如：8888（选填）'
           maxLength={4}
           value={last4}
-          onChange={(e) => setLast4(e.target.value.replace(/[^\w]/g, '').slice(0, 4))}
+          onChange={(e) => setLast4(sanitizeLast4Input(e.target.value))}
           helperText='建议填写后 4 位，方便核对账单'
         />
 

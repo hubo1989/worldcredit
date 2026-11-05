@@ -5,10 +5,16 @@ import '@testing-library/jest-dom/vitest'
 import {
   validateBillingDay,
   validateDueRule,
+  validateLimitOnCreate,
   resolveLimitOnEdit,
   parseLast4,
+  sanitizeLast4Input,
+  resolveBankChange,
+  resolveProductSelect,
+  resolveNameOverride,
   DEFAULT_HOLDER_AVATAR_COLOR,
 } from '@/components/mobile/card-form-shared'
+import { CardForm, resolveCardFormLimit, getCardFormLimitHelperText } from '@/components/mobile/CardForm'
 import { AccountMergeWizardModal } from '@/components/mobile/AccountMergeWizardModal'
 import { CardAccountModal } from '@/components/mobile/CardAccountModal'
 import { CardCreateModal } from '@/components/mobile/CardCreateModal'
@@ -76,6 +82,113 @@ describe('card-form-shared 纯函数逻辑验证 (Medium 5, 7, 8, 11, 12)', () =
     expect(validateDueRule(true, 'fixed', '31')).toEqual({ valid: true, value: 31 })
     expect(validateDueRule(true, 'fixed', '0').valid).toBe(false)
     expect(validateDueRule(true, 'fixed', '32').valid).toBe(false)
+
+    // 未识别的规则类型显式返回 invalid (#7 封闭函数)
+    expect(validateDueRule(true, 'fixed_before_billing', '15').valid).toBe(false)
+    expect(validateDueRule(true, 'unknown_due_rule', '10').valid).toBe(false)
+  })
+
+  it('validateLimitOnCreate: 新建额度校验要求大于0的正数 (#3)', () => {
+    expect(validateLimitOnCreate('').valid).toBe(false)
+    expect(validateLimitOnCreate('   ').valid).toBe(false)
+    expect(validateLimitOnCreate('0').valid).toBe(false)
+    expect(validateLimitOnCreate('-10').valid).toBe(false)
+    expect(validateLimitOnCreate('abc').valid).toBe(false)
+    expect(validateLimitOnCreate('50000')).toEqual({ valid: true, value: 50000 })
+    expect(validateLimitOnCreate(30000)).toEqual({ valid: true, value: 30000 })
+  })
+
+  it('sanitizeLast4Input: 输入过滤只保留数字且最多4位 (#5)', () => {
+    expect(sanitizeLast4Input('1234')).toBe('1234')
+    expect(sanitizeLast4Input('12a3b4c')).toBe('1234')
+    expect(sanitizeLast4Input('123456')).toBe('1234')
+    expect(sanitizeLast4Input('ab_cd')).toBe('')
+  })
+
+  it('resolveBankChange & resolveProductSelect & resolveNameOverride: 共享表单逻辑 (#4)', () => {
+    const dummyProds: CardProduct[] = [
+      { id: 'p1', bank_name: '招商银行', bank_id: 'b1', card_name: '经典白金卡', currency: 'CNY', card_type: 'credit' } as unknown as CardProduct,
+      { id: 'p2', bank_name: '招商银行', bank_id: 'b1', card_name: '青年卡', currency: 'CNY', card_type: 'credit' } as unknown as CardProduct,
+    ]
+    // 未自定义卡名时，切银行自动回填首个产品名
+    expect(resolveBankChange(dummyProds, false, '')).toEqual({
+      productId: 'p1',
+      cardName: '经典白金卡',
+    })
+    // 已自定义卡名时，保留用户自定卡名
+    expect(resolveBankChange(dummyProds, true, '我的专属卡')).toEqual({
+      productId: 'p1',
+      cardName: '我的专属卡',
+    })
+    // 无产品时回填兜底名
+    expect(resolveBankChange([], false, '')).toEqual({
+      productId: '',
+      cardName: '标准信用卡',
+    })
+
+    // 点选卡产品
+    expect(resolveProductSelect(dummyProds[1])).toEqual({
+      productId: 'p2',
+      cardName: '青年卡',
+      hasCustomName: false,
+    })
+
+    // 名称覆盖推导：与产品名相同或未自定义时不覆盖
+    expect(resolveNameOverride('经典白金卡', dummyProds[0], false)).toBeNull()
+    expect(resolveNameOverride('经典白金卡', dummyProds[0], true)).toBeNull()
+    expect(resolveNameOverride('我的招行卡', dummyProds[0], true)).toBe('我的招行卡')
+    expect(resolveNameOverride('', dummyProds[0], true)).toBeNull()
+  })
+
+  it('resolveCardFormLimit & getCardFormLimitHelperText: CardForm 额度推导与 helperText (#1, #2)', () => {
+    const mockCard = {
+      id: 'c1',
+      credit_limit: 50000,
+      credit_limit_override: 50000,
+    } as CreditCard
+
+    // 编辑场景留空：不传 limit/override (undefined)，保持旧 override 不丢失 (#1)
+    expect(resolveCardFormLimit('', true, mockCard)).toEqual({
+      valid: true,
+      credit_limit: undefined,
+      credit_limit_override: undefined,
+    })
+
+    // 编辑场景输入 0：显式清空 (0, null)
+    expect(resolveCardFormLimit('0', true, mockCard)).toEqual({
+      valid: true,
+      credit_limit: 0,
+      credit_limit_override: null,
+    })
+
+    // 编辑场景输入正数：正常覆盖
+    expect(resolveCardFormLimit('80000', true, mockCard)).toEqual({
+      valid: true,
+      credit_limit: 80000,
+      credit_limit_override: 80000,
+    })
+
+    // 新建信用卡：拒绝 0 和空 (#3)
+    expect(resolveCardFormLimit('', true, undefined).valid).toBe(false)
+    expect(resolveCardFormLimit('0', true, undefined).valid).toBe(false)
+    expect(resolveCardFormLimit('30000', true, undefined)).toEqual({
+      valid: true,
+      credit_limit: 30000,
+      credit_limit_override: 30000,
+    })
+
+    // 新建贷款类：允许留空 (0, null)
+    expect(resolveCardFormLimit('', false, undefined)).toEqual({
+      valid: true,
+      credit_limit: 0,
+      credit_limit_override: null,
+    })
+
+    // helperText 函数化验证 (#2)
+    expect(getCardFormLimitHelperText(undefined)).toBeUndefined()
+    expect(getCardFormLimitHelperText(mockCard)).toBe('已手动设置（不会被邮件同步覆盖）')
+    const unsyncedCard = { id: 'c2', credit_limit: 0, credit_limit_override: null } as CreditCard
+    expect(getCardFormLimitHelperText(unsyncedCard)).toBe('邮件未获取到额度，请输入并保存')
   })
 
   it('resolveLimitOnEdit: 额度留空与清空语义 (Medium 8, 11)', () => {
@@ -366,5 +479,114 @@ describe('Modal 提交前校验失败不建持卡人 (Medium 5)', () => {
 
     // createHolder 绝对不能被调用
     expect(mockedCreateHolder).not.toHaveBeenCalled()
+  })
+})
+
+describe('CardForm 组件交互与回归验证 (#1, #2, #5)', () => {
+  const dummyProducts: CardProduct[] = [
+    {
+      id: 'cp-cmb-1',
+      bank_id: 'b1',
+      bank_name: '招商银行',
+      card_name: '经典白金卡',
+      currency: 'CNY',
+      card_type: 'credit',
+    } as unknown as CardProduct,
+  ]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockedGetCardProducts.mockResolvedValue(dummyProducts)
+  })
+
+  it('CardForm: 编辑卡片时留空额度提交，不提交 credit_limit: 0，保留原有 override 不丢 (#1)', async () => {
+    const initialCard: CreditCard = {
+      id: 'card-1',
+      holder_id: 'holder-1',
+      card_product_id: 'cp-cmb-1',
+      card_number_last4: '1234',
+      credit_limit: 50000,
+      credit_limit_override: 50000,
+      billing_day: 15,
+      status: 'active',
+      card_type: 'credit',
+      created_at: '2026-01-01T00:00:00Z',
+    }
+    const handleSubmit = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <CardForm
+        open={true}
+        onClose={vi.fn()}
+        onSubmit={handleSubmit}
+        holderId="holder-1"
+        initial={initialCard}
+      />
+    )
+
+    // 等待 products 异步加载并回填表单（快捷卡种渲染）
+    await screen.findByRole('button', { name: '经典白金卡' })
+
+    // 清空额度输入框
+    const limitInput = screen.getByLabelText(/额度/)
+    fireEvent.change(limitInput, { target: { value: '' } })
+
+    // 保存
+    const saveBtn = screen.getByRole('button', { name: '保存' })
+    fireEvent.click(saveBtn)
+
+    await waitFor(() => {
+      expect(handleSubmit).toHaveBeenCalledTimes(1)
+    })
+
+    // 关键断言：留空时不提交 credit_limit: 0，两个字段均为 undefined
+    const submitted = handleSubmit.mock.calls[0][0]
+    expect(submitted.credit_limit).toBeUndefined()
+    expect(submitted.credit_limit_override).toBeUndefined()
+  })
+
+  it('CardForm: 编辑卡片显式输入 0，提交 credit_limit: 0 与 credit_limit_override: null 走清除路径 (#1)', async () => {
+    const initialCard: CreditCard = {
+      id: 'card-1',
+      holder_id: 'holder-1',
+      card_product_id: 'cp-cmb-1',
+      card_number_last4: '1234',
+      credit_limit: 50000,
+      credit_limit_override: 50000,
+      billing_day: 15,
+      status: 'active',
+      card_type: 'credit',
+      created_at: '2026-01-01T00:00:00Z',
+    }
+    const handleSubmit = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <CardForm
+        open={true}
+        onClose={vi.fn()}
+        onSubmit={handleSubmit}
+        holderId="holder-1"
+        initial={initialCard}
+      />
+    )
+
+    // 等待 products 异步加载并回填表单（快捷卡种渲染）
+    await screen.findByRole('button', { name: '经典白金卡' })
+
+    // 输入 0
+    const limitInput = screen.getByLabelText(/额度/)
+    fireEvent.change(limitInput, { target: { value: '0' } })
+
+    // 保存
+    const saveBtn = screen.getByRole('button', { name: '保存' })
+    fireEvent.click(saveBtn)
+
+    await waitFor(() => {
+      expect(handleSubmit).toHaveBeenCalledTimes(1)
+    })
+
+    const submitted = handleSubmit.mock.calls[0][0]
+    expect(submitted.credit_limit).toBe(0)
+    expect(submitted.credit_limit_override).toBeNull()
   })
 })

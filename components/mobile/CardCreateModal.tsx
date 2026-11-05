@@ -11,7 +11,12 @@ import type { CardProduct, CardHolder } from '@/lib/types'
 import {
   validateBillingDay,
   validateDueRule,
+  validateLimitOnCreate,
   parseLast4,
+  sanitizeLast4Input,
+  resolveBankChange,
+  resolveProductSelect,
+  resolveNameOverride,
   DEFAULT_HOLDER_AVATAR_COLOR,
   DUE_TYPE_LABELS,
 } from './card-form-shared'
@@ -73,13 +78,9 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
           const firstBank = bankList[0]
           setSelectedBankId(firstBank.id)
           const firstBankProds = prodList.filter((p) => p.bank_id === firstBank.id)
-          if (firstBankProds.length > 0) {
-            setSelectedProductId(firstBankProds[0].id)
-            setCardName(firstBankProds[0].card_name)
-          } else {
-            setSelectedProductId('')
-            setCardName('标准信用卡')
-          }
+          const next = resolveBankChange(firstBankProds, false, '')
+          setSelectedProductId(next.productId)
+          setCardName(next.cardName)
           setHasCustomName(false)
         }
 
@@ -106,23 +107,16 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
     setSelectedBankId(bankId)
     setError(null)
     const bankProds = products.filter((p) => p.bank_id === bankId)
-    if (bankProds.length > 0) {
-      setSelectedProductId(bankProds[0].id)
-      if (!hasCustomName) {
-        setCardName(bankProds[0].card_name)
-      }
-    } else {
-      setSelectedProductId('')
-      if (!hasCustomName) {
-        setCardName('标准信用卡')
-      }
-    }
+    const next = resolveBankChange(bankProds, hasCustomName, cardName)
+    setSelectedProductId(next.productId)
+    setCardName(next.cardName)
   }
 
   const handleSelectProduct = (prod: CardProduct) => {
-    setSelectedProductId(prod.id)
-    setCardName(prod.card_name)
-    setHasCustomName(false)
+    const next = resolveProductSelect(prod)
+    setSelectedProductId(next.productId)
+    setCardName(next.cardName)
+    setHasCustomName(next.hasCustomName)
   }
 
   const handleSubmit = async () => {
@@ -155,9 +149,9 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
       return
     }
 
-    const limitNum = parseFloat(limit)
-    if (!limit.trim() || isNaN(limitNum) || limitNum < 0) {
-      setError('请输入有效的信用额度')
+    const limitCheck = validateLimitOnCreate(limit)
+    if (!limitCheck.valid) {
+      setError(limitCheck.error || '请输入有效的信用额度')
       return
     }
 
@@ -201,9 +195,14 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
         holder_id: finalHolderId,
         bank_id: selectedBankId,
         card_product_id: selectedProductId || undefined,
-        name_override: hasCustomName && cardName.trim() ? cardName.trim() : undefined,
+        name_override:
+          resolveNameOverride(
+            cardName,
+            products.find((p) => p.id === selectedProductId),
+            hasCustomName
+          ) ?? undefined,
         card_number_last4: last4Check.value,
-        credit_limit: limitNum,
+        credit_limit: limitCheck.value!,
         billing_day: dayCheck.value!,
         override_due_type: overrideEnabled ? overrideDueType : null,
         override_due_value: overrideEnabled ? dueCheck.value : undefined,
@@ -342,7 +341,7 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
             placeholder='选填'
             maxLength={4}
             value={last4}
-            onChange={(e) => setLast4(e.target.value.replace(/[^\w]/g, '').slice(0, 4))}
+            onChange={(e) => setLast4(sanitizeLast4Input(e.target.value))}
           />
 
           <TextField
