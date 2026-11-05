@@ -350,4 +350,16 @@ describe("BillsView 键盘导航边界", () => {
     expect(cardButton.tagName).toBe("BUTTON");
     expect(document.querySelector('[role="button"] button, button button')).toBeNull();
   });
+
+  it("BillsView 提供合并账单入口并响应点击", async () => {
+    const user = userEvent.setup();
+    const { props } = makeBillsViewFixture();
+    const onMergeCards = vi.fn();
+    render(<BillsView {...props} onMergeCards={onMergeCards} />);
+
+    const mergeBtn = screen.getByRole("button", { name: "合并账单" });
+    expect(mergeBtn).toBeInTheDocument();
+    await user.click(mergeBtn);
+    expect(onMergeCards).toHaveBeenCalledTimes(1);
+  });
 });

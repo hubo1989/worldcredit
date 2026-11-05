@@ -134,5 +134,13 @@ describe('信用额度字段与持久化规则', () => {
       expect(changed).toBe(false)
       expect(mock.getUpdatedLimit()).toBeNull()
     })
+
+    it('card 具备 credit_limit_override 时 getEffectiveCreditLimit 正确生效且保存时能保留', () => {
+      const cardFromLoader: Pick<CreditCard, 'credit_limit' | 'credit_limit_override'> = {
+        credit_limit: 10000,
+        credit_limit_override: 30000,
+      }
+      expect(getEffectiveCreditLimit(cardFromLoader)).toBe(30000)
+    })
   })
 })

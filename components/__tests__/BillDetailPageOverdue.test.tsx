@@ -181,4 +181,53 @@ describe('BillDetailPage 逾期天数显示规则回归测试', () => {
     expect(screen.getByText(/已逾期 \d+ 天/)).toBeInTheDocument()
     expect(screen.getByText('逾期')).toBeInTheDocument()
   })
+
+  it('卡片信息与覆盖额度正确渲染（尾号不重复前缀，手动额度覆盖生效）', async () => {
+    mockedGetBillDetail.mockResolvedValueOnce(
+      makeBillDetail({
+        statement_date: '2026-08-05',
+        due_date: '2026-08-25',
+        card: {
+          id: 'c1',
+          holder_id: 'h1',
+          card_product_id: 'cp1',
+          card_number_last4: '2104',
+          credit_limit: 50000,
+          credit_limit_override: 88000,
+          billing_day: 5,
+          status: 'active' as const,
+          card_type: 'credit' as const,
+          created_at: '2026-01-01T00:00:00Z',
+          card_holder: { id: 'h1', name: '本人' },
+          card_product: {
+            id: 'cp1',
+            bank_name: '民泰银行',
+            card_name: '民泰普卡',
+            currency: 'CNY',
+            country: 'CN',
+            payment_due_type: 'after_billing' as const,
+            payment_due_value: 20,
+            is_active: true,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        },
+      }) as never,
+    )
+
+    await renderPage()
+
+    await waitFor(() => {
+      expect(screen.getByText('账单详情')).toBeInTheDocument()
+    })
+
+    // 卡片尾号应直接展示 2104，而不是「尾号 2104」
+    expect(screen.getByText('2104')).toBeInTheDocument()
+    expect(screen.queryByText('尾号 2104')).not.toBeInTheDocument()
+
+    // 额度应优先展示 credit_limit_override (¥88,000)，而不是原始的 ¥50,000
+    expect(screen.getByText('¥88,000')).toBeInTheDocument()
+
+    // 今日刷卡免息展示正常
+    expect(screen.getByText(/今日刷卡免息/)).toBeInTheDocument()
+  })
 })

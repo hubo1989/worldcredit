@@ -2,7 +2,6 @@ import { query, queryOne, execute, batch, uuid, now, today } from "../db";
 import type { Bill, Payment, CreditCard, CardProduct, BillCardSubtotal, CreditAccount } from "../types";
 import {
   getDueDate,
-  getLoanNextDueDate,
   effectiveBillAmount,
   billEffectiveMinPayment,
   billEffectiveDueDate,
@@ -10,6 +9,9 @@ import {
   billStatusRecalcStatement,
   nextBillingDateOf,
   isValidCalendarDate,
+  isBillUnissued,
+  calculateCardGracePeriod,
+  diffInCalendarDays,
 } from "../utils";
 import { format } from "date-fns";
 import { RpcDomainError } from "./errors";
@@ -69,11 +71,10 @@ function computeStatus(bill: Bill, paidAmount: number): Bill["status"] {
   const amount = effectiveBillAmount(bill);
   if (amount <= 0 || paidAmount >= amount - 0.01) return "paid";
   if (paidAmount > 0) return "partial";
-  // 待出账保护：未出账前绝无逾期概念，状态为 unpaid
-  const stmtDate = billEffectiveStatementDate(bill) || bill.statement_end;
-  if (stmtDate && daysUntil(stmtDate) > 0) return "unpaid";
+  // 待出账保护：未出账前绝无逾期概念，状态为 unpaid（统一复用 isBillUnissued 日历日口径）
+  if (isBillUnissued(bill)) return "unpaid";
   const dueDate = billEffectiveDueDate(bill) || bill.due_date;
-  if (dueDate && daysUntil(dueDate) < 0) return "overdue";
+  if (dueDate && diffInCalendarDays(dueDate) < 0) return "overdue";
   return "unpaid";
 }
 
@@ -377,49 +378,7 @@ export async function getBillById(id: string): Promise<BillWithCard | null> {
   return withCreditCardProductFields(billWithCard);
 }
 
-export function calculateCardGracePeriod(
-  card: CreditCard & { card_product: CardProduct },
-  today: Date = new Date(),
-) {
-  const d = new Date(today);
-  d.setHours(0, 0, 0, 0);
-  const billingDay = Number(card.override_billing_day ?? card.billing_day ?? 10);
-  if (card.card_type === "loan" && card.loan_due_day) {
-    const nextDueDate = getLoanNextDueDate(card.loan_due_day, d);
-    const diffMs = nextDueDate.getTime() - d.getTime();
-    return {
-      billingDay,
-      nextBillingDate: nextDueDate,
-      nextDueDate,
-      graceDays: Math.max(1, Math.ceil(diffMs / (24 * 60 * 60 * 1000))),
-    };
-  }
-  let purchaseMonth = new Date(d.getFullYear(), d.getMonth(), 1);
-  const effectiveBillingDay = Math.min(
-    billingDay,
-    new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(),
-  );
-  // 账单日次日起的交易归下一期：账单日当天刷卡当天出账（多数国内行
-  // 口径），当天交易进当期账单、免息最短；账单日后一天刷卡才是最长
-  // 免息的第一天（今天 == 账单日 → purchaseMonth 留在本月，当期出账
-  // 最早、免息天数最小；今天 == 账单日+1 → 归下一期，免息期最长）。
-  if (d.getDate() > effectiveBillingDay) {
-    purchaseMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-  }
-  const nextBillingDate = new Date(
-    purchaseMonth.getFullYear(),
-    purchaseMonth.getMonth(),
-    effectiveBillingDay,
-  );
-  const nextDueDate = getDueDate(card, card.card_product, purchaseMonth);
-  const diffMs = nextDueDate.getTime() - d.getTime();
-  return {
-    billingDay,
-    nextBillingDate,
-    nextDueDate,
-    graceDays: Math.max(1, Math.ceil(diffMs / (24 * 60 * 60 * 1000))),
-  };
-}
+export { calculateCardGracePeriod };
 
 export interface CardWithBillsSummary {
   card: CreditCard & { card_product: CardProduct };
@@ -578,10 +537,7 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
         )
       : 0;
 
-    const isUnissuedBill = (b: BillDashboardItem) => {
-      const stmt = billEffectiveStatementDate(b) || b.statement_end || b.statement_date;
-      return Boolean(stmt && daysUntil(stmt) > 0);
-    };
+    const isUnissuedBill = (b: BillDashboardItem) => isBillUnissued(b);
 
     let status: CardWithBillsSummary["status"] = "unissued";
     if (
@@ -745,6 +701,7 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
   const { data: billRow, error } = await queryOne<Record<string, unknown>>(
     `SELECT b.*, cc.id AS c_id, cc.holder_id AS c_holder_id, cc.card_product_id AS c_card_product_id,
             cc.card_number_last4 AS c_card_number_last4, cc.credit_limit AS c_credit_limit,
+            cc.credit_limit_override AS c_credit_limit_override,
             cc.billing_day AS c_billing_day, cc.status AS c_status, cc.card_type AS c_card_type,
             cc.loan_due_day AS c_loan_due_day, cc.override_billing_day AS c_override_billing_day,
             cc.override_due_type AS c_override_due_type, cc.override_due_value AS c_override_due_value,
@@ -791,6 +748,8 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
       card_product_id: row.c_card_product_id as string,
       card_number_last4: (row.c_card_number_last4 as string) || undefined,
       credit_limit: row.c_credit_limit as number,
+      credit_limit_override:
+        row.c_credit_limit_override != null ? (row.c_credit_limit_override as number) : undefined,
       billing_day: row.c_billing_day as number,
       status: row.c_status as CreditCard["status"],
       card_type: row.c_card_type as CreditCard["card_type"],

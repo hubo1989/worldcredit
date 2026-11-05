@@ -110,6 +110,7 @@ export interface BillsViewProps {
   onManualAmount: (item: CardWithBillsSummary) => void
   onAddBill: () => void
   onAddCard?: () => void
+  onMergeCards?: () => void
 }
 
 function FilterPill({
@@ -391,7 +392,7 @@ function BillCard({
                             </span>
                           </div>
                         ))}
-                        {b.unallocated_amount != null && (
+                        {b.unallocated_amount !== null && b.unallocated_amount !== undefined && (
                           <div className='flex justify-between items-center text-d-muted/80 italic'>
                             <span>上期结转 / 账户级分期与调整</span>
                             <span className='font-mono'>
@@ -428,7 +429,7 @@ export function BillsView(vm: BillsViewProps) {
     onClearStatuses, statusCounts, entityCounts, tagCounts, dimension, onDimension,
     selectedTag, onSelectedTag, holderTags, bankTags,
     loading, loadError, onRetry, onEmptySync, payables, cards, allCards, holderMap,
-    bankGroups, onOpenPayment, onManualAmount, onAddBill, onAddCard, sortMode, onSortMode,
+    bankGroups, onOpenPayment, onManualAmount, onAddBill, onAddCard, onMergeCards, sortMode, onSortMode,
     payablePayments, payableHistoryErrors, payableHistoryLoading,
     expandedPayableIds, onTogglePayableHistory,
     onEditPayable, onPayPayable,
@@ -527,6 +528,15 @@ export function BillsView(vm: BillsViewProps) {
       <div className='flex items-center justify-between px-5 pt-4'>
         <p className='text-[20px] font-bold leading-7 text-d-text'>卡片与账单</p>
         <div className='flex items-center gap-2'>
+          {onMergeCards && (
+            <button
+              type='button'
+              onClick={onMergeCards}
+              className='flex h-11 items-center gap-1 rounded-xl border border-d-border bg-d-surface px-3 text-[13px] font-semibold text-d-text active:opacity-90'
+            >
+              <span>合并账单</span>
+            </button>
+          )}
           {onAddCard && (
             <button
               type='button'
