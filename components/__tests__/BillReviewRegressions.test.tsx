@@ -362,4 +362,37 @@ describe("BillsView 键盘导航边界", () => {
     await user.click(mergeBtn);
     expect(onMergeCards).toHaveBeenCalledTimes(1);
   });
+
+  it("BillsView 合并账单下 memberCards 尾号均为空时，不渲染孤立的「含尾号 」，回退到普通尾号展示", () => {
+    const { props } = makeBillsViewFixture();
+    const mergedCardItem: CardWithBillsSummary = {
+      ...props.cards[0],
+      card: {
+        ...props.cards[0].card,
+        card_number_last4: "8888",
+      },
+      account: {
+        id: "acc-1",
+        holder_id: "h1",
+        bank_id: "b1",
+        bank_name: "招商银行",
+        currency: "CNY",
+        statement_mode: "merged",
+        quota_mode: "shared",
+        status: "active",
+        created_at: "2026-01-01",
+        updated_at: "2026-01-01",
+      },
+      memberCards: [
+        { id: "c1", card_number_last4: null } as unknown as NonNullable<CardWithBillsSummary['memberCards']>[number],
+        { id: "c2", card_number_last4: "" } as unknown as NonNullable<CardWithBillsSummary['memberCards']>[number],
+      ],
+    };
+    render(<BillsView {...props} cards={[mergedCardItem]} allCards={[mergedCardItem]} />);
+
+    // 绝不包含孤立的 "含尾号 "
+    expect(screen.queryByText(/^含尾号/)).toBeNull();
+    // 回退到普通主卡尾号展示
+    expect(screen.getByText("尾号 8888")).toBeInTheDocument();
+  });
 });

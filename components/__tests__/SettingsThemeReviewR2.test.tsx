@@ -10,11 +10,65 @@ import { resolveTheme, applyResolvedTheme, getInitialResolvedTheme } from '@/lib
 import type { UserReminderConfig } from '@/lib/types'
 import * as pushApi from '@/lib/api/push'
 import * as adminApi from '@/lib/api/admin'
+import * as prefApi from '@/lib/api/preferences'
 import AdminSettingsPage from '@/app/admin/settings/page'
+import { DisplayPreferencesCard } from '@/components/settings/DisplayPreferencesCard'
+import SettingsPage from '@/app/(mobile)/settings/page'
+import * as gmailApi from '@/lib/api/gmail'
+import { isUserWebPushEnabled } from '@/worker/cron'
+import { isWebPushChannelEnabled } from '@/lib/api/push'
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ back: vi.fn(), push: vi.fn() }),
+}))
+
+vi.mock('@/lib/auth', () => ({
+  useAuth: () => ({
+    user: { id: 'u1', email: 'test@example.com', role: 'member' },
+    signOut: vi.fn(),
+  }),
+}))
+
+vi.mock('@/lib/api/preferences', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    getUserPreferences: vi.fn().mockResolvedValue({
+      user_id: 'u1',
+      display_config: {
+        privacy_mode: false,
+        show_min_payment: true,
+        show_statement_date: true,
+        show_annual_fee: true,
+        show_card_last4: true,
+        default_currency: 'CNY',
+      },
+      reminder_config: {
+        remind_days_before: [3, 1, 0],
+        enabled_channels: ['web_push'],
+      },
+    }),
+    updateUserPreferences: vi.fn().mockResolvedValue({}),
+  }
+})
+
+vi.mock('@/lib/api/gmail', () => ({
+  getGmailConnection: vi.fn(),
+}))
 
 vi.mock('@/lib/api/push', () => ({
   sendTestPush: vi.fn(),
   subscribePush: vi.fn(),
+  isWebPushChannelEnabled: vi.fn((config) => {
+    if (!config) return true
+    if (config.enabled_channels !== undefined) {
+      return Array.isArray(config.enabled_channels) && config.enabled_channels.includes('web_push')
+    }
+    if (config.opportunities && config.opportunities.web_push_enabled === false) {
+      return false
+    }
+    return true
+  }),
 }))
 
 vi.mock('@/lib/api/admin', () => ({
@@ -23,9 +77,21 @@ vi.mock('@/lib/api/admin', () => ({
 }))
 
 describe('S1 #1 & #2 & #3 & #4 · ReminderPreferencesCard 行为回归', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
+beforeEach(() => {
+  vi.clearAllMocks()
+  if (typeof window !== 'undefined' && !window.matchMedia) {
+    window.matchMedia = vi.fn().mockImplementation((query) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+  }
+})
 
   it('存量配置 enabled_channels 为 undefined 时 Web Push 默认开启，关闭时正确落库空数组', async () => {
     const user = userEvent.setup()
@@ -46,6 +112,43 @@ describe('S1 #1 & #2 & #3 & #4 · ReminderPreferencesCard 行为回归', () => {
     // 点击切换为关闭，应提交包含空数组的 enabled_channels
     await user.click(toggle)
     expect(onChange).toHaveBeenCalledWith({ enabled_channels: [] })
+  })
+
+  it('存量配置 enabled_channels 未设置但旧 opportunities.web_push_enabled === false 时，判定为关闭并写回一次迁移', async () => {
+    const onChange = vi.fn()
+    const legacyOffConfig = {
+      remind_days_before: [3, 1, 0],
+      opportunities: {
+        web_push_enabled: false,
+      },
+    } as unknown as UserReminderConfig
+
+    render(<ReminderPreferencesCard config={legacyOffConfig} onChange={onChange} />)
+
+    // 绝不让显式关闭过的用户被重新开启：判定为关闭状态
+    const toggle = screen.getByRole('switch', { name: 'Web Push 浏览器通道' })
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    // 自动写回一次空数组迁移
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith({ enabled_channels: [] })
+    })
+  })
+
+  it('存量配置 enabled_channels 未设置且旧 opportunities.web_push_enabled === true 或未设置时，默认开启', () => {
+    const onChange = vi.fn()
+    const legacyOnConfig = {
+      remind_days_before: [3, 1, 0],
+      opportunities: {
+        web_push_enabled: true,
+      },
+    } as unknown as UserReminderConfig
+
+    render(<ReminderPreferencesCard config={legacyOnConfig} onChange={onChange} />)
+    const toggle = screen.getByRole('switch', { name: 'Web Push 浏览器通道' })
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    // 默认开启时不触发多余的关闭写回
+    expect(onChange).not.toHaveBeenCalledWith({ enabled_channels: [] })
   })
 
   it('显式关闭 enabled_channels: [] 时判定为关闭', () => {
@@ -135,6 +238,83 @@ describe('S1 #1 & #2 & #3 & #4 · ReminderPreferencesCard 行为回归', () => {
     } finally {
       window.Notification = origNotification
     }
+  })
+
+  it('服务端真实下发成功后只通过 Toast 提示，不创建本地 new Notification 避免双通知', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pushApi.sendTestPush).mockResolvedValueOnce({
+      ok: true,
+      data: { subscriptions: 1, sent: 1, removed: 0, errors: [] },
+    })
+
+    const notificationCtor = vi.fn()
+    const origNotification = window.Notification
+    // @ts-expect-error mock Notification
+    window.Notification = Object.assign(notificationCtor, {
+      permission: 'granted',
+      requestPermission: vi.fn().mockResolvedValue('granted'),
+    })
+
+    try {
+      render(
+        <ReminderPreferencesCard
+          config={{ remind_days_before: [3, 1, 0], enabled_channels: ['web_push'] }}
+          onChange={vi.fn()}
+        />
+      )
+      const testBtn = screen.getByRole('button', { name: /发送测试通知/ })
+      await user.click(testBtn)
+
+      await waitFor(() => {
+        expect(screen.getByText('测试通知已成功下发至设备通知栏！')).toBeInTheDocument()
+      })
+      // 绝不调用本地 Notification 造成重复通知
+      expect(notificationCtor).not.toHaveBeenCalled()
+    } finally {
+      window.Notification = origNotification
+    }
+  })
+
+  it('Web Push 通道关闭时，点击发送测试通知拦截并提示通道已关闭', async () => {
+    const user = userEvent.setup()
+    const origNotification = window.Notification
+    // @ts-expect-error mock Notification
+    window.Notification = {
+      permission: 'granted',
+      requestPermission: vi.fn().mockResolvedValue('granted'),
+    }
+
+    try {
+      render(
+        <ReminderPreferencesCard
+          config={{ remind_days_before: [3, 1, 0], enabled_channels: [] }}
+          onChange={vi.fn()}
+        />
+      )
+      const testBtn = screen.getByRole('button', { name: /发送测试通知/ })
+      await user.click(testBtn)
+
+      await waitFor(() => {
+        expect(screen.getByText('Web Push 浏览器通道已关闭，请先开启通道后再测试。')).toBeInTheDocument()
+      })
+      expect(pushApi.sendTestPush).not.toHaveBeenCalled()
+    } finally {
+      window.Notification = origNotification
+    }
+  })
+
+  it('时区选项基于 Intl.DateTimeFormat 动态生成，包含当前动态 UTC 偏移', () => {
+    render(
+      <ReminderPreferencesCard
+        config={{ remind_days_before: [3, 1, 0], enabled_channels: ['web_push'] }}
+        onChange={vi.fn()}
+      />
+    )
+    const select = screen.getByLabelText('提醒时区 (标准下拉)') as unknown as HTMLSelectElement
+    const nyOption = Array.from(select.options).find((o) => o.value === 'America/New_York')
+    expect(nyOption).toBeDefined()
+    // 包含动态 UTC 偏移，非写死文本
+    expect(nyOption?.textContent).toMatch(/America\/New_York \(美东时间 UTC-[45]\)/)
   })
 })
 
@@ -260,5 +440,179 @@ describe('S1 #8 · admin/settings 统一保存与部分成功失真处理', () =
 
     // 保存更改按钮依然可用，因为 supportEmail 依然处于 dirty 状态！
     expect(saveBtn).not.toBeDisabled()
+  })
+
+  it('多个 dirty keys 保存时保证严格串行提交，避免并发写冲突', async () => {
+    const user = userEvent.setup()
+    let concurrentCalls = 0
+    let maxConcurrent = 0
+    const callOrder: string[] = []
+
+    vi.mocked(adminApi.updateSystemSettings).mockImplementation(async (key, val) => {
+      concurrentCalls++
+      maxConcurrent = Math.max(maxConcurrent, concurrentCalls)
+      callOrder.push(String(key))
+      await new Promise((r) => setTimeout(r, 20))
+      concurrentCalls--
+      return { key, value: val }
+    })
+
+    render(<AdminSettingsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('WorldCredit')).toBeInTheDocument()
+    })
+
+    // 修改两个字段产生多个 dirty keys
+    const nameInput = screen.getByDisplayValue('WorldCredit')
+    await user.clear(nameInput)
+    await user.type(nameInput, 'WorldCredit Serial')
+
+    const emailInput = screen.getByDisplayValue('support@worldcredit.com')
+    await user.clear(emailInput)
+    await user.type(emailInput, 'serial@worldcredit.com')
+
+    const saveBtn = screen.getByRole('button', { name: '保存更改' })
+    await user.click(saveBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText('系统设置已保存')).toBeInTheDocument()
+    })
+
+    // 验证严格串行：最大并发数必须为 1，不存在重叠并发请求
+    expect(maxConcurrent).toBe(1)
+    expect(callOrder.length).toBe(2)
+  })
+})
+
+describe('PR #55 R3 综合补充测试（#1、#4、#5、#6、#8）', () => {
+  it('DisplayPreferencesCard 对白名单外存量币种动态追加当前值（历史设置）', () => {
+    const onChange = vi.fn()
+    render(
+      <DisplayPreferencesCard
+        config={{
+          privacy_mode: false,
+          show_min_payment: true,
+          show_statement_date: true,
+          show_annual_fee: true,
+          show_card_last4: true,
+          default_currency: 'SGD',
+        }}
+        onChange={onChange}
+      />
+    )
+    const select = screen.getByLabelText('综合看板折算币种') as unknown as HTMLSelectElement
+    expect(select.value).toBe('SGD')
+    expect(screen.getByRole('option', { name: 'SGD · 当前值（历史设置）' })).toBeInTheDocument()
+  })
+
+  it('DisplayPreferencesCard 模块不再反向导出 CURRENCY_OPTIONS', async () => {
+    const mod = await import('@/components/settings/DisplayPreferencesCard')
+    // @ts-expect-error test assertion on removed re-export
+    expect(mod.CURRENCY_OPTIONS).toBeUndefined()
+  })
+
+  it('Gmail 徽章区分 loading / error(含重试) / 未连接三态，错误时不伪装成未连接', async () => {
+    const user = userEvent.setup()
+    let rejectGmail: (err: unknown) => void
+    const pendingPromise = new Promise<never>((_, reject) => {
+      rejectGmail = reject
+    })
+    vi.mocked(gmailApi.getGmailConnection).mockReturnValueOnce(pendingPromise)
+
+    render(<SettingsPage />)
+
+    // 1. loading 态
+    expect(screen.getByText('加载中…')).toBeInTheDocument()
+
+    // 2. error 态（模拟接口抛错）
+    rejectGmail!(new Error('Network error'))
+
+    await waitFor(() => {
+      expect(screen.getByText('加载失败')).toBeInTheDocument()
+    })
+    const retryBtn = screen.getByRole('button', { name: '重试' })
+    expect(retryBtn).toBeInTheDocument()
+
+    // 3. 点击重试 -> 成功恢复为已连接
+    vi.mocked(gmailApi.getGmailConnection).mockResolvedValueOnce({
+      connected: true,
+      email: 'user@gmail.com',
+      status: 'active',
+      last_sync_at: '2026-11-06T00:00:00Z',
+      last_sync_summary: null,
+      last_error: null,
+    })
+    await user.click(retryBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText('已连接')).toBeInTheDocument()
+    })
+  })
+
+  it('worker/cron 与 lib/api/push 统一按迁移后口径判定 Web Push 发送通道', () => {
+    // 存量配置：未设置 enabled_channels 且旧 opportunities.web_push_enabled === false -> 绝不发送
+    const legacyOff = JSON.stringify({
+      remind_days_before: [3, 1, 0],
+      opportunities: { web_push_enabled: false },
+    })
+    expect(isUserWebPushEnabled(legacyOff)).toBe(false)
+    expect(isWebPushChannelEnabled(JSON.parse(legacyOff))).toBe(false)
+
+    // 存量配置：未设置 enabled_channels 且旧 opportunities.web_push_enabled === true -> 默认开
+    const legacyOn = JSON.stringify({
+      remind_days_before: [3, 1, 0],
+      opportunities: { web_push_enabled: true },
+    })
+    expect(isUserWebPushEnabled(legacyOn)).toBe(true)
+    expect(isWebPushChannelEnabled(JSON.parse(legacyOn))).toBe(true)
+
+    // 存量配置：未设置 enabled_channels 且 opportunities 未配置 -> 默认开
+    const legacyUnset = JSON.stringify({ remind_days_before: [3, 1, 0] })
+    expect(isUserWebPushEnabled(legacyUnset)).toBe(true)
+    expect(isWebPushChannelEnabled(JSON.parse(legacyUnset))).toBe(true)
+
+    // 新配置：显式关闭 enabled_channels: []
+    const explicitOff = JSON.stringify({ enabled_channels: [] })
+    expect(isUserWebPushEnabled(explicitOff)).toBe(false)
+    expect(isWebPushChannelEnabled(JSON.parse(explicitOff))).toBe(false)
+
+    // 新配置：显式开启 enabled_channels: ['web_push']
+    const explicitOn = JSON.stringify({ enabled_channels: ['web_push'] })
+    expect(isUserWebPushEnabled(explicitOn)).toBe(true)
+    expect(isWebPushChannelEnabled(JSON.parse(explicitOn))).toBe(true)
+  })
+
+  it('useUserPreferences: togglePrivacyMode 写库失败时安全捕获并回滚，不波及未处理 Promise rejection', async () => {
+    vi.mocked(prefApi.updateUserPreferences).mockRejectedValueOnce(new Error('Write failed'))
+    const { renderHook, act } = await import('@testing-library/react')
+    const { useUserPreferences } = await import('@/lib/hooks/useUserPreferences')
+
+    const { result } = renderHook(() => useUserPreferences())
+
+    // 初始状态
+    expect(result.current.displayConfig.privacy_mode).toBe(false)
+
+    // 调用 togglePrivacyMode（fire-and-forget），即使写库抛错也不会向外 rethrow 导致未捕获 rejection
+    await act(async () => {
+      await result.current.togglePrivacyMode()
+    })
+
+    // 回滚到原始状态
+    expect(result.current.displayConfig.privacy_mode).toBe(false)
+  })
+
+  it('useUserPreferences: updateDisplay 保留 rethrow 给已处理调用方', async () => {
+    vi.mocked(prefApi.updateUserPreferences).mockRejectedValueOnce(new Error('Write failed'))
+    const { renderHook, act } = await import('@testing-library/react')
+    const { useUserPreferences } = await import('@/lib/hooks/useUserPreferences')
+
+    const { result } = renderHook(() => useUserPreferences())
+
+    await expect(
+      act(async () => {
+        await result.current.updateDisplay({ privacy_mode: true })
+      })
+    ).rejects.toThrow('Write failed')
   })
 })

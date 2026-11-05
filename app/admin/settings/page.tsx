@@ -114,26 +114,19 @@ export default function AdminSettingsPage() {
 
     setSaving(true)
     try {
-      // 1. 提交所有 dirty 字段（逐 key 并行提交）
-      const results = await Promise.allSettled(
-        dirtyKeys.map(async (k) => {
-          await updateSystemSettings(k, formSettings[k] as string | boolean)
-          return k
-        })
-      )
-
+      // 1. 提交所有 dirty 字段（串行提交，避免并发写冲突导致丢更新）
       const succeededKeys: DraftKey[] = []
       const failedKeys: DraftKey[] = []
 
-      results.forEach((res, idx) => {
-        const k = dirtyKeys[idx]
-        if (res.status === 'fulfilled') {
+      for (const k of dirtyKeys) {
+        try {
+          await updateSystemSettings(k, formSettings[k] as string | boolean)
           succeededKeys.push(k)
-        } else {
+        } catch (err) {
           failedKeys.push(k)
-          console.error(`Failed to save setting ${k}:`, res.reason)
+          console.error(`Failed to save setting ${k}:`, err)
         }
-      })
+      }
 
       // 仅将成功的字段合并到 serverSettings，失败字段仍保留在 dirty 状态
       if (succeededKeys.length > 0) {

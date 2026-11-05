@@ -221,17 +221,27 @@ function BillCard({
                 {displayName}
               </span>
             )}
-            {item.account?.statement_mode === 'merged' && item.memberCards && item.memberCards.length > 1 ? (
-              <span className='shrink-0 whitespace-nowrap text-[12px] font-semibold leading-4 text-d-text'>
-                含尾号 {item.memberCards.map(m => formatCardTail(m.card_number_last4)).filter(Boolean).join(' · ')}
-              </span>
-            ) : (
-              tailDigits && (
-                <span className='shrink-0 whitespace-nowrap text-[12px] font-semibold leading-4 text-d-text'>
-                  尾号 {tailDigits}
-                </span>
-              )
-            )}
+            {(() => {
+              const mergedTails =
+                item.account?.statement_mode === 'merged' && item.memberCards && item.memberCards.length > 1
+                  ? item.memberCards.map((m) => formatCardTail(m.card_number_last4)).filter(Boolean)
+                  : []
+              if (mergedTails.length > 0) {
+                return (
+                  <span className='shrink-0 whitespace-nowrap text-[12px] font-semibold leading-4 text-d-text'>
+                    含尾号 {mergedTails.join(' · ')}
+                  </span>
+                )
+              }
+              if (tailDigits) {
+                return (
+                  <span className='shrink-0 whitespace-nowrap text-[12px] font-semibold leading-4 text-d-text'>
+                    尾号 {tailDigits}
+                  </span>
+                )
+              }
+              return null
+            })()}
             {holderName && (
               <span className='shrink-0 whitespace-nowrap text-[10px] leading-4 text-d-muted'>
                 持卡人 {holderName}

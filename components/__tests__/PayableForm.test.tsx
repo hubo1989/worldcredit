@@ -216,11 +216,11 @@ describe('PayableForm 归属银行', () => {
 })
 
 describe('PayableForm category compatibility', () => {
-  it('displays legacy unknown category explicitly and falls back to other on submit', async () => {
+  it('displays legacy unknown category explicitly and passes through original category on submit without silently rewriting to other', async () => {
     const user = userEvent.setup()
     const onSuccess = vi.fn()
     const onClose = vi.fn()
-    mockedUpdate.mockResolvedValueOnce(makePayable({ category: 'other' }))
+    mockedUpdate.mockResolvedValueOnce(makePayable({ category: 'unknown_legacy_cat' as never }))
 
     render(
       <PayableForm
@@ -243,6 +243,6 @@ describe('PayableForm category compatibility', () => {
     await waitFor(() => expect(mockedUpdate).toHaveBeenCalledTimes(1))
     const [updatedId, patch] = mockedUpdate.mock.calls[0]
     expect(updatedId).toBe('payable-1')
-    expect(patch.category).toBe('other')
+    expect(patch.category).toBe('unknown_legacy_cat')
   })
 })
