@@ -403,4 +403,22 @@ public final class QueryService: Sendable {
             try CardHolder.order(Column("created_at").asc, Column("id").asc).fetchAll(db)
         }
     }
+
+    /// 全部银行列表，按名称升序排列
+    public func fetchBanks() async throws -> [Bank] {
+        try await dbManager.dbWriter.read { db in
+            try Bank.order(Column("name").asc).fetchAll(db)
+        }
+    }
+
+    /// 全部或指定银行的卡产品列表
+    public func fetchCardProducts(bankId: String? = nil) async throws -> [CardProduct] {
+        try await dbManager.dbWriter.read { db in
+            if let bankId, !bankId.isEmpty {
+                return try CardProduct.filter(Column("bank_id") == bankId).order(Column("card_name").asc).fetchAll(db)
+            } else {
+                return try CardProduct.order(Column("card_name").asc).fetchAll(db)
+            }
+        }
+    }
 }

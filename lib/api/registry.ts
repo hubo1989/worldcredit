@@ -10,6 +10,7 @@
 //   - memberFilter: response filter applied to member results
 
 import * as adminServer from './admin.server'
+import * as accountsServer from './accounts.server'
 import * as aiServer from './ai.server'
 import * as analyticsServer from './analytics.server'
 import * as attachmentsServer from './attachments.server'
@@ -37,6 +38,7 @@ import * as remindersServer from './reminders.server'
 import * as syncGmailServer from './sync-gmail.server'
 import {
   applyAnalyticsScope,
+  assertAccountAccess,
   assertBenefitAccess,
   assertBillAccess,
   assertBillListAccess,
@@ -131,6 +133,33 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     enrichBankFromWeb: { impl: aiServer.enrichBankFromWeb, admin: true },
     suggestPromosFromWeb: { impl: aiServer.suggestPromosFromWeb, admin: true },
   },
+  accounts: {
+    getCreditAccounts: { impl: accountsServer.getCreditAccounts, bindUser: 0 },
+    getCreditAccountDetail: {
+      impl: accountsServer.getCreditAccountDetail,
+      memberGuard: async (args, ctx) => assertAccountAccess(args[0], ctx),
+    },
+    mergeCardsIntoAccount: {
+      impl: accountsServer.mergeCardsIntoAccount,
+      memberGuard: async (args, ctx) => {
+        await assertAccountAccess(args[0], ctx);
+        const cardIds = args[1] as string[];
+        if (Array.isArray(cardIds)) {
+          for (const cid of cardIds) {
+            await assertCardAccess(cid, ctx);
+          }
+        }
+      },
+    },
+    splitCardFromAccount: {
+      impl: accountsServer.splitCardFromAccount,
+      memberGuard: async (args, ctx) => assertCardAccess(args[0], ctx),
+    },
+    updateCreditAccount: {
+      impl: accountsServer.updateCreditAccount,
+      memberGuard: async (args, ctx) => assertAccountAccess(args[0], ctx),
+    },
+  },
   analytics: {
     getAnalyticsSummary: { impl: analyticsServer.getAnalyticsSummary, memberGuard: (args, ctx) => applyAnalyticsScope(args[0], ctx) },
     getMonthlyDebtTrend: { impl: analyticsServer.getMonthlyDebtTrend, memberGuard: (args, ctx) => applyAnalyticsScope(args[0], ctx) },
@@ -220,6 +249,7 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     createCard: { impl: cardsServer.createCard, memberGuard: guardObjField(0, "holder_id", async (holderId, ctx) => assertHolderAccess(holderId, ctx)) },
     updateCard: { impl: cardsServer.updateCard, memberGuard: guardCard(0) },
     updateCardHolder: { impl: cardsServer.updateCardHolder, bindUser: 0 },
+    getDueDateReasonReport: { impl: cardsServer.getDueDateReasonReport, bindUser: 0 },
   },
   dashboard: {
     getOpportunityTodayCount: { impl: getTodayAvailableCount, prependActor: true },
@@ -241,13 +271,14 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
   },
   banks: {
     getBankNames: { impl: banksServer.getBankNames },
+    getBanks: { impl: banksServer.getBanks },
   },
   holders: {
     getHolders: { impl: holdersServer.getHolders, bindUser: 0 },
     getHolder: { impl: holdersServer.getHolder, memberGuard: guardHolder(0) },
     getHolderStatsPageData: { impl: holdersServer.getHolderStatsPageData, memberGuard: guardHolder(0) },
     getHolderCardCounts: { impl: holdersServer.getHolderCardCounts, memberGuard: async (args, ctx) => assertHolderIdsAccess(args[0], ctx) },
-    createHolder: { impl: holdersServer.createHolder, bindField: { arg: 0, field: "created_by" }, admin: true },
+    createHolder: { impl: holdersServer.createHolder, bindField: { arg: 0, field: "created_by" } },
     updateHolder: { impl: holdersServer.updateHolder, admin: true },
     mergeHolders: { impl: holdersServer.mergeHolders, admin: true },
   },
@@ -262,6 +293,8 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
   payables: {
     // 周期应付（房租/贷款）：一律绑定会话用户，成员只能碰自己创建的记录。
     getRecurringPayables: { impl: payablesServer.getRecurringPayables, bindUser: 0 },
+    getPayableCustomCategories: { impl: payablesServer.getPayableCustomCategories, bindUser: 0 },
+    savePayableCustomCategory: { impl: payablesServer.savePayableCustomCategory, bindUser: 0 },
     createRecurringPayable: {
       impl: payablesServer.createRecurringPayable,
       bindField: { arg: 0, field: 'created_by' },

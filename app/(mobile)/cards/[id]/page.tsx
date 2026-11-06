@@ -3,11 +3,12 @@
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { getCardDetail, updateCard, updateCardHolder } from '@/lib/api/cards'
-import { CardForm } from '@/components/mobile/CardForm'
+import { getCardDetail, type CreditCardWithProduct } from '@/lib/api/cards'
+import { CardDefinitionModal } from '@/components/mobile/CardDefinitionModal'
+import { CardAccountModal } from '@/components/mobile/CardAccountModal'
 import { ChevronLeftIcon, ClockIcon } from '@/components/icons/WcIcon'
-import { getEffectiveBillingDay, getEffectiveDueConfig, formatCardTail, getEffectiveCardName, getEffectiveAnnualFee } from '@/lib/utils'
-import type { CreditCard, CardProduct, CardHolder, Bill, Benefit } from '@/lib/types'
+import { getEffectiveBillingDay, getEffectiveDueConfig, formatCardTail, getEffectiveCardName, getEffectiveAnnualFee, getEffectiveCreditLimit, isCreditLimitManuallySet } from '@/lib/utils'
+import type { CreditCard, CardProduct, CardHolder, Bill, Benefit, CardDueDateResolution } from '@/lib/types'
 import type { OpportunityDto } from '@/lib/opportunities/queries.server'
 import { STATUS_LABELS } from '@/lib/opportunities/view-model'
 
@@ -74,20 +75,20 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
   const [bills, setBills] = useState<BillWithPaid[]>([])
   const [benefits, setBenefits] = useState<Array<Benefit & { used: number }>>([])
   const [opportunities, setOpportunities] = useState<OpportunityDto[]>([])
+  const [dueDateResolution, setDueDateResolution] = useState<CardDueDateResolution | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   // 编辑表单状态
-  const [cardFormOpen, setCardFormOpen] = useState(false)
-  // 持卡人选项已改由 updateCardHolder 专用通道处理，这里只剩展示名
-  const [holders] = useState<Array<{ id: string; name: string }>>([])
+  const [cardDefOpen, setCardDefOpen] = useState(false)
+  const [cardAccountOpen, setCardAccountOpen] = useState(false)
 
   const load = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
 
-      // 卡 + 卡产品 + 持卡人 + 最近账单（含已还聚合）+ 权益使用进度，一次 RPC 返回
+      // 卡 + 卡产品 + 持卡人 + 最近账单（含已还聚合）+ 权益使用进度 + 还款日确切原因，一次 RPC 返回
       const detail = await getCardDetail(id)
       setCard({
         ...detail.card,
@@ -96,6 +97,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       setBills(detail.bills as unknown as BillWithPaid[])
       setBenefits(detail.benefits)
       setOpportunities(detail.opportunities ?? [])
+      setDueDateResolution(detail.dueDateResolution ?? null)
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载卡片失败')
     } finally {
@@ -145,8 +147,20 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
   const used = bills
     .filter(b => b.computed_status !== 'paid')
     .reduce((s, b) => s + Math.max(0, Number(b.bill_amount) - b.paid_amount), 0)
-  const limit = Number(card.credit_limit) || 0
-  const available = Math.max(0, limit - used)
+  const effLimit = getEffectiveCreditLimit(card)
+  const isLimitManual = isCreditLimitManuallySet(card)
+  const available = effLimit != null ? Math.max(0, effLimit - used) : null
+
+  let limitBadge: React.ReactNode = null
+  if (isLimitManual) {
+    limitBadge = (
+      <span className='rounded bg-d-accent-soft px-1 text-[10px] font-semibold text-d-accent-light'>已设置</span>
+    )
+  } else if (effLimit === null) {
+    limitBadge = (
+      <span className='rounded bg-d-warn-soft px-1 text-[10px] font-semibold text-d-warn-ink'>去设置</span>
+    )
+  }
 
   const billingDay = getEffectiveBillingDay(card)
   const dueConfig = getEffectiveDueConfig(card, product)
@@ -197,11 +211,21 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
               )}
             </p>
           </div>
-          {card.status !== 'active' && (
-            <span className='rounded-full bg-white/15 px-2.5 py-0.5 text-[12px] font-semibold leading-4'>
-              {card.status === 'frozen' ? '已冻结' : '已注销'}
-            </span>
-          )}
+          <div className='flex items-center gap-2'>
+            {card.status !== 'active' && (
+              <span className='rounded-full bg-white/15 px-2.5 py-0.5 text-[12px] font-semibold leading-4'>
+                {card.status === 'frozen' ? '已冻结' : '已注销'}
+              </span>
+            )}
+            <button
+              type='button'
+              onClick={() => setCardDefOpen(true)}
+              aria-label='修改卡片信息'
+              className='rounded-lg bg-white/15 px-2.5 py-1 text-[12px] font-semibold text-white transition-colors active:bg-white/25'
+            >
+              修改卡片信息
+            </button>
+          </div>
         </div>
         <div className='relative z-10'>
           <p className='num-tabular mb-0.5 text-[17px] tracking-widest'>
@@ -213,11 +237,33 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
         </div>
       </div>
 
-      {/* 额度三格 */}
+      {/* 额度三格：未获取时明确提示，允许点击弹出输入；已设置回显标签 */}
       <div className='mb-2.5 grid grid-cols-3 gap-0.5 rounded-2xl border border-d-border bg-d-surface p-2'>
-        <Quota label='总额度' value={limit} cls='text-d-text' />
-        <Quota label='已用' value={used} cls='text-d-gold' />
-        <Quota label='可用' value={available} cls='text-d-success-ink' />
+        <button
+          type='button'
+          onClick={() => setCardAccountOpen(true)}
+          className='rounded-xl p-1 text-center transition-colors active:bg-d-subtle'
+          title='点击修改或设置额度'
+          aria-label='修改额度与账户'
+        >
+          <p className='mb-0.5 flex items-center justify-center gap-1 text-[12px] leading-4 text-d-muted'>
+            <span>总额度</span>
+            {limitBadge}
+          </p>
+          <p className={'num-tabular text-[15px] font-bold ' + (effLimit === null ? 'text-d-warn-ink' : 'text-d-text')}>
+            {effLimit !== null ? `¥${effLimit.toLocaleString()}` : '未获取'}
+          </p>
+        </button>
+        <div className='p-1 text-center'>
+          <p className='mb-0.5 text-[12px] leading-4 text-d-muted'>已用</p>
+          <p className='num-tabular text-[15px] font-bold text-d-gold'>¥{Number(used).toLocaleString()}</p>
+        </div>
+        <div className='p-1 text-center'>
+          <p className='mb-0.5 text-[12px] leading-4 text-d-muted'>可用</p>
+          <p className='num-tabular text-[15px] font-bold text-d-success-ink'>
+            {available !== null ? `¥${available.toLocaleString()}` : '—'}
+          </p>
+        </div>
       </div>
 
       {/* 日期与费用 */}
@@ -226,7 +272,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
         action={
           <button
             type='button'
-            onClick={() => setCardFormOpen(true)}
+            onClick={() => setCardAccountOpen(true)}
             aria-label='编辑卡片'
             className='rounded-lg bg-d-accent px-3 py-1 text-[12px] font-semibold text-white active:opacity-80'
           >
@@ -239,12 +285,50 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
           <Row
             label='还款日'
             value={
-              <span className='inline-flex items-center gap-1.5'>
-                {dueDayOfMonth ? '每月 ' + dueDayOfMonth + ' 日' : (card.loan_due_day ? '每月 ' + card.loan_due_day + ' 日' : (dueConfig.type === 'after_billing' ? '账单日后 ' + dueConfig.value + ' 天' : '—'))}
-                {isDueOverridden && <CustomizedTag />}
-              </span>
+              dueDateResolution?.has_exact_due_date ? (
+                <span className='inline-flex items-center gap-1.5 font-semibold text-d-text'>
+                  <span>{dueDateResolution.exact_due_date}</span>
+                  <span className='rounded-full bg-d-subtle px-1.5 py-0.5 text-[10px] font-normal text-d-muted'>
+                    {dueDateResolution.exact_source === 'bill_override' ? '人工确认' : '账单邮件'}
+                  </span>
+                </span>
+              ) : (
+                <span className='inline-flex items-center gap-1.5'>
+                  <span className='font-semibold text-d-warn-ink'>未获取确切还款日</span>
+                  {dueDateResolution?.reason_label && (
+                    <span className='rounded bg-d-warn-soft px-1.5 py-0.5 text-[10px] font-semibold text-d-warn-ink'>
+                      {dueDateResolution.reason_label}
+                    </span>
+                  )}
+                  {isDueOverridden && <CustomizedTag />}
+                </span>
+              )
             }
           />
+          {/* 无确切还款日时展示归因说明与邮件依据，绝不编造日期 */}
+          {!dueDateResolution?.has_exact_due_date && dueDateResolution && (
+            <div className='my-1 rounded-xl bg-d-subtle p-2 text-[11px] leading-4 text-d-muted'>
+              <p className='font-semibold text-d-text'>还款日状态原因：</p>
+              <p className='mt-0.5'>{dueDateResolution.summary}</p>
+              {dueDayOfMonth && (
+                <p className='mt-0.5 text-[10px] text-d-muted/80'>
+                  卡档参考规则：每月 {dueDayOfMonth} 日（非当期账单确切截止日）
+                </p>
+              )}
+              {dueDateResolution.email_evidences.length > 0 && (
+                <div className='mt-1.5 border-t border-d-border/60 pt-1'>
+                  <p className='text-[10px] font-semibold text-d-text'>邮件归因明细（共 {dueDateResolution.email_evidences.length} 封）：</p>
+                  <ul className='mt-0.5 list-disc pl-3.5 space-y-0.5 text-[10px]'>
+                    {dueDateResolution.email_evidences.slice(0, 3).map((ev) => (
+                      <li key={ev.id}>
+                        <span className='text-d-text'>{ev.reason_label}</span>：{ev.detail || ev.subject || '未包含确切还款日'}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
           <Row
             label='最长免息'
             value={
@@ -269,25 +353,21 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
       </Section>
 
       {/* 编辑卡片对话框：保存后卡级别内容优先于卡产品默认 */}
-      {/* 完整卡片编辑：银行/产品/账户模式等基础信息（复用持卡人页的 CardForm） */}
       {card && (
-        <CardForm
-          open={cardFormOpen}
-          onClose={() => setCardFormOpen(false)}
-          holderId={card.holder_id}
-          holders={holders}
-          initial={card}
-          lockProduct
-          onSubmit={async data => {
-            // 归属变化走专用通道（双端 scope 校验 + 权益关联冲突提示），其余字段原路更新
-            if (data.holder_id !== card.holder_id) {
-              await updateCardHolder(card.id, data.holder_id)
-            }
-            const { holder_id: _holderId, ...rest } = data
-            void _holderId
-            await updateCard(card.id, rest)
-            await load()
-          }}
+        <CardDefinitionModal
+          open={cardDefOpen}
+          onClose={() => setCardDefOpen(false)}
+          card={card as CreditCardWithProduct}
+          onSaved={load}
+        />
+      )}
+
+      {card && (
+        <CardAccountModal
+          open={cardAccountOpen}
+          onClose={() => setCardAccountOpen(false)}
+          card={card as CreditCardWithProduct}
+          onSaved={load}
         />
       )}
 
@@ -411,15 +491,6 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
     <div className='flex items-center justify-between'>
       <span className='text-[12px] leading-4 text-d-muted'>{label}</span>
       <span className='num-tabular text-[12px] font-semibold text-d-text'>{value}</span>
-    </div>
-  )
-}
-
-function Quota({ label, value, cls }: { label: string; value: number; cls: string }) {
-  return (
-    <div className='text-center'>
-      <p className='mb-0.5 text-[12px] leading-4 text-d-muted'>{label}</p>
-      <p className={'num-tabular text-[15px] font-bold ' + cls}>¥{Number(value).toLocaleString()}</p>
     </div>
   )
 }

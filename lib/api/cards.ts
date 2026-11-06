@@ -42,3 +42,6 @@ export function updateCard(...args: Parameters<typeof Server.updateCard>) {
 export function updateCardHolder(cardId: string, newHolderId: string) {
   return callRpc<typeof Server.updateCardHolder>('cards', 'updateCardHolder', '', cardId, newHolderId)
 }
+export function getDueDateReasonReport() {
+  return callRpc<typeof Server.getDueDateReasonReport>('cards', 'getDueDateReasonReport', '')
+}

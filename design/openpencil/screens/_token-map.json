@@ -142,7 +142,27 @@
     "color.bg.subtle",
     "color.text.adminMuted",
     "color.runtime.adminPrimary",
-    "color.runtime.adminAccent"
+    "color.runtime.adminAccent",
+    "color.obsidian.accentLight",
+    "color.obsidian.goldDeep",
+    "color.obsidian.danger",
+    "color.obsidian.light.canvas",
+    "color.obsidian.light.surface",
+    "color.obsidian.light.subtle",
+    "color.obsidian.light.border",
+    "color.obsidian.light.text",
+    "color.obsidian.light.muted",
+    "color.obsidian.light.accent",
+    "color.obsidian.light.accentLight",
+    "color.obsidian.light.gold",
+    "color.obsidian.light.goldDeep",
+    "color.obsidian.light.goldSoft",
+    "color.obsidian.light.danger",
+    "color.obsidian.light.dangerSoft",
+    "color.obsidian.light.dangerInk",
+    "color.obsidian.light.warningInk",
+    "color.obsidian.light.successSoft",
+    "color.obsidian.light.successInk"
   ],
   "numericMappings": [
     {

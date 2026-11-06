@@ -249,20 +249,86 @@ export async function getAnalyticsSummary(filters: AnalyticsFilters): Promise<An
   let creditLimit = emptySum(displayCurrency)
   if (cardIds.length > 0) {
     const placeholders = cardIds.map(() => '?').join(',')
-    const { data: cards, error } = await query<{ credit_limit: number; currency: string | null }>(
-      `SELECT cc.credit_limit, cp.currency
+    const { data: cards, error } = await query<{
+      id: string
+      holder_id: string
+      credit_limit: number
+      account_id: string | null
+      currency: string | null
+      bank_id: string | null
+      bank_name: string | null
+      account_quota_mode: string | null
+      shared_credit_limit: number | null
+      bank_quota_mode: string | null
+    }>(
+      `SELECT cc.id, cc.holder_id, cc.credit_limit, cc.account_id,
+              cp.currency, cp.bank_id, cp.bank_name,
+              ca.quota_mode AS account_quota_mode, ca.shared_credit_limit,
+              b.quota_mode AS bank_quota_mode
        FROM credit_cards cc
        LEFT JOIN card_products cp ON cc.card_product_id = cp.id
+       LEFT JOIN banks b ON cp.bank_id = b.id
+       LEFT JOIN credit_accounts ca ON cc.account_id = ca.id
        WHERE cc.id IN (${placeholders}) AND cc.status = 'active'`,
       cardIds
     )
     if (error) throw new Error(error.message)
-    // 额度为 0 的卡（例如额度未知的外币卡）不进分母：它们只会把分母撑大、
-    // 让使用率假性变低，属于把未知当利好。
-    const cardsWithLimit = (cards || []).filter(card => (Number(card.credit_limit) || 0) > 0)
+
+    // 两级聚合：独立账户/卡逐卡累加，共享额度池同一 (holder_id, bank, currency) 每池仅计 1 次
+    const limitItems: Array<{ amount: number; currency: string }> = []
+    const sharedPools: Record<string, { currency: string; sharedLimit?: number; maxCardLimit: number }> = {}
+
+    for (const card of cards || []) {
+      const cardLimit = Number(card.credit_limit) || 0
+      const isShared =
+        card.account_quota_mode === 'shared' ||
+        (!card.account_quota_mode && card.bank_quota_mode === 'shared')
+
+      if (!isShared) {
+        if (cardLimit > 0) {
+          limitItems.push({
+            amount: cardLimit,
+            currency: card.currency ?? displayCurrency,
+          })
+        }
+      } else {
+        const bankKey = card.bank_id || card.bank_name || 'unknown'
+        const poolKey = `${card.holder_id}_${bankKey}_${card.currency ?? displayCurrency}`
+        if (!sharedPools[poolKey]) {
+          sharedPools[poolKey] = {
+            currency: card.currency ?? displayCurrency,
+            sharedLimit:
+              card.shared_credit_limit != null ? Number(card.shared_credit_limit) : undefined,
+            maxCardLimit: cardLimit,
+          }
+        } else {
+          if (card.shared_credit_limit != null) {
+            sharedPools[poolKey].sharedLimit = Math.max(
+              sharedPools[poolKey].sharedLimit ?? 0,
+              Number(card.shared_credit_limit)
+            )
+          }
+          sharedPools[poolKey].maxCardLimit = Math.max(
+            sharedPools[poolKey].maxCardLimit,
+            cardLimit
+          )
+        }
+      }
+    }
+
+    for (const pool of Object.values(sharedPools)) {
+      const poolAmount = pool.sharedLimit ?? pool.maxCardLimit
+      if (poolAmount > 0) {
+        limitItems.push({
+          amount: poolAmount,
+          currency: pool.currency,
+        })
+      }
+    }
+
     creditLimit = sumByCurrency(
-      cardsWithLimit,
-      card => ({ amount: Number(card.credit_limit) || 0, currency: card.currency ?? displayCurrency }),
+      limitItems,
+      item => item,
       displayCurrency,
       rates
     )

@@ -42,6 +42,37 @@ export function getEffectiveAnnualFee(
 }
 
 /**
+ * 返回卡片实际生效的信用额度（正数）；未获取时返回 null，绝不把兼容值 0 当作真实额度。
+ *
+ * 优先级：credit_limit_override（正数） > credit_limit（正数） > null（未获取）。
+ * credit_cards.credit_limit 在数据库与 iOS 离线库中均为 NOT NULL DEFAULT 0，
+ * 自动建卡/未填额度时存 0 作为兼容值，展示与计算时必须识别为 null（「未获取」）。
+ */
+export function getEffectiveCreditLimit(
+  card: Pick<CreditCard, "credit_limit" | "credit_limit_override"> | undefined | null,
+): number | null {
+  if (!card) return null;
+  if (card.credit_limit_override != null) {
+    const over = Number(card.credit_limit_override);
+    if (Number.isFinite(over) && over > 0) return over;
+  }
+  const raw = Number(card.credit_limit);
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  return null;
+}
+
+/**
+ * 卡片信用额度是否已由用户手动设置（持久化在 credit_limit_override）。
+ */
+export function isCreditLimitManuallySet(
+  card: Pick<CreditCard, "credit_limit_override"> | undefined | null,
+): boolean {
+  if (!card || card.credit_limit_override == null) return false;
+  const over = Number(card.credit_limit_override);
+  return Number.isFinite(over) && over > 0;
+}
+
+/**
  * 返回实际生效的还款规则（优先使用卡级别 override，否则用卡产品默认）
  */
 export function getEffectiveDueConfig(
@@ -304,6 +335,73 @@ export function billEffectiveStatementDate(bill: {
   return bill.statement_date_override ?? bill.statement_date ?? null;
 }
 
+/**
+ * 判定账单是否未出账（日历日口径）：
+ * 出账日（优先生效出账日，兜底 statement_end）在今天之后（diffInCalendarDays > 0）即为未出账。
+ * 当天出账（diffInCalendarDays === 0）算已出账。
+ * 未出账前绝无逾期概念。
+ */
+export function isBillUnissued(
+  bill: {
+    statement_date?: string | null;
+    statement_date_override?: string | null;
+    statement_end?: string | null;
+  },
+  today: Date = new Date(),
+): boolean {
+  const stmtDate = billEffectiveStatementDate(bill) || bill.statement_end;
+  if (!stmtDate) return false;
+  return diffInCalendarDays(stmtDate, today) > 0;
+}
+
+/**
+ * 计算卡片今日刷卡的免息期与关键日期（今日交易动态口径）
+ * 今天交易 → 进下一期账单 → 到该期还款日的天数
+ */
+export function calculateCardGracePeriod(
+  card: CreditCard & { card_product: CardProduct },
+  today: Date = new Date(),
+) {
+  const d = new Date(today);
+  d.setHours(0, 0, 0, 0);
+  const billingDay = Number(card.override_billing_day ?? card.billing_day ?? 10);
+  if (card.card_type === "loan" && card.loan_due_day) {
+    const nextDueDate = getLoanNextDueDate(card.loan_due_day, d);
+    const diffMs = nextDueDate.getTime() - d.getTime();
+    return {
+      billingDay,
+      nextBillingDate: nextDueDate,
+      nextDueDate,
+      graceDays: Math.max(1, Math.ceil(diffMs / (24 * 60 * 60 * 1000))),
+    };
+  }
+  let purchaseMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+  const effectiveBillingDay = Math.min(
+    billingDay,
+    new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(),
+  );
+  // 账单日次日起的交易归下一期：账单日当天刷卡当天出账（多数国内行
+  // 口径），当天交易进当期账单、免息最短；账单日后一天刷卡才是最长
+  // 免息的第一天（今天 == 账单日 → purchaseMonth 留在本月，当期出账
+  // 最早、免息天数最小；今天 == 账单日+1 → 归下一期，免息期最长）。
+  if (d.getDate() > effectiveBillingDay) {
+    purchaseMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  }
+  const nextBillingDate = new Date(
+    purchaseMonth.getFullYear(),
+    purchaseMonth.getMonth(),
+    effectiveBillingDay,
+  );
+  const nextDueDate = getDueDate(card, card.card_product, purchaseMonth);
+  const diffMs = nextDueDate.getTime() - d.getTime();
+  return {
+    billingDay,
+    nextBillingDate,
+    nextDueDate,
+    graceDays: Math.max(1, Math.ceil(diffMs / (24 * 60 * 60 * 1000))),
+  };
+}
+
 // 账单日临近判定：距下一次账单日不足 days 天（含当天）时允许手填金额。
 // 用账单日而非到期日——出账前金额还是空的，正是需要用户先记一笔的时候。
 export function canManuallySetBillAmount(
@@ -315,31 +413,169 @@ export function canManuallySetBillAmount(
   return remaining >= 0 && remaining < days;
 }
 
-// ── 周期性固定支出（房租 / 贷款 / 其他按月应付） ────────────────────────────
+// ── 周期性固定支出（房租 / 贷款 / 其他周期应付） ────────────────────────────
+
+export interface PayableCycleConfig {
+  cycle_type?: "monthly" | "every_n_months" | "yearly" | null;
+  cycle_months?: number | null;
+  due_month?: number | null;
+  due_day?: number | null;
+  anchor_period?: string | null;
+  created_at?: string | null;
+}
+
+function formatPayableYearMonth(year: number, month1Based: number): string {
+  return `${year}-${String(month1Based).padStart(2, "0")}`;
+}
+
+function parsePayableYearMonth(period: string | null | undefined): { year: number; month: number } | null {
+  if (typeof period !== "string") return null;
+  const m = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(period.trim());
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  if (year < 1970 || year > 2100) return null;
+  return { year, month };
+}
+
+/** 账期按月平移（months 可正可负），返回 'YYYY-MM'。 */
+export function addMonthsToPayablePeriod(period: string, months: number): string {
+  const parsed = parsePayableYearMonth(period);
+  if (!parsed) {
+    const [year, month] = period.split("-").map(Number);
+    const next = addMonths(new Date(year, month - 1, 1), months);
+    return formatPayableYearMonth(next.getFullYear(), next.getMonth() + 1);
+  }
+  const totalMonths = parsed.year * 12 + (parsed.month - 1) + months;
+  const nextYear = Math.floor(totalMonths / 12);
+  const nextMonth = (((totalMonths % 12) + 12) % 12) + 1;
+  return formatPayableYearMonth(nextYear, nextMonth);
+}
 
 /**
  * 某个应付事项在 today 所处的账期（'YYYY-MM'）。
  *
- * 账期按「应付日所在的那个月」定义，不做「过了应付日就算下期」的滚动：
- * 房租 15 号到期，16 号仍然属于本月账期（只是已逾期），下个月才换期。
- * 这样逾期才表达得出来——滚动口径会把「本月该付没付」直接抹掉。
+ * - monthly（默认）：按 today 所在月，不做「过了应付日就算下期」的滚动，保留逾期表达；
+ * - every_n_months：从起算账期 anchor_period 起每 X 个月一档，落在当前档位内直到下一档开始；
+ * - yearly：按每年 due_month 所在月（12 个月一档），未到达首个 anchor_period 前钳制在首期。
  */
-export function payablePeriodOf(today: Date = new Date()): string {
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+export function payablePeriodOf(today: Date = new Date(), cycle?: PayableCycleConfig): string {
+  const todayYear = today.getFullYear();
+  const todayMonth = today.getMonth() + 1;
+  const rawTodayPeriod = formatPayableYearMonth(todayYear, todayMonth);
+
+  if (!cycle || !cycle.cycle_type || cycle.cycle_type === "monthly") {
+    return rawTodayPeriod;
+  }
+
+  if (cycle.cycle_type === "yearly") {
+    const parsedAnchor = parsePayableYearMonth(cycle.anchor_period);
+    const dueMonth =
+      typeof cycle.due_month === "number" &&
+      Number.isInteger(cycle.due_month) &&
+      cycle.due_month >= 1 &&
+      cycle.due_month <= 12
+        ? cycle.due_month
+        : parsedAnchor
+          ? parsedAnchor.month
+          : todayMonth;
+
+    let anchorYear = todayYear;
+    if (parsedAnchor && parsedAnchor.month === dueMonth) {
+      anchorYear = parsedAnchor.year;
+    } else if (typeof cycle.created_at === "string" && cycle.created_at.trim()) {
+      const createdDate = new Date(cycle.created_at);
+      if (!Number.isNaN(createdDate.getTime())) {
+        const createdYear = createdDate.getFullYear();
+        const dueDay =
+          typeof cycle.due_day === "number" && cycle.due_day >= 1 && cycle.due_day <= 31
+            ? cycle.due_day
+            : 1;
+        const candidateDue = payableDueDate(dueDay, formatPayableYearMonth(createdYear, dueMonth));
+        anchorYear = diffInCalendarDays(candidateDue, createdDate) >= 0 ? createdYear : createdYear + 1;
+      }
+    }
+
+    const anchorPeriod = formatPayableYearMonth(anchorYear, dueMonth);
+    const diffMonths = (todayYear - anchorYear) * 12 + (todayMonth - dueMonth);
+    if (diffMonths < 0) return anchorPeriod;
+    const cyclesElapsed = Math.floor(diffMonths / 12);
+    return formatPayableYearMonth(anchorYear + cyclesElapsed, dueMonth);
+  }
+
+  // every_n_months
+  const step =
+    typeof cycle.cycle_months === "number" &&
+    Number.isInteger(cycle.cycle_months) &&
+    cycle.cycle_months >= 2
+      ? cycle.cycle_months
+      : 1;
+  if (step <= 1) return rawTodayPeriod;
+
+  let anchor = parsePayableYearMonth(cycle.anchor_period);
+  if (!anchor && typeof cycle.created_at === "string") {
+    const createdDate = new Date(cycle.created_at);
+    if (!Number.isNaN(createdDate.getTime())) {
+      anchor = { year: createdDate.getFullYear(), month: createdDate.getMonth() + 1 };
+    }
+  }
+  if (!anchor) {
+    anchor = { year: todayYear, month: todayMonth };
+  }
+
+  const anchorStr = formatPayableYearMonth(anchor.year, anchor.month);
+  const diffMonths = (todayYear - anchor.year) * 12 + (todayMonth - anchor.month);
+  if (diffMonths < 0) return anchorStr;
+  const cyclesElapsed = Math.floor(diffMonths / step);
+  return addMonthsToPayablePeriod(anchorStr, cyclesElapsed * step);
 }
 
-/** 某账期内该应付事项的到期日（处理 due_day > 当月天数，如 31 日）。 */
+/** 某账期内该应付事项的到期日（处理 due_day > 当月天数，如 31 日或平年 2 月 29 日）。 */
 export function payableDueDate(dueDay: number, period: string): Date {
   const [year, month] = period.split("-").map(Number);
   const monthDate = new Date(year, month - 1, 1);
   return getActualBillingDate(dueDay, monthDate);
 }
 
-/** 当前账期的下一期（'YYYY-MM'）：本期已结清后用它指向下期应付日。 */
-export function nextPayablePeriodOf(period: string): string {
-  const [year, month] = period.split("-").map(Number);
-  const next = addMonths(new Date(year, month - 1, 1), 1);
-  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+/** 当前账期的下一期（'YYYY-MM'）：每月 +1 月，每 X 月 +X 月，每年同月（年份 +1）。 */
+export function nextPayablePeriodOf(period: string, cycle?: PayableCycleConfig): string {
+  if (!cycle || !cycle.cycle_type || cycle.cycle_type === "monthly") {
+    return addMonthsToPayablePeriod(period, 1);
+  }
+  if (cycle.cycle_type === "yearly") {
+    const parsed = parsePayableYearMonth(period);
+    const baseYear = parsed ? parsed.year : Number(period.split("-")[0]);
+    const fallbackMonth = parsed ? parsed.month : Number(period.split("-")[1]);
+    const month =
+      typeof cycle.due_month === "number" &&
+      Number.isInteger(cycle.due_month) &&
+      cycle.due_month >= 1 &&
+      cycle.due_month <= 12
+        ? cycle.due_month
+        : fallbackMonth;
+    return formatPayableYearMonth(baseYear + 1, month);
+  }
+  const step =
+    typeof cycle.cycle_months === "number" &&
+    Number.isInteger(cycle.cycle_months) &&
+    cycle.cycle_months >= 2
+      ? cycle.cycle_months
+      : 1;
+  return addMonthsToPayablePeriod(period, step);
+}
+
+/**
+ * 推导下一期到期日：
+ *   - monthly：下月同日（月末收拢）；
+ *   - every_n_months：间隔 X 个月后的同日（月末收拢）；
+ *   - yearly：次年同月同日（如闰年 02-29 → 平年 02-28，遇闰年恢复 02-29）。
+ */
+export function nextPayableDueDate(
+  dueDay: number,
+  period: string,
+  cycle?: PayableCycleConfig,
+): Date {
+  return payableDueDate(dueDay, nextPayablePeriodOf(period, cycle));
 }
 
 /**
@@ -364,13 +600,25 @@ export function cardUrgencyRank(status: CardUrgencyStatus): number {
  *
  * 为什么不用毫秒差：'2026-09-16' 这种无时区的日期串按 UTC 解析，在东八区会
  * 落回本地当天 08:00。直接用 (target - now) / 86400000 再取整，在跨日边界会
- * 差一天——用户看到「距离还款日 2 日」而徽章写着「逾期」。所以先把两侧都归一到
- * 本地零点再相减。
+ * 差一天——用户看到「距离还款日 2 日」而徽章写着「逾期」。
+ *
+ * 为什么用固定业务时区而不是进程本地时区：生产跑在 Cloudflare Workers（UTC）、
+ * CI 也是 UTC，用户却在中国。若按进程时区取「今天」，UTC 下东八区凌晨
+ * 00:00-08:00 会比用户日历日早一天，出账日当天被误判为「未出账」。因此两侧
+ * 都归一到 Asia/Shanghai 的日历日（与 getLocalTodayString 同口径）再相减，
+ * 行为在任何运行时区下一致。date-only 字符串（YYYY-MM-DD）本身就是日历日，
+ * 直接透传不经过时区换算。
  */
 export function diffInCalendarDays(target: string | Date, today: Date = new Date()): number {
-  const t = typeof target === "string" ? new Date(target) : target;
-  const localMidnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  return Math.round((localMidnight(t) - localMidnight(today)) / 86_400_000);
+  const BUSINESS_TIME_ZONE = "Asia/Shanghai";
+  const calendarDay = (input: string | Date): string => {
+    if (typeof input === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
+    return getLocalTodayString(BUSINESS_TIME_ZONE, input as Date);
+  };
+  const targetDay = calendarDay(target);
+  const todayDay = calendarDay(today);
+  // 两串都是 YYYY-MM-DD，Date.parse 一律按 UTC 零点解析，差值恒为整日。
+  return Math.round((Date.parse(targetDay) - Date.parse(todayDay)) / 86_400_000);
 }
 
 /**
@@ -522,6 +770,7 @@ export function payableNextCycleStatus(
   period: string,
   today: Date = new Date(),
   statementLeadDays = 30,
+  cycle?: PayableCycleConfig,
 ): {
   phase: "awaiting_statement" | "awaiting_payment";
   /** awaiting_statement → 出账日；awaiting_payment → 还款日 */
@@ -529,8 +778,8 @@ export function payableNextCycleStatus(
   /** 距该日期的天数 */
   days: number;
 } {
-  // 下期还款日按「due_day + 下期账期」算（月末收拢：31 日 → 下月最后一天）
-  const due = payableDueDate(dueDay, nextPayablePeriodOf(period));
+  // 下期还款日按「due_day + 下期账期（含周期步长/每年同月）」算（月末收拢）
+  const due = payableDueDate(dueDay, nextPayablePeriodOf(period, cycle));
   const days = diffInCalendarDays(due, today);
   if (days >= statementLeadDays) {
     const statementDate = addDays(due, -statementLeadDays);
@@ -599,15 +848,21 @@ export function payableToSortCard(
     due_date: string;
     days_until_due: number;
     due_day: number;
+    period?: string;
+    cycle_type?: "monthly" | "every_n_months" | "yearly" | null;
+    cycle_months?: number | null;
+    due_month?: number | null;
+    anchor_period?: string | null;
   },
   _today: Date = new Date(),
 ): BillsListCard & { payableSource: true } {
   const status: CardUrgencyStatus = payable.status === "paid" ? "unissued" : payable.status;
   // 下期应付日按「due_day + 下期账期」重算，而不是 due_date 顺延一个月：
   // setMonth 在 10-31 这类日期会溢出成 12-01，收拢口径要求落在 11-30。
+  const currentPeriod = payable.period ?? payable.due_date.slice(0, 7);
   const nextDue = payableDueDate(
     payable.due_day,
-    nextPayablePeriodOf(payable.due_date.slice(0, 7)),
+    nextPayablePeriodOf(currentPeriod, payable),
   );
   return {
     status,

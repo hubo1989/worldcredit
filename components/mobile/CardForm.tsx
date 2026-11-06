@@ -6,7 +6,21 @@ import { Button, Toggle } from '@/components/obsidian/controls'
 import { TextField, SelectField } from '@/components/obsidian/fields'
 import type { CreditCard, CardProduct } from '@/lib/types'
 import { getCardProducts } from '@/lib/api/cards'
+import { getEffectiveCreditLimit, isCreditLimitManuallySet } from '@/lib/utils'
 import { AiFillBox } from '@/components/mobile/AiFillBox'
+import {
+  resolveLimitOnEdit,
+  validateLimitOnCreate,
+  sanitizeLast4Input,
+  resolveBankChange,
+  resolveProductSelect,
+  resolveNameOverride,
+  normalizeDueType,
+  buildDueRulePayload,
+  validateDueRule,
+  DUE_TYPE_LABELS,
+  type DueRuleType,
+} from './card-form-shared'
 
 interface Props {
   open: boolean
@@ -19,20 +33,6 @@ interface Props {
    */
   holders?: Array<{ id: string; name: string }>
   initial?: CreditCard
-  /**
-   * 编辑已有卡时锁定归属：银行与卡产品（含卡名）是建档时就定下的身份，
-   * 录错了应删卡重建，而不是换产品——换产品会让历史账单挂到错误的
-   * 账单日/还款规则上。产品级信息（名称/描述/权益）在管理页维护。
-   */
-  lockProduct?: boolean
-}
-
-type DueType = 'after_billing' | 'fixed' | 'fixed_before_billing'
-
-const DUE_TYPE_LABELS: Record<DueType, string> = {
-  after_billing: '账单日后 X 天',
-  fixed: '每月固定还款日',
-  fixed_before_billing: '每月固定还款日（账单日倒推）',
 }
 
 /** 卡类型分段选择（对应 MUI ToggleButtonGroup exclusive 的暗色版）。 */
@@ -68,12 +68,85 @@ function CardTypeSegment({
   )
 }
 
-export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, lockProduct = false }: Props) {
+/**
+ * 额度解析与语义推导（#1, #2 具名函数化，消灭 handleSubmit 中的嵌套三元）
+ * - 编辑既有卡：统一走 resolveLimitOnEdit（留空=undefined 不修改，0=清除，正数=覆盖）
+ * - 新建信用卡：正数必填（validateLimitOnCreate）
+ * - 新建贷款类：选填（留空为 0 / null，正数为覆盖）
+ */
+export function resolveCardFormLimit(
+  limitStr: string,
+  isCredit: boolean,
+  initial?: CreditCard
+): {
+  valid: boolean
+  credit_limit?: number
+  credit_limit_override?: number | null
+  error?: string
+} {
+  if (initial) {
+    return resolveLimitOnEdit(limitStr)
+  }
+
+  if (isCredit) {
+    const check = validateLimitOnCreate(limitStr)
+    if (!check.valid) {
+      return { valid: false, error: check.error || '请输入有效的信用额度' }
+    }
+    return {
+      valid: true,
+      credit_limit: check.value,
+      credit_limit_override: check.value,
+    }
+  }
+
+  const trimmed = limitStr.trim()
+  if (!trimmed) {
+    return {
+      valid: true,
+      credit_limit: 0,
+      credit_limit_override: null,
+    }
+  }
+  const num = parseFloat(trimmed)
+  if (isNaN(num) || num < 0) {
+    return { valid: false, error: '信用额度必须为非负数' }
+  }
+  if (num === 0) {
+    return {
+      valid: true,
+      credit_limit: 0,
+      credit_limit_override: null,
+    }
+  }
+  return {
+    valid: true,
+    credit_limit: num,
+    credit_limit_override: num,
+  }
+}
+
+/**
+ * 额度输入框辅助提示（#2 具名函数化，消灭 helperText 嵌套三元）
+ */
+export function getCardFormLimitHelperText(initial?: CreditCard): string | undefined {
+  if (!initial) return undefined
+  if (isCreditLimitManuallySet(initial)) {
+    return '已手动设置（不会被邮件同步覆盖）'
+  }
+  if (getEffectiveCreditLimit(initial) === null) {
+    return '邮件未获取到额度，请输入并保存'
+  }
+  return undefined
+}
+
+export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }: Props) {
   const [products, setProducts] = useState<CardProduct[]>([])
   const [selectedBank, setSelectedBank] = useState('')
   const [productId, setProductId] = useState(initial?.card_product_id ?? '')
   const [last4, setLast4] = useState(initial?.card_number_last4 ?? '')
-  const [limit, setLimit] = useState(initial?.credit_limit.toString() ?? '')
+  const initialEffLimit = getEffectiveCreditLimit(initial)
+  const [limit, setLimit] = useState(initialEffLimit != null ? initialEffLimit.toString() : '')
   const [billingDay, setBillingDay] = useState(initial?.billing_day.toString() ?? '')
   const [submitting, setSubmitting] = useState(false)
   // 编辑态下可改归属；新建仍固定为传入的 holderId
@@ -90,15 +163,14 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
   const [issuedOn, setIssuedOn] = useState(initial?.issued_on ?? '')
   const [activatedOn, setActivatedOn] = useState(initial?.activated_on ?? '')
 
-  // 还款规则覆盖
+  // 还款规则覆盖：只看 override_due_type，避免残留 value 导致关闭后复活
   const [overrideEnabled, setOverrideEnabled] = useState(
-    !!(initial?.override_due_type || initial?.override_billing_day)
+    !!initial?.override_due_type
   )
-  const [overrideBillingDay, setOverrideBillingDay] = useState(
-    initial?.override_billing_day?.toString() ?? ''
-  )
-  const [overrideDueType, setOverrideDueType] = useState<DueType>(
-    (initial?.override_due_type as DueType) ?? 'after_billing'
+  const [cardName, setCardName] = useState(initial?.name_override ?? '')
+  const [hasCustomName, setHasCustomName] = useState(false)
+  const [overrideDueType, setOverrideDueType] = useState<DueRuleType>(
+    normalizeDueType(initial?.override_due_type)
   )
   const [overrideDueValue, setOverrideDueValue] = useState(
     initial?.override_due_value?.toString() ?? ''
@@ -128,21 +200,25 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
         setSelectedBank(match.bank_name)
       }
       setProductId(initial.card_product_id)
+      setCardName(initial.name_override || match?.card_name || '')
+      setHasCustomName(!!initial.name_override)
       setLast4(initial.card_number_last4 ?? '')
-      setLimit(initial.credit_limit.toString())
+      const eff = getEffectiveCreditLimit(initial)
+      setLimit(eff != null ? eff.toString() : '')
       setBillingDay(initial.billing_day.toString())
       setCardType(initial.card_type ?? 'credit')
       setLoanDueDay(initial.loan_due_day?.toString() ?? '')
       setIssuedOn(initial.issued_on ?? '')
       setActivatedOn(initial.activated_on ?? '')
-      setOverrideEnabled(!!(initial.override_due_type || initial.override_billing_day))
-      setOverrideBillingDay(initial.override_billing_day?.toString() ?? '')
-      setOverrideDueType((initial.override_due_type as DueType) ?? 'after_billing')
+      setOverrideEnabled(!!initial.override_due_type)
+      setOverrideDueType(normalizeDueType(initial.override_due_type))
       setOverrideDueValue(initial.override_due_value?.toString() ?? '')
       setAccountModeOverride(initial.account_mode_override ?? 'auto')
     } else if (!initial) {
       setSelectedBank('')
       setProductId('')
+      setCardName('')
+      setHasCustomName(false)
       setLast4('')
       setLimit('')
       setBillingDay('')
@@ -151,7 +227,6 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
       setIssuedOn('')
       setActivatedOn('')
       setOverrideEnabled(false)
-      setOverrideBillingDay('')
       setOverrideDueType('after_billing')
       setOverrideDueValue('')
       setAccountModeOverride('auto')
@@ -161,19 +236,24 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
   const handleBankChange = (bank: string) => {
     setSelectedBank(bank)
     const filtered = products.filter(p => p.bank_name === bank)
-    if (filtered.length > 0) {
-      setProductId(filtered[0].id)
-    } else {
-      setProductId('')
-    }
+    const next = resolveBankChange(filtered, hasCustomName, cardName)
+    setProductId(next.productId)
+    setCardName(next.cardName)
+  }
+
+  const handleSelectProduct = (p: CardProduct) => {
+    const next = resolveProductSelect(p)
+    setProductId(next.productId)
+    setCardName(next.cardName)
+    setHasCustomName(next.hasCustomName)
   }
 
   const showOwnerSelect = !!initial && !!holders && holders.length > 0
   const isCredit = cardType === 'credit'
   const isLoan = cardType === 'loan'
 
-  // 信用卡模式校验
-  const creditValid = !!selectedBank && !!productId && !!limit && !!billingDay
+  // 信用卡模式校验：新建卡必填额度；编辑既有卡允许仅改其他信息，或补充输入额度
+  const creditValid = !!selectedBank && !!productId && !!billingDay && (!!initial || !!limit.trim())
   // 贷款类模式校验（产品和还款日必填，额度选填）
   const loanValid = !!selectedBank && !!productId && !!loanDueDay
 
@@ -181,26 +261,45 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
 
   const handleSubmit = async () => {
     if (!canSubmit) return
+
+    const limitResolution = resolveCardFormLimit(limit, isCredit, initial)
+    if (!limitResolution.valid) {
+      alert(limitResolution.error || '请输入有效的信用额度')
+      return
+    }
+
+    if (isCredit) {
+      const dueCheck = validateDueRule(overrideEnabled, overrideDueType, overrideDueValue)
+      if (!dueCheck.valid) {
+        alert(dueCheck.error || '还款规则校验失败')
+        return
+      }
+    }
+
     setSubmitting(true)
     try {
-      const base: Omit<CreditCard, 'id' | 'created_at'> = {
+      const currentProd = products.find(p => p.id === productId)
+      const finalNameOverride = resolveNameOverride(cardName, currentProd, hasCustomName)
+      const dueRulePayload = buildDueRulePayload(overrideEnabled, overrideDueType, overrideDueValue)
+
+      const base = {
         holder_id: ownerId,
         card_product_id: productId,
         card_number_last4: last4 || undefined,
-        credit_limit: limit ? parseFloat(limit) : 0,
-        billing_day: billingDay ? parseInt(billingDay) : 1,
-        status: 'active',
+        credit_limit: limitResolution.credit_limit,
+        credit_limit_override: limitResolution.credit_limit_override,
+        billing_day: billingDay ? parseInt(billingDay, 10) : 1,
+        status: 'active' as const,
         card_type: cardType,
-        loan_due_day: isLoan && loanDueDay ? parseInt(loanDueDay) : undefined,
-        override_billing_day: overrideEnabled && overrideBillingDay ? parseInt(overrideBillingDay) : undefined,
-        override_due_type: overrideEnabled ? overrideDueType : null,
-        override_due_value: overrideEnabled && overrideDueValue ? parseInt(overrideDueValue) : undefined,
+        loan_due_day: isLoan && loanDueDay ? parseInt(loanDueDay, 10) : undefined,
+        name_override: finalNameOverride ?? undefined,
+        ...dueRulePayload,
         account_mode_override: accountModeOverride === 'auto' ? null : accountModeOverride,
         issued_on: issuedOn || null,
         activated_on: activatedOn || null,
       }
 
-      await onSubmit(base)
+      await onSubmit(base as unknown as Omit<CreditCard, 'id' | 'created_at'>)
       onClose()
     } catch (err: unknown) {
       console.error(err)
@@ -228,7 +327,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
       <div className='flex flex-col gap-4'>
         <AiFillBox mode="card" onFill={(data) => {
           if (data.bank_name) setSelectedBank(String(data.bank_name))
-          if (data.card_number_last4) setLast4(String(data.card_number_last4))
+          if (data.card_number_last4) setLast4(sanitizeLast4Input(String(data.card_number_last4)))
           if (data.billing_day) {
             const d = String(data.billing_day).replace(/\D/g, '')
             if (d) setBillingDay(d)
@@ -271,21 +370,42 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
           required
           value={selectedBank}
           onChange={e => handleBankChange(e.target.value)}
-          disabled={lockProduct}
-          helperText={lockProduct ? '银行与卡产品编辑时不可更换，如需更换请删卡重建' : undefined}
           options={bankOptions.map(bank => ({ value: bank, label: bank }))}
         />
 
-        {/* 卡片名称选择 */}
-        <SelectField
-          label="卡片名称"
-          required
-          value={productId}
-          onChange={e => setProductId(e.target.value)}
-          disabled={!selectedBank || lockProduct}
-          helperText={lockProduct ? '卡片名称在管理页（卡产品）维护' : !selectedBank ? '请先选择发卡银行' : undefined}
-          options={availableProducts.map(p => ({ value: p.id, label: p.card_name }))}
-        />
+        {/* 卡片名称输入与常用卡种快捷点选 */}
+        <div>
+          <TextField
+            label="卡片名称"
+            required
+            placeholder="输入卡片名称，或点选下方卡种"
+            value={cardName}
+            onChange={e => {
+              setCardName(e.target.value)
+              setHasCustomName(true)
+            }}
+          />
+
+          {availableProducts.length > 0 && (
+            <div className='mt-2 flex flex-wrap gap-1.5'>
+              {availableProducts.slice(0, 6).map((p) => (
+                <button
+                  key={p.id}
+                  type='button'
+                  onClick={() => handleSelectProduct(p)}
+                  className={
+                    'rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ' +
+                    (productId === p.id && cardName === p.card_name
+                      ? 'bg-d-accent text-white'
+                      : 'border border-d-border bg-d-subtle text-d-muted hover:text-d-text')
+                  }
+                >
+                  {p.card_name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* ---- 信用卡模式 ---- */}
         {isCredit && (
@@ -293,10 +413,11 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
             <TextField
               label="额度"
               type="number"
-              placeholder="例如：50000"
+              placeholder={initial && getEffectiveCreditLimit(initial) === null ? "未获取，请输入信用额度" : "例如：50000"}
               value={limit}
               onChange={e => setLimit(e.target.value)}
-              required
+              required={!initial}
+              helperText={getCardFormLimitHelperText(initial)}
               startAdornment={<span>¥</span>}
             />
 
@@ -341,21 +462,11 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
             {overrideEnabled && (
               // 分组缩进线：1px d-border
               <div className='flex flex-col gap-4 border-l border-d-border pl-2'>
-                <TextField
-                  label="账单日（覆盖）"
-                  type="number"
-                  placeholder="留空则使用上方账单日"
-                  value={overrideBillingDay}
-                  onChange={e => setOverrideBillingDay(e.target.value)}
-                  helperText="可选，覆盖卡产品的默认账单日"
-                  endAdornment={<span>日</span>}
-                />
-
                 <SelectField
                   label="还款规则"
                   value={overrideDueType}
-                  onChange={e => setOverrideDueType(e.target.value as DueType)}
-                  options={(Object.keys(DUE_TYPE_LABELS) as DueType[]).map(t => ({
+                  onChange={e => setOverrideDueType(e.target.value as DueRuleType)}
+                  options={(Object.keys(DUE_TYPE_LABELS) as DueRuleType[]).map(t => ({
                     value: t,
                     label: DUE_TYPE_LABELS[t],
                   }))}
@@ -420,8 +531,8 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial, 
           label="卡号末4位"
           placeholder="选填"
           value={last4}
-          onChange={e => setLast4(e.target.value)}
-          maxLength={6}
+          onChange={e => setLast4(sanitizeLast4Input(e.target.value))}
+          maxLength={4}
         />
       </div>
     </Modal>

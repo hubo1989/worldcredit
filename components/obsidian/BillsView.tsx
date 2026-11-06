@@ -109,6 +109,8 @@ export interface BillsViewProps {
   onOpenPayment: (bill: BillDashboardItem) => void
   onManualAmount: (item: CardWithBillsSummary) => void
   onAddBill: () => void
+  onAddCard?: () => void
+  onMergeCards?: () => void
 }
 
 function FilterPill({
@@ -171,10 +173,13 @@ function BillCard({
   const manualPinned = item.historyBills.some(hasManualBillAmount)
   const canManual = manualPinned || canManuallySetBillAmount(billingDay)
   // 已过账单日但本期账单还没进系统：非首次账单的卡才提醒（首次出账时间不可预期）
+  // 归属合并账户的非锚点卡抑制缺账告警（PRD 7.4）
   const latestBillMonth = item.historyBills.reduce<string | null>((latest, b) => {
     return b.bill_month && (!latest || b.bill_month > latest) ? b.bill_month : latest
   }, null)
-  const missingStatement = missingStatementDays(billingDay, latestBillMonth)
+  const missingStatement = item.suppressMissingStatement
+    ? null
+    : missingStatementDays(billingDay, latestBillMonth)
 
   const unpaidBills = item.historyBills.filter(b => b.computed_status !== 'paid')
   const dueRef = isCleared ? null : pickDueReference(unpaidBills)
@@ -216,11 +221,27 @@ function BillCard({
                 {displayName}
               </span>
             )}
-            {tailDigits && (
-              <span className='shrink-0 whitespace-nowrap text-[12px] font-semibold leading-4 text-d-text'>
-                尾号 {tailDigits}
-              </span>
-            )}
+            {(() => {
+              const mergedTails =
+                item.account?.statement_mode === 'merged' && item.memberCards && item.memberCards.length > 1
+                  ? item.memberCards.map((m) => formatCardTail(m.card_number_last4)).filter(Boolean)
+                  : []
+              if (mergedTails.length > 0) {
+                return (
+                  <span className='shrink-0 whitespace-nowrap text-[12px] font-semibold leading-4 text-d-text'>
+                    含尾号 {mergedTails.join(' · ')}
+                  </span>
+                )
+              }
+              if (tailDigits) {
+                return (
+                  <span className='shrink-0 whitespace-nowrap text-[12px] font-semibold leading-4 text-d-text'>
+                    尾号 {tailDigits}
+                  </span>
+                )
+              }
+              return null
+            })()}
             {holderName && (
               <span className='shrink-0 whitespace-nowrap text-[10px] leading-4 text-d-muted'>
                 持卡人 {holderName}
@@ -329,45 +350,69 @@ function BillCard({
                 return (
                   <div
                     key={b.id}
-                    className='flex items-center justify-between rounded-lg bg-d-subtle p-2.5 text-left'
+                    className='rounded-lg bg-d-subtle p-2.5 text-left'
                   >
-                    <HistoryLabel
-                      type={bPaid ? undefined : 'button'}
-                      aria-label={bPaid ? undefined : `登记 ${bMonth} 期账单还款`}
-                      onClick={bPaid ? undefined : e => { e.stopPropagation(); onOpenPayment(b) }}
-                      className='min-w-0 text-left'
-                    >
-                      <span className='block text-[12px] font-semibold leading-4 text-d-text'>
-                        {bMonth} 期账单
-                      </span>
-                      <span className='mt-0.5 block text-[10px] leading-4 text-d-muted'>
-                        到期日: {b.due_date ? format(new Date(b.due_date), 'yyyy-MM-dd') : '—'}
-                      </span>
-                    </HistoryLabel>
-                    <span className='flex shrink-0 items-center gap-2'>
-                      <span className='text-[12px] font-semibold text-d-text'>
-                        {currencySymbol(rowCurrency)}
-                        {Number(b.bill_amount).toLocaleString()}
-                      </span>
-                      <span
-                        className={
-                          'rounded-md px-1.5 py-0.5 text-[10px] font-semibold ' +
-                          (bPaid
-                            ? 'bg-d-success-soft text-d-success-ink'
-                            : 'bg-d-danger-soft text-d-danger-ink')
-                        }
+                    <div className='flex items-center justify-between'>
+                      <HistoryLabel
+                        type={bPaid ? undefined : 'button'}
+                        aria-label={bPaid ? undefined : `登记 ${bMonth} 期账单还款`}
+                        onClick={bPaid ? undefined : e => { e.stopPropagation(); onOpenPayment(b) }}
+                        className='min-w-0 text-left'
                       >
-                        {bPaid ? '已结清' : '未结清'}
+                        <span className='block text-[12px] font-semibold leading-4 text-d-text'>
+                          {bMonth} 期账单
+                        </span>
+                        <span className='mt-0.5 block text-[10px] leading-4 text-d-muted'>
+                          到期日: {b.due_date ? format(new Date(b.due_date), 'yyyy-MM-dd') : '—'}
+                        </span>
+                      </HistoryLabel>
+                      <span className='flex shrink-0 items-center gap-2'>
+                        <span className='text-[12px] font-semibold text-d-text'>
+                          {currencySymbol(rowCurrency)}
+                          {Number(b.bill_amount).toLocaleString()}
+                        </span>
+                        <span
+                          className={
+                            'rounded-md px-1.5 py-0.5 text-[10px] font-semibold ' +
+                            (bPaid
+                              ? 'bg-d-success-soft text-d-success-ink'
+                              : 'bg-d-danger-soft text-d-danger-ink')
+                          }
+                        >
+                          {bPaid ? '已结清' : '未结清'}
+                        </span>
+                        <button
+                          type='button'
+                          onClick={goToBill}
+                          className='inline-flex items-center gap-0.5 text-[11px] font-semibold text-d-accent-light'
+                        >
+                          <span className='underline underline-offset-2'>编辑</span>
+                          <ChevronRightIcon size={14} className='text-d-muted' />
+                        </button>
                       </span>
-                      <button
-                        type='button'
-                        onClick={goToBill}
-                        className='inline-flex items-center gap-0.5 text-[11px] font-semibold text-d-accent-light'
-                      >
-                        <span className='underline underline-offset-2'>编辑</span>
-                        <ChevronRightIcon size={14} className='text-d-muted' />
-                      </button>
-                    </span>
+                    </div>
+                    {/* 分卡小计与差额透明说明 (PRD 6.2) */}
+                    {b.subtotals && b.subtotals.length > 0 && (
+                      <div className='mt-2 border-t border-d-border/40 pt-2 space-y-1 text-[11px] text-d-muted'>
+                        {b.subtotals.map(sub => (
+                          <div key={sub.card_tail} className='flex justify-between items-center'>
+                            <span>尾号 {sub.card_tail} 本期小计</span>
+                            <span className='font-mono font-medium text-d-text'>
+                              {currencySymbol(rowCurrency)}{Number(sub.subtotal_amount).toLocaleString()}
+                            </span>
+                          </div>
+                        ))}
+                        {b.unallocated_amount !== null && b.unallocated_amount !== undefined && (
+                          <div className='flex justify-between items-center text-d-muted/80 italic'>
+                            <span>上期结转 / 账户级分期与调整</span>
+                            <span className='font-mono'>
+                              {b.unallocated_amount > 0 ? '+' : ''}
+                              {currencySymbol(rowCurrency)}{b.unallocated_amount.toLocaleString()}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -394,7 +439,7 @@ export function BillsView(vm: BillsViewProps) {
     onClearStatuses, statusCounts, entityCounts, tagCounts, dimension, onDimension,
     selectedTag, onSelectedTag, holderTags, bankTags,
     loading, loadError, onRetry, onEmptySync, payables, cards, allCards, holderMap,
-    bankGroups, onOpenPayment, onManualAmount, onAddBill, sortMode, onSortMode,
+    bankGroups, onOpenPayment, onManualAmount, onAddBill, onAddCard, onMergeCards, sortMode, onSortMode,
     payablePayments, payableHistoryErrors, payableHistoryLoading,
     expandedPayableIds, onTogglePayableHistory,
     onEditPayable, onPayPayable,
@@ -489,22 +534,43 @@ export function BillsView(vm: BillsViewProps) {
 
   return (
     <div className='obsidian-dashboard min-h-dvh bg-d-bg pb-24 text-d-text'>
-      {/* 页头：标题 + 同步 */}
+      {/* 页头：标题 + 操作（新增卡片 + 同步） */}
       <div className='flex items-center justify-between px-5 pt-4'>
         <p className='text-[20px] font-bold leading-7 text-d-text'>卡片与账单</p>
-        <button
-          id='sync-bills-btn'
-          type='button'
-          aria-label='同步账单'
-          onClick={onSync}
-          disabled={syncing}
-          className='flex h-11 w-11 items-center justify-center rounded-xl border border-d-border bg-d-surface disabled:opacity-60'
-        >
-          <SyncIcon
-            size={20}
-            className={syncing ? 'animate-spin text-d-accent-light' : 'text-d-accent-light'}
-          />
-        </button>
+        <div className='flex items-center gap-2'>
+          {onMergeCards && (
+            <button
+              type='button'
+              onClick={onMergeCards}
+              className='flex h-11 items-center gap-1 rounded-xl border border-d-border bg-d-surface px-3 text-[13px] font-semibold text-d-text active:opacity-90'
+            >
+              <span>合并账单</span>
+            </button>
+          )}
+          {onAddCard && (
+            <button
+              type='button'
+              onClick={onAddCard}
+              className='flex h-11 items-center gap-1 rounded-xl bg-d-accent px-3 text-[13px] font-semibold text-white active:opacity-90'
+            >
+              <PlusIcon size={16} />
+              <span>新增卡片</span>
+            </button>
+          )}
+          <button
+            id='sync-bills-btn'
+            type='button'
+            aria-label='同步账单'
+            onClick={onSync}
+            disabled={syncing}
+            className='flex h-11 w-11 items-center justify-center rounded-xl border border-d-border bg-d-surface disabled:opacity-60'
+          >
+            <SyncIcon
+              size={20}
+              className={syncing ? 'animate-spin text-d-accent-light' : 'text-d-accent-light'}
+            />
+          </button>
+        </div>
       </div>
 
       <div className='mt-4 flex flex-col gap-3 px-5'>
@@ -708,13 +774,24 @@ export function BillsView(vm: BillsViewProps) {
           <div className='rounded-2xl border border-d-border bg-d-surface px-6 py-10 text-center'>
             <p className='text-[15px] font-semibold text-d-text'>没有找到卡片记录</p>
             <p className='mt-1 text-[12px] text-d-muted'>可以手动录入卡片或导入邮箱账单</p>
-            <button
-              type='button'
-              onClick={onEmptySync}
-              className='mt-4 h-11 rounded-xl bg-d-accent px-5 text-xs font-semibold text-white'
-            >
-              立即同步
-            </button>
+            <div className='mt-4 flex items-center justify-center gap-3'>
+              {onAddCard && (
+                <button
+                  type='button'
+                  onClick={onAddCard}
+                  className='h-11 rounded-xl bg-d-accent px-5 text-xs font-semibold text-white'
+                >
+                  新增卡片
+                </button>
+              )}
+              <button
+                type='button'
+                onClick={onEmptySync}
+                className='h-11 rounded-xl border border-d-border bg-d-surface px-5 text-xs font-semibold text-d-text'
+              >
+                立即同步
+              </button>
+            </div>
           </div>
         ) : (
           renderCards()

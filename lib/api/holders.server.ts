@@ -187,12 +187,21 @@ async function syncHolderAuthUser(holderId: string, email?: string | null): Prom
   await execute('UPDATE card_holders SET auth_user_id = ? WHERE id = ?', [data?.id ?? null, holderId])
 }
 
-export async function createHolder(holder: Omit<CardHolder, 'id' | 'created_at'>): Promise<CardHolder> {
+export type CreateHolderInput = Omit<CardHolder, 'id' | 'created_at' | 'created_by'> & {
+  created_by?: string
+}
+
+export async function createHolder(holder: CreateHolderInput): Promise<CardHolder> {
+  const trimmedName = holder.name ? holder.name.trim() : ''
+  if (!trimmedName) {
+    throw new Error('持卡人姓名不能为空')
+  }
   const id = uuid()
   const ts = now()
+  const createdBy = holder.created_by || ''
   const { error } = await execute(
     'INSERT INTO card_holders (id, created_by, managed_by, name, phone, email, avatar_color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, holder.created_by, holder.created_by, holder.name, holder.phone || null, holder.email || null, holder.avatar_color || '#1976d2', ts]
+    [id, createdBy, createdBy, trimmedName, holder.phone || null, holder.email || null, holder.avatar_color || '#7aadff', ts]
   )
   if (error) throw new Error(error.message)
   await syncHolderAuthUser(id, holder.email)
@@ -310,11 +319,28 @@ export async function getHolderStatsPageData(holderId: string): Promise<StatsPag
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
   // Fetch cards
-  const { data: cards, error: cardError } = await query<CreditCard>(
-    'SELECT * FROM credit_cards WHERE holder_id = ?', [holderId]
+  const { data: cards, error: cardError } = await query<
+    CreditCard & {
+      bank_id?: string | null
+      bank_name?: string | null
+      currency?: string | null
+      account_quota_mode?: string | null
+      shared_credit_limit?: number | null
+      bank_quota_mode?: string | null
+    }
+  >(
+    `SELECT cc.*, cp.bank_id, cp.bank_name, cp.currency,
+            ca.quota_mode AS account_quota_mode, ca.shared_credit_limit,
+            b.quota_mode AS bank_quota_mode
+     FROM credit_cards cc
+     LEFT JOIN card_products cp ON cc.card_product_id = cp.id
+     LEFT JOIN banks b ON cp.bank_id = b.id
+     LEFT JOIN credit_accounts ca ON cc.account_id = ca.id
+     WHERE cc.holder_id = ?`,
+    [holderId]
   )
   if (cardError) throw new Error(cardError.message)
-  const allCards = (cards || []) as CreditCard[]
+  const allCards = cards || []
   const activeCards = allCards.filter(c => c.status === 'active')
   const cardIds = allCards.map(c => c.id)
 
@@ -333,8 +359,43 @@ export async function getHolderStatsPageData(holderId: string): Promise<StatsPag
     allBills = (bills || []) as Bill[]
   }
 
-  // Summary
-  const totalLimit = activeCards.reduce((s, c) => s + (Number(c.credit_limit) || 0), 0)
+  // Summary: 两级去重聚合总授信额度（共享额度池同银行每池仅计 1 次，不重复叠加）
+  const sharedPools: Record<string, { sharedLimit?: number; maxLimit: number }> = {}
+  let independentLimit = 0
+  for (const c of activeCards) {
+    const limit = Number(c.credit_limit) || 0
+    const isShared =
+      c.account_quota_mode === 'shared' ||
+      (!c.account_quota_mode && c.bank_quota_mode === 'shared')
+
+    if (!isShared) {
+      if (limit > 0) independentLimit += limit
+    } else {
+      const bankKey = c.bank_id || c.bank_name || 'unknown'
+      const poolKey = `${bankKey}_${c.currency || 'CNY'}`
+      if (!sharedPools[poolKey]) {
+        sharedPools[poolKey] = {
+          sharedLimit:
+            c.shared_credit_limit != null ? Number(c.shared_credit_limit) : undefined,
+          maxLimit: limit,
+        }
+      } else {
+        if (c.shared_credit_limit != null) {
+          sharedPools[poolKey].sharedLimit = Math.max(
+            sharedPools[poolKey].sharedLimit ?? 0,
+            Number(c.shared_credit_limit)
+          )
+        }
+        sharedPools[poolKey].maxLimit = Math.max(sharedPools[poolKey].maxLimit, limit)
+      }
+    }
+  }
+
+  let totalLimit = independentLimit
+  for (const pool of Object.values(sharedPools)) {
+    const poolAmount = pool.sharedLimit ?? pool.maxLimit
+    if (poolAmount > 0) totalLimit += poolAmount
+  }
   const unpaidStatuses: Bill['status'][] = ['unpaid', 'partial', 'overdue']
   const unpaidBills = allBills.filter(b => unpaidStatuses.includes(b.status))
   const totalUsed = unpaidBills.reduce((s, b) => s + (Number(b.bill_amount) || 0), 0)

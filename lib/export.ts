@@ -145,6 +145,8 @@ async function exportBills(
     })
     .map(bill => ({
       '账单月份': bill.bill_month,
+      '账户模式': bill.account?.statement_mode === 'merged' ? '合并账单' : '独立账单',
+      '关联卡尾号': bill.account_card_tails || formatCardTail(bill.credit_cards.card_number_last4),
       '银行': bill.credit_cards.bank_name,
       '卡片': bill.credit_cards.card_name,
       '卡号末四位': formatCardTail(bill.credit_cards.card_number_last4),

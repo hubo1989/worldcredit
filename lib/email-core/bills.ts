@@ -9,6 +9,8 @@
  */
 
 import type { BillParseResult, HolderScopedBill, NestedBillMessage, RawAttachment } from './types'
+import { evaluateParsedBillDueDate, extractValidCreditLimit, isExactDueDate } from './due-date'
+import { isCmbStatement, parseCmbStatement } from './cmb'
 import {
   extractNameFromBody,
   isEmlAttachment,
@@ -122,6 +124,7 @@ export function deriveBillingDayFromEmail(params: {
  */
 export interface CardProductCandidate {
   id: string
+  bank_id?: string | null
   bank_name: string
   currency: string
 }
@@ -176,6 +179,8 @@ export interface FindOrCreateCardParams {
   bankName: string | null
   /** AI 解出的币种，用于在同银行多产品里排除币种不符的候选。 */
   currency: string | null
+  /** 邮件明确写出的信用额度（正数）；缺失或 <= 0 时按未获取存兼容值 0。 */
+  creditLimit?: number | null
   /**
    * false 时只查找不创建：归属不可信（回落默认持卡人）绝不能凭猜测
    * 给某个人名下新建卡——2026-10-16 民生 0872 就这样被挂错了人。
@@ -195,10 +200,60 @@ export async function findOrCreateCardForHolder(
   const tail = normalizeCardTail(params.cardTail)
   if (!tail) return { ok: false, reason: '账单未给出尾号，跳过（避免误挂到其他卡）' }
 
-  const existing = await db.prepare(
-    'SELECT id FROM credit_cards WHERE holder_id = ? AND card_number_last4 = ? LIMIT 1'
-  ).bind(params.holderId, tail).first<{ id: string }>()
-  if (existing) return { ok: true, cardId: existing.id, created: false }
+  const bankNameStr = (params.bankName ?? '').trim()
+  const isMergedCandidate = /招商|招行|民生|上海银行|北京银行/.test(bankNameStr)
+
+  // 1. 若发卡行为合并出账模式（如招行），检查持卡人名下是否已有活跃合并账户
+  let existingMergedAccount: { id: string; primary_card_id: string | null } | null = null
+  if (isMergedCandidate) {
+    try {
+      existingMergedAccount = await db
+        .prepare(
+          `SELECT id, primary_card_id FROM credit_accounts
+           WHERE holder_id = ?
+             AND (bank_name LIKE '%招商%' OR bank_name LIKE '%招行%' OR bank_name LIKE ? OR bank_id IN (SELECT id FROM banks WHERE name LIKE ?))
+             AND statement_mode = 'merged'
+             AND status = 'active'
+           ORDER BY created_at ASC LIMIT 1`
+        )
+        .bind(params.holderId, `%${bankNameStr}%`, `%${bankNameStr}%`)
+        .first<{ id: string; primary_card_id: string | null }>()
+    } catch {
+      existingMergedAccount = null
+    }
+  }
+
+  // 2. 检查卡片是否已存在
+  let existingCard: { id: string; account_id?: string | null } | null = null
+  try {
+    existingCard = await db.prepare(
+      'SELECT id, account_id FROM credit_cards WHERE holder_id = ? AND card_number_last4 = ? LIMIT 1'
+    ).bind(params.holderId, tail).first<{ id: string; account_id?: string | null }>()
+  } catch {
+    const fallback = await db.prepare(
+      'SELECT id FROM credit_cards WHERE holder_id = ? AND card_number_last4 = ? LIMIT 1'
+    ).bind(params.holderId, tail).first<{ id: string }>()
+    if (fallback) existingCard = { id: fallback.id }
+  }
+
+  if (existingCard) {
+    if (existingMergedAccount && !existingCard.account_id) {
+      try {
+        await db.prepare('UPDATE credit_cards SET account_id = ? WHERE id = ?')
+          .bind(existingMergedAccount.id, existingCard.id).run()
+      } catch {
+        // ignore
+      }
+    }
+    return { ok: true, cardId: existingMergedAccount?.primary_card_id || existingCard.id, created: false }
+  }
+
+  // 3. 卡片不存在，但已存在合并账户：
+  // PRD 与业务原则明确要求：「未知尾号只展示、不自动建卡（按需补建入口）」
+  // 此时对齐到账户的锚点卡 primary_card_id，不伪造创建新卡片
+  if (existingMergedAccount && existingMergedAccount.primary_card_id) {
+    return { ok: true, cardId: existingMergedAccount.primary_card_id, created: false }
+  }
 
   if (params.allowCreate === false) {
     return {
@@ -211,7 +266,7 @@ export async function findOrCreateCardForHolder(
   // credit_cards.card_product_id 是 NOT NULL 且外键 RESTRICT，必须挂在真实卡产品上。
   // 这里刻意不新建卡产品：缺少银行/卡种上下文时硬造会污染产品目录。
   const products = await db.prepare(
-    'SELECT id, bank_name, currency FROM card_products WHERE is_active = 1 ORDER BY created_at ASC, id ASC'
+    'SELECT id, bank_id, bank_name, currency FROM card_products WHERE is_active = 1 ORDER BY created_at ASC, id ASC'
   ).all<CardProductCandidate>()
   const product = pickCardProductForBank(products.results ?? [], params.bankName, params.currency)
   if (!product) {
@@ -242,11 +297,74 @@ export async function findOrCreateCardForHolder(
   }
 
   const cardId = crypto.randomUUID()
-  // 额度暂记 0：AI 结果里没有额度字段，宁可留空等用户补，也不猜一个数。
+  // 额度：邮件明确给出正数额度则写入，否则记兼容值 0（credit_limit_override=NULL，界面识别为「未获取」）。
   // 币种不落库在这里——它由 card_product 决定，所以上面必须挑对产品。
-  await db.prepare(
-    'INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type) VALUES (?, ?, ?, ?, 0, ?, ?, ?)'
-  ).bind(cardId, params.holderId, product.id, tail, billingDay, 'active', 'credit').run()
+  const initialLimit = extractValidCreditLimit(params.creditLimit)
+
+  let accountId: string | null = null
+  if (isMergedCandidate) {
+    accountId = crypto.randomUUID()
+    try {
+      await db.prepare(
+        `INSERT INTO credit_accounts (id, holder_id, bank_id, bank_name, currency, statement_mode, quota_mode, shared_credit_limit, billing_day, due_type, due_value, primary_card_id, status)
+         VALUES (?, ?, ?, ?, ?, 'merged', 'shared', ?, ?, 'after_billing', 20, NULL, 'active')`
+      ).bind(
+        accountId,
+        params.holderId,
+        product.bank_id || null,
+        product.bank_name || bankNameStr,
+        product.currency || 'CNY',
+        initialLimit,
+        billingDay
+      ).run()
+    } catch {
+      accountId = null
+    }
+  }
+
+  if (initialLimit !== null) {
+    if (accountId) {
+      try {
+        await db.prepare(
+          'INSERT INTO credit_cards (id, holder_id, account_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(cardId, params.holderId, accountId, product.id, tail, initialLimit, billingDay, 'active', 'credit').run()
+      } catch {
+        await db.prepare(
+          'INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(cardId, params.holderId, product.id, tail, initialLimit, billingDay, 'active', 'credit').run()
+      }
+    } else {
+      await db.prepare(
+        'INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(cardId, params.holderId, product.id, tail, initialLimit, billingDay, 'active', 'credit').run()
+    }
+  } else {
+    if (accountId) {
+      try {
+        await db.prepare(
+          'INSERT INTO credit_cards (id, holder_id, account_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(cardId, params.holderId, accountId, product.id, tail, 0, billingDay, 'active', 'credit').run()
+      } catch {
+        await db.prepare(
+          'INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type) VALUES (?, ?, ?, ?, 0, ?, ?, ?)'
+        ).bind(cardId, params.holderId, product.id, tail, billingDay, 'active', 'credit').run()
+      }
+    } else {
+      await db.prepare(
+        'INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, credit_limit, billing_day, status, card_type) VALUES (?, ?, ?, ?, 0, ?, ?, ?)'
+      ).bind(cardId, params.holderId, product.id, tail, billingDay, 'active', 'credit').run()
+    }
+  }
+
+  // 确保账户挂载 primary_card_id 锚点卡
+  if (accountId) {
+    try {
+      await db.prepare('UPDATE credit_accounts SET primary_card_id = ? WHERE id = ? AND primary_card_id IS NULL')
+        .bind(cardId, accountId).run()
+    } catch {
+      // ignore
+    }
+  }
 
   return { ok: true, cardId, created: true }
 }
@@ -321,15 +439,63 @@ export async function upsertBillForCard(
   const amount = Number(parsed.bill_amount)
   const minPayment = parsed.min_payment != null ? Number(parsed.min_payment) : null
   const statementDate = parsed.statement_date ?? null
-  // 0 元账单的 due_date 兜底（bills.due_date NOT NULL）：缺省时用账单日或月末；
-  // 0 元新账单 status 直接置 paid（应还 0 元 = 已还清），与直发路径同口径。
+  // 非 0 元账单必须具备确切 YYYY-MM-DD 还款日，禁止 fallback 到 statementDate 或月末 -28 编造日期；
+  // 仅 0 元账单（无需还款，status=paid）在邮件未给还款日时满足 bills.due_date NOT NULL 存储约束。
   const zeroBill = amount === 0
-  const dueDate = (parsed.due_date as string | null) ?? statementDate ?? (billMonth + '-28')
+  const exactDue = isExactDueDate(parsed.due_date) && parsed.due_date_status !== 'ambiguous_or_grace_only'
+    ? parsed.due_date.trim()
+    : null
+  if (!zeroBill && !exactDue) {
+    const evalDue = evaluateParsedBillDueDate(parsed)
+    throw new Error(!evalDue.ok ? evalDue.reason : '缺少确切还款日（YYYY-MM-DD），禁止编造还款日')
+  }
+  const dueDate = exactDue ?? statementDate ?? (billMonth + '-28')
   const initialStatus = zeroBill ? 'paid' : 'unpaid'
 
-  const existing = await db.prepare(
-    'SELECT id, status FROM bills WHERE card_id = ? AND bill_month = ?'
-  ).bind(cardId, billMonth).first<{ id: string; status: string | null }>()
+  // 解析归属账户与锚点卡
+  let accountId: string | null = null
+  let anchorCardId = cardId
+  let holderId: string | null = null
+
+  try {
+    const cardInfo = await db.prepare(
+      'SELECT id, holder_id, account_id FROM credit_cards WHERE id = ?'
+    ).bind(cardId).first<{ id: string; holder_id: string; account_id: string | null }>()
+    if (cardInfo) {
+      holderId = cardInfo.holder_id
+      if (cardInfo.account_id) {
+        accountId = cardInfo.account_id
+        const accInfo = await db.prepare(
+          'SELECT id, statement_mode, primary_card_id FROM credit_accounts WHERE id = ?'
+        ).bind(accountId).first<{ id: string; statement_mode: string; primary_card_id: string | null }>()
+        if (accInfo?.statement_mode === 'merged' && accInfo.primary_card_id) {
+          anchorCardId = accInfo.primary_card_id
+        }
+      }
+    }
+  } catch {
+    // 兼容桩环境
+  }
+
+  // 唯一性判定：若有 accountId 则优先查 (account_id, bill_month)，否则查 (card_id, bill_month)
+  let existing: { id: string; status: string | null } | null = null
+  if (accountId) {
+    try {
+      existing = await db.prepare(
+        'SELECT id, status FROM bills WHERE account_id = ? AND bill_month = ?'
+      ).bind(accountId, billMonth).first<{ id: string; status: string | null }>()
+    } catch {
+      existing = null
+    }
+  }
+  if (!existing) {
+    existing = await db.prepare(
+      'SELECT id, status FROM bills WHERE card_id = ? AND bill_month = ?'
+    ).bind(anchorCardId, billMonth).first<{ id: string; status: string | null }>()
+  }
+
+  let billId: string
+  let action: 'inserted' | 'updated' | 'preserved'
 
   if (existing) {
     if (!options.trusted) {
@@ -339,17 +505,124 @@ export async function upsertBillForCard(
         reason: `该卡 ${billMonth} 账单已存在，但收件人无法确认归属（已回落默认持卡人），保留原值`,
       }
     }
-    await db.prepare(
-      'UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?, status = ? WHERE id = ?'
-    ).bind(amount, minPayment, dueDate, statementDate, keepPaidStatus(existing.status), existing.id).run()
-    return { billId: existing.id, action: 'updated', reason: null }
+    billId = existing.id
+    action = 'updated'
+    try {
+      await db.prepare(
+        'UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?, status = ?, account_id = COALESCE(account_id, ?) WHERE id = ?'
+      ).bind(amount, minPayment, dueDate, statementDate, keepPaidStatus(existing.status), accountId, existing.id).run()
+    } catch {
+      await db.prepare(
+        'UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?, status = ? WHERE id = ?'
+      ).bind(amount, minPayment, dueDate, statementDate, keepPaidStatus(existing.status), existing.id).run()
+    }
+  } else {
+    billId = crypto.randomUUID()
+    action = 'inserted'
+    if (accountId) {
+      try {
+        await db.prepare(
+          'INSERT INTO bills (id, account_id, card_id, bill_month, bill_amount, min_payment, due_date, statement_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(billId, accountId, anchorCardId, billMonth, amount, minPayment, dueDate, statementDate, initialStatus).run()
+      } catch {
+        await db.prepare(
+          'INSERT INTO bills (id, card_id, bill_month, bill_amount, min_payment, due_date, statement_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(billId, anchorCardId, billMonth, amount, minPayment, dueDate, statementDate, initialStatus).run()
+      }
+    } else {
+      await db.prepare(
+        'INSERT INTO bills (id, card_id, bill_month, bill_amount, min_payment, due_date, statement_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(billId, anchorCardId, billMonth, amount, minPayment, dueDate, statementDate, initialStatus).run()
+    }
   }
 
-  const billId = crypto.randomUUID()
-  await db.prepare(
-    'INSERT INTO bills (id, card_id, bill_month, bill_amount, min_payment, due_date, statement_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).bind(billId, cardId, billMonth, amount, minPayment, dueDate, statementDate, initialStatus).run()
-  return { billId, action: 'inserted', reason: null }
+  // 写入/更新分卡小计（bill_card_subtotals）
+  if (parsed.card_subtotals && parsed.card_subtotals.length > 0) {
+    for (const sub of parsed.card_subtotals) {
+      const subTail = normalizeCardTail(sub.card_last4)
+      if (!subTail) continue
+
+      let subCardId: string | null = null
+      if (holderId) {
+        try {
+          const matchedCard = await db.prepare(
+            'SELECT id FROM credit_cards WHERE holder_id = ? AND card_number_last4 = ? LIMIT 1'
+          ).bind(holderId, subTail).first<{ id: string }>()
+          if (matchedCard) subCardId = matchedCard.id
+        } catch {
+          // ignore
+        }
+      }
+
+      const subId = crypto.randomUUID()
+      try {
+        await db.prepare(
+          `INSERT INTO bill_card_subtotals (id, bill_id, card_id, card_tail, subtotal_amount, currency, source)
+           VALUES (?, ?, ?, ?, ?, ?, 'email')
+           ON CONFLICT(bill_id, card_tail) DO UPDATE SET
+             card_id = excluded.card_id,
+             subtotal_amount = excluded.subtotal_amount,
+             currency = excluded.currency`
+        ).bind(subId, billId, subCardId, subTail, sub.amount, sub.currency || 'CNY').run()
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return { billId, action, reason: null }
+}
+
+/**
+ * 邮件明确写出正数信用额度时，仅在卡片当前为「未获取」（credit_limit <= 0 且无人工覆盖）时回填。
+ * 绝不触碰 credit_limit_override，也不覆盖用户已设置的额度。
+ */
+export async function syncCreditLimitFromBill(
+  db: D1Database,
+  cardId: string,
+  parsed: BillParseResult
+): Promise<boolean> {
+  const candidate = extractValidCreditLimit(parsed.credit_limit)
+  if (candidate === null) return false
+
+  let card: { credit_limit: number | null; credit_limit_override?: number | null; account_id?: string | null } | null
+  try {
+    card = await db
+      .prepare('SELECT credit_limit, credit_limit_override, account_id FROM credit_cards WHERE id = ?')
+      .bind(cardId)
+      .first<{ credit_limit: number | null; credit_limit_override?: number | null; account_id?: string | null }>()
+  } catch {
+    card = await db
+      .prepare('SELECT credit_limit, credit_limit_override FROM credit_cards WHERE id = ?')
+      .bind(cardId)
+      .first<{ credit_limit: number | null; credit_limit_override?: number | null }>()
+  }
+  if (!card) return false
+
+  // 同步账户级共享额度（若卡片属于共享额度账户且账户尚未设置共享额度）
+  if (card.account_id) {
+    try {
+      const acc = await db
+        .prepare('SELECT id, shared_credit_limit, quota_mode FROM credit_accounts WHERE id = ?')
+        .bind(card.account_id)
+        .first<{ id: string; shared_credit_limit: number | null; quota_mode: string }>()
+      if (acc && acc.quota_mode === 'shared' && (acc.shared_credit_limit == null || acc.shared_credit_limit <= 0)) {
+        await db.prepare('UPDATE credit_accounts SET shared_credit_limit = ? WHERE id = ?')
+          .bind(candidate, acc.id).run()
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (card.credit_limit_override != null) return false
+  if ((Number(card.credit_limit) || 0) > 0) return false
+
+  await db
+    .prepare('UPDATE credit_cards SET credit_limit = ? WHERE id = ?')
+    .bind(candidate, cardId)
+    .run()
+  return true
 }
 
 /**
@@ -475,23 +748,21 @@ export async function persistNestedBills(
 
     let parsed: BillParseResult
     try {
-      parsed = await parse(message.text)
+      if (isCmbStatement({ fromEmail: message.from, subject: message.subject, text: message.text })) {
+        parsed = parseCmbStatement(message.text)
+      } else {
+        parsed = await parse(message.text)
+      }
     } catch (err) {
       skipped.push({ label: message.label, reason: 'AI 解析失败：' + (err instanceof Error ? err.message : String(err)) })
       continue
     }
 
-    // 转发包里混着「电子对账单已可查阅」这类通知和营销邮件，字段不全的一律跳过
-    // 与直发路径同口径：0 元账单合法（== null 判空，不用 falsy）；
-    // 0 元时 due_date 可缺（无需还款就没有截止日）
-    const zeroBill = Number(parsed.bill_amount) === 0
-    if (
-      parsed.is_bill === false ||
-      !parsed.bill_month ||
-      parsed.bill_amount == null || Number.isNaN(Number(parsed.bill_amount)) ||
-      (!zeroBill && !parsed.due_date)
-    ) {
-      skipped.push({ label: message.label, reason: '非账单或缺少必填字段' })
+    // 转发包里混着「电子对账单已可查阅」这类通知和营销邮件，字段不全的一律跳过；
+    // 非 0 元账单必须有确切 YYYY-MM-DD 还款日，明确区分「邮件未提供」与「日期模糊/只有宽限期」。
+    const dueEval = evaluateParsedBillDueDate(parsed)
+    if (!dueEval.ok) {
+      skipped.push({ label: message.label, reason: dueEval.reason })
       continue
     }
 
@@ -514,10 +785,11 @@ export async function persistNestedBills(
       cardTail: parsed.card_last4 ?? null,
       statementDate: parsed.statement_date ?? null,
       statementDay: parsed.statement_day ?? null,
-      dueDate: parsed.due_date ?? null,
+      dueDate: dueEval.dueDate,
       receivedDate: message.date,
       bankName: parsed.bank_name ?? null,
       currency: parsed.currency ?? null,
+      creditLimit: parsed.credit_limit ?? null,
       // 归属不可信时绝不自动建卡（会挂到默认持卡人头上）；落草稿等人工确认。
       allowCreate: trusted,
     })
@@ -541,6 +813,7 @@ export async function persistNestedBills(
     }
     // 每期账单落库后回写卡档账单日（有出账日证据互相印证才动，见函数注释）
     const billingDayUpdated = await syncBillingDayFromBill(db, card.cardId, parsed)
+    await syncCreditLimitFromBill(db, card.cardId, parsed)
     written.push({
       holderId: resolution.holderId,
       holderName: scope.holders.find(h => h.id === resolution.holderId)?.name ?? '',

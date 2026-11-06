@@ -27,6 +27,9 @@ public struct CardUpdateInput: Sendable {
     public var overrideDueValue: Int?
     /// Omitted values leave the rule unchanged; this flag clears both fields.
     public var clearDueOverride: Bool = false
+    public var cardProductId: String?
+    public var cardNumberLast4: String?
+    public var holderId: String?
 
     public init(
         nameOverride: String? = nil,
@@ -34,7 +37,11 @@ public struct CardUpdateInput: Sendable {
         billingDay: Int? = nil,
         overrideBillingDay: Int? = nil,
         overrideDueType: PaymentDueType? = nil,
-        overrideDueValue: Int? = nil
+        overrideDueValue: Int? = nil,
+        clearDueOverride: Bool = false,
+        cardProductId: String? = nil,
+        cardNumberLast4: String? = nil,
+        holderId: String? = nil
     ) {
         self.nameOverride = nameOverride
         self.creditLimit = creditLimit
@@ -42,6 +49,10 @@ public struct CardUpdateInput: Sendable {
         self.overrideBillingDay = overrideBillingDay
         self.overrideDueType = overrideDueType
         self.overrideDueValue = overrideDueValue
+        self.clearDueOverride = clearDueOverride
+        self.cardProductId = cardProductId
+        self.cardNumberLast4 = cardNumberLast4
+        self.holderId = holderId
     }
 }
 
@@ -72,9 +83,23 @@ public final class CardEditService: Sendable {
 
             var patchDict: [String: Any] = [:]
 
+            if let productId = input.cardProductId, !productId.isEmpty {
+                card.cardProductId = productId
+                patchDict["card_product_id"] = productId
+            }
+            if let holderId = input.holderId, !holderId.isEmpty {
+                card.holderId = holderId
+                patchDict["holder_id"] = holderId
+            }
+            if let last4 = input.cardNumberLast4 {
+                let trimmed = last4.trimmingCharacters(in: .whitespaces)
+                card.cardNumberLast4 = trimmed.isEmpty ? nil : trimmed
+                patchDict["card_number_last4"] = trimmed.isEmpty ? NSNull() : trimmed
+            }
             if let name = input.nameOverride {
-                card.nameOverride = name.isEmpty ? nil : name
-                patchDict["name_override"] = name.isEmpty ? NSNull() : name
+                let trimmed = name.trimmingCharacters(in: .whitespaces)
+                card.nameOverride = trimmed.isEmpty ? nil : trimmed
+                patchDict["name_override"] = trimmed.isEmpty ? NSNull() : trimmed
             }
             if let limit = input.creditLimit {
                 card.creditLimit = limit
@@ -83,8 +108,10 @@ public final class CardEditService: Sendable {
             if let day = input.billingDay {
                 card.billingDay = day
                 patchDict["billing_day"] = day
-            }
-            if let ovDay = input.overrideBillingDay {
+                // 彻底收口：写入 billing_day 时强制置空 override_billing_day，消除双列遮蔽
+                card.overrideBillingDay = nil
+                patchDict["override_billing_day"] = NSNull()
+            } else if let ovDay = input.overrideBillingDay {
                 card.overrideBillingDay = ovDay
                 patchDict["override_billing_day"] = ovDay
             }

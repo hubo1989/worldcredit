@@ -7,28 +7,42 @@ import { createPayment, updateBillStatus, getBillDetail, getPaymentTotal } from 
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillEditForm } from '@/components/mobile/BillEditForm'
 import { BillPaymentsManage } from '@/components/mobile/BillPaymentsManage'
+import { CardDefinitionModal } from '@/components/mobile/CardDefinitionModal'
+import { CardAccountModal } from '@/components/mobile/CardAccountModal'
+import type { CreditCardWithProduct } from '@/lib/api/cards'
 import { useAuth } from '@/lib/auth'
-import { computePaymentDrivenStatus } from '@/lib/utils'
-import { ChevronLeftIcon, ChevronRightIcon, BankIcon, UserIcon, ClockIcon } from '@/components/icons/WcIcon'
-import { formatCardTail, getEffectiveCardName } from '@/lib/utils'
-import type { Bill, Payment, CreditCard, CardProduct, CardHolder } from '@/lib/types'
+import {
+  computePaymentDrivenStatus,
+  getEffectiveCreditLimit,
+  getEffectiveBillingDay,
+  formatCardTail,
+  getEffectiveCardName,
+  isBillUnissued,
+  calculateCardGracePeriod,
+} from '@/lib/utils'
+import { ChevronLeftIcon, ChevronRightIcon, ClockIcon } from '@/components/icons/WcIcon'
+import type { Bill, Payment, CardHolder } from '@/lib/types'
 
 type BillDetail = Bill & {
-  card: CreditCard & {
+  card?: CreditCardWithProduct & {
     card_holders?: CardHolder
-    card_product: CardProduct
   }
   payments: Payment[]
 }
 
-/** 计算已还 / 剩余 / 状态 */
+/** 计算已还 / 剩余 / 状态 / 是否未出账 */
 function computeBillProgress(bill: BillDetail) {
   const paid = (bill.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0)
   const amount = Number(bill.bill_amount) || 0
   const remaining = Math.max(0, amount - paid)
   // 与服务端落库、还款重算共用同一个状态函数，避免 0 / 0.01 边界两套口径
-  const status = computePaymentDrivenStatus(bill, paid)
-  return { paid, remaining, status }
+  let status = computePaymentDrivenStatus(bill, paid)
+  const unissued = isBillUnissued(bill)
+  if (status === 'overdue' && unissued) {
+    // 待出账保护：未到出账日绝无逾期
+    status = 'unpaid'
+  }
+  return { paid, remaining, status, isUnissued: unissued }
 }
 
 /** 状态徽章（暗色）：淡底 + ink，与 bills 暗色视图同一口径 */
@@ -72,6 +86,8 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const [paymentOpen, setPaymentOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [paymentsManageOpen, setPaymentsManageOpen] = useState(false)
+  const [cardDefModalOpen, setCardDefModalOpen] = useState(false)
+  const [cardAccountModalOpen, setCardAccountModalOpen] = useState(false)
   const { user } = useAuth()
   // deleteBill 服务端 admin only；member 隐藏删除入口，权限以服务端为准
   const isAdmin = user?.role === 'admin'
@@ -83,10 +99,15 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
       setError(null)
       // 账单 + 卡 + 卡产品 + 持卡人 + 还款记录，一次 RPC 返回
       const detail = await getBillDetail(id)
-      const card = detail.bill.card
-        ? { ...detail.bill.card, card_holders: detail.bill.card.card_holder }
+      const rawCard = detail.bill.card
+      const card: CreditCardWithProduct | undefined = rawCard && rawCard.card_product
+        ? ({
+            ...rawCard,
+            card_product: rawCard.card_product,
+            card_holders: rawCard.card_holder,
+          } as CreditCardWithProduct)
         : undefined
-      setBill({ ...(detail.bill as Bill), card, payments: detail.payments } as unknown as BillDetail)
+      setBill({ ...(detail.bill as Bill), card, payments: detail.payments })
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载账单失败')
     } finally {
@@ -153,9 +174,15 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const holderName = holder?.name
   const last4 = formatCardTail(card?.card_number_last4)
 
-  const { paid, remaining, status } = computeBillProgress(bill)
+  const { paid, remaining, status, isUnissued } = computeBillProgress(bill)
   const minPayment = bill.min_payment != null ? Number(bill.min_payment) : null
   const billAmount = Number(bill.bill_amount) || 0
+  const effLimit = card ? getEffectiveCreditLimit(card) : null
+  const effBillingDay = card ? getEffectiveBillingDay(card) : null
+  const todayGraceDays =
+    card && card.card_product
+      ? calculateCardGracePeriod({ ...card, card_product: card.card_product }).graceDays
+      : 0
 
   // 免息还款期长度：这一期「出账日 → 还款日」的窗口，是卡产品属性，
   // 与今天无关；剩余免息：今天距还款日还有几天（负数 = 已逾期）。
@@ -165,10 +192,31 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     if (!start || !end) return 0
     return Math.max(0, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 86400000))
   })()
-  const billPaid = status === 'paid'
+  const isSettled = status === 'paid'
   const graceRemaining = bill.due_date
     ? Math.round((new Date(bill.due_date).getTime() - Date.now()) / 86400000)
     : null
+
+  const renderGraceRemainingNotice = () => {
+    if (isSettled || graceRemaining === null) return null
+    if (graceRemaining >= 0) {
+      return (
+        <p className='mt-0.5 inline-flex items-center gap-1 text-[12px] font-semibold leading-4 text-d-gold'>
+          <ClockIcon size={12} />
+          剩 {graceRemaining} 天免息（逾期未还将计息）
+        </p>
+      )
+    }
+    if (!isUnissued) {
+      return (
+        <p className='mt-0.5 inline-flex items-center gap-1 text-[12px] font-semibold leading-4 text-d-danger-ink'>
+          <ClockIcon size={12} />
+          已逾期 {-graceRemaining} 天
+        </p>
+      )
+    }
+    return null
+  }
 
   const periodStart = bill.statement_start ? format(new Date(bill.statement_start), 'M/d') : ''
   const periodEnd = bill.statement_end ? format(new Date(bill.statement_end), 'M/d') : ''
@@ -177,29 +225,10 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     <div className='obsidian-dashboard min-h-dvh bg-d-bg px-5 pb-24 pt-3 text-d-text'>
       <HeaderBack title='账单详情' onBack={() => router.back()} />
 
-      {/* 头部：卡名 + 持卡人/银行 + 金额 + 状态徽章 */}
+      {/* 头部：金额 + 状态徽章 + 编辑金额与日期 */}
       <div className='mb-2.5 rounded-2xl border border-d-border bg-d-surface p-4'>
         <div className='mb-1 flex items-start justify-between gap-2.5'>
-          <div className='min-w-0 flex-1'>
-            <p className='truncate text-[15px] font-semibold leading-5 text-d-text'>{cardName}</p>
-            <div className='mt-1.5 flex flex-wrap items-center gap-1.5'>
-              <span className='inline-flex items-center gap-1 rounded-full bg-d-subtle px-2 py-0.5 text-[12px] font-semibold leading-4 text-d-accent-light'>
-                <BankIcon size={11} />
-                {bankName}
-              </span>
-              {holderName && (
-                <span className='inline-flex items-center gap-1 rounded-full bg-d-subtle px-2 py-0.5 text-[12px] font-semibold leading-4 text-d-accent-light'>
-                  <UserIcon size={11} />
-                  {holderName}
-                </span>
-              )}
-              {last4 && (
-                <span className='rounded-full bg-d-subtle px-2 py-0.5 text-[12px] font-semibold leading-4 text-d-muted'>
-                  尾号 {last4}
-                </span>
-              )}
-            </div>
-          </div>
+          <p className='text-[13px] font-semibold text-d-muted'>账单应还</p>
           <StatusBadgeDark status={status} />
         </div>
         <p className='num-tabular mt-2 text-[28px] font-bold leading-none text-d-text'>
@@ -224,44 +253,84 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         ]}
       />
 
-      {/* 账单周期 */}
-      <Section title='账单周期'>
-        <p className='text-[13px] leading-5 text-d-text'>
-          {periodStart && periodEnd ? '账单周期 ' + periodStart + ' – ' + periodEnd : '账单周期 —'}
-          {last4 ? ' · 尾号 ' + last4 : ''}
-        </p>
+      {/* 区块 2：关联卡片（不含持卡人/尾号/账单日） */}
+      <Section
+        title='关联卡片'
+        action={
+          card && (
+            <button
+              type='button'
+              onClick={() => setCardDefModalOpen(true)}
+              className='text-[13px] font-semibold text-d-accent-light'
+            >
+              修改卡片信息
+            </button>
+          )
+        }
+      >
+        <div className='flex flex-col gap-1.5'>
+          <Row label='卡片名称' value={cardName} />
+          <Row label='所属银行' value={bankName} />
+          <Row
+            label='今日刷卡免息'
+            value={
+              todayGraceDays > 0
+                ? `${todayGraceDays} 天`
+                : '—'
+            }
+          />
+        </div>
       </Section>
 
-      {/* 日期信息：这一期账单自己的具体日期，不是循环规则 */}
-      <Section title='日期信息'>
+      {/* 区块 3：账单信息（人+卡）（不含银行/卡片） */}
+      <Section
+        title='账单信息（人+卡）'
+        action={
+          card && (
+            <button
+              type='button'
+              onClick={() => setCardAccountModalOpen(true)}
+              className='text-[13px] font-semibold text-d-accent-light'
+            >
+              修改
+            </button>
+          )
+        }
+      >
         <div className='flex flex-col gap-1.5'>
-          <Row label='出账日' value={bill.statement_date ? format(new Date(bill.statement_date), 'yyyy-MM-dd') : '—'} />
-          <Row label='账单周期' value={periodStart && periodEnd ? periodStart + ' – ' + periodEnd : '—'} />
+          <Row label='持卡人' value={holderName || '—'} />
+          <Row label='卡片尾号' value={last4 || '—'} />
           <Row
-            label='还款日'
-            value={bill.due_date ? format(new Date(bill.due_date), 'yyyy-MM-dd') : '—'}
+            label='信用额度'
+            value={
+              effLimit !== null && effLimit !== undefined
+                ? `¥${Number(effLimit).toLocaleString()}`
+                : '—'
+            }
           />
+          <Row
+            label='每月账单日'
+            value={
+              effBillingDay !== null && effBillingDay !== undefined && effBillingDay > 0
+                ? `每月 ${effBillingDay} 日`
+                : '—'
+            }
+          />
+
+          <div className='my-1 h-px bg-d-border/60' />
+
+          <Row label='账单周期' value={periodStart && periodEnd ? `${periodStart} – ${periodEnd}` : (bill.bill_month || '—')} />
+          <Row label='出账日' value={bill.statement_date ? format(new Date(bill.statement_date), 'yyyy-MM-dd') : '—'} />
+          <Row label='还款日' value={bill.due_date ? format(new Date(bill.due_date), 'yyyy-MM-dd') : '—'} />
           <Row
             label='免息还款期'
             value={
               graceWindow > 0
-                ? graceWindow + ' 天（出账日 → 还款日）'
+                ? `${graceWindow} 天（出账日 → 还款日）`
                 : '—'
             }
           />
-          {!billPaid && graceRemaining !== null && (
-            <p
-              className={
-                'mt-0.5 inline-flex items-center gap-1 text-[12px] font-semibold leading-4 ' +
-                (graceRemaining < 0 ? 'text-d-danger-ink' : 'text-d-gold')
-              }
-            >
-              <ClockIcon size={12} />
-              {graceRemaining >= 0
-                ? `剩 ${graceRemaining} 天免息（逾期未还将计息）`
-                : `已逾期 ${-graceRemaining} 天`}
-            </p>
-          )}
+          {renderGraceRemainingNotice()}
         </div>
       </Section>
 
@@ -370,6 +439,26 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         onClose={() => setPaymentsManageOpen(false)}
         onChanged={load}
       />
+
+      {/* 修改卡片信息弹窗（所属银行、卡片名称、还款规则） */}
+      {card && (
+        <CardDefinitionModal
+          open={cardDefModalOpen}
+          onClose={() => setCardDefModalOpen(false)}
+          card={card}
+          onSaved={() => load({ silent: true })}
+        />
+      )}
+
+      {/* 修改账单信息（人+卡）弹窗（持卡人、卡片尾号、信用额度、每月账单日） */}
+      {card && (
+        <CardAccountModal
+          open={cardAccountModalOpen}
+          onClose={() => setCardAccountModalOpen(false)}
+          card={card}
+          onSaved={() => load({ silent: true })}
+        />
+      )}
     </div>
   )
 }
@@ -399,10 +488,13 @@ function Row({ label, value }: { label: string; value: string }) {
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className='mb-2.5'>
-      <p className='mb-1.5 text-[15px] font-semibold leading-5 text-d-text'>{title}</p>
+      <div className='mb-1.5 flex items-center justify-between'>
+        <p className='text-[15px] font-semibold leading-5 text-d-text'>{title}</p>
+        {action}
+      </div>
       <div className='rounded-2xl border border-d-border bg-d-surface p-3.5'>{children}</div>
     </div>
   )

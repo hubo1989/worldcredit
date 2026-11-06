@@ -40,9 +40,14 @@ describe('账单/卡片查询必须携带卡级别覆盖列', () => {
 
   it('getBillDetail 把覆盖列落进了返回的 card 对象', () => {
     const body = fnBody(bills, 'getBillDetail')
-    for (const field of ['name_override', 'override_due_type', 'override_due_value']) {
+    for (const field of ['name_override', 'override_due_type', 'override_due_value', 'credit_limit_override']) {
       expect(body, `getBillDetail 返回的 card 缺 ${field}`).toMatch(new RegExp(`\\b${field}:`))
     }
+  })
+
+  it('getBillDetail SELECT 中包含了 credit_limit_override', () => {
+    const body = fnBody(bills, 'getBillDetail')
+    expect(body).toMatch(/cc\.credit_limit_override AS c_credit_limit_override/)
   })
 
   it('账单读路径的卡名优先级与 withCreditCardProductFields 一致', () => {

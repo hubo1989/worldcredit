@@ -44,7 +44,7 @@ export async function loadAiConfig(db: D1Database): Promise<AiConfig> {
 // ─── OpenAI bill parser ───────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `你是银行账单解析助手。从邮件内容中提取信用卡账单信息，以 JSON 格式返回：
-{"is_bill":true,"email_kind":"statement","bank_name":"","card_last4":"","bill_amount":0,"min_payment":null,"due_date":"YYYY-MM-DD","bill_month":"YYYY-MM","statement_date":null,"statement_day":null,"currency":"CNY","confidence":0.9}
+{"is_bill":true,"email_kind":"statement","bank_name":"","card_last4":"","bill_amount":0,"min_payment":null,"credit_limit":null,"due_date":"YYYY-MM-DD","due_date_status":"exact","bill_month":"YYYY-MM","statement_date":null,"statement_day":null,"currency":"CNY","confidence":0.9}
 字段 card_last4 请填邮件中出现的"卡号/账户结尾"完整数字，不要截断：
 - 大陆/香港卡通常是末 4 位，如 "1234"
 - American Express 的账户结尾是 5 位，如 "93001"，请原样填 5 位
@@ -56,6 +56,11 @@ email_kind 是邮件类型，按实际内容选：
 - "payment_reminder"：还款提醒/催缴通知
 - "other"：营销或其他
 只有 email_kind 是 "statement" 时 is_bill 才为 true；自动扣款通知、还款提醒即使提到金额和还款日，也不是新一期账单，is_bill 必须为 false（它们对应的那期账单已由真正的账单邮件建过，再解析会造出重复账单）。
+due_date 与 due_date_status 规则（严禁编造或推算还款日）：
+- 仅当邮件正文白纸黑字给出本期确切完整的还款截止日期（具体年月日，格式 YYYY-MM-DD）时，due_date 填该日期，due_date_status 填 "exact"。
+- 若邮件仅提到宽限期或相对规则（如「账单日后20天」「免息还款期最短20天」「每月15日还款」但未写明当期具体年月日）或日期表述模糊，禁止从账单日推算 due_date，due_date 必须填 null，due_date_status 填 "ambiguous_or_grace_only"。
+- 若邮件完全未提供还款日，due_date 填 null，due_date_status 填 "missing"。
+credit_limit 只在邮件正文明确写出卡片信用额度具体正数时填数值（纯数字）；未提供填 null，禁止填写 0 或从账单金额/可用额度推算。
 statement_date 只在邮件明确给出本期出账日/Statement Date（完整日期）时填写。注意：自动扣款通知里的 "Statement balance as of Oct 16" 不是出账日，不要填进 statement_date。
 statement_day 只在邮件正文明确写出「账单日」及其数值（如「账单日 09」「账单日：每月21日」「Statement day: 22」）时填 1-31 的整数。不要从账期起止日期、还款日或 statement_date 推算；没有就填 null。
 如果不是账单邮件，返回 {"is_bill": false}

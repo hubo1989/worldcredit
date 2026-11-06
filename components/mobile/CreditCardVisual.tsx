@@ -1,6 +1,6 @@
 'use client'
 
-import { formatAmount, formatCardTail } from '@/lib/utils'
+import { formatAmount, formatCardTail, getEffectiveCreditLimit, isCreditLimitManuallySet } from '@/lib/utils'
 import type { CreditCard, CardProduct } from '@/lib/types'
 
 interface Props {
@@ -30,8 +30,12 @@ const BANK_COLORS: Record<string, string> = {
 }
 
 export function CreditCardVisual({ card, usedAmount = 0, onClick }: Props) {
-  const available = card.credit_limit - usedAmount
-  const usagePercent = card.credit_limit > 0 ? (usedAmount / card.credit_limit) * 100 : 0
+  const effLimit = getEffectiveCreditLimit(card)
+  const isManual = isCreditLimitManuallySet(card)
+  const hasLimit = effLimit !== null
+  // 可用额度与详情页口径一致，超额时截断为 0，避免负数展示
+  const available = hasLimit ? Math.max(0, effLimit - usedAmount) : null
+  const usagePercent = hasLimit && effLimit > 0 ? (usedAmount / effLimit) * 100 : 0
   const bankName = card.bank_name ?? card.card_product?.bank_name ?? '银行卡'
   const cardName = card.card_name ?? card.card_product?.card_name ?? '信用卡'
   const bankColor = BANK_COLORS[bankName] || '#1976d2'
@@ -61,12 +65,21 @@ export function CreditCardVisual({ card, usedAmount = 0, onClick }: Props) {
       <div className='bg-d-surface px-4 py-3'>
         <div className='mb-1.5 flex justify-between text-[12px] leading-4 text-d-muted'>
           <span>已用 {formatAmount(usedAmount, currency)}</span>
-          <span>额度 {formatAmount(card.credit_limit, currency)}</span>
+          <span className='inline-flex items-center gap-1'>
+            <span>额度 {hasLimit ? formatAmount(effLimit, currency) : '未获取'}</span>
+            {isManual && (
+              <span className='rounded bg-d-subtle px-1 py-0.5 text-[9px] font-semibold text-d-text'>
+                已设置
+              </span>
+            )}
+          </span>
         </div>
         <div className='h-1.5 overflow-hidden rounded-full bg-d-border'>
-          <div className={'h-full rounded-full ' + bar} style={{ width: `${Math.min(usagePercent, 100)}%` }} />
+          <div className={'h-full rounded-full ' + bar} style={{ width: `${hasLimit ? Math.min(usagePercent, 100) : 0}%` }} />
         </div>
-        <p className='mt-1.5 text-[12px] leading-4 text-d-muted'>可用 {formatAmount(available, currency)}</p>
+        <p className='mt-1.5 text-[12px] leading-4 text-d-muted'>
+          可用 {available !== null ? formatAmount(available, currency) : '—'}
+        </p>
       </div>
     </button>
   )

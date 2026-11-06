@@ -43,6 +43,15 @@ export function assertHolderIdsAccess(holderIds: unknown, ctx: MemberContext): v
   memberAssert(ids.every(id => typeof id === 'string' && ctx.holderIds.includes(id)), '无权访问其他成员的数据')
 }
 
+export async function assertAccountAccess(accountId: unknown, ctx: MemberContext): Promise<void> {
+  memberAssert(typeof accountId === 'string', '参数必须是信用账户 ID')
+  const { data } = await queryOne<{ holder_id: string }>(
+    'SELECT holder_id FROM credit_accounts WHERE id = ?',
+    [accountId]
+  )
+  memberAssert(!!data && ctx.holderIds.includes(data.holder_id), '无权访问其他成员的信用账户')
+}
+
 export async function assertCardAccess(cardId: unknown, ctx: MemberContext): Promise<void> {
   memberAssert(typeof cardId === 'string', '参数必须是卡片 ID')
   const { data } = await queryOne<{ holder_id: string }>('SELECT holder_id FROM credit_cards WHERE id = ?', [cardId])

@@ -1,0 +1,271 @@
+// components/mobile/card-form-shared.ts
+import type { CardProduct } from '@/lib/types'
+
+/**
+ * ObsidianUI 持卡人默认头像颜色（对应 d-accent-light，暗色面板上清晰辨识）
+ */
+export const DEFAULT_HOLDER_AVATAR_COLOR = '#7aadff'
+
+export const DUE_TYPE_LABELS = {
+  after_billing: '账单日后 N 天',
+  fixed: '每月固定日期',
+} as const
+
+export type DueRuleType = 'after_billing' | 'fixed'
+
+/**
+ * 归一化还款规则类型：
+ * - 'fixed' 或遗留的 'fixed_before_billing' 归一到 'fixed'
+ * - 其它合法类型或缺省默认返回 'after_billing'
+ */
+export function normalizeDueType(type?: string | null): DueRuleType {
+  if (type === 'fixed' || type === 'fixed_before_billing') {
+    return 'fixed'
+  }
+  return 'after_billing'
+}
+
+export interface DueRulePayload {
+  override_due_type: DueRuleType | null
+  override_due_value: number | null
+}
+
+/**
+ * 构建还款规则 payload：
+ * - enabled 为 false 时：两字段显式提交 null（服务端 SET NULL，避免残留导致复活）
+ * - enabled 为 true 时：提交 normalized 后的 type 与整数 value（若 value 无效则返回 null）
+ */
+export function buildDueRulePayload(
+  enabled: boolean,
+  type?: string | null,
+  valueInput?: string | number | null
+): DueRulePayload {
+  if (!enabled) {
+    return {
+      override_due_type: null,
+      override_due_value: null,
+    }
+  }
+
+  const normalizedType = normalizeDueType(type)
+  let val: number | null = null
+  if (typeof valueInput === 'number') {
+    val = Number.isInteger(valueInput) ? valueInput : Math.trunc(valueInput)
+  } else if (typeof valueInput === 'string') {
+    const trimmed = valueInput.trim()
+    if (trimmed) {
+      const parsed = parseInt(trimmed, 10)
+      if (!isNaN(parsed) && Number.isInteger(parsed)) {
+        val = parsed
+      }
+    }
+  }
+
+  return {
+    override_due_type: normalizedType,
+    override_due_value: val,
+  }
+}
+
+/**
+ * 校验每月账单日（1-31）
+ */
+export function validateBillingDay(dayInput: string | number | undefined | null): {
+  valid: boolean
+  value?: number
+  error?: string
+} {
+  const str = String(dayInput ?? '').trim()
+  if (!str) {
+    return { valid: false, error: '请输入每月账单日' }
+  }
+  const dayNum = parseInt(str, 10)
+  if (isNaN(dayNum) || !Number.isInteger(dayNum) || dayNum < 1 || dayNum > 31) {
+    return { valid: false, error: '每月账单日必须在 1 到 31 之间' }
+  }
+  return { valid: true, value: dayNum }
+}
+
+/**
+ * 校验还款规则覆盖
+ * - 未识别类型显式返回 invalid（封闭函数，#7）
+ */
+export function validateDueRule(
+  enabled: boolean,
+  type: string,
+  valueInput: string | number | undefined | null
+): {
+  valid: boolean
+  value?: number
+  error?: string
+} {
+  if (!enabled) {
+    return { valid: true, value: undefined }
+  }
+  const str = String(valueInput ?? '').trim()
+  if (!str) {
+    return { valid: false, error: '开启自定义还款规则时必须填写还款日数值' }
+  }
+  const val = parseInt(str, 10)
+  if (isNaN(val) || !Number.isInteger(val)) {
+    return { valid: false, error: '还款日数值必须为有效整数' }
+  }
+
+  if (type === 'after_billing') {
+    if (val < 0) {
+      return { valid: false, error: '账单日后还款天数必须大于或等于 0' }
+    }
+  } else if (type === 'fixed') {
+    if (val < 1 || val > 31) {
+      return { valid: false, error: '固定还款日必须在 1 到 31 之间' }
+    }
+  } else {
+    return { valid: false, error: `不支持的还款规则类型: ${type}` }
+  }
+  return { valid: true, value: val }
+}
+
+/**
+ * 新建时信用额度校验（#3）：必须为大于 0 的正数
+ */
+export function validateLimitOnCreate(limitInput: string | number | undefined | null): {
+  valid: boolean
+  value?: number
+  error?: string
+} {
+  const str = String(limitInput ?? '').trim()
+  if (!str) {
+    return { valid: false, error: '请输入有效的信用额度' }
+  }
+  const num = parseFloat(str)
+  if (isNaN(num) || num <= 0) {
+    return { valid: false, error: '请输入有效的信用额度' }
+  }
+  return { valid: true, value: num }
+}
+
+/**
+ * 编辑时额度输入框语义解析：
+ * - 留空（空字符串）：保留旧 override 不动（不传 credit_limit / credit_limit_override，即 undefined）
+ * - 输入 0：显式清空 override 与 limit（传 credit_limit: 0, credit_limit_override: null）
+ * - 输入 > 0 的正数：设置新额度与 override（传 credit_limit: num, credit_limit_override: num）
+ */
+export function resolveLimitOnEdit(limitStr: string): {
+  valid: boolean
+  credit_limit?: number
+  credit_limit_override?: number | null
+  error?: string
+} {
+  const trimmed = limitStr.trim()
+  if (!trimmed) {
+    // 留空：保持原有值不动
+    return {
+      valid: true,
+      credit_limit: undefined,
+      credit_limit_override: undefined,
+    }
+  }
+  const num = parseFloat(trimmed)
+  if (isNaN(num) || num < 0) {
+    return { valid: false, error: '信用额度必须为非负数' }
+  }
+  if (num === 0) {
+    return {
+      valid: true,
+      credit_limit: 0,
+      credit_limit_override: null,
+    }
+  }
+  return {
+    valid: true,
+    credit_limit: num,
+    credit_limit_override: num,
+  }
+}
+
+/**
+ * 卡片尾号清洗：
+ * - 留空：''（空字符串表示清空既有尾号，服务端会转换为 NULL）
+ * - 1-4 位数字：合法尾号
+ * - 其它：报错
+ */
+export function parseLast4(last4Input: string | undefined | null): {
+  valid: boolean
+  value?: string
+  error?: string
+} {
+  const trimmed = String(last4Input ?? '').trim()
+  if (!trimmed) {
+    return { valid: true, value: '' }
+  }
+  if (!/^\d{1,4}$/.test(trimmed)) {
+    return { valid: false, error: '卡号尾号必须为 1 到 4 位数字' }
+  }
+  return { valid: true, value: trimmed }
+}
+
+/**
+ * 过滤尾号输入：只允许数字，最多 4 位（#5）
+ */
+export function sanitizeLast4Input(value: string): string {
+  return value.replace(/[^\d]/g, '').slice(0, 4)
+}
+
+/**
+ * 银行变更时的产品回填与卡片名称推导（#4）
+ */
+export function resolveBankChange(
+  bankProducts: CardProduct[],
+  hasCustomName: boolean,
+  currentCardName: string,
+  fallbackCardName = '标准信用卡'
+): {
+  productId: string
+  cardName: string
+} {
+  if (bankProducts.length > 0) {
+    const first = bankProducts[0]
+    return {
+      productId: first.id,
+      cardName: hasCustomName ? currentCardName : first.card_name,
+    }
+  }
+  return {
+    productId: '',
+    cardName: hasCustomName ? currentCardName : fallbackCardName,
+  }
+}
+
+/**
+ * 点选卡产品时的状态推导（选中产品、回填产品名、重置 hasCustomName）（#4）
+ */
+export function resolveProductSelect(prod: CardProduct): {
+  productId: string
+  cardName: string
+  hasCustomName: boolean
+} {
+  return {
+    productId: prod.id,
+    cardName: prod.card_name,
+    hasCustomName: false,
+  }
+}
+
+/**
+ * 判定卡片名称是否属于自定义覆盖（#4）：
+ * 若未自定义（!hasCustomName）或卡名与当前选定产品名称相同，则返回 null（表示不覆盖/清空 override）
+ */
+export function resolveNameOverride(
+  cardName: string,
+  selectedProduct: CardProduct | undefined,
+  hasCustomName: boolean
+): string | null {
+  const trimmed = cardName.trim()
+  if (!trimmed || !hasCustomName) {
+    return null
+  }
+  if (selectedProduct && trimmed === selectedProduct.card_name) {
+    return null
+  }
+  return trimmed
+}

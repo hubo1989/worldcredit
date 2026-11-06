@@ -1,9 +1,16 @@
 'use client'
 
-import { useState } from 'react'
-import { BellIcon, ClockIcon, PlusIcon } from '@/components/icons/WcIcon'
+import { useState, useEffect } from 'react'
+import { BellIcon, ClockIcon } from '@/components/icons/WcIcon'
 import type { UserReminderConfig } from '@/lib/types'
+import { Toggle } from '@/components/obsidian/controls'
 import { ConfirmDialog, Toast } from '@/components/obsidian/overlays'
+import { sendTestPush } from '@/lib/api/push'
+import {
+  isWebPushChannelEnabled,
+  resolveEffectiveChannels,
+  formatTimezoneOptionLabel,
+} from './shared'
 
 interface ReminderPreferencesCardProps {
   config: UserReminderConfig
@@ -11,7 +18,22 @@ interface ReminderPreferencesCardProps {
   disabled?: boolean
 }
 
-const OPPORTUNITY_DAY_CHOICES = [0, 1, 3, 7]
+const BILL_DAY_CHOICES = [
+  { day: 7, label: '提前 7 天' },
+  { day: 3, label: '提前 3 天' },
+  { day: 1, label: '提前 1 天' },
+  { day: 0, label: '还款日当天' },
+]
+
+const OPPORTUNITY_DAY_CHOICES = [0, 1, 3, 7, 15]
+
+const TIMEZONE_DEFINITIONS = [
+  { value: 'Asia/Shanghai', name: '中国标准时间' },
+  { value: 'America/New_York', name: '美东时间' },
+  { value: 'Europe/London', name: '格林威治时间' },
+  { value: 'Asia/Tokyo', name: '日本标准时间' },
+  { value: 'Asia/Hong_Kong', name: '香港时间' },
+]
 
 function toggleDayList(list: number[] | undefined, day: number): number[] {
   const current = list ?? []
@@ -20,7 +42,7 @@ function toggleDayList(list: number[] | undefined, day: number): number[] {
     : [...current, day].sort((a, b) => b - a)
 }
 
-/** 还款适时提醒规则（暗色）。props 契约与亮色版一致。 */
+/** 还款与权益适时提醒规则（移动端 BottomSheet 内置）。扁平结构，无嵌套卡片，零硬编码色值。 */
 export function ReminderPreferencesCard({ config, onChange, disabled }: ReminderPreferencesCardProps) {
   const [testing, setTesting] = useState(false)
   const [testNotice, setTestNotice] = useState<{ open: boolean; message: string; severity: 'success' | 'info' | 'error' }>({
@@ -28,18 +50,40 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
     message: '',
     severity: 'success',
   })
-  // 测试推送无法在渲染里直接弹系统通知预览时，用说明弹窗承载权限引导
   const [guideOpen, setGuideOpen] = useState(false)
 
-  const handleToggleDay = (day: number) => {
+  const handleToggleBillDay = (day: number) => {
     const current = config.remind_days_before || []
-    const updated = current.includes(day)
-      ? current.filter(d => d !== day)
-      : [...current, day].sort((a, b) => b - a)
-    onChange({ remind_days_before: updated })
+    onChange({ remind_days_before: toggleDayList(current, day) })
+  }
+
+  // 存量口径判定：若 enabled_channels 未设置而旧 opportunities.web_push_enabled === false 则默认关闭，否则默认开启
+  const isWebPushEnabled = isWebPushChannelEnabled(config)
+
+  // 存量迁移写回：读取到 enabled_channels 未设置且旧 opportunities.web_push_enabled === false 时，写回一次
+  useEffect(() => {
+    if (config.enabled_channels === undefined && config.opportunities?.web_push_enabled === false) {
+      onChange({ enabled_channels: [] })
+    }
+  }, [config.enabled_channels, config.opportunities?.web_push_enabled, onChange])
+
+  const handleToggleWebPush = (enabled: boolean) => {
+    const currentChannels = resolveEffectiveChannels(config)
+    const channels = new Set(currentChannels)
+    if (enabled) channels.add('web_push')
+    else channels.delete('web_push')
+    onChange({ enabled_channels: Array.from(channels) })
   }
 
   const handleSendTestPush = async () => {
+    if (!isWebPushEnabled) {
+      setTestNotice({
+        open: true,
+        message: 'Web Push 浏览器通道已关闭，请先开启通道后再测试。',
+        severity: 'info',
+      })
+      return
+    }
     setTesting(true)
     try {
       if (typeof window !== 'undefined' && 'Notification' in window) {
@@ -49,128 +93,280 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
         }
 
         if (perm === 'granted') {
-          new Notification('🔔 WorldCredit 适时提醒', {
-            body: '这是一条测试还款提醒！您的提醒节点与免打扰时间配置已生效。',
-            icon: '/pwa-192x192.png',
-            tag: 'worldcredit-test-reminder'
-          })
+          const res = await sendTestPush()
+          if (!res.ok) {
+            setTestNotice({
+              open: true,
+              message: `测试推送失败：${res.error || '服务端响应异常'}`,
+              severity: 'error',
+            })
+            return
+          }
+
+          // 服务端真实下发成功后仅用 Toast 提示，不与本地 new Notification 重复
           setTestNotice({
             open: true,
-            message: '测试通知已成功推送到您的设备系统通知栏！',
-            severity: 'success'
+            message: '测试通知已成功下发至设备通知栏！',
+            severity: 'success',
           })
         } else {
           setTestNotice({
             open: true,
             message: '未开启浏览器通知权限，请在浏览器地址栏允许通知后再试。',
-            severity: 'info'
+            severity: 'info',
           })
         }
       } else {
         setGuideOpen(true)
       }
     } catch (err) {
-      setTestNotice({ open: true, message: '测试发送失败: ' + (err instanceof Error ? err.message : String(err)), severity: 'error' })
+      setTestNotice({
+        open: true,
+        message: '测试发送失败: ' + (err instanceof Error ? err.message : String(err)),
+        severity: 'error',
+      })
     } finally {
       setTesting(false)
     }
   }
 
+  const opp = config.opportunities
+  const updateOpp = (patch: Partial<NonNullable<UserReminderConfig['opportunities']>>) =>
+    onChange({ opportunities: { ...(opp ?? {}), ...patch } })
+
+  // 存量节点合并：已选但不在预设选项集的值动态追加，支持查看与点击取消
+  const billDayChoices = (() => {
+    const selected = config.remind_days_before || []
+    const choiceDays = new Set(BILL_DAY_CHOICES.map((c) => c.day))
+    const extra = selected
+      .filter((d) => !choiceDays.has(d))
+      .map((d) => ({
+        day: d,
+        label: d === 0 ? '还款日当天' : `提前 ${d} 天`,
+      }))
+    return [...BILL_DAY_CHOICES, ...extra].sort((a, b) => b.day - a.day)
+  })()
+
+  // 存量时区合并：基于 Intl.DateTimeFormat 动态生成夏令时与当前偏移
+  const timezoneChoices = (() => {
+    const currentTz = opp?.time_zone
+    const base = TIMEZONE_DEFINITIONS.map((def) => ({
+      value: def.value,
+      label: formatTimezoneOptionLabel(def.value, def.name),
+    }))
+    if (currentTz && !base.some((opt) => opt.value === currentTz)) {
+      return [...base, { value: currentTz, label: `${currentTz} (当前设置)` }]
+    }
+    return base
+  })()
+
   return (
-    <div className='obsidian-dashboard rounded-2xl border border-d-border bg-d-surface p-4'>
-      <div className='mb-3 flex items-center gap-3'>
-        <div className='flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-d-gold-soft text-d-warn-ink'>
-          <BellIcon size={20} />
+    <div className='flex flex-col gap-5 text-d-text'>
+      {/* 区块一：账单还款提醒 */}
+      <div className='rounded-2xl border border-d-border bg-d-subtle/50 p-4'>
+        <div className='mb-3 flex items-center gap-2 text-d-accent-light'>
+          <BellIcon size={18} />
+          <h4 className='text-[15px] font-bold leading-5'>账单还款提醒</h4>
         </div>
-        <div className='min-w-0 flex-1'>
-          <p className='text-[15px] font-bold leading-5 text-d-text'>还款适时提醒规则</p>
-          <p className='mt-0.5 text-[12px] leading-4 text-d-muted'>
-            定制到期前的提醒时间节点与夜间免打扰时段
-          </p>
-        </div>
-      </div>
 
-      <div className='my-3 border-t border-dashed border-d-border' />
+        <div className='flex flex-col gap-4'>
+          {/* 提醒节点多选 */}
+          <div>
+            <label className='mb-2 block text-[13px] font-medium text-d-muted'>
+              还款日前提醒节点（多选）：
+            </label>
+            <div className='flex flex-wrap gap-2'>
+              {billDayChoices.map(({ day, label }) => {
+                const active = (config.remind_days_before || []).includes(day)
+                return (
+                  <button
+                    key={day}
+                    type='button'
+                    disabled={disabled}
+                    onClick={() => handleToggleBillDay(day)}
+                    className={
+                      'min-h-[44px] rounded-full px-4 text-[13px] font-semibold transition-colors disabled:opacity-50 ' +
+                      (active
+                        ? 'bg-d-accent text-white shadow-sm'
+                        : 'border border-d-border bg-d-bg text-d-muted active:bg-d-subtle')
+                    }
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
 
-      <div className='flex flex-col gap-3'>
-        <div>
-          <p className='mb-1.5 text-[11px] font-bold text-d-muted'>提醒提前时间节点 (支持多选)：</p>
-          <div className='flex flex-wrap gap-2'>
-            {[7, 5, 3, 1, 0].map(day => {
-              const active = (config.remind_days_before || []).includes(day)
-              const label = day === 0 ? '到期当天' : '提前 ' + day + ' 天'
-              return (
-                <button
-                  key={day}
-                  type='button'
+          {/* Web Push 通道 */}
+          <div className='flex min-h-[48px] items-center justify-between border-t border-d-border/60 pt-3'>
+            <div>
+              <p className='text-[14px] font-medium text-d-text'>Web Push 浏览器通道</p>
+              <p className='text-[12px] text-d-muted'>通过系统通知中心直达设备</p>
+            </div>
+            <Toggle
+              checked={isWebPushEnabled}
+              onChange={handleToggleWebPush}
+              disabled={disabled}
+              ariaLabel='Web Push 浏览器通道'
+            />
+          </div>
+
+          {/* 免打扰时段 */}
+          <div className='border-t border-d-border/60 pt-3'>
+            <div className='mb-2 flex items-center gap-1.5 text-d-muted'>
+              <ClockIcon size={14} />
+              <label className='text-[13px] font-medium'>免打扰时段 (Quiet Hours)：</label>
+            </div>
+            <div className='flex items-center gap-3'>
+              <div className='flex-1'>
+                <span className='mb-1 block text-[11px] text-d-muted'>起始</span>
+                <input
+                  type='time'
+                  aria-label='免打扰起始'
                   disabled={disabled}
-                  onClick={() => handleToggleDay(day)}
-                  className={
-                    'rounded-full px-3.5 py-1.5 text-[13px] font-bold transition-colors disabled:opacity-50 ' +
-                    (active
-                      ? 'bg-d-accent text-white'
-                      : 'border border-d-border bg-d-surface text-d-muted')
-                  }
-                >
-                  {label}
-                </button>
-              )
-            })}
+                  value={config.quiet_hours_start || '22:00'}
+                  onChange={(e) => onChange({ quiet_hours_start: e.target.value })}
+                  className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
+                />
+              </div>
+              <span className='mt-5 text-[13px] text-d-muted'>至</span>
+              <div className='flex-1'>
+                <span className='mb-1 block text-[11px] text-d-muted'>结束</span>
+                <input
+                  type='time'
+                  aria-label='免打扰结束'
+                  disabled={disabled}
+                  value={config.quiet_hours_end || '08:00'}
+                  onChange={(e) => onChange({ quiet_hours_end: e.target.value })}
+                  className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
+                />
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div className='border-t border-dashed border-d-border' />
-
-        <div>
-          <div className='mb-1.5 flex items-center gap-1.5'>
-            <ClockIcon size={14} className='text-d-muted' />
-            <p className='text-[11px] font-bold text-d-muted'>免打扰时段 (Quiet Hours)：</p>
-          </div>
-          <div className='flex items-center gap-2.5'>
-            <input
-              type='time'
-              aria-label='免打扰开始时间'
-              disabled={disabled}
-              value={config.quiet_hours_start || '22:00'}
-              onChange={e => onChange({ quiet_hours_start: e.target.value })}
-              className='h-10 rounded-xl border border-d-border bg-d-bg px-2.5 text-[13px] text-d-text [color-scheme:dark] disabled:opacity-50'
-              style={{ width: 130 }}
-            />
-            <span className='text-[12px] text-d-muted'>至</span>
-            <input
-              type='time'
-              aria-label='免打扰结束时间'
-              disabled={disabled}
-              value={config.quiet_hours_end || '08:00'}
-              onChange={e => onChange({ quiet_hours_end: e.target.value })}
-              className='h-10 rounded-xl border border-d-border bg-d-bg px-2.5 text-[13px] text-d-text [color-scheme:dark] disabled:opacity-50'
-              style={{ width: 130 }}
-            />
-          </div>
-        </div>
-
-        <div className='border-t border-dashed border-d-border' />
-
-        <div className='flex items-center justify-between gap-3 rounded-xl bg-d-bg p-3'>
-          <div className='min-w-0 flex-1'>
-            <p className='text-[13px] font-bold leading-5 text-d-text'>验证设备连通性</p>
-            <p className='mt-0.5 text-[11px] leading-4 text-d-muted'>
-              点此发送一条测试推送，验证系统通知是否正常到达
-            </p>
-          </div>
+          {/* 测试通知 */}
           <button
             type='button'
             disabled={testing || disabled}
             onClick={handleSendTestPush}
-            className='flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-d-accent px-3.5 text-[12px] font-semibold text-d-accent-light disabled:opacity-50'
+            className='mt-1 flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl border border-d-accent/50 bg-d-subtle px-4 text-[13px] font-semibold text-d-accent-light transition-colors active:bg-d-accent/10 disabled:opacity-50'
           >
-            <PlusIcon size={14} />
-            {testing ? '测试中...' : '测试通知'}
+            <span>🔔</span>
+            <span>{testing ? '正在推送…' : '发送测试通知 (真实 /api/push/test)'}</span>
           </button>
         </div>
       </div>
 
-      {/* 当前设备不支持 Push API 时的降级说明 */}
+      {/* 区块二：权益机会提醒 */}
+      <div className='rounded-2xl border border-d-border bg-d-subtle/50 p-4'>
+        <div className='mb-3 flex items-center justify-between'>
+          <div className='flex items-center gap-2 text-d-gold'>
+            <span className='text-[16px]'>👑</span>
+            <h4 className='text-[15px] font-bold leading-5'>权益机会提醒</h4>
+          </div>
+          <Toggle
+            checked={opp?.enabled ?? true}
+            onChange={(v) => updateOpp({ enabled: v })}
+            disabled={disabled}
+            ariaLabel='权益机会提醒'
+          />
+        </div>
+
+        {(opp?.enabled ?? true) && (
+          <div className='flex flex-col gap-4 border-t border-d-border/60 pt-3'>
+            {/* 提醒时区下拉 */}
+            <div>
+              <label htmlFor='opp-timezone-select' className='mb-1.5 block text-[13px] font-medium text-d-muted'>
+                提醒时区 (标准下拉)
+              </label>
+              <select
+                id='opp-timezone-select'
+                value={opp?.time_zone ?? 'Asia/Shanghai'}
+                disabled={disabled}
+                onChange={(e) => updateOpp({ time_zone: e.target.value })}
+                className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
+              >
+                {timezoneChoices.map((opt) => (
+                  <option key={opt.value} value={opt.value} className='bg-d-surface text-d-text'>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 每日提醒推送时间 */}
+            <div>
+              <label htmlFor='opp-localtime-input' className='mb-1.5 block text-[13px] font-medium text-d-muted'>
+                每日提醒推送时间
+              </label>
+              <input
+                id='opp-localtime-input'
+                type='time'
+                value={opp?.local_time ?? '09:00'}
+                disabled={disabled}
+                onChange={(e) => updateOpp({ local_time: e.target.value })}
+                className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
+              />
+            </div>
+
+            {/* 到期提醒节点 */}
+            <div>
+              <label className='mb-2 block text-[13px] font-medium text-d-muted'>权益到期提醒节点：</label>
+              <div className='flex flex-wrap gap-2'>
+                {OPPORTUNITY_DAY_CHOICES.map((d) => {
+                  const active = (opp?.expiry_days_before ?? []).includes(d)
+                  const label = d === 0 ? '到期当天' : `提前 ${d} 天`
+                  return (
+                    <button
+                      key={d}
+                      type='button'
+                      disabled={disabled}
+                      onClick={() => updateOpp({ expiry_days_before: toggleDayList(opp?.expiry_days_before, d) })}
+                      className={
+                        'min-h-[44px] rounded-full px-4 text-[13px] font-semibold transition-colors disabled:opacity-50 ' +
+                        (active
+                          ? 'border border-d-gold-deep bg-d-gold-soft text-d-gold'
+                          : 'border border-d-border bg-d-bg text-d-muted active:bg-d-subtle')
+                      }
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* 领取截止提醒节点 */}
+            <div>
+              <label className='mb-2 block text-[13px] font-medium text-d-muted'>权益领取截止提醒节点：</label>
+              <div className='flex flex-wrap gap-2'>
+                {[0, 1, 3].map((d) => {
+                  const active = (opp?.claim_days_before ?? []).includes(d)
+                  const label = d === 0 ? '截止当天' : `提前 ${d} 天`
+                  return (
+                    <button
+                      key={d}
+                      type='button'
+                      disabled={disabled}
+                      onClick={() => updateOpp({ claim_days_before: toggleDayList(opp?.claim_days_before, d) })}
+                      className={
+                        'min-h-[44px] rounded-full px-4 text-[13px] font-semibold transition-colors disabled:opacity-50 ' +
+                        (active
+                          ? 'border border-d-gold-deep bg-d-gold-soft text-d-gold'
+                          : 'border border-d-border bg-d-bg text-d-muted active:bg-d-subtle')
+                      }
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       <ConfirmDialog
         open={guideOpen}
         title='测试提醒'
@@ -179,7 +375,7 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
           <button
             type='button'
             onClick={() => setGuideOpen(false)}
-            className='h-10 rounded-xl bg-d-accent px-5 text-sm font-semibold text-white'
+            className='min-h-[44px] rounded-xl bg-d-accent px-5 text-sm font-semibold text-white'
           >
             知道了
           </button>
@@ -195,106 +391,8 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
         message={testNotice.message}
         severity={testNotice.severity}
         autoHideMs={4000}
-        onClose={() => setTestNotice(prev => ({ ...prev, open: false }))}
+        onClose={() => setTestNotice((prev) => ({ ...prev, open: false }))}
       />
-
-      {/* 权益提醒（Task 16）：独立子开关/时区/时间/节点；不改上面账单提醒语义 */}
-      <OpportunityReminderSection config={config} onChange={onChange} disabled={disabled} />
-    </div>
-  )
-}
-
-function OpportunityReminderSection({
-  config,
-  onChange,
-  disabled,
-}: ReminderPreferencesCardProps) {
-  const opp = config.opportunities
-  const update = (patch: Partial<NonNullable<UserReminderConfig['opportunities']>>) =>
-    onChange({ opportunities: { ...(opp ?? {}), ...patch } })
-  const dayChips = (
-    field: 'expiry_days_before' | 'claim_days_before',
-    current: number[] | undefined,
-    label: string,
-  ) => (
-    <div>
-      <p className='mb-1 text-[12px] font-semibold text-d-muted'>{label}</p>
-      <div className='flex gap-2'>
-        {OPPORTUNITY_DAY_CHOICES.map((d) => (
-          <button
-            key={d}
-            type='button'
-            disabled={disabled}
-            onClick={() => update({ [field]: toggleDayList(current, d) } as Partial<NonNullable<UserReminderConfig['opportunities']>>)}
-            className={
-              'h-8 rounded-full px-3 text-[12px] font-semibold disabled:opacity-50 ' +
-              ((current ?? []).includes(d) ? 'bg-d-accent text-white' : 'bg-d-subtle text-d-muted')
-            }
-          >
-            {d === 0 ? '当天' : `前 ${d} 天`}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-
-  return (
-    <div className='mt-5 rounded-2xl border border-d-border bg-d-surface p-4'>
-      <div className='flex items-center justify-between'>
-        <div>
-          <p className='text-[13px] font-bold text-d-text'>权益提醒</p>
-          <p className='text-[11px] text-d-muted'>到期/领取截止/额度重置的提醒</p>
-        </div>
-        <button
-          type='button'
-          disabled={disabled}
-          onClick={() => update({ enabled: !(opp?.enabled ?? true) })}
-          className={
-            'h-8 rounded-full px-3 text-[12px] font-semibold disabled:opacity-50 ' +
-            ((opp?.enabled ?? true) ? 'bg-d-accent text-white' : 'bg-d-subtle text-d-muted')
-          }
-        >
-          {(opp?.enabled ?? true) ? '已开启' : '已关闭'}
-        </button>
-      </div>
-
-      <div className='mt-3 flex flex-col gap-3'>
-        <label className='flex items-center justify-between'>
-          <span className='text-[12px] text-d-muted'>Web Push 渠道</span>
-          <input
-            type='checkbox'
-            disabled={disabled}
-            checked={opp?.web_push_enabled ?? true}
-            onChange={(e) => update({ web_push_enabled: e.target.checked })}
-          />
-        </label>
-        <div className='flex gap-3'>
-          <label className='flex-1'>
-            <span className='mb-1 block text-[12px] font-semibold text-d-muted'>提醒时区</span>
-            <input
-              value={opp?.time_zone ?? 'Asia/Shanghai'}
-              disabled={disabled}
-              onChange={(e) => update({ time_zone: e.target.value })}
-              className='w-full rounded-xl border border-d-border bg-d-bg px-3 py-2 text-[14px] text-d-text outline-none focus:border-d-accent'
-            />
-          </label>
-          <label className='flex-1'>
-            <span className='mb-1 block text-[12px] font-semibold text-d-muted'>每日时间</span>
-            <input
-              type='time'
-              value={opp?.local_time ?? '09:00'}
-              disabled={disabled}
-              onChange={(e) => update({ local_time: e.target.value })}
-              className='w-full rounded-xl border border-d-border bg-d-bg px-3 py-2 text-[14px] text-d-text outline-none focus:border-d-accent'
-            />
-          </label>
-        </div>
-        {dayChips('expiry_days_before', opp?.expiry_days_before, '到期提醒节点')}
-        {dayChips('claim_days_before', opp?.claim_days_before, '领取截止节点')}
-        <p className='text-[11px] leading-4 text-d-muted'>
-          推送连接测试沿用上方「发送测试通知」（真实 /api/push/test，不代表设备必达）。
-        </p>
-      </div>
     </div>
   )
 }

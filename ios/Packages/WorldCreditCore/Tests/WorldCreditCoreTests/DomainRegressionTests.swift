@@ -339,4 +339,68 @@ struct DomainRegressionTests {
         let invalid = productJSON.replacingOccurrences(of: "\"fixed\"", with: "\"unknown\"")
         #expect(throws: DecodingError.self) { try JSONDecoder().decode(CardProduct.self, from: Data(invalid.utf8)) }
     }
+
+    @Test("Updating billing day resets override billing day and enqueues NSNull in patch")
+    func billingDayUnification() async throws {
+        let manager = try database()
+        try await manager.dbWriter.write { db in
+            var card = try #require(try CreditCard.fetchOne(db, id: "card"))
+            card.overrideBillingDay = 15
+            try card.update(db)
+        }
+        let service = CardEditService(dbManager: manager)
+        var input = CardUpdateInput()
+        input.billingDay = 20
+        let card = try await service.updateCard(cardId: "card", input: input)
+        #expect(card.billingDay == 20)
+        #expect(card.overrideBillingDay == nil)
+
+        try await manager.dbWriter.read { db in
+            let stored = try #require(try CreditCard.fetchOne(db, id: "card"))
+            #expect(stored.billingDay == 20)
+            #expect(stored.overrideBillingDay == nil)
+            let mutation = try #require(try MutationOutbox.fetchAll(db).first)
+            let args = try #require(try JSONSerialization.jsonObject(with: Data(mutation.argsJson.utf8)) as? [Any])
+            let patch = try #require(args[1] as? [String: Any])
+            #expect(patch["billing_day"] as? Int == 20)
+            #expect(patch["override_billing_day"] is NSNull)
+        }
+    }
+
+    @Test("Card edit input accepts cardProductId, holderId, last4 and custom name")
+    func cardEditFullContract() async throws {
+        let manager = try database()
+        try await manager.dbWriter.write { db in
+            try db.execute(sql: """
+                INSERT INTO card_holders (id, created_by, managed_by, name) VALUES ('holder2', 'user', 'user', '测试2');
+                INSERT INTO card_products (id, bank_id, bank_name, card_name, payment_due_type, payment_due_value)
+                VALUES ('product2', 'bank', '测试银行', '白金卡', 'fixed', 20);
+            """)
+        }
+        let service = CardEditService(dbManager: manager)
+        var input = CardUpdateInput()
+        input.cardProductId = "product2"
+        input.holderId = "holder2"
+        input.cardNumberLast4 = "8888"
+        input.nameOverride = "我的白金卡"
+        input.creditLimit = 20000
+
+        let card = try await service.updateCard(cardId: "card", input: input)
+        #expect(card.cardProductId == "product2")
+        #expect(card.holderId == "holder2")
+        #expect(card.cardNumberLast4 == "8888")
+        #expect(card.nameOverride == "我的白金卡")
+        #expect(card.creditLimit == 20000)
+
+        try await manager.dbWriter.read { db in
+            let mutation = try #require(try MutationOutbox.fetchAll(db).first)
+            let args = try #require(try JSONSerialization.jsonObject(with: Data(mutation.argsJson.utf8)) as? [Any])
+            let patch = try #require(args[1] as? [String: Any])
+            #expect(patch["card_product_id"] as? String == "product2")
+            #expect(patch["holder_id"] as? String == "holder2")
+            #expect(patch["card_number_last4"] as? String == "8888")
+            #expect(patch["name_override"] as? String == "我的白金卡")
+            #expect(patch["credit_limit"] as? Double == 20000)
+        }
+    }
 }

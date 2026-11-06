@@ -19,10 +19,13 @@ import {
   loadHolderScope,
   parkBillAsDraft,
   syncBillingDayFromBill,
+  syncCreditLimitFromBill,
   upsertBillForCard,
 } from '../../lib/email-core/bills'
+import { evaluateParsedBillDueDate } from '../../lib/email-core/due-date'
 import { extractNameFromBody, resolveHolder } from '../../lib/email-core/holders'
 import { loadAiConfig, parseBillWithAI } from '../../lib/email-core/ai'
+import { isCmbStatement, parseCmbStatement } from '../../lib/email-core/cmb'
 import { scheduleBillSync } from './push'
 
 export default {
@@ -70,10 +73,11 @@ export default {
       const raw = await streamToBytes(message.raw)
       const parsedTop = parseRawMessage(raw)
       const emailBody = parsedTop.text
+      const isCmbDirect = isCmbStatement({ fromEmail, subject, text: emailBody })
 
       // 3. Fetch AI config（转发包路径里每封附件也要用它，所以提前到分支之前）
       const aiConfig = await loadAiConfig(db)
-      if (!aiConfig.apiKey) {
+      if (!isCmbDirect && !aiConfig.apiKey) {
         throw new Error('AI API Key 未配置（system_settings.ai_api_key）')
       }
 
@@ -85,7 +89,9 @@ export default {
         db,
         userId,
         top: parsedTop,
-        parse: body => parseBillWithAI(aiConfig, body),
+        parse: body => isCmbStatement({ text: body })
+          ? Promise.resolve(parseCmbStatement(body))
+          : parseBillWithAI(aiConfig, body),
       })
       if (bundle) {
         // billsWritten = 0 也算「处理过但没什么可写」，用 skipped 与失败的解析区分开
@@ -104,8 +110,10 @@ export default {
         return
       }
 
-      // 5. Parse bill with AI
-      const aiResult = await parseBillWithAI(aiConfig, emailBody)
+      // 5. Parse bill with CMB dedicated parser or AI
+      const aiResult = isCmbDirect
+        ? parseCmbStatement(emailBody)
+        : await parseBillWithAI(aiConfig, emailBody)
       log.raw_ai_response = JSON.stringify(aiResult)
 
       // 邮件类型门禁：自动扣款通知 / 还款提醒不是新一期账单。Chase 7491 的
@@ -118,18 +126,15 @@ export default {
         return
       }
 
-      // 0 元账单（本期已还清）是合法数据：bill_amount 用 == null 判空而不是 falsy，
-      // 否则 !0 会把应还 0 元的账单误判成缺字段跳过。due_date 同理——无需还款
-      // 就没有还款截止日，金额为 0 时放宽。
-      const zeroBill = Number(aiResult.bill_amount) === 0
-      if (
-        aiResult.is_bill === false ||
-        !aiResult.bill_month ||
-        aiResult.bill_amount == null || Number.isNaN(Number(aiResult.bill_amount)) ||
-        (!zeroBill && !aiResult.due_date)
-      ) {
+      // 0 元账单（本期已还清）是合法数据：bill_amount 用 == null 判空而不是 falsy；
+      // 非 0 元账单必须有确切的 YYYY-MM-DD 还款日，禁止推算或编造日期。
+      const dueEval = evaluateParsedBillDueDate(aiResult)
+      if (!dueEval.ok) {
         log.status = 'skipped'
-        log.error_msg = 'Not a bill email or missing required fields'
+        log.error_msg =
+          dueEval.kind === 'not_a_bill'
+            ? 'Not a bill email or missing required fields'
+            : dueEval.reason
         await writeLog(db, log)
         return
       }
@@ -164,9 +169,10 @@ export default {
         cardTail: aiResult.card_last4 ?? null,
         bankName: aiResult.bank_name ?? null,
         currency: aiResult.currency ?? null,
+        creditLimit: aiResult.credit_limit ?? null,
         statementDate: aiResult.statement_date ?? null,
         statementDay: aiResult.statement_day ?? null,
-        dueDate: aiResult.due_date ?? null,
+        dueDate: dueEval.dueDate,
         receivedDate: parsedTop.headers.date ?? null,
         allowCreate: trusted,
       })
@@ -204,6 +210,7 @@ export default {
       if (billingDayUpdated) {
         cardNote += '已按本期出账日修正卡档账单日；'
       }
+      await syncCreditLimitFromBill(db, cardId, aiResult)
 
       // 8. Write success log
       log.bill_id = billId
