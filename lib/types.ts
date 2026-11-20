@@ -362,6 +362,53 @@ export interface UserDisplayConfig {
   default_currency: string
 }
 
+export type NotificationCategory =
+  | 'bill_due_today'
+  | 'payable_due_today'
+  | 'bill_due_advance'
+  | 'payable_due_advance'
+  | 'bill_overdue'
+  | 'grace_period_longest'
+  | 'opportunity_expiry'
+  | 'opportunity_claim'
+  | 'opportunity_activity'
+  | 'opportunity_task'
+  | 'opportunity_reset'
+  | 'opportunity_booking'
+  | 'system'
+
+export interface NotificationItemSwitches {
+  bill_due_today: boolean
+  payable_due_today: boolean
+  bill_due_advance: boolean
+  payable_due_advance: boolean
+  bill_overdue: boolean
+  grace_period_longest: boolean
+  opportunity_expiry: boolean
+  opportunity_claim: boolean
+  opportunity_activity: boolean
+  opportunity_task: boolean
+  opportunity_reset: boolean
+  opportunity_booking: boolean
+}
+
+export interface UserNotificationItem {
+  id: string
+  user_id: string
+  notification_key: string
+  category: NotificationCategory
+  title: string
+  body: string | null
+  target_url: string | null
+  metadata_json: string | null
+  sent_at: string
+  status: 'sent' | 'failed' | 'skipped'
+  error: string | null
+  read_at: string | null
+  deleted_at: string | null
+  push_sent_at: string | null
+}
+
 /**
  * 用户自定义提醒规则与通道设置
  */
@@ -371,6 +418,10 @@ export interface UserReminderConfig {
   quiet_hours_end?: string
   enabled_channels: ('web_push' | 'email' | 'webhook')[]
   custom_reminder_email?: string
+  /**
+   * 全部通知项的细粒度开关（缺省全开，兼容存量配置）
+   */
+  items?: Partial<NotificationItemSwitches>
   /**
    * 权益提醒子树（Task 14）：深合并 OpportunityReminderConfig 默认值；
    * 旧字段保持原语义，读取时两者并列生效（旧 quiet hours 约束推送时段）。

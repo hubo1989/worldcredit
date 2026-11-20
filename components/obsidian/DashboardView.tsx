@@ -2,12 +2,13 @@
 
 import type { ReactNode } from 'react'
 import type { BillDashboardItem } from '@/lib/api/bills'
+import { categoryLabel, type PayableWithStatus } from '@/lib/api/payables'
+import { BellIcon } from '@/components/icons/WcIcon'
 import {
   billCurrency,
   computeMetrics,
   formatMoney,
   FUTURE_RANGES,
-  getDueTodayBills,
   type FutureRange,
   type HolderFilter,
 } from '@/lib/dashboard-metrics'
@@ -31,9 +32,12 @@ export interface DashboardViewProps {
   displayCurrency: string
   visibleBills: BillDashboardItem[]
   onPaySingle: (e: React.MouseEvent, bill: BillDashboardItem) => void
+  onPayPayable?: (e: React.MouseEvent, payable: PayableWithStatus) => void
   onPayAllOpen: () => void
   onNavBills: () => void
   onNavPromos: () => void
+  onNavNotifications?: () => void
+  unreadNotificationCount?: number
   totalCardCount: number
   holders: Array<{ id: string; name: string }>
   cardsByHolder: Record<string, number>
@@ -50,10 +54,12 @@ export function DashboardView(vm: DashboardViewProps) {
   const {
     metrics, holderPills, holderFilter, onHolderFilter, futureRange, onFutureRange,
     debtExpanded, onDebtExpanded, privacyOn, privacyIcon, onTogglePrivacy,
-    amountClass, displayCurrency, visibleBills, onPaySingle, onPayAllOpen,
-    onNavBills, onNavPromos, totalCardCount, holders, cardsByHolder,
+    amountClass, displayCurrency, visibleBills, onPaySingle, onPayPayable, onPayAllOpen,
+    onNavBills, onNavPromos, onNavNotifications, unreadNotificationCount = 0,
+    totalCardCount, holders, cardsByHolder,
     quickActions, promoCount, userName, userEmail, urgentReminders,
   } = vm
+  void visibleBills
 
   // 头像/称呼都来自当前登录用户；邮箱前缀只是兜底，不能再写死成某一个人的名字。
   const emailPrefix = (userEmail || '').split('@')[0]
@@ -62,13 +68,28 @@ export function DashboardView(vm: DashboardViewProps) {
 
   return (
     <div className="obsidian-dashboard min-h-dvh bg-d-bg pb-4 text-d-text">
-      {/* 页头：问候 + 隐私开关 */}
+      {/* 页头：问候 + 通知中心 + 隐私开关 */}
       <div className="flex items-center gap-3 px-5 pt-5">
         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-d-accent text-sm font-bold text-white">{avatarInitial}</div>
         <div className="flex-1">
           <p className="text-[11px] leading-4 text-d-muted">概览</p>
           <p className="text-[15px] font-bold leading-5">{displayName}</p>
         </div>
+        {onNavNotifications && (
+          <button
+            type="button"
+            onClick={onNavNotifications}
+            aria-label="通知中心"
+            className="relative flex h-11 w-11 items-center justify-center rounded-full border border-d-border bg-d-surface text-d-text"
+          >
+            <BellIcon size={20} />
+            {unreadNotificationCount > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-d-danger px-1 text-[10px] font-bold text-white">
+                {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+              </span>
+            )}
+          </button>
+        )}
         <button
           onClick={onTogglePrivacy}
           aria-label={privacyOn ? '显示金额' : '隐匿金额'}
@@ -79,16 +100,28 @@ export function DashboardView(vm: DashboardViewProps) {
       </div>
 
       {/* 居中大余额 */}
-      <div className="mt-4 flex flex-col items-center gap-2">
+      <div className="mt-4 flex flex-col items-center gap-2 px-5">
         <p className="text-xs text-d-muted">总待还款</p>
         <p className={amountClass + ' text-[34px] font-bold leading-none'}>
           {formatMoney(metrics.totalPending, displayCurrency)}
         </p>
-        <div className="flex items-center gap-6">
+        <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5">
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-d-muted">含逾期</span>
             <span className={amountClass + ' text-[13px] font-semibold text-d-danger-ink'}>
               {formatMoney(metrics.overdueAmount, displayCurrency)}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-d-muted">当日待还</span>
+            <span
+              className={
+                amountClass +
+                ' text-[13px] font-semibold ' +
+                (metrics.dueTodayAmount > 0 ? 'text-d-gold' : 'text-d-success-ink')
+              }
+            >
+              {formatMoney(metrics.dueTodayAmount, displayCurrency)}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
@@ -207,37 +240,63 @@ export function DashboardView(vm: DashboardViewProps) {
         </div>
       </div>
 
-      {/* 当天需还款（B0-2 修订需求） */}
-      {(() => {
-        // 已结清（或剩余为 0）的账单不该再出现在「今天需还款」里——
-        // 它的 CTA 会被 markBillAsPaid 拒绝，用户看到的是一个必然失败的操作。
-        const dueToday = getDueTodayBills(visibleBills)
-        if (dueToday.length === 0) return null
-        return (
-          <div className="mx-5 mt-4 rounded-2xl border border-d-gold-deep bg-d-surface p-3.5">
-            <div className="flex items-center justify-between">
-              <p className="text-[13px] font-bold">今天需还款</p>
-              <p className="text-[11px] text-d-gold">{dueToday.length} 笔</p>
-            </div>
-            {dueToday.map(b => (
-              <div key={b.id} className="mt-2 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[13px] font-semibold">
-                    {b.card?.card_product?.bank_name || '信用卡'} · 尾号 {b.card?.card_number_last4 || '----'}
-                  </p>
-                  <p className="text-[11px] text-d-gold">今日到期 · {formatMoney(b.remaining_amount, billCurrency(b, displayCurrency))}</p>
-                </div>
-                <button
-                  onClick={e => onPaySingle(e, b)}
-                  className="h-11 shrink-0 rounded-xl bg-d-gold px-4 text-xs font-semibold text-d-bg"
-                >
-                  立即还款
-                </button>
-              </div>
-            ))}
+      {/* 当天需还款（含当日到期信用卡账单 + 固定支出） */}
+      {metrics.dueTodayCount > 0 && (
+        <div className="mx-5 mt-4 rounded-2xl border border-d-gold-deep bg-d-surface p-3.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[13px] font-bold">今天需还款</p>
+            <p className="text-[11px] font-semibold text-d-gold">
+              当日待还 <span className={amountClass}>{formatMoney(metrics.dueTodayAmount, displayCurrency)}</span> · {metrics.dueTodayCount} 笔
+            </p>
           </div>
-        )
-      })()}
+          {metrics.dueTodayBills.map(b => (
+            <div key={b.id} className="mt-2.5 flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-semibold">
+                  {b.card?.card_product?.bank_name || '信用卡'} · 尾号 {b.card?.card_number_last4 || '----'}
+                </p>
+                <p className="text-[11px] text-d-gold">
+                  今日到期 · <span className={amountClass}>{formatMoney(b.remaining_amount, billCurrency(b, displayCurrency))}</span>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={e => onPaySingle(e, b)}
+                className="h-11 shrink-0 rounded-xl bg-d-gold px-4 text-xs font-semibold text-d-bg"
+              >
+                立即还款
+              </button>
+            </div>
+          ))}
+          {metrics.dueTodayPayables.map(p => {
+            const remaining = Math.max(0, (Number(p.amount) || 0) - (Number(p.paid_amount) || 0))
+            return (
+              <div key={`payable-${p.id}`} className="mt-2.5 flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <p className="truncate text-[13px] font-semibold">{p.name}</p>
+                    <span className="shrink-0 rounded-md bg-d-subtle px-1.5 py-0.5 text-[10px] font-medium text-d-muted">
+                      {categoryLabel(p.category, p.custom_category)}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-d-gold">
+                    今日应付 · <span className={amountClass}>{formatMoney(remaining, p.currency || displayCurrency)}</span>
+                  </p>
+                </div>
+                {onPayPayable ? (
+                  <button
+                    type="button"
+                    onClick={e => onPayPayable(e, p)}
+                    className="h-11 shrink-0 rounded-xl border border-d-gold-deep bg-d-gold-soft px-4 text-xs font-semibold text-d-gold"
+                  >
+                    标记已付
+                  </button>
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* 优惠活动入口（P0 修订）：数量需待统一查询（Task 11）能证明持卡资格后再恢复 */}
       <button

@@ -109,10 +109,14 @@ describe("读路径统一按生效金额投影", () => {
     "lib/api/cards.server.ts",
     "lib/api/holders.server.ts",
     "lib/api/analytics.server.ts",
-    "worker/cron.ts",
+    "lib/notifications-engine.server.ts",
   ])("%s 在 SQL 层做 COALESCE(bill_amount_override, bill_amount)", (rel) => {
     // 允许表别名前缀（joins 里写成 b.bill_amount_override）
     expect(read(rel)).toMatch(/COALESCE\(\w*\.?bill_amount_override,\s*\w*\.?bill_amount\)/);
+  });
+
+  it("worker/cron.ts 委托 lib/notifications-engine.server.ts 生成当日通知候选", () => {
+    expect(read("worker/cron.ts")).toMatch(/buildDailyNotificationCandidates/);
   });
 
   it("还款校验用生效金额（否则手填 800 却按导入 1200 拒绝还款）", () => {

@@ -90,4 +90,62 @@ struct DashboardMetricsTests {
         #expect(empty.totalPending == 0)
         #expect(empty.visibleBills.isEmpty)
     }
+
+    @Test("Due today metrics include unsettled due-today payables, holder filter and FX unconverted tracking")
+    func dueTodayWithPayables() {
+        let bills = [item("today", amount: 1000)]
+        let fx = FxRates(base: "USD", rates: ["USD": 1, "CNY": 7.2], timestamp: 0, fetchedAt: 0)
+        let payables = [
+            PayableItem(
+                id: "p-usd", createdBy: "u1", name: "VPS", category: .utility,
+                amount: 150, currency: "USD", dueDay: 10, holderId: "holder-a",
+                period: "2026-05", dueDate: "2026-05-10", daysUntilDue: 0, paidAmount: 50, status: .unpaid
+            ),
+            PayableItem(
+                id: "p-hkd", createdBy: "u1", name: "香港保险", category: .insurance,
+                amount: 500, currency: "HKD", dueDay: 10, holderId: "holder-a",
+                period: "2026-05", dueDate: "2026-05-10", daysUntilDue: 0, paidAmount: 0, status: .unpaid
+            ),
+            PayableItem(
+                id: "p-paid", createdBy: "u1", name: "物业", category: .utility,
+                amount: 300, currency: "CNY", dueDay: 10, holderId: "holder-a",
+                period: "2026-05", dueDate: "2026-05-10", daysUntilDue: 0, paidAmount: 300, status: .paid
+            ),
+            PayableItem(
+                id: "p-other-holder", createdBy: "u1", name: "房贷", category: .loan,
+                amount: 2000, currency: "CNY", dueDay: 10, holderId: "holder-b",
+                period: "2026-05", dueDate: "2026-05-10", daysUntilDue: 0, paidAmount: 0, status: .unpaid
+            ),
+        ]
+
+        let allMetrics = DashboardMetrics.compute(
+            bills: bills,
+            cards: [],
+            holderId: nil,
+            futureDays: 7,
+            displayCurrency: "CNY",
+            rates: fx,
+            payables: payables
+        )
+        // 1000 CNY bill + (150-50)*7.2 USD + 2000 CNY other-holder = 3720 CNY; HKD missing FX -> unconverted
+        #expect(allMetrics.dueTodayAmount == 3720)
+        #expect(allMetrics.dueTodayPayables.map(\.id) == ["p-usd", "p-hkd", "p-other-holder"])
+        #expect(allMetrics.dueTodayCount == 4)
+        #expect(allMetrics.dueTodayByCurrency == ["CNY": 3000, "USD": 100, "HKD": 500])
+        #expect(allMetrics.unconvertedCurrencies == ["HKD"])
+        #expect(allMetrics.totalPending == 1000)
+
+        let holderBMetrics = DashboardMetrics.compute(
+            bills: [],
+            cards: [],
+            holderId: "holder-b",
+            futureDays: 7,
+            displayCurrency: "CNY",
+            rates: fx,
+            payables: payables
+        )
+        #expect(holderBMetrics.dueTodayAmount == 2000)
+        #expect(holderBMetrics.dueTodayPayables.map(\.id) == ["p-other-holder"])
+        #expect(holderBMetrics.dueTodayCount == 1)
+    }
 }

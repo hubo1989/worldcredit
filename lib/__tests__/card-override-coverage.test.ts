@@ -56,12 +56,14 @@ describe('账单/卡片查询必须携带卡级别覆盖列', () => {
 })
 
 describe('推送与提醒路径必须优先使用卡级别名称', () => {
-  it('每日推送 cron 选中并优先使用 name_override', () => {
+  it('每日推送 cron 经 notifications-engine 选中并优先使用 name_override', () => {
     const cron = read('worker/cron.ts')
-    expect(cron, 'cron 没查 name_override，推送标题会显示卡产品原名').toMatch(/cc\.name_override/)
-    expect(cron).toMatch(/name_override \|\|/)
-    // 标题里的三个分支都要用生效名，不能残留 bill.card_name
-    expect(cron).not.toMatch(/\$\{bill\.card_name \|\| ''\}/)
+    expect(cron).toMatch(/buildDailyNotificationCandidates/)
+    const engine = read('lib/notifications-engine.server.ts')
+    expect(engine, 'cron 通知引擎没查 name_override，推送标题会显示卡产品原名').toMatch(/cc\.name_override/)
+    expect(engine).toMatch(/name_override \|\|/)
+    // 标题里的分支都要用生效名，不能残留 bill.card_name
+    expect(engine).not.toMatch(/\$\{bill\.card_name \|\| ''\}/)
   })
 
   it('站内提醒的两条查询都带 name_override，且消费端优先取它', () => {

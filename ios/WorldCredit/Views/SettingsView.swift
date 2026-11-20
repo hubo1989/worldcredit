@@ -72,6 +72,31 @@ struct SettingsView: View {
 
                 GmailSyncSection()
 
+                Section("通知与提醒") {
+                    NavigationLink {
+                        NotificationsCenterView()
+                    } label: {
+                        HStack {
+                            Label("通知中心", systemImage: "bell")
+                            Spacer()
+                            if appState.unreadNotificationCount > 0 {
+                                Text("\(appState.unreadNotificationCount)")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 2)
+                                    .background(Color.red, in: Capsule())
+                            }
+                        }
+                    }
+
+                    NavigationLink {
+                        NotificationSettingsView()
+                    } label: {
+                        Label("通知与提醒开关", systemImage: "slider.horizontal.3")
+                    }
+                }
+
                 Section("外观与主题") {
                     Picker("主题模式", selection: Binding(
                         get: { appState.themeMode },

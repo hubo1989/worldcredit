@@ -65,5 +65,25 @@ export async function POST(request: Request) {
   for (const id of staleIds) {
     await db.prepare('DELETE FROM push_subscriptions WHERE id = ?').bind(id).run()
   }
+  if (sent > 0) {
+    const ts = new Date().toISOString()
+    await db
+      .prepare(
+        `INSERT INTO notification_history
+           (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status, push_sent_at)
+         VALUES (?, ?, ?, 'system', ?, ?, '/notifications', ?, ?, 'sent', ?)`
+      )
+      .bind(
+        crypto.randomUUID(),
+        userId,
+        `test:${Date.now()}`,
+        'WorldCredit 测试推送',
+        '推送通道已就绪 ✅ 到期提醒将按时送达。',
+        JSON.stringify({ kind: 'system_test', sent }),
+        ts,
+        ts
+      )
+      .run()
+  }
   return Response.json({ data: { subscriptions: subs.length, sent, removed: staleIds.length, errors }, error: null })
 }

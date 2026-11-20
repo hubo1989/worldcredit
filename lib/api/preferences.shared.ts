@@ -2,6 +2,7 @@
 // server implementation and the client wrappers (no database imports).
 import type { UserDisplayConfig, UserReminderConfig } from '../types'
 import { normalizeCurrencyOrDefault } from '../fx'
+import { DEFAULT_NOTIFICATION_ITEM_SWITCHES } from '../notifications.shared'
 
 export const DEFAULT_DISPLAY_CONFIG: UserDisplayConfig = {
   privacy_mode: false,
@@ -17,6 +18,7 @@ export const DEFAULT_REMINDER_CONFIG: UserReminderConfig = {
   quiet_hours_start: '22:00',
   quiet_hours_end: '08:00',
   enabled_channels: ['web_push'],
+  items: { ...DEFAULT_NOTIFICATION_ITEM_SWITCHES },
   opportunities: {
     enabled: true,
     web_push_enabled: true,

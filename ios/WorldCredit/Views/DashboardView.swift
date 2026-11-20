@@ -80,7 +80,8 @@ struct DashboardView: View {
             holderId: holderFilter,
             futureDays: futureDays,
             displayCurrency: appState.dashboardCurrency,
-            rates: appState.dashboardRates
+            rates: appState.dashboardRates,
+            payables: appState.payables
         )
     }
 
@@ -111,6 +112,29 @@ struct DashboardView: View {
                         .font(.headline)
                 }
                 Spacer()
+                NavigationLink {
+                    NotificationsCenterView()
+                } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: appState.unreadNotificationCount > 0 ? "bell.badge" : "bell")
+                            .font(.title3)
+                            .frame(width: 44, height: 44)
+                            .background(Color(uiColor: .secondarySystemGroupedBackground), in: Circle())
+                        if appState.unreadNotificationCount > 0 {
+                            Text(appState.unreadNotificationCount > 99 ? "99+" : "\(appState.unreadNotificationCount)")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color.red, in: Capsule())
+                                .offset(x: 4, y: -2)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("通知中心，\(appState.unreadNotificationCount) 条未读")
+                .accessibilityIdentifier("dashboard.notifications")
+
                 Button {
                     Task { await appState.setDashboardPrivacy(!appState.dashboardPrivacy) }
                 } label: {
@@ -130,19 +154,29 @@ struct DashboardView: View {
                 .font(.system(size: 36, weight: .bold, design: .rounded))
                 .accessibilityIdentifier("dashboard.totalDebt")
 
-            HStack(spacing: 24) {
+            HStack(spacing: 16) {
                 VStack(spacing: 2) {
                     Text("含逾期").font(.caption).foregroundStyle(.secondary)
                     money(metrics.overdueAmount)
                         .font(.subheadline.bold())
                         .foregroundStyle(.red)
                 }
+                .frame(maxWidth: .infinity)
+                VStack(spacing: 2) {
+                    Text("当日待还").font(.caption).foregroundStyle(.secondary)
+                    money(metrics.dueTodayAmount)
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("dashboard.dueTodayAmount")
+                }
+                .frame(maxWidth: .infinity)
                 VStack(spacing: 2) {
                     Text("未来 \(futureDays) 天").font(.caption).foregroundStyle(.secondary)
                     money(metrics.futureAmount)
                         .font(.subheadline.bold())
                         .foregroundStyle(.orange)
                 }
+                .frame(maxWidth: .infinity)
             }
 
             if !metrics.unconvertedCurrencies.isEmpty {
@@ -354,13 +388,22 @@ struct DashboardView: View {
 
     private var dueTodaySection: some View {
         Group {
-            if !metrics.dueTodayBills.isEmpty {
+            if metrics.dueTodayCount > 0 {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         Text("今天需还款").font(.headline)
                         Spacer()
-                        Text("\(metrics.dueTodayBills.count) 笔")
-                            .font(.caption.bold()).foregroundStyle(.orange)
+                        HStack(spacing: 4) {
+                            Text("当日待还")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                            money(metrics.dueTodayAmount)
+                                .font(.caption.bold())
+                                .foregroundStyle(.orange)
+                            Text("· \(metrics.dueTodayCount) 笔")
+                                .font(.caption.bold())
+                                .foregroundStyle(.orange)
+                        }
                     }
                     ForEach(metrics.dueTodayBills) { item in
                         HStack {
@@ -380,6 +423,45 @@ struct DashboardView: View {
                                 .buttonStyle(.borderedProminent)
                                 .tint(.orange)
                                 .accessibilityIdentifier("dashboard.dueToday.pay.\(item.id)")
+                        }
+                        .padding()
+                        .background(Color(uiColor: .secondarySystemGroupedBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    ForEach(metrics.dueTodayPayables) { item in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(item.name)
+                                        .font(.subheadline.bold())
+                                    Text(item.category.label)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color(uiColor: .tertiarySystemGroupedBackground), in: Capsule())
+                                }
+                                HStack(spacing: 4) {
+                                    Text("今日应付 ·")
+                                        .font(.caption).foregroundStyle(.orange)
+                                    money(item.remainingAmount, billCurrency: item.currency)
+                                        .font(.caption.bold()).foregroundStyle(.orange)
+                                }
+                            }
+                            Spacer()
+                            Button("标记已付") {
+                                Task {
+                                    do {
+                                        try await appState.payPayable(item, amount: item.remainingAmount)
+                                    } catch {
+                                        appState.lastSyncError = error.localizedDescription
+                                    }
+                                }
+                            }
+                            .font(.caption.bold())
+                            .buttonStyle(.borderedProminent)
+                            .tint(.orange)
+                            .accessibilityIdentifier("dashboard.dueToday.payable.\(item.id)")
                         }
                         .padding()
                         .background(Color(uiColor: .secondarySystemGroupedBackground))

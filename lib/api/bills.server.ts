@@ -56,14 +56,6 @@ function withCreditCardProductFields(bill: BillWithCard): BillWithCard {
   };
 }
 
-function daysUntil(date: string): number {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  const target = new Date(date);
-  target.setHours(0, 0, 0, 0);
-  return Math.ceil((target.getTime() - d.getTime()) / (24 * 60 * 60 * 1000));
-}
-
 function computeStatus(bill: Bill, paidAmount: number): Bill["status"] {
   if (bill.status === "paid") return "paid";
   // 一律用生效金额：用户手填值优先，否则已还金额会跟展示的金额对不上
@@ -89,10 +81,13 @@ interface BillJoinRow extends Record<string, unknown> {
   statement_start: string | null;
   statement_end: string | null;
   statement_date: string | null;
+  statement_date_override: string | null;
   bill_amount: number;
   bill_amount_override: number | null;
   min_payment: number | null;
+  min_payment_override: number | null;
   due_date: string;
+  due_date_override: string | null;
   status: Bill["status"];
   created_at: string;
   // credit_cards fields
@@ -128,6 +123,10 @@ function mapJoinRowToDashboard(
   payments: Pick<Payment, "id" | "amount" | "paid_at" | "channel" | "note">[],
   attachments?: { id: string; file_name: string; public_url?: string }[],
 ): BillDashboardItem {
+  const effectiveDueDate = row.due_date_override ?? row.due_date;
+  const effectiveStatementDate = row.statement_date_override ?? row.statement_date;
+  const effectiveMinPayment =
+    row.min_payment_override != null ? row.min_payment_override : row.min_payment;
   const bill: Bill = {
     id: row.id,
     account_id: row.account_id ? String(row.account_id) : undefined,
@@ -135,15 +134,18 @@ function mapJoinRowToDashboard(
     bill_month: row.bill_month,
     statement_start: row.statement_start || undefined,
     statement_end: row.statement_end || undefined,
-    statement_date: row.statement_date || undefined,
+    statement_date: effectiveStatementDate || undefined,
+    statement_date_override: row.statement_date_override || undefined,
     // 读边界统一把 bill_amount 归一化为「生效金额」（手填值优先）。
     // 让每个消费方自己调用 effectiveBillAmount 是行不通的——本文件与
     // analytics/holders/cards/cron 共有二十多处读取点，漏一处就会两处显示不一致。
     bill_amount: row.bill_amount_override != null ? row.bill_amount_override : row.bill_amount,
     // 手填值原样带出：界面要能显示「已手动设定」并允许改回，
     bill_amount_override: row.bill_amount_override != null ? row.bill_amount_override : undefined,
-    min_payment: row.min_payment || undefined,
-    due_date: row.due_date,
+    min_payment: effectiveMinPayment || undefined,
+    min_payment_override: row.min_payment_override != null ? row.min_payment_override : undefined,
+    due_date: effectiveDueDate,
+    due_date_override: row.due_date_override || undefined,
     status: row.status,
     created_at: row.created_at,
   };
@@ -192,6 +194,7 @@ function mapJoinRowToDashboard(
   };
   const paidAmount = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
   const amount = effectiveBillAmount(bill);
+  const days = diffInCalendarDays(effectiveDueDate);
   return {
     ...bill,
     card,
@@ -199,8 +202,8 @@ function mapJoinRowToDashboard(
     attachments,
     paid_amount: paidAmount,
     remaining_amount: Math.max(0, amount - paidAmount),
-    days_until_due: daysUntil(bill.due_date),
-    interest_free_days_left: Math.max(0, daysUntil(bill.due_date)),
+    days_until_due: days,
+    interest_free_days_left: Math.max(0, days),
     computed_status: computeStatus(bill, paidAmount),
   };
 }

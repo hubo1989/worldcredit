@@ -11,6 +11,12 @@ import {
 import { getHolders } from "@/lib/api/holders";
 import { getCardsBasicByHolders } from "@/lib/api/cards";
 import {
+  getRecurringPayables,
+  payRecurringPayable,
+  type PayableWithStatus,
+} from "@/lib/api/payables";
+import { getUnreadNotificationCount } from "@/lib/api/notifications";
+import {
   type HolderFilter,
   type FutureRange,
   billCurrency,
@@ -61,6 +67,8 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [holders, setHolders] = useState<CardHolder[]>([]);
   const [bills, setBills] = useState<BillDashboardItem[]>([]);
+  const [payables, setPayables] = useState<PayableWithStatus[]>([]);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [cards, setCards] = useState<Array<{ id: string; holder_id: string }>>([]);
 
   // ---- 交互状态 ----
@@ -107,10 +115,12 @@ export default function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      // 并行：持卡人 / 账单；卡片依赖持卡人 id，随后批量查询
-      const [holderList, allBills] = await Promise.all([
+      // 并行：持卡人 / 账单 / 固定支出 / 未读通知数；卡片依赖持卡人 id，随后批量查询
+      const [holderList, allBills, payableList, unreadCount] = await Promise.all([
         getHolders(user.id),
         getBillDashboardItems(200, user.id),
+        getRecurringPayables(user.id).catch(() => []),
+        getUnreadNotificationCount().catch(() => 0),
       ]);
       holderList.sort((a, b) => a.created_at.localeCompare(b.created_at));
       const holderIds = holderList.map((h) => h.id);
@@ -119,6 +129,8 @@ export default function DashboardPage() {
       setHolders(holderList);
       setCards(cardsRes);
       setBills(allBills);
+      setPayables(payableList);
+      setUnreadNotificationCount(unreadCount);
     } catch (err) {
       console.error("Dashboard load failed:", err);
       setError(err instanceof Error ? err.message : "加载失败，请下拉重试");
@@ -202,6 +214,27 @@ export default function DashboardPage() {
     }
   };
 
+  const handlePayPayable = async (e: React.MouseEvent, payable: PayableWithStatus) => {
+    e.stopPropagation();
+    try {
+      const remaining = Math.max(0, Number(payable.amount) - Number(payable.paid_amount));
+      if (remaining <= 0) return;
+      await payRecurringPayable(payable.id, remaining);
+      setToast({
+        open: true,
+        message: `🎉 已登记 ${payable.name} 本期付款（${formatMoney(remaining, payable.currency || displayCurrency)}）！`,
+        severity: "success",
+      });
+      loadData();
+    } catch (err) {
+      setToast({
+        open: true,
+        message: "登记付款失败: " + (err instanceof Error ? err.message : String(err)),
+        severity: "error",
+      });
+    }
+  };
+
   const handlePayAllOverdue = async () => {
     if (!user?.id) return;
     setPaying(true);
@@ -240,12 +273,19 @@ export default function DashboardPage() {
   const closeToast = useCallback(() => setToast((prev) => ({ ...prev, open: false })), []);
   const goToBills = useCallback(() => router.push("/bills"), [router]);
   const goToPromos = useCallback(() => router.push("/promos"), [router]);
+  const goToNotifications = useCallback(() => router.push("/notifications"), [router]);
 
   // 当前选中持卡人下的账单
   const visibleBills = useMemo(() => {
     if (holderFilter === "all") return bills;
     return bills.filter((b) => b.card?.holder_id === holderFilter);
   }, [bills, holderFilter]);
+
+  // 当前选中持卡人下的固定支出
+  const visiblePayables = useMemo(() => {
+    if (holderFilter === "all") return payables;
+    return payables.filter((p) => p.holder_id === holderFilter);
+  }, [payables, holderFilter]);
 
   // 当前选中持卡人下的卡片
   const visibleCards = useMemo(() => {
@@ -254,8 +294,8 @@ export default function DashboardPage() {
   }, [cards, holderFilter]);
 
   const metrics = useMemo(
-    () => computeMetrics(visibleBills, futureRange, displayCurrency, fxRates),
-    [visibleBills, futureRange, displayCurrency, fxRates],
+    () => computeMetrics(visibleBills, futureRange, displayCurrency, fxRates, visiblePayables),
+    [visibleBills, futureRange, displayCurrency, fxRates, visiblePayables],
   );
 
   const cardsByHolder = useMemo(() => countCardsByHolder(cards), [cards]);
@@ -355,9 +395,12 @@ export default function DashboardPage() {
         displayCurrency={displayCurrency}
         visibleBills={visibleBills}
         onPaySingle={handlePaySingle}
+        onPayPayable={handlePayPayable}
         onPayAllOpen={openPayAllConfirm}
         onNavBills={goToBills}
         onNavPromos={goToPromos}
+        onNavNotifications={goToNotifications}
+        unreadNotificationCount={unreadNotificationCount}
         totalCardCount={totalCardCount}
         holders={holders}
         cardsByHolder={cardsByHolder}

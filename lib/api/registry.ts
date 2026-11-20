@@ -25,6 +25,7 @@ import * as emailBillsServer from './emailBills.server'
 import * as gmailServer from './gmail.server'
 import * as gmailLedgerServer from './gmail-ledger.server'
 import * as holdersServer from './holders.server'
+import * as notificationsServer from './notifications.server'
 import * as payablesServer from './payables.server'
 // payments.ts 直接持有 db 访问（历史文件无 .server 拆分），registry 是
 // server-only 模块，导入即并入服务端 bundle，符合现有约定。
@@ -285,6 +286,14 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
   preferences: {
     getUserPreferences: { impl: preferencesServer.getUserPreferences, bindUser: 0 },
     updateUserPreferences: { impl: preferencesServer.updateUserPreferences, bindUser: 0 },
+  },
+  notifications: {
+    getNotifications: { impl: notificationsServer.getNotifications, bindUser: 0 },
+    getUnreadNotificationCount: { impl: notificationsServer.getUnreadNotificationCount, bindUser: 0 },
+    markNotificationRead: { impl: notificationsServer.markNotificationRead, bindUser: 0 },
+    markAllNotificationsRead: { impl: notificationsServer.markAllNotificationsRead, bindUser: 0 },
+    deleteNotification: { impl: notificationsServer.deleteNotification, bindUser: 0 },
+    deleteAllNotifications: { impl: notificationsServer.deleteAllNotifications, bindUser: 0 },
   },
   promos: {
     getPromosWithBanks: { impl: promosServer.getPromosWithBanks, bindUser: 0 },
