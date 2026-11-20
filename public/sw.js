@@ -46,12 +46,18 @@ const ALLOWED_PREFIXES = ['/bills/', '/cards/']
 
 function normalizeInternalTargetUrl(raw) {
   if (typeof raw !== 'string' || !raw.startsWith('/') || raw.startsWith('//')) return '/bills'
+  let pathname
+  try {
+    pathname = new URL(raw, self.location.origin).pathname
+  } catch {
+    return '/bills'
+  }
   if (
-    EXACT_ALLOWED_URLS.has(raw) ||
-    OPPORTUNITY_ALLOWED_URLS.has(raw) ||
-    ALLOWED_PREFIXES.some((prefix) => raw.startsWith(prefix))
+    EXACT_ALLOWED_URLS.has(pathname) ||
+    OPPORTUNITY_ALLOWED_URLS.has(pathname) ||
+    ALLOWED_PREFIXES.some((prefix) => pathname.startsWith(prefix))
   ) {
-    return raw
+    return pathname
   }
   return '/bills'
 }

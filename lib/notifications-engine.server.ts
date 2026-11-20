@@ -5,10 +5,10 @@
 //   - 每日 Cron 扫表时补发 Web Push / APNs（跳过已读、已删、已推送、免打扰时段），并写入 push_sent_at。
 
 import { categoryLabel, type PayableCategory, type PayableCycleType } from './api/payables.shared'
-import { currencySymbol } from './fx'
 import {
   computeCardGraceWindowOnDate,
   formatCurrencyBuckets,
+  formatMoneySingle,
   isInQuietHours,
   isNewLongestGracePeriodDay,
   resolveNotificationSwitches,
@@ -120,11 +120,6 @@ function encodeMetadata(meta: NotificationMetadata): string {
   return JSON.stringify(meta)
 }
 
-function formatMoneySingle(amount: number, currency: string): string {
-  const rounded = Math.round(amount * 100) / 100
-  return `${currencySymbol(currency)}${rounded.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
-}
-
 function civilDateFromTodayStr(todayStr: string): Date {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(todayStr)
   if (!m) return new Date()
@@ -136,20 +131,31 @@ function formatPayableDueDateStr(dueDay: number, period: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+export interface PrefetchedUserNotificationPrefs {
+  reminderConfigRaw: string | null
+  legacyRow: { bill_due_enabled: number; overdue_enabled: number; due_days_before: number } | null
+}
+
 export async function loadUserNotificationContext(
   db: D1Database,
-  userId: string
+  userId: string,
+  prefetched?: PrefetchedUserNotificationPrefs
 ): Promise<UserNotificationContext> {
-  const [prefRow, legacyRow] = await Promise.all([
-    db
-      .prepare('SELECT reminder_config FROM user_preferences WHERE user_id = ?')
-      .bind(userId)
-      .first<{ reminder_config: string }>(),
-    db
-      .prepare('SELECT bill_due_enabled, overdue_enabled, due_days_before FROM notification_preferences WHERE user_id = ?')
-      .bind(userId)
-      .first<{ bill_due_enabled: number; overdue_enabled: number; due_days_before: number }>(),
-  ])
+  const [prefRow, legacyRow] = prefetched
+    ? [
+        prefetched.reminderConfigRaw != null ? { reminder_config: prefetched.reminderConfigRaw } : null,
+        prefetched.legacyRow,
+      ]
+    : await Promise.all([
+        db
+          .prepare('SELECT reminder_config FROM user_preferences WHERE user_id = ?')
+          .bind(userId)
+          .first<{ reminder_config: string }>(),
+        db
+          .prepare('SELECT bill_due_enabled, overdue_enabled, due_days_before FROM notification_preferences WHERE user_id = ?')
+          .bind(userId)
+          .first<{ bill_due_enabled: number; overdue_enabled: number; due_days_before: number }>(),
+      ])
 
   if (prefRow?.reminder_config) {
     try {
@@ -241,9 +247,11 @@ export function isUserInQuietHours(ctx: UserNotificationContext, now: Date = new
 export async function buildDailyNotificationCandidates(
   db: D1Database,
   userId: string,
-  todayStr: string = getLocalTodayString('Asia/Shanghai')
+  todayStr?: string,
+  options?: { now?: Date; prefetched?: PrefetchedUserNotificationPrefs }
 ): Promise<{ context: UserNotificationContext; candidates: DailyNotificationCandidate[] }> {
-  const context = await loadUserNotificationContext(db, userId)
+  const context = await loadUserNotificationContext(db, userId, options?.prefetched)
+  const effectiveToday = todayStr ?? getLocalTodayString(context.timeZone, options?.now)
   const switches = resolveNotificationSwitches(context.reminderConfig)
   const advanceDays = new Set(context.remindDaysBefore.filter(d => Number.isInteger(d) && d > 0))
   const candidates: DailyNotificationCandidate[] = []
@@ -349,7 +357,7 @@ export async function buildDailyNotificationCandidates(
 
   // 2. 评估活跃固定支出（与 payables.server.ts 同滚动账期口径）
   const payableRows = payableStmt.results || []
-  const todayDate = civilDateFromTodayStr(todayStr)
+  const todayDate = civilDateFromTodayStr(effectiveToday)
 
   interface PayableEval {
     row: PayableQueryRow
@@ -395,7 +403,7 @@ export async function buildDailyNotificationCandidates(
 
       let displayPeriod = currentPeriod
       let displayPaid = paidCurrent
-      const nextDiff = diffCivilDays(nextDueStr, todayStr)
+      const nextDiff = diffCivilDays(nextDueStr, effectiveToday)
       if (settledCurrent && Number.isFinite(nextDiff) && nextDiff < 30) {
         displayPeriod = nextPeriod
         displayPaid = paidMap.get(`${row.id}:${nextPeriod}`) ?? 0
@@ -405,7 +413,7 @@ export async function buildDailyNotificationCandidates(
       if (remaining <= 0.01) continue
 
       const dueDateStr = formatPayableDueDateStr(row.due_day, displayPeriod)
-      const daysUntil = diffCivilDays(dueDateStr, todayStr)
+      const daysUntil = diffCivilDays(dueDateStr, effectiveToday)
       if (!Number.isFinite(daysUntil)) continue
       activePayables.push({
         row,
@@ -423,13 +431,13 @@ export async function buildDailyNotificationCandidates(
   const dueTodayPayableEntries: NotificationPayableMetadataItem[] = []
 
   for (const bill of unpaidBills) {
-    const daysUntil = diffCivilDays(bill.effective_due_date, todayStr)
+    const daysUntil = diffCivilDays(bill.effective_due_date, effectiveToday)
     if (!Number.isFinite(daysUntil)) continue
     const remaining = Math.max(0, Number(bill.effective_amount || 0) - Number(bill.paid_amount || 0))
     const currency = bill.currency || 'CNY'
     const subject = formatBillSubject(bill)
     const stmtDate = bill.effective_statement_date || bill.statement_end
-    const stmtDiff = stmtDate ? diffCivilDays(stmtDate, todayStr) : Number.NaN
+    const stmtDiff = stmtDate ? diffCivilDays(stmtDate, effectiveToday) : Number.NaN
     const isUnissued = Number.isFinite(stmtDiff) && stmtDiff > 0
 
     if (daysUntil === 0) {
@@ -446,7 +454,7 @@ export async function buildDailyNotificationCandidates(
       if (switches.bill_overdue) {
         const amtStr = formatMoneySingle(remaining, currency)
         candidates.push({
-          notification_key: `bill_overdue:${bill.id}:${todayStr}`,
+          notification_key: `bill_overdue:${bill.id}:${effectiveToday}`,
           category: 'bill_overdue',
           title: `已逾期：${subject}`,
           body: `${subject} 账单剩余待还 ${amtStr}，已逾期 ${Math.abs(daysUntil)} 天（到期日 ${bill.effective_due_date}）。`,
@@ -465,7 +473,7 @@ export async function buildDailyNotificationCandidates(
       if (switches.bill_due_advance) {
         const amtStr = formatMoneySingle(remaining, currency)
         candidates.push({
-          notification_key: `bill:${bill.id}:${todayStr}`,
+          notification_key: `bill:${bill.id}:${effectiveToday}`,
           category: 'bill_due_advance',
           title: daysUntil === 1 ? `明天到期：${subject}` : `${daysUntil}天后还款：${subject}`,
           body: `${subject} 账单剩余待还 ${amtStr}，将于 ${daysUntil} 天后（${bill.effective_due_date}）到期。`,
@@ -499,7 +507,7 @@ export async function buildDailyNotificationCandidates(
       if (switches.bill_overdue) {
         const amtStr = formatMoneySingle(p.remaining, p.row.currency || 'CNY')
         candidates.push({
-          notification_key: `payable_overdue:${p.row.id}:${todayStr}`,
+          notification_key: `payable_overdue:${p.row.id}:${effectiveToday}`,
           category: 'bill_overdue',
           title: `固定支出已逾期：${p.row.name}`,
           body: `${p.row.name}（${p.categoryText}）本期应付 ${amtStr}，已逾期 ${Math.abs(p.daysUntil)} 天（应付日 ${p.dueDate}）。`,
@@ -518,7 +526,7 @@ export async function buildDailyNotificationCandidates(
       if (switches.payable_due_advance) {
         const amtStr = formatMoneySingle(p.remaining, p.row.currency || 'CNY')
         candidates.push({
-          notification_key: `payable:${p.row.id}:${todayStr}`,
+          notification_key: `payable:${p.row.id}:${effectiveToday}`,
           category: 'payable_due_advance',
           title: p.daysUntil === 1 ? `固定支出明天到期：${p.row.name}` : `${p.daysUntil}天后应付：${p.row.name}`,
           body: `${p.row.name}（${p.categoryText}）本期应付 ${amtStr}，将于 ${p.daysUntil} 天后（${p.dueDate}）到期。`,
@@ -552,14 +560,14 @@ export async function buildDailyNotificationCandidates(
     const category: NotificationCategory =
       dueTodayBillEntries.length === 0 ? 'payable_due_today' : 'bill_due_today'
     candidates.unshift({
-      notification_key: `due_today_summary:${todayStr}`,
+      notification_key: `due_today_summary:${effectiveToday}`,
       category,
       title: `今日待还款 ${totalLabel}（共 ${totalDueTodayCount} 笔）`,
       body: `今天需完成以下 ${totalDueTodayCount} 笔还款：\n${lines.join('\n')}`,
       target_url: '/dashboard',
       metadata_json: encodeMetadata({
         kind: 'due_today_summary',
-        date: todayStr,
+        date: effectiveToday,
         totals_by_currency: totalsByCurrency,
         bills: dueTodayBillEntries,
         payables: dueTodayPayableEntries,
@@ -573,7 +581,7 @@ export async function buildDailyNotificationCandidates(
 
     for (const card of cardsStmt.results || []) {
       const effectiveBillingDay = Number(card.override_billing_day ?? card.billing_day ?? 10)
-      if (!isNewLongestGracePeriodDay(effectiveBillingDay, todayStr)) continue
+      if (!isNewLongestGracePeriodDay(effectiveBillingDay, effectiveToday)) continue
 
       const win = computeCardGraceWindowOnDate(
         {
@@ -584,7 +592,7 @@ export async function buildDailyNotificationCandidates(
           payment_due_type: card.payment_due_type ?? 'after_billing',
           payment_due_value: card.payment_due_value ?? 20,
         },
-        todayStr
+        effectiveToday
       )
       const isMerged = card.account_statement_mode === 'merged' && Boolean(card.account_id)
       const groupKey = isMerged ? `account:${card.account_id}` : `card:${card.id}`
@@ -623,14 +631,14 @@ export async function buildDailyNotificationCandidates(
           ? `${graceHits[0].label} 昨日刚出账单，今天进入本轮最长免息期，刷卡可享 ${graceHits[0].graceDays} 天免息（下期账单日 ${graceHits[0].nextBillingDate}，还款日 ${graceHits[0].nextDueDate}）。`
           : `以下卡片昨日刚过账单日，今天新进入本轮最长免息期：\n${lines.join('\n')}`
       candidates.push({
-        notification_key: `grace_longest:${todayStr}`,
+        notification_key: `grace_longest:${effectiveToday}`,
         category: 'grace_period_longest',
         title,
         body,
         target_url: graceHits.length === 1 ? `/cards/${graceHits[0].cardId}` : '/bills',
         metadata_json: encodeMetadata({
           kind: 'grace_period_longest',
-          date: todayStr,
+          date: effectiveToday,
           cards: graceHits,
         }),
       })
@@ -647,10 +655,12 @@ export async function buildDailyNotificationCandidates(
 export async function ensureDailyNotificationsForUser(
   db: D1Database,
   userId: string,
-  todayStr: string = getLocalTodayString('Asia/Shanghai'),
+  todayStr?: string,
   nowIso: string = new Date().toISOString()
 ): Promise<number> {
-  const { candidates } = await buildDailyNotificationCandidates(db, userId, todayStr)
+  const { candidates } = await buildDailyNotificationCandidates(db, userId, todayStr, {
+    now: new Date(nowIso),
+  })
   if (candidates.length === 0) return 0
 
   const stmtSql = `INSERT OR IGNORE INTO notification_history

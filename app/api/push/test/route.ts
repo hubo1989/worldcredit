@@ -82,6 +82,7 @@ export async function POST(request: Request) {
              sent_at = excluded.sent_at,
              status = 'sent',
              push_sent_at = excluded.push_sent_at,
+             -- 测试推送由用户在设置页显式触发，有意重置同日记录阅读/删除状态；勿复制到 Cron 路径
              read_at = NULL,
              deleted_at = NULL`
         )

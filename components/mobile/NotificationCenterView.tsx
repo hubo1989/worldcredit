@@ -11,11 +11,11 @@ import {
 } from '@/lib/api/notifications'
 import {
   formatCurrencyBuckets,
+  formatMoneySingle,
   NOTIFICATION_CATEGORY_META,
   type NotificationMetadata,
 } from '@/lib/notifications.shared'
 import type { UserNotificationItem } from '@/lib/types'
-import { currencySymbol } from '@/lib/fx'
 import {
   BellIcon,
   CheckIcon,
@@ -70,10 +70,6 @@ function parseMetadata(raw: string | null): NotificationMetadata | null {
 
 function isSafeInternalUrl(url?: string | null): url is string {
   return typeof url === 'string' && url.startsWith('/') && !url.startsWith('//')
-}
-
-function formatSingleAmount(amount: number, currency: string): string {
-  return `${currencySymbol(currency)}${(Number(amount) || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
 }
 
 export function NotificationCenterView() {
@@ -556,7 +552,7 @@ export function NotificationCenterView() {
                     >
                       <span className='min-w-0 flex-1 truncate'>信用卡 · {b.subject}</span>
                       <span className='ml-2 shrink-0 font-semibold text-d-gold'>
-                        {formatSingleAmount(b.remaining, b.currency)}
+                        {formatMoneySingle(b.remaining, b.currency)}
                       </span>
                     </div>
                   ))}
@@ -569,7 +565,7 @@ export function NotificationCenterView() {
                         固定支出（{p.category}）· {p.name}
                       </span>
                       <span className='ml-2 shrink-0 font-semibold text-d-gold'>
-                        {formatSingleAmount(p.remaining, p.currency)}
+                        {formatMoneySingle(p.remaining, p.currency)}
                       </span>
                     </div>
                   ))}

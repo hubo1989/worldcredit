@@ -445,6 +445,12 @@ export function syncItemSwitchesWithOpportunities(
   return { items, opportunities }
 }
 
+export function formatMoneySingle(amount: number, currency: string): string {
+  const safe = Number(amount)
+  const rounded = Math.round((Number.isFinite(safe) ? safe : 0) * 100) / 100
+  return `${currencySymbol(currency)}${rounded.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
+}
+
 export function formatCurrencyBuckets(totalsByCurrency: Record<string, number>): string {
   const entries = Object.entries(totalsByCurrency).filter(([, amount]) => Number.isFinite(amount) && amount > 0)
   if (entries.length === 0) return '¥0'
@@ -453,10 +459,5 @@ export function formatCurrencyBuckets(totalsByCurrency: Record<string, number>):
     if (b === 'CNY') return 1
     return a.localeCompare(b)
   })
-  return entries
-    .map(([currency, amount]) => {
-      const rounded = Math.round(amount * 100) / 100
-      return `${currencySymbol(currency)}${rounded.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
-    })
-    .join(' + ')
+  return entries.map(([currency, amount]) => formatMoneySingle(amount, currency)).join(' + ')
 }

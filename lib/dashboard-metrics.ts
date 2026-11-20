@@ -123,15 +123,20 @@ export function getDueTodayBills(bills: BillDashboardItem[]): BillDashboardItem[
   )
 }
 
-/** 统一计算固定支出剩余待付金额，NaN/空字段兜底为 0。 */
+/** 浮点结算精度容差（与服务端 remaining > 0.01 保持一致，排除已结清记录）。 */
+const SETTLED_AMOUNT_EPSILON = 0.01
+
+/** 统一计算固定支出剩余待付金额；缺失或非数值字段按约定静默兜底为 0。 */
 export function payableRemaining(p: { amount: unknown; paid_amount?: unknown }): number {
-  return Math.max(0, (Number(p.amount) || 0) - (Number(p.paid_amount) || 0))
+  const amount = Number(p.amount)
+  const paid = Number(p.paid_amount ?? 0)
+  return Math.max(0, (Number.isFinite(amount) ? amount : 0) - (Number.isFinite(paid) ? paid : 0))
 }
 
 /** 当天到期、未结清且有剩余待付金额的固定支出列表。 */
 export function getDueTodayPayables(payables: PayableWithStatus[]): PayableWithStatus[] {
   return payables.filter(
-    p => p.days_until_due === 0 && p.status !== 'paid' && payableRemaining(p) > 0.01
+    p => p.days_until_due === 0 && p.status !== 'paid' && payableRemaining(p) > SETTLED_AMOUNT_EPSILON
   )
 }
 

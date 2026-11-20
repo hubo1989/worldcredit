@@ -12,6 +12,7 @@ import {
   isNewLongestGracePeriodDay,
   syncItemSwitchesWithOpportunities,
 } from '../notifications.shared'
+import { getBillDashboardItems } from '../api/bills.server'
 import {
   deleteAllNotifications,
   deleteNotification,
@@ -1002,6 +1003,42 @@ describe('主动通知增强 + 通知中心 + 全部通知项开关', () => {
         .prepare(`SELECT COUNT(*) AS cnt FROM notification_history WHERE user_id = 'user-a'`)
         .first<{ cnt: number }>()
       expect(Number(postCancelHist?.cnt ?? 0)).toBe(0)
+    })
+
+    it('Round-2: buildDailyNotificationCandidates 按用户时区判定今日日期，且 bills.server 保留 min_payment_override = 0', async () => {
+      await db.batch([
+        db
+          .prepare(`UPDATE user_preferences SET reminder_config = ? WHERE user_id = 'user-a'`)
+          .bind(
+            JSON.stringify({
+              enabled_channels: ['web_push'],
+              opportunities: { time_zone: 'America/New_York' },
+            })
+          ),
+        db
+          .prepare(
+            `INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day, status, card_type)
+             VALUES ('card-tz', 'holder-a', 'prod-cny', 10, 'active', 'credit')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO bills (id, card_id, bill_month, bill_amount, min_payment, min_payment_override, due_date, status)
+             VALUES ('bill-tz', 'card-tz', '2026-05', 800, 80, 0, '2026-05-09', 'unpaid')`
+          ),
+      ])
+
+      // 2026-05-10T02:00:00Z = America/New_York 2026-05-09 22:00 (Asia/Shanghai 已是 05-10)
+      const built = await buildDailyNotificationCandidates(db as unknown as D1Database, 'user-a', undefined, {
+        now: new Date('2026-05-10T02:00:00Z'),
+      })
+      expect(built.context.timeZone).toBe('America/New_York')
+      const summary = built.candidates.find(c => c.notification_key === 'due_today_summary:2026-05-09')
+      expect(summary).toBeTruthy()
+
+      const items = await getBillDashboardItems(20, 'user-a')
+      const target = items.find(b => b.id === 'bill-tz')
+      expect(target?.min_payment).toBe(0)
+      expect(target?.min_payment_override).toBe(0)
     })
   })
 })

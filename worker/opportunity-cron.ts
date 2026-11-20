@@ -287,6 +287,14 @@ interface DueDelivery {
   scheduled_at: string
 }
 
+function isOpportunityInboxEnabled(userWorld: UserWorld, switchKey: OpportunitySwitchKey): boolean {
+  if (!userWorld.config.enabled) return false
+  if (!isOpportunitySwitchEnabled(userWorld.rawConfig, switchKey)) return false
+  if (switchKey === 'opportunity_reset' && !userWorld.config.reset_enabled) return false
+  if (switchKey === 'opportunity_booking' && !userWorld.config.booking_enabled) return false
+  return true
+}
+
 /** Every due (user, event, step) delivery for this scan instant. */
 async function buildDueDeliveries(
   deps: ScanDeps,
@@ -302,9 +310,7 @@ async function buildDueDeliveries(
       for (const event of world.events) {
         if (event.needs_review) continue // 未核实数据不催用
         const switchKey = opportunitySwitchKeyForEvent(event.kind, world.definitionKind)
-        if (!isOpportunitySwitchEnabled(user.rawConfig, switchKey)) continue
-        if (event.kind === 'cycle_reset' && !user.config.reset_enabled) continue
-        if (event.kind === 'booking_service' && !user.config.booking_enabled) continue
+        if (!isOpportunityInboxEnabled(user, switchKey)) continue
         // “今天”以该事件的规则时区评估（§10.3：不依赖主机 locale）
         const todayOn = localDateInZone(deps.now, event.time_zone)
 
@@ -472,13 +478,7 @@ export async function scanOpportunityNotifications(deps: ScanDeps): Promise<Scan
     const userWorld = usersById.get(job.user_id)
     const world = worlds.get(job.object_id)
     const inboxCategory = notificationCategoryForDeliveryKey(job.delivery_key, world?.definitionKind)
-    if (
-      userWorld &&
-      (!userWorld.config.enabled ||
-        !isOpportunitySwitchEnabled(userWorld.rawConfig, inboxCategory) ||
-        (inboxCategory === 'opportunity_reset' && !userWorld.config.reset_enabled) ||
-        (inboxCategory === 'opportunity_booking' && !userWorld.config.booking_enabled))
-    ) {
+    if (userWorld && !isOpportunityInboxEnabled(userWorld, inboxCategory)) {
       await db
         .prepare(`UPDATE opportunity_notification_jobs SET status = 'cancelled', updated_at = ? WHERE id = ?`)
         .bind(nowIso, job.id)
@@ -616,7 +616,8 @@ export async function scanOpportunityNotifications(deps: ScanDeps): Promise<Scan
         .prepare(
           `UPDATE notification_history
            SET status = ?, push_sent_at = COALESCE(push_sent_at, ?), error = ?
-           WHERE user_id = ? AND notification_key = ? AND deleted_at IS NULL`,
+           WHERE user_id = ? AND notification_key = ?
+             AND deleted_at IS NULL AND read_at IS NULL`,
         )
         .bind(
           accepted > 0 ? 'sent' : 'failed',

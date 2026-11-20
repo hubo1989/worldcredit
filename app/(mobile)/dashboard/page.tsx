@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   getBillDashboardItems,
@@ -71,6 +71,7 @@ export default function DashboardPage() {
   const [payables, setPayables] = useState<PayableWithStatus[]>([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [cards, setCards] = useState<Array<{ id: string; holder_id: string }>>([]);
+  const unreadSyncedRef = useRef(false);
 
   // ---- 交互状态 ----
   const [holderFilter, setHolderFilter] = useState<HolderFilter>("all");
@@ -112,28 +113,39 @@ export default function DashboardPage() {
   const blurClass = privacyOn ? "privacy-blur" : "privacy-clear";
 
   // ---- 数据加载 ----
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (opts?: { silent?: boolean }) => {
     if (!user?.id) return;
-    setLoading(true);
+    const silent = Boolean(opts?.silent);
+    if (!silent) {
+      setLoading(true);
+    }
     setError(null);
+    const shouldSyncUnread = !unreadSyncedRef.current;
     try {
-      // 并行：持卡人 / 账单 / 固定支出 / 未读通知数；卡片依赖持卡人 id，随后批量查询
+      // 并行：持卡人 / 账单 / 固定支出 / 未读通知数（仅首载同步当日通知）；卡片依赖持卡人 id
       const [holderList, allBills, payableList, unreadCount] = await Promise.all([
         getHolders(user.id),
         getBillDashboardItems(200, user.id),
         getRecurringPayables(user.id).catch((err) => {
           console.warn("[dashboard] Failed to load recurring payables:", err);
-          setToast({
-            open: true,
-            message: "固定支出加载失败，当日待还金额暂不含固定支出",
-            severity: "info",
-          });
+          if (!silent) {
+            setToast({
+              open: true,
+              message: "固定支出加载失败，当日待还金额暂不含固定支出",
+              severity: "info",
+            });
+          }
           return [];
         }),
-        getUnreadNotificationCount().catch((err) => {
-          console.warn("[dashboard] Failed to load unread notification count:", err);
-          return 0;
-        }),
+        getUnreadNotificationCount(shouldSyncUnread)
+          .then((count) => {
+            if (shouldSyncUnread) unreadSyncedRef.current = true;
+            return count;
+          })
+          .catch((err) => {
+            console.warn("[dashboard] Failed to load unread notification count:", err);
+            return 0;
+          }),
       ]);
       holderList.sort((a, b) => a.created_at.localeCompare(b.created_at));
       const holderIds = holderList.map((h) => h.id);
@@ -148,7 +160,9 @@ export default function DashboardPage() {
       console.error("Dashboard load failed:", err);
       setError(err instanceof Error ? err.message : "加载失败，请下拉重试");
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [user?.id]);
 
@@ -240,7 +254,7 @@ export default function DashboardPage() {
         message: `🎉 已登记 ${payable.name} 本期付款（${formatMoney(remaining, payable.currency || displayCurrency)}）！`,
         severity: "success",
       });
-      await loadData();
+      await loadData({ silent: true });
     } catch (err) {
       setToast({
         open: true,
@@ -440,13 +454,13 @@ export default function DashboardPage() {
         toast={toast}
         onToastClose={closeToast}
         error={error}
-        onRetry={loadData}
+        onRetry={() => void loadData()}
       />
 
       <QuickActionSheet
         open={quickSheetOpen}
         onClose={closeQuickSheet}
-        onChanged={loadData}
+        onChanged={() => void loadData({ silent: true })}
         initialAction={quickInitialAction}
       />
     </>

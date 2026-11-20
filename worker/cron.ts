@@ -2,12 +2,12 @@
 // Deployed as part of the main Worker (cron trigger in wrangler.jsonc)
 
 import webpush from "web-push";
-import { getLocalTodayString } from "../lib/utils";
 import { sendApnsToUser } from "../lib/apns.server";
 import { isWebPushChannelEnabled } from "../lib/notifications.shared";
 import {
   buildDailyNotificationCandidates,
   isUserInQuietHours,
+  type PrefetchedUserNotificationPrefs,
 } from "../lib/notifications-engine.server";
 
 interface CronEnv {
@@ -64,7 +64,7 @@ async function loadExistingHistoryByKey(
 }
 
 export async function handleScheduled(
-  _event: ScheduledEvent,
+  scheduledEvent: ScheduledEvent,
   env: CronEnv,
   _ctx: ExecutionContext,
 ): Promise<void> {
@@ -73,11 +73,12 @@ export async function handleScheduled(
   const db = env.DB;
   await pruneStaleMutationsAndAuthAttempts(db);
   const nowDate =
-    _event && typeof _event.scheduledTime === "number" && Number.isFinite(_event.scheduledTime)
-      ? new Date(_event.scheduledTime)
+    scheduledEvent &&
+    typeof scheduledEvent.scheduledTime === "number" &&
+    Number.isFinite(scheduledEvent.scheduledTime)
+      ? new Date(scheduledEvent.scheduledTime)
       : new Date();
   const nowIso = nowDate.toISOString();
-  const today = getLocalTodayString("Asia/Shanghai", nowDate);
 
   // 1. Collect target users (users table + fallback preference tables for isolated tests)
   const userRows = await db
@@ -96,16 +97,30 @@ export async function handleScheduled(
     return;
   }
 
-  // 2. Get all push subscriptions (Web Push & iOS device tokens)
-  const subs = await db
-    .prepare("SELECT id, user_id, endpoint, p256dh, auth FROM push_subscriptions")
-    .all<{ id: string; user_id: string; endpoint: string; p256dh: string; auth: string }>();
+  // 2. Batch-prefetch subscriptions, iOS tokens, and preference tables once before the user loop
+  const [subs, iosTokens, prefRows, legacyRows] = await Promise.all([
+    db
+      .prepare("SELECT id, user_id, endpoint, p256dh, auth FROM push_subscriptions")
+      .all<{ id: string; user_id: string; endpoint: string; p256dh: string; auth: string }>(),
+    db
+      .prepare("SELECT id, user_id, token FROM device_tokens WHERE platform = 'ios'")
+      .all<{ id: string; user_id: string; token: string }>(),
+    db
+      .prepare("SELECT user_id, reminder_config FROM user_preferences")
+      .all<{ user_id: string; reminder_config: string | null }>(),
+    db
+      .prepare("SELECT user_id, bill_due_enabled, overdue_enabled, due_days_before FROM notification_preferences")
+      .all<{ user_id: string; bill_due_enabled: number; overdue_enabled: number; due_days_before: number }>(),
+  ]);
   const subscriptions = subs.results || [];
-
-  const iosTokens = await db
-    .prepare("SELECT id, user_id, token FROM device_tokens WHERE platform = 'ios'")
-    .all<{ id: string; user_id: string; token: string }>();
   const iosDevices = iosTokens.results || [];
+  const prefByUser = new Map<string, string | null>(
+    (prefRows.results || []).map((row) => [row.user_id, row.reminder_config ?? null]),
+  );
+  const legacyByUser = new Map<
+    string,
+    { bill_due_enabled: number; overdue_enabled: number; due_days_before: number }
+  >((legacyRows.results || []).map((row) => [row.user_id, row]));
 
   // 3. Process each user
   let sentCount = 0;
@@ -115,8 +130,15 @@ export async function handleScheduled(
     try {
       const userSubs = subscriptions.filter((s) => s.user_id === userId);
       const userDevices = iosDevices.filter((d) => d.user_id === userId);
+      const prefetched: PrefetchedUserNotificationPrefs = {
+        reminderConfigRaw: prefByUser.get(userId) ?? null,
+        legacyRow: legacyByUser.get(userId) ?? null,
+      };
 
-      const { context, candidates } = await buildDailyNotificationCandidates(db, userId, today);
+      const { context, candidates } = await buildDailyNotificationCandidates(db, userId, undefined, {
+        now: nowDate,
+        prefetched,
+      });
       if (!candidates.length) continue;
 
       const inQuiet = isUserInQuietHours(context, nowDate);
@@ -233,7 +255,7 @@ export async function handleScheduled(
         const finalError = errors.length > 0 ? errors.join("; ") : null;
         const pushSentAt = deliveredAny ? nowIso : null;
 
-        await db
+        const upsertRes = await db
           .prepare(
             `INSERT INTO notification_history
                (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status, push_sent_at, error)
@@ -267,7 +289,7 @@ export async function handleScheduled(
           .run();
 
         if (deliveredAny) sentCount++;
-        else inboxCount++;
+        else if (Number(upsertRes.meta?.changes ?? 0) > 0) inboxCount++;
       }
     } catch (err) {
       console.error(`[cron] Failed processing user ${userId}:`, err);

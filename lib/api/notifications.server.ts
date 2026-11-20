@@ -118,14 +118,18 @@ async function softMutateNotifications(
   bindings: unknown[]
 ): Promise<{ changes: number; unread_count: number }> {
   const db = getDb()
-  const res = await db
-    .prepare(sql)
-    .bind(...bindings)
-    .run()
-  const unread_count = await countUnreadForUser(db, userId)
+  const [res, countRes] = await db.batch([
+    db.prepare(sql).bind(...bindings),
+    db
+      .prepare(
+        'SELECT COUNT(*) AS cnt FROM notification_history WHERE user_id = ? AND deleted_at IS NULL AND read_at IS NULL'
+      )
+      .bind(userId),
+  ])
+  const countRow = countRes.results?.[0] as { cnt?: number } | undefined
   return {
     changes: Number(res.meta?.changes ?? 0),
-    unread_count,
+    unread_count: Number(countRow?.cnt ?? 0),
   }
 }
 

@@ -123,8 +123,8 @@ function mapJoinRowToDashboard(
   payments: Pick<Payment, "id" | "amount" | "paid_at" | "channel" | "note">[],
   attachments?: { id: string; file_name: string; public_url?: string }[],
 ): BillDashboardItem {
-  const effectiveDueDate = row.due_date_override ?? row.due_date;
-  const effectiveStatementDate = row.statement_date_override ?? row.statement_date;
+  const effectiveDueDate = row.due_date_override || row.due_date;
+  const effectiveStatementDate = row.statement_date_override || row.statement_date;
   const effectiveMinPayment =
     row.min_payment_override != null ? row.min_payment_override : row.min_payment;
   const bill: Bill = {
@@ -142,7 +142,7 @@ function mapJoinRowToDashboard(
     bill_amount: row.bill_amount_override != null ? row.bill_amount_override : row.bill_amount,
     // 手填值原样带出：界面要能显示「已手动设定」并允许改回，
     bill_amount_override: row.bill_amount_override != null ? row.bill_amount_override : undefined,
-    min_payment: effectiveMinPayment || undefined,
+    min_payment: effectiveMinPayment ?? undefined,
     min_payment_override: row.min_payment_override != null ? row.min_payment_override : undefined,
     due_date: effectiveDueDate,
     due_date_override: row.due_date_override || undefined,
