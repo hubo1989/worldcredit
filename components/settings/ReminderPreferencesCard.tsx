@@ -3,7 +3,12 @@
 import { useState, useEffect } from 'react'
 import { BellIcon, ClockIcon } from '@/components/icons/WcIcon'
 import type { NotificationItemSwitches, UserReminderConfig } from '@/lib/types'
-import { NOTIFICATION_SWITCH_ITEMS, resolveNotificationSwitches } from '@/lib/notifications.shared'
+import {
+  DEFAULT_ACTIVITY_DAYS,
+  DEFAULT_TASK_DAYS,
+  NOTIFICATION_SWITCH_ITEMS,
+  resolveNotificationSwitches,
+} from '@/lib/notifications.shared'
 import { Toggle } from '@/components/obsidian/controls'
 import { ConfirmDialog, Toast } from '@/components/obsidian/overlays'
 import { sendTestPush } from '@/lib/api/push'
@@ -429,13 +434,15 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
               <label className='mb-2 block text-[13px] font-medium text-d-muted'>优惠活动提醒节点：</label>
               <div className='flex flex-wrap gap-2'>
                 {ACTIVITY_DAY_CHOICES.map((d) => {
-                  const active = (opp?.activity_days_before ?? [7, 3, 1]).includes(d)
+                  const active = (opp?.activity_days_before ?? DEFAULT_ACTIVITY_DAYS).includes(d)
                   return (
                     <button
                       key={d}
                       type='button'
                       disabled={disabled}
-                      onClick={() => updateOpp({ activity_days_before: toggleDayList(opp?.activity_days_before ?? [7, 3, 1], d) })}
+                      onClick={() =>
+                        updateOpp({ activity_days_before: toggleDayList(opp?.activity_days_before ?? DEFAULT_ACTIVITY_DAYS, d) })
+                      }
                       className={
                         'min-h-[44px] rounded-full px-4 text-[13px] font-semibold transition-colors disabled:opacity-50 ' +
                         (active
@@ -455,14 +462,14 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
               <label className='mb-2 block text-[13px] font-medium text-d-muted'>达标任务提醒节点：</label>
               <div className='flex flex-wrap gap-2'>
                 {TASK_DAY_CHOICES.map((d) => {
-                  const active = (opp?.task_days_before ?? [3, 1, 0]).includes(d)
+                  const active = (opp?.task_days_before ?? DEFAULT_TASK_DAYS).includes(d)
                   const label = d === 0 ? '截止当天' : `提前 ${d} 天`
                   return (
                     <button
                       key={d}
                       type='button'
                       disabled={disabled}
-                      onClick={() => updateOpp({ task_days_before: toggleDayList(opp?.task_days_before ?? [3, 1, 0], d) })}
+                      onClick={() => updateOpp({ task_days_before: toggleDayList(opp?.task_days_before ?? DEFAULT_TASK_DAYS, d) })}
                       className={
                         'min-h-[44px] rounded-full px-4 text-[13px] font-semibold transition-colors disabled:opacity-50 ' +
                         (active

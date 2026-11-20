@@ -2,7 +2,11 @@
 // server implementation and the client wrappers (no database imports).
 import type { UserDisplayConfig, UserReminderConfig } from '../types'
 import { normalizeCurrencyOrDefault } from '../fx'
-import { DEFAULT_NOTIFICATION_ITEM_SWITCHES } from '../notifications.shared'
+import {
+  DEFAULT_ACTIVITY_DAYS,
+  DEFAULT_NOTIFICATION_ITEM_SWITCHES,
+  DEFAULT_TASK_DAYS,
+} from '../notifications.shared'
 
 export const DEFAULT_DISPLAY_CONFIG: UserDisplayConfig = {
   privacy_mode: false,
@@ -25,9 +29,9 @@ export const DEFAULT_REMINDER_CONFIG: UserReminderConfig = {
     time_zone: 'Asia/Shanghai',
     local_time: '09:00',
     expiry_days_before: [3, 1, 0],
-    activity_days_before: [7, 3, 1],
+    activity_days_before: [...DEFAULT_ACTIVITY_DAYS],
     claim_days_before: [3, 1, 0],
-    task_days_before: [3, 1, 0],
+    task_days_before: [...DEFAULT_TASK_DAYS],
     reset_enabled: true,
     booking_enabled: true,
   },

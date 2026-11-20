@@ -9,6 +9,7 @@ struct DashboardView: View {
     @State private var debtExpanded = false
     @State private var showPayAllConfirm = false
     @State private var webDestination: DashboardWebDestination?
+    @State private var showPushNotificationsCenter = false
 
     private let futureOptions = [7, 14, 30]
 
@@ -33,6 +34,18 @@ struct DashboardView: View {
             .navigationTitle("概览")
             .navigationDestination(for: BillDetailRoute.self) { route in
                 BillDetailView(item: route.item)
+            }
+            .navigationDestination(isPresented: $showPushNotificationsCenter) {
+                NotificationsCenterView()
+            }
+            .onAppear {
+                consumePendingNotificationRoutes()
+            }
+            .onChange(of: appState.pendingOpenNotifications) { _, _ in
+                consumePendingNotificationRoutes()
+            }
+            .onChange(of: appState.pendingWebDestination) { _, _ in
+                consumePendingNotificationRoutes()
             }
             .refreshable { await appState.refreshDashboard() }
             .task { await appState.loadInitialDataIfNeeded() }
@@ -86,6 +99,17 @@ struct DashboardView: View {
     }
 
     private var currency: String { appState.dashboardCurrency }
+
+    private func consumePendingNotificationRoutes() {
+        if appState.pendingOpenNotifications {
+            appState.pendingOpenNotifications = false
+            showPushNotificationsCenter = true
+        }
+        if let dest = appState.pendingWebDestination {
+            appState.pendingWebDestination = nil
+            webDestination = dest
+        }
+    }
 
     // MARK: - 金额
 

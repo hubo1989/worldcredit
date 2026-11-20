@@ -10,6 +10,7 @@ import {
   computeCardGraceWindowOnDate,
   isInQuietHours,
   isNewLongestGracePeriodDay,
+  syncItemSwitchesWithOpportunities,
 } from '../notifications.shared'
 import {
   deleteAllNotifications,
@@ -20,9 +21,10 @@ import {
   markNotificationRead,
 } from '../api/notifications.server'
 
-const { mockSendNotification, mockSetVapidDetails } = vi.hoisted(() => ({
+const { mockSendNotification, mockSetVapidDetails, mockSendApnsToUser } = vi.hoisted(() => ({
   mockSendNotification: vi.fn(),
   mockSetVapidDetails: vi.fn(),
+  mockSendApnsToUser: vi.fn(),
 }))
 
 vi.mock('web-push', () => ({
@@ -30,6 +32,10 @@ vi.mock('web-push', () => ({
     sendNotification: mockSendNotification,
     setVapidDetails: mockSetVapidDetails,
   },
+}))
+
+vi.mock('../apns.server', () => ({
+  sendApnsToUser: mockSendApnsToUser,
 }))
 
 import { handleScheduled } from '../../worker/cron'
@@ -87,6 +93,7 @@ describe('主动通知增强 + 通知中心 + 全部通知项开关', () => {
     setDb(db as unknown as D1Database)
     mockSendNotification.mockReset().mockResolvedValue({ statusCode: 201 })
     mockSetVapidDetails.mockReset()
+    mockSendApnsToUser.mockReset().mockResolvedValue({ total: 1, sent: 1, failed: 0 })
     await seedWorld(db)
   })
 
@@ -632,6 +639,369 @@ describe('主动通知增强 + 通知中心 + 全部通知项开关', () => {
       expect(hist).toBeTruthy()
       expect(hist!.category).toBe('opportunity_expiry')
       expect(hist!.push_sent_at).toBeTruthy()
+    })
+  })
+
+  describe('PR #56 Review 回归用例', () => {
+    it('Codex #1: 存在 reminder_config 但未显式配置 items 时保留旧 notification_preferences 退订设置', async () => {
+      await db.batch([
+        db
+          .prepare(
+            `UPDATE user_preferences SET reminder_config = ? WHERE user_id = 'user-a'`
+          )
+          .bind(JSON.stringify({ quiet_hours_start: '22:00', quiet_hours_end: '08:00' })),
+        db
+          .prepare(
+            `INSERT INTO notification_preferences (user_id, bill_due_enabled, overdue_enabled, due_days_before)
+             VALUES ('user-a', 0, 0, 3)`
+          ),
+        db
+          .prepare(
+            `INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day, status, card_type)
+             VALUES ('card-leg', 'holder-a', 'prod-cny', 10, 'active', 'credit')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO bills (id, card_id, bill_month, bill_amount, due_date, status)
+             VALUES ('bill-leg-due', 'card-leg', '2026-05', 500, '2026-05-10', 'unpaid')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO bills (id, card_id, bill_month, bill_amount, due_date, status)
+             VALUES ('bill-leg-over', 'card-leg', '2026-04', 200, '2026-05-05', 'overdue')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO recurring_payables (id, created_by, name, category, amount, currency, due_day, is_active, created_at)
+             VALUES ('pay-leg', 'user-a', '宽带费', 'utility', 100, 'CNY', 10, 1, '2026-01-01T00:00:00Z')`
+          ),
+      ])
+
+      const first = await buildDailyNotificationCandidates(db as unknown as D1Database, 'user-a', '2026-05-10')
+      expect(first.context.reminderConfig.items?.bill_due_today).toBe(false)
+      expect(first.context.reminderConfig.items?.bill_due_advance).toBe(false)
+      expect(first.context.reminderConfig.items?.bill_overdue).toBe(false)
+      expect(first.candidates.some(c => c.notification_key === 'bill_overdue:bill-leg-over:2026-05-10')).toBe(false)
+      const summary = first.candidates.find(c => c.notification_key === 'due_today_summary:2026-05-10')
+      expect(summary).toBeTruthy()
+      const meta = JSON.parse(summary!.metadata_json!)
+      expect(meta.bills).toHaveLength(0)
+      expect(meta.payables).toHaveLength(1)
+
+      // 显式开启 bill_due_today 时覆盖旧表退订
+      await db
+        .prepare(`UPDATE user_preferences SET reminder_config = ? WHERE user_id = 'user-a'`)
+        .bind(JSON.stringify({ items: { bill_due_today: true } }))
+        .run()
+      const second = await buildDailyNotificationCandidates(db as unknown as D1Database, 'user-a', '2026-05-10')
+      const summary2 = second.candidates.find(c => c.notification_key === 'due_today_summary:2026-05-10')
+      const meta2 = JSON.parse(summary2!.metadata_json!)
+      expect(meta2.bills).toHaveLength(1)
+      expect(second.candidates.some(c => c.notification_key === 'bill_overdue:bill-leg-over:2026-05-10')).toBe(false)
+    })
+
+    it('Codex #7: 用户关闭推送通道 (enabled_channels: []) 时跳过 APNs 发送', async () => {
+      await db.batch([
+        db
+          .prepare(
+            `INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day, status, card_type)
+             VALUES ('card-apns', 'holder-a', 'prod-cny', 10, 'active', 'credit')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO bills (id, card_id, bill_month, bill_amount, due_date, status)
+             VALUES ('bill-apns', 'card-apns', '2026-05', 300, '2026-05-10', 'unpaid')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO device_tokens (id, user_id, token, platform)
+             VALUES ('dev-1', 'user-a', 'apns-tok-1', 'ios')`
+          ),
+        db
+          .prepare(`UPDATE user_preferences SET reminder_config = ? WHERE user_id = 'user-a'`)
+          .bind(
+            JSON.stringify({
+              remind_days_before: [3, 1, 0],
+              quiet_hours_start: '22:00',
+              quiet_hours_end: '08:00',
+              enabled_channels: [],
+            })
+          ),
+      ])
+
+      const env = {
+        DB: db as unknown as D1Database,
+        APNS_KEY_P8: 'fake-key',
+        APNS_KEY_ID: 'key-1',
+        APNS_TEAM_ID: 'team-1',
+      }
+      await handleScheduled(
+        { scheduledTime: Date.parse('2026-05-10T02:00:00Z') } as ScheduledEvent,
+        env,
+        {} as ExecutionContext
+      )
+      expect(mockSendApnsToUser).not.toHaveBeenCalled()
+
+      // 清空历史并恢复推送通道后 APNs 恢复发送
+      await db.prepare(`DELETE FROM notification_history WHERE user_id = 'user-a'`).run()
+      await db
+        .prepare(`UPDATE user_preferences SET reminder_config = ? WHERE user_id = 'user-a'`)
+        .bind(
+          JSON.stringify({
+            remind_days_before: [3, 1, 0],
+            quiet_hours_start: '22:00',
+            quiet_hours_end: '08:00',
+            enabled_channels: ['web_push'],
+          })
+        )
+        .run()
+      await handleScheduled(
+        { scheduledTime: Date.parse('2026-05-10T02:00:00Z') } as ScheduledEvent,
+        env,
+        {} as ExecutionContext
+      )
+      expect(mockSendApnsToUser).toHaveBeenCalledTimes(1)
+    })
+
+    it('OCR #31/#33 & #27: 畸形到期日不误判今日到期，syncToday=false 不写当日通知，items 优先于 opportunities 冲突值', async () => {
+      await db.batch([
+        db
+          .prepare(
+            `INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day, status, card_type)
+             VALUES ('card-bad', 'holder-a', 'prod-cny', 10, 'active', 'credit')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO bills (id, card_id, bill_month, bill_amount, due_date, due_date_override, status)
+             VALUES ('bill-bad-date', 'card-bad', '2026-05', 100, '2026-05-10', 'not-a-date', 'unpaid')`
+          ),
+      ])
+
+      const built = await buildDailyNotificationCandidates(db as unknown as D1Database, 'user-a', '2026-05-10')
+      expect(built.candidates).toHaveLength(0)
+
+      // 写入合法今日待还账单后，getUnreadNotificationCount(userId, false) 不触发 syncToday 写入
+      await db
+        .prepare(
+          `INSERT INTO bills (id, card_id, bill_month, bill_amount, due_date, status)
+           VALUES ('bill-good', 'card-bad', '2026-06', 250, '2026-05-10', 'unpaid')`
+        )
+        .run()
+      const countWithoutSync = await getUnreadNotificationCount('user-a', false)
+      expect(countWithoutSync).toBe(0)
+      const countWithSync = await getUnreadNotificationCount('user-a')
+      expect(countWithSync).toBe(1)
+
+      // syncItemSwitchesWithOpportunities: incoming.items 优先覆盖 incoming.opportunities
+      const synced = syncItemSwitchesWithOpportunities(
+        { items: { opportunity_reset: true }, opportunities: { reset_enabled: true } },
+        { items: { opportunity_reset: false }, opportunities: { reset_enabled: true } }
+      )
+      expect(synced.items.opportunity_reset).toBe(false)
+      expect(synced.opportunities.reset_enabled).toBe(false)
+    })
+
+    it('Codex #2/#3 & OCR #43/#44/#45: 取消已关闭开关的在途任务、promo 使用 activity_days_before、结构化 deliveryKey 分类、web_push 关闭计数与 partial 写回', async () => {
+      const makeRuleJson = (title: string, category: 'shopping' | 'travel') =>
+        JSON.stringify({
+          schema_version: 1,
+          title,
+          description: null,
+          category,
+          time_zone: 'Asia/Shanghai',
+          bank_id: 'bank-cmb',
+          card_product_ids: ['prod-cny'],
+          valid_from: '2026-01-01',
+          valid_until_before: null,
+          open_ended: true,
+          weekdays: null,
+          cycle: { kind: 'monthly', anchor_month: null, anchor_day: 1, anchor_source: null },
+          allocation: 'recurring',
+          count_limit: 1,
+          amount_limit_minor: null,
+          currency: null,
+          unit_label: '次',
+          eligibility_text: null,
+          requires_personal_confirmation: false,
+          claim_window: null,
+          booking_window: null,
+          workflow_time_basis: 'per_cycle',
+          booking_consumes: 'reserve_then_use',
+          cancellation_rule: 'confirm_with_issuer',
+          entry: {},
+        })
+      const promoRules = makeRuleJson('双倍积分活动', 'shopping')
+      const benefitRules = makeRuleJson('延误险权益', 'travel')
+
+      await db.batch([
+        db
+          .prepare(
+            `INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day, status, card_type)
+             VALUES ('card-opp2', 'holder-a', 'prod-cny', 10, 'active', 'credit')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO opportunity_definitions (id, kind, visibility, status, created_by, created_at)
+             VALUES ('def-promo', 'promo', 'shared', 'active', 'user-a', '2026-01-01T00:00:00Z')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO opportunity_rule_versions (id, definition_id, version, effective_from, rules_json, verification, published_at)
+             VALUES ('ver-promo', 'def-promo', 1, '2026-01-01', ?, 'official_verified', '2026-01-01T00:00:00Z')`
+          )
+          .bind(promoRules),
+        db
+          .prepare(
+            `INSERT INTO opportunity_accounts (id, definition_id, holder_id, scope_kind, scope_key, eligibility, status, created_by, created_at)
+             VALUES ('oacc-promo', 'def-promo', 'holder-a', 'card', 'card-opp2', 'confirmed', 'active', 'user-a', '2026-01-01T00:00:00Z')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO opportunity_account_cards (account_id, definition_id, holder_id, card_id)
+             VALUES ('oacc-promo', 'def-promo', 'holder-a', 'card-opp2')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO opportunity_cycles (id, account_id, version_id, version_as_of_on, cycle_key, allocation_kind, activation_state, period_start_on, period_end_before, usable_start_on, usable_end_before, time_zone, count_limit, created_at)
+             VALUES ('cyc-promo', 'oacc-promo', 'ver-promo', '2026-06-01', '2026-06', 'regular', 'active', '2026-06-01', '2026-06-06', '2026-06-01', '2026-06-06', 'Asia/Shanghai', 1, '2026-06-01T00:00:00Z')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO opportunity_definitions (id, kind, visibility, status, created_by, created_at)
+             VALUES ('def-claim-id', 'benefit', 'shared', 'active', 'user-a', '2026-01-01T00:00:00Z')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO opportunity_rule_versions (id, definition_id, version, effective_from, rules_json, verification, published_at)
+             VALUES ('ver-claim-id', 'def-claim-id', 1, '2026-01-01', ?, 'official_verified', '2026-01-01T00:00:00Z')`
+          )
+          .bind(benefitRules),
+        // 对象 ID 本身含 "claim" 字样，用来验证 OCR #43 不会被子串误判为 opportunity_claim
+        db
+          .prepare(
+            `INSERT INTO opportunity_accounts (id, definition_id, holder_id, scope_kind, scope_key, eligibility, status, created_by, created_at)
+             VALUES ('oacc-claim-word', 'def-claim-id', 'holder-a', 'card', 'card-opp2', 'confirmed', 'active', 'user-a', '2026-01-01T00:00:00Z')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO opportunity_account_cards (account_id, definition_id, holder_id, card_id)
+             VALUES ('oacc-claim-word', 'def-claim-id', 'holder-a', 'card-opp2')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO opportunity_cycles (id, account_id, version_id, version_as_of_on, cycle_key, allocation_kind, activation_state, period_start_on, period_end_before, usable_start_on, usable_end_before, time_zone, count_limit, created_at)
+             VALUES ('cyc-claim-word', 'oacc-claim-word', 'ver-claim-id', '2026-06-01', '2026-06', 'regular', 'active', '2026-06-01', '2026-06-02', '2026-06-01', '2026-06-02', 'Asia/Shanghai', 1, '2026-06-01T00:00:00Z')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth)
+             VALUES ('sub-1', 'user-a', 'https://push.example/1', 'p', 'a')`
+          ),
+        db
+          .prepare(
+            `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth)
+             VALUES ('sub-2', 'user-a', 'https://push.example/2', 'p', 'a')`
+          ),
+      ])
+
+      const now = new Date('2026-06-01T01:00:00Z')
+
+      // Codex #3: promo 的 last usable day 是 2026-06-05 (距 06-01 为 4 天)，仅在 activity_days_before 含 4 时生成 d4 任务
+      // 同时验证 OCR #44: web_push 关闭时计入 skipped_web_push_disabled，且不误计入 skipped_no_subscription
+      await db
+        .prepare(`UPDATE user_preferences SET reminder_config = ? WHERE user_id = 'user-a'`)
+        .bind(
+          JSON.stringify({
+            enabled_channels: [],
+            items: { opportunity_activity: true, opportunity_expiry: true },
+            opportunities: { enabled: true, activity_days_before: [4], expiry_days_before: [2] },
+          })
+        )
+        .run()
+      const sender = vi.fn(async (sub: { endpoint: string }) =>
+        sub.endpoint.endsWith('/1') ? { ok: true } : { ok: false, error: '502 bad gateway' }
+      )
+      const rDisabled = await scanOpportunityNotifications({
+        db: db as unknown as D1Database,
+        now,
+        sender,
+      })
+      const promoJob = await db
+        .prepare(`SELECT delivery_key FROM opportunity_notification_jobs WHERE object_id = 'oacc-promo'`)
+        .first<{ delivery_key: string }>()
+      expect(promoJob?.delivery_key.endsWith(':d4')).toBe(true)
+      expect(rDisabled.skipped_web_push_disabled).toBeGreaterThanOrEqual(1)
+      expect(rDisabled.skipped_no_subscription).toBe(0)
+      expect(sender).not.toHaveBeenCalled()
+
+      // 开启 web_push 通道并重置 job 为 pending 以便在部分失败场景验证 OCR #45
+      await db
+        .prepare(`UPDATE user_preferences SET reminder_config = ? WHERE user_id = 'user-a'`)
+        .bind(
+          JSON.stringify({
+            enabled_channels: ['web_push'],
+            items: { opportunity_activity: true, opportunity_expiry: true },
+            opportunities: { enabled: true, activity_days_before: [4], expiry_days_before: [2] },
+          })
+        )
+        .run()
+      await db
+        .prepare(`UPDATE opportunity_notification_jobs SET status = 'pending', scheduled_at = '2026-06-01T00:00:00Z'`)
+        .run()
+
+      const rPartial = await scanOpportunityNotifications({
+        db: db as unknown as D1Database,
+        now,
+        sender,
+      })
+      expect(rPartial.partial).toBeGreaterThanOrEqual(2)
+
+      const histRows = (
+        await db
+          .prepare(
+            `SELECT notification_key, category, status, push_sent_at, error
+             FROM notification_history
+             WHERE user_id = 'user-a' AND notification_key LIKE 'opp:%'`
+          )
+          .all<{ notification_key: string; category: string; status: string; push_sent_at: string | null; error: string | null }>()
+      ).results
+      const promoHist = histRows.find(r => r.notification_key.includes('oacc-promo'))
+      const claimWordHist = histRows.find(r => r.notification_key.includes('oacc-claim-word'))
+      expect(promoHist?.category).toBe('opportunity_activity')
+      expect(promoHist?.status).toBe('sent')
+      expect(promoHist?.push_sent_at).toBeTruthy()
+      expect(promoHist?.error).toContain('发送失败')
+      // OCR #43: 对象 id 含 "claim" 仍按结构化 event type 'expiry' 归类
+      expect(claimWordHist?.category).toBe('opportunity_expiry')
+      expect(claimWordHist?.status).toBe('sent')
+
+      // Codex #2: 若已有待投递 job，在投递前关闭开关则会直接取消 job 且不再写 notification_history
+      await db.prepare(`DELETE FROM notification_history WHERE user_id = 'user-a'`).run()
+      await db
+        .prepare(`UPDATE opportunity_notification_jobs SET status = 'pending', scheduled_at = '2026-06-01T00:00:00Z'`)
+        .run()
+      await db
+        .prepare(`UPDATE user_preferences SET reminder_config = ? WHERE user_id = 'user-a'`)
+        .bind(
+          JSON.stringify({
+            enabled_channels: ['web_push'],
+            items: { opportunity_activity: false, opportunity_expiry: false },
+            opportunities: { enabled: true, activity_days_before: [4], expiry_days_before: [2] },
+          })
+        )
+        .run()
+      sender.mockClear()
+      const rCancelled = await scanOpportunityNotifications({
+        db: db as unknown as D1Database,
+        now,
+        sender,
+      })
+      expect(rCancelled.cancelled).toBeGreaterThanOrEqual(2)
+      expect(sender).not.toHaveBeenCalled()
+      const postCancelHist = await db
+        .prepare(`SELECT COUNT(*) AS cnt FROM notification_history WHERE user_id = 'user-a'`)
+        .first<{ cnt: number }>()
+      expect(Number(postCancelHist?.cnt ?? 0)).toBe(0)
     })
   })
 })

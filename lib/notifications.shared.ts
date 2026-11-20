@@ -8,6 +8,53 @@ import type {
   UserReminderConfig,
 } from './types'
 
+export const DEFAULT_ACTIVITY_DAYS: number[] = [7, 3, 1]
+export const DEFAULT_TASK_DAYS: number[] = [3, 1, 0]
+
+export interface NotificationBillMetadataItem {
+  id: string
+  subject: string
+  remaining: number
+  currency: string
+  due_date: string
+}
+
+export interface NotificationPayableMetadataItem {
+  id: string
+  name: string
+  category: string
+  remaining: number
+  currency: string
+  due_date: string
+}
+
+export interface NotificationGraceCardMetadataItem {
+  cardId: string
+  label: string
+  graceDays: number
+  nextBillingDate: string
+  nextDueDate: string
+}
+
+export interface NotificationMetadata {
+  kind?: string
+  date?: string
+  due_date?: string
+  bill_id?: string
+  payable_id?: string
+  remaining?: number
+  currency?: string
+  days_until_due?: number
+  days_overdue?: number
+  totals_by_currency?: Record<string, number>
+  bills?: NotificationBillMetadataItem[]
+  payables?: NotificationPayableMetadataItem[]
+  cards?: NotificationGraceCardMetadataItem[]
+  event_key?: string
+  delivery_key?: string
+  object_id?: string
+}
+
 export const DEFAULT_NOTIFICATION_ITEM_SWITCHES: NotificationItemSwitches = {
   bill_due_today: true,
   payable_due_today: true,
@@ -333,6 +380,69 @@ export function computeCardGraceWindowOnDate(
     nextBillingDate,
     nextDueDate,
   }
+}
+
+export function isWebPushChannelEnabled(
+  configOrRaw?:
+    | {
+        enabled_channels?: unknown
+        opportunities?: { web_push_enabled?: unknown } | null
+      }
+    | string
+    | null
+): boolean {
+  if (!configOrRaw) return true
+  let cfg: { enabled_channels?: unknown; opportunities?: { web_push_enabled?: unknown } | null }
+  if (typeof configOrRaw === 'string') {
+    try {
+      const parsed = JSON.parse(configOrRaw)
+      if (!parsed || typeof parsed !== 'object') return true
+      cfg = parsed as { enabled_channels?: unknown; opportunities?: { web_push_enabled?: unknown } | null }
+    } catch {
+      return true
+    }
+  } else {
+    cfg = configOrRaw
+  }
+  if (cfg.enabled_channels !== undefined) {
+    return Array.isArray(cfg.enabled_channels) && cfg.enabled_channels.includes('web_push')
+  }
+  if (cfg.opportunities && cfg.opportunities.web_push_enabled === false) {
+    return false
+  }
+  return true
+}
+
+export function syncItemSwitchesWithOpportunities(
+  current?: Partial<UserReminderConfig> | null,
+  incoming?: Partial<UserReminderConfig> | null
+): {
+  items: NotificationItemSwitches
+  opportunities: NonNullable<UserReminderConfig['opportunities']>
+} {
+  const items: NotificationItemSwitches = {
+    ...resolveNotificationSwitches(current),
+    ...(incoming?.items || {}),
+  }
+  const opportunities: NonNullable<UserReminderConfig['opportunities']> = {
+    ...(current?.opportunities || {}),
+    ...(incoming?.opportunities || {}),
+  }
+
+  // Conflicting simultaneous updates settle deterministically on items.*
+  if (incoming?.items?.opportunity_reset !== undefined) {
+    opportunities.reset_enabled = incoming.items.opportunity_reset
+  } else if (incoming?.opportunities?.reset_enabled !== undefined) {
+    items.opportunity_reset = incoming.opportunities.reset_enabled
+  }
+
+  if (incoming?.items?.opportunity_booking !== undefined) {
+    opportunities.booking_enabled = incoming.items.opportunity_booking
+  } else if (incoming?.opportunities?.booking_enabled !== undefined) {
+    items.opportunity_booking = incoming.opportunities.booking_enabled
+  }
+
+  return { items, opportunities }
 }
 
 export function formatCurrencyBuckets(totalsByCurrency: Record<string, number>): string {

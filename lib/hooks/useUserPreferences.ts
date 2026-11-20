@@ -10,7 +10,10 @@ import {
 } from '../api/preferences'
 import type { UserDisplayConfig, UserReminderConfig } from '../types'
 import { resolveEffectiveChannels } from '@/components/settings/shared'
-import { resolveNotificationSwitches } from '../notifications.shared'
+import {
+  resolveNotificationSwitches,
+  syncItemSwitchesWithOpportunities,
+} from '../notifications.shared'
 
 const PREF_CACHE_KEY = 'worldcredit_user_prefs_cache'
 
@@ -158,24 +161,10 @@ export function useUserPreferences() {
 
   const updateReminder = async (updates: Partial<UserReminderConfig>) => {
     const prev = reminderConfig
-    const mergedItems = {
-      ...resolveNotificationSwitches(reminderConfig),
-      ...(updates.items || {}),
-    }
-    const mergedOpp = {
-      ...(reminderConfig.opportunities || {}),
-      ...(updates.opportunities || {}),
-    }
-    if (updates.items?.opportunity_reset !== undefined && updates.opportunities?.reset_enabled === undefined) {
-      mergedOpp.reset_enabled = updates.items.opportunity_reset
-    } else if (updates.opportunities?.reset_enabled !== undefined && updates.items?.opportunity_reset === undefined) {
-      mergedItems.opportunity_reset = updates.opportunities.reset_enabled
-    }
-    if (updates.items?.opportunity_booking !== undefined && updates.opportunities?.booking_enabled === undefined) {
-      mergedOpp.booking_enabled = updates.items.opportunity_booking
-    } else if (updates.opportunities?.booking_enabled !== undefined && updates.items?.opportunity_booking === undefined) {
-      mergedItems.opportunity_booking = updates.opportunities.booking_enabled
-    }
+    const { items: mergedItems, opportunities: mergedOpp } = syncItemSwitchesWithOpportunities(
+      reminderConfig,
+      updates
+    )
     const nextReminder: UserReminderConfig = {
       ...reminderConfig,
       ...updates,

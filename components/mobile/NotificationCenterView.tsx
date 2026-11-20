@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   deleteAllNotifications,
@@ -9,7 +9,11 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
 } from '@/lib/api/notifications'
-import { formatCurrencyBuckets, NOTIFICATION_CATEGORY_META } from '@/lib/notifications.shared'
+import {
+  formatCurrencyBuckets,
+  NOTIFICATION_CATEGORY_META,
+  type NotificationMetadata,
+} from '@/lib/notifications.shared'
 import type { UserNotificationItem } from '@/lib/types'
 import { currencySymbol } from '@/lib/fx'
 import {
@@ -52,35 +56,20 @@ function formatSentTime(iso: string, full = false): string {
   }
 }
 
-interface ParsedMetadata {
-  kind?: string
-  totals_by_currency?: Record<string, number>
-  bills?: Array<{ id: string; subject: string; remaining: number; currency: string; due_date: string }>
-  payables?: Array<{
-    id: string
-    name: string
-    category: string
-    remaining: number
-    currency: string
-    due_date: string
-  }>
-  cards?: Array<{
-    cardId: string
-    label: string
-    graceDays: number
-    nextBillingDate: string
-    nextDueDate: string
-  }>
-}
+const PAGE_SIZE = 50
 
-function parseMetadata(raw: string | null): ParsedMetadata | null {
+function parseMetadata(raw: string | null): NotificationMetadata | null {
   if (!raw) return null
   try {
-    const parsed = JSON.parse(raw) as ParsedMetadata
+    const parsed = JSON.parse(raw) as NotificationMetadata
     return parsed && typeof parsed === 'object' ? parsed : null
   } catch {
     return null
   }
+}
+
+function isSafeInternalUrl(url?: string | null): url is string {
+  return typeof url === 'string' && url.startsWith('/') && !url.startsWith('//')
 }
 
 function formatSingleAmount(amount: number, currency: string): string {
@@ -94,6 +83,8 @@ export function NotificationCenterView() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<UserNotificationItem | null>(null)
@@ -104,30 +95,75 @@ export function NotificationCenterView() {
     severity: 'success' | 'info' | 'error'
   }>({ open: false, message: '', severity: 'success' })
 
+  const syncedTodayRef = useRef(false)
+  const loadSeqRef = useRef(0)
+
   const loadList = useCallback(
-    async (nextFilter: 'all' | 'unread' = filter) => {
+    async (nextFilter: 'all' | 'unread' = filter, forceSync = false) => {
+      const seq = ++loadSeqRef.current
+      const shouldSync = forceSync || !syncedTodayRef.current
       setLoading(true)
       setError(null)
       try {
-        const res = await getNotifications({ filter: nextFilter, limit: 100, syncToday: true })
+        const res = await getNotifications({
+          filter: nextFilter,
+          limit: PAGE_SIZE,
+          offset: 0,
+          syncToday: shouldSync,
+        })
+        if (seq !== loadSeqRef.current) return
+        if (shouldSync) syncedTodayRef.current = true
         setItems(res.items)
         setUnreadCount(res.unread_count)
         setTotalCount(res.total_count)
+        const expectedTotal = nextFilter === 'unread' ? res.unread_count : res.total_count
+        setHasMore(res.items.length >= PAGE_SIZE && res.items.length < expectedTotal)
       } catch (err) {
+        if (seq !== loadSeqRef.current) return
         setError(err instanceof Error ? err.message : '加载通知失败，请重试')
       } finally {
-        setLoading(false)
+        if (seq === loadSeqRef.current) setLoading(false)
       }
     },
     [filter]
   )
+
+  const handleLoadMore = async () => {
+    if (loading || loadingMore || !hasMore) return
+    const seq = loadSeqRef.current
+    setLoadingMore(true)
+    try {
+      const res = await getNotifications({
+        filter,
+        limit: PAGE_SIZE,
+        offset: items.length,
+        syncToday: false,
+      })
+      if (seq !== loadSeqRef.current) return
+      const seen = new Set(items.map(row => row.id))
+      const merged = [...items, ...res.items.filter(row => !seen.has(row.id))]
+      setItems(merged)
+      setUnreadCount(res.unread_count)
+      setTotalCount(res.total_count)
+      const expectedTotal = filter === 'unread' ? res.unread_count : res.total_count
+      setHasMore(res.items.length >= PAGE_SIZE && merged.length < expectedTotal)
+    } catch (err) {
+      setToast({
+        open: true,
+        message: err instanceof Error ? err.message : '加载更多失败',
+        severity: 'error',
+      })
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   useEffect(() => {
     void loadList(filter)
   }, [filter, loadList])
 
   const handleMarkRead = async (item: UserNotificationItem) => {
-    if (item.read_at) return
+    if (item.read_at || busy) return
     const nowIso = new Date().toISOString()
     try {
       const res = await markNotificationRead(item.id)
@@ -148,7 +184,7 @@ export function NotificationCenterView() {
 
   const handleOpenDetail = async (item: UserNotificationItem) => {
     setSelected(item)
-    if (!item.read_at) {
+    if (!item.read_at && !busy) {
       await handleMarkRead(item)
     }
   }
@@ -163,6 +199,9 @@ export function NotificationCenterView() {
       setItems(prev =>
         filter === 'unread' ? [] : prev.map(row => ({ ...row, read_at: row.read_at ?? nowIso }))
       )
+      if (filter === 'unread') {
+        setHasMore(false)
+      }
       setSelected(prev => (prev ? { ...prev, read_at: prev.read_at ?? nowIso } : null))
       setToast({ open: true, message: '已全部标为已读', severity: 'success' })
     } catch (err) {
@@ -207,6 +246,7 @@ export function NotificationCenterView() {
       setItems([])
       setUnreadCount(0)
       setTotalCount(0)
+      setHasMore(false)
       setToast({ open: true, message: '已清空全部通知', severity: 'success' })
     } catch (err) {
       setToast({
@@ -324,12 +364,14 @@ export function NotificationCenterView() {
         </div>
       )}
 
-      {loading ? (
+      {loading && (
         <div className='flex flex-col items-center justify-center gap-3 py-16 text-d-muted'>
           <Spinner size={24} />
           <p className='text-[13px]'>正在加载通知…</p>
         </div>
-      ) : items.length === 0 ? (
+      )}
+
+      {!loading && items.length === 0 && (
         <div className='mt-6 flex flex-col items-center justify-center rounded-2xl border border-d-border bg-d-surface px-6 py-14 text-center'>
           <span className='mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-d-subtle text-d-muted'>
             <BellIcon size={22} />
@@ -341,7 +383,9 @@ export function NotificationCenterView() {
             当日待还账单、固定支出、最长免息期及权益提醒都会集中展示在这里
           </p>
         </div>
-      ) : (
+      )}
+
+      {!loading && items.length > 0 && (
         <div className='flex flex-col gap-3'>
           {items.map(item => {
             const meta = NOTIFICATION_CATEGORY_META[item.category] ?? NOTIFICATION_CATEGORY_META.system
@@ -421,6 +465,16 @@ export function NotificationCenterView() {
               </div>
             )
           })}
+          {hasMore && (
+            <button
+              type='button'
+              disabled={loadingMore}
+              onClick={() => void handleLoadMore()}
+              className='mt-1 min-h-[44px] w-full rounded-2xl border border-d-border bg-d-surface text-[13px] font-semibold text-d-accent-light disabled:opacity-50 active:bg-d-subtle'
+            >
+              {loadingMore ? '正在加载更多…' : '加载更多'}
+            </button>
+          )}
         </div>
       )}
 
@@ -440,11 +494,12 @@ export function NotificationCenterView() {
               >
                 删除通知
               </button>
-              {selected.target_url ? (
+              {isSafeInternalUrl(selected.target_url) ? (
                 <button
                   type='button'
                   onClick={() => {
-                    const url = selected.target_url!
+                    const url = selected.target_url
+                    if (!isSafeInternalUrl(url)) return
                     setSelected(null)
                     router.push(url)
                   }}

@@ -12,6 +12,10 @@ import {
   isInQuietHours,
   isNewLongestGracePeriodDay,
   resolveNotificationSwitches,
+  type NotificationBillMetadataItem,
+  type NotificationGraceCardMetadataItem,
+  type NotificationMetadata,
+  type NotificationPayableMetadataItem,
 } from './notifications.shared'
 import type { CardProduct, NotificationCategory, UserReminderConfig } from './types'
 import { getLocalTodayString, nextPayablePeriodOf, payableDueDate, payablePeriodOf } from './utils'
@@ -87,11 +91,33 @@ interface CreditCardGraceRow {
   account_statement_mode: string | null
 }
 
+function parseCivilDateUTC(dateStr: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:$|T)/.exec(dateStr.trim())
+  if (!m) return Number.NaN
+  const year = Number(m[1])
+  const month = Number(m[2])
+  const day = Number(m[3])
+  const ts = Date.UTC(year, month - 1, day)
+  const verify = new Date(ts)
+  if (
+    verify.getUTCFullYear() !== year ||
+    verify.getUTCMonth() !== month - 1 ||
+    verify.getUTCDate() !== day
+  ) {
+    return Number.NaN
+  }
+  return ts
+}
+
 function diffCivilDays(targetStr: string, todayStr: string): number {
-  const t = Date.parse(`${targetStr}T00:00:00Z`)
-  const c = Date.parse(`${todayStr}T00:00:00Z`)
-  if (!Number.isFinite(t) || !Number.isFinite(c)) return 0
+  const t = parseCivilDateUTC(targetStr)
+  const c = parseCivilDateUTC(todayStr)
+  if (!Number.isFinite(t) || !Number.isFinite(c)) return Number.NaN
   return Math.round((t - c) / 86_400_000)
+}
+
+function encodeMetadata(meta: NotificationMetadata): string {
+  return JSON.stringify(meta)
 }
 
 function formatMoneySingle(amount: number, currency: string): string {
@@ -114,10 +140,16 @@ export async function loadUserNotificationContext(
   db: D1Database,
   userId: string
 ): Promise<UserNotificationContext> {
-  const prefRow = await db
-    .prepare('SELECT reminder_config FROM user_preferences WHERE user_id = ?')
-    .bind(userId)
-    .first<{ reminder_config: string }>()
+  const [prefRow, legacyRow] = await Promise.all([
+    db
+      .prepare('SELECT reminder_config FROM user_preferences WHERE user_id = ?')
+      .bind(userId)
+      .first<{ reminder_config: string }>(),
+    db
+      .prepare('SELECT bill_due_enabled, overdue_enabled, due_days_before FROM notification_preferences WHERE user_id = ?')
+      .bind(userId)
+      .first<{ bill_due_enabled: number; overdue_enabled: number; due_days_before: number }>(),
+  ])
 
   if (prefRow?.reminder_config) {
     try {
@@ -125,12 +157,20 @@ export async function loadUserNotificationContext(
       const remindDaysBefore = Array.isArray(parsed.remind_days_before)
         ? parsed.remind_days_before.filter((d): d is number => typeof d === 'number' && Number.isInteger(d))
         : [3, 1, 0]
+      const mergedItemsInput = legacyRow
+        ? {
+            ...parsed.items,
+            bill_due_today: parsed.items?.bill_due_today ?? (legacyRow.bill_due_enabled === 1),
+            bill_due_advance: parsed.items?.bill_due_advance ?? (legacyRow.bill_due_enabled === 1),
+            bill_overdue: parsed.items?.bill_overdue ?? (legacyRow.overdue_enabled === 1),
+          }
+        : parsed.items
       const mergedConfig: UserReminderConfig = {
         remind_days_before: remindDaysBefore,
         quiet_hours_start: parsed.quiet_hours_start ?? '22:00',
         quiet_hours_end: parsed.quiet_hours_end ?? '08:00',
         enabled_channels: Array.isArray(parsed.enabled_channels) ? parsed.enabled_channels : ['web_push'],
-        items: resolveNotificationSwitches(parsed),
+        items: resolveNotificationSwitches({ ...parsed, items: mergedItemsInput }),
         opportunities: parsed.opportunities,
       }
       return {
@@ -146,11 +186,6 @@ export async function loadUserNotificationContext(
       // Fall through to legacy/default below if stored JSON is corrupted
     }
   }
-
-  const legacyRow = await db
-    .prepare('SELECT bill_due_enabled, overdue_enabled, due_days_before FROM notification_preferences WHERE user_id = ?')
-    .bind(userId)
-    .first<{ bill_due_enabled: number; overdue_enabled: number; due_days_before: number }>()
 
   if (legacyRow) {
     const dueDays = Math.max(0, Math.min(30, Number(legacyRow.due_days_before ?? 3)))
@@ -213,30 +248,60 @@ export async function buildDailyNotificationCandidates(
   const advanceDays = new Set(context.remindDaysBefore.filter(d => Number.isInteger(d) && d > 0))
   const candidates: DailyNotificationCandidate[] = []
 
-  // 1. 查询名下未结清账单（含手工覆盖金额与覆盖到期日、扣除已还金额）
-  const billStmt = await db
-    .prepare(
-      `SELECT b.id, COALESCE(b.account_id, cc.account_id) AS account_id, b.card_id, b.bill_month,
-              COALESCE(b.bill_amount_override, b.bill_amount) AS effective_amount,
-              COALESCE(b.due_date_override, b.due_date) AS effective_due_date,
-              COALESCE(b.statement_date_override, b.statement_date) AS effective_statement_date,
-              b.statement_end,
-              b.status,
-              ch.id AS holder_id,
-              cp.bank_name, cp.card_name, COALESCE(cp.currency, 'CNY') AS currency,
-              cc.name_override, cc.card_number_last4,
-              ca.statement_mode AS account_statement_mode,
-              (SELECT COALESCE(SUM(p.amount), 0) FROM payments p WHERE p.bill_id = b.id) AS paid_amount
-       FROM bills b
-       JOIN credit_cards cc ON b.card_id = cc.id
-       JOIN card_holders ch ON cc.holder_id = ch.id
-       LEFT JOIN card_products cp ON cc.card_product_id = cp.id
-       LEFT JOIN credit_accounts ca ON (b.account_id = ca.id OR (b.account_id IS NULL AND cc.account_id = ca.id))
-       WHERE (ch.created_by = ? OR ch.managed_by = ? OR ch.auth_user_id = ?)
-         AND b.status IN ('unpaid', 'partial', 'overdue')`
-    )
-    .bind(userId, userId, userId)
-    .all<BillQueryRow>()
+  // 1-2 & 4. 并发读取未结清账单、活跃固定支出与最长免息期候选卡
+  const [billStmt, payableStmt, cardsStmt] = await Promise.all([
+    db
+      .prepare(
+        `SELECT b.id, COALESCE(b.account_id, cc.account_id) AS account_id, b.card_id, b.bill_month,
+                COALESCE(b.bill_amount_override, b.bill_amount) AS effective_amount,
+                COALESCE(b.due_date_override, b.due_date) AS effective_due_date,
+                COALESCE(b.statement_date_override, b.statement_date) AS effective_statement_date,
+                b.statement_end,
+                b.status,
+                ch.id AS holder_id,
+                cp.bank_name, cp.card_name, COALESCE(cp.currency, 'CNY') AS currency,
+                cc.name_override, cc.card_number_last4,
+                ca.statement_mode AS account_statement_mode,
+                (SELECT COALESCE(SUM(p.amount), 0) FROM payments p WHERE p.bill_id = b.id) AS paid_amount
+         FROM bills b
+         JOIN credit_cards cc ON b.card_id = cc.id
+         JOIN card_holders ch ON cc.holder_id = ch.id
+         LEFT JOIN card_products cp ON cc.card_product_id = cp.id
+         LEFT JOIN credit_accounts ca ON (b.account_id = ca.id OR (b.account_id IS NULL AND cc.account_id = ca.id))
+         WHERE (ch.created_by = ? OR ch.managed_by = ? OR ch.auth_user_id = ?)
+           AND b.status IN ('unpaid', 'partial', 'overdue')`
+      )
+      .bind(userId, userId, userId)
+      .all<BillQueryRow>(),
+    db
+      .prepare(
+        `SELECT id, name, category, custom_category, amount, currency,
+                cycle_type, cycle_months, due_month, due_day, anchor_period, created_at
+         FROM recurring_payables
+         WHERE created_by = ? AND is_active = 1
+         ORDER BY due_day ASC`
+      )
+      .bind(userId)
+      .all<PayableQueryRow>(),
+    switches.grace_period_longest
+      ? db
+          .prepare(
+            `SELECT cc.id, cc.holder_id, cc.account_id, cc.billing_day, cc.override_billing_day,
+                    cc.override_due_type, cc.override_due_value, cc.name_override, cc.card_number_last4,
+                    cp.bank_name, cp.card_name, cp.payment_due_type, cp.payment_due_value,
+                    ca.statement_mode AS account_statement_mode
+             FROM credit_cards cc
+             JOIN card_holders ch ON cc.holder_id = ch.id
+             LEFT JOIN card_products cp ON cc.card_product_id = cp.id
+             LEFT JOIN credit_accounts ca ON cc.account_id = ca.id
+             WHERE (ch.created_by = ? OR ch.managed_by = ? OR ch.auth_user_id = ?)
+               AND cc.status = 'active'
+               AND COALESCE(cc.card_type, 'credit') = 'credit'`
+          )
+          .bind(userId, userId, userId)
+          .all<CreditCardGraceRow>()
+      : Promise.resolve(null),
+  ])
 
   const unpaidBills = (billStmt.results || []).filter(row => {
     const remaining = Math.max(0, Number(row.effective_amount || 0) - Number(row.paid_amount || 0))
@@ -282,17 +347,7 @@ export async function buildDailyNotificationCandidates(
     return `${bankPrefix} ${cardName}${tail}`.trim() || '信用卡'
   }
 
-  // 2. 查询名下活跃固定支出（与 payables.server.ts 同滚动账期口径）
-  const payableStmt = await db
-    .prepare(
-      `SELECT id, name, category, custom_category, amount, currency,
-              cycle_type, cycle_months, due_month, due_day, anchor_period, created_at
-       FROM recurring_payables
-       WHERE created_by = ? AND is_active = 1
-       ORDER BY due_day ASC`
-    )
-    .bind(userId)
-    .all<PayableQueryRow>()
+  // 2. 评估活跃固定支出（与 payables.server.ts 同滚动账期口径）
   const payableRows = payableStmt.results || []
   const todayDate = civilDateFromTodayStr(todayStr)
 
@@ -340,7 +395,8 @@ export async function buildDailyNotificationCandidates(
 
       let displayPeriod = currentPeriod
       let displayPaid = paidCurrent
-      if (settledCurrent && diffCivilDays(nextDueStr, todayStr) < 30) {
+      const nextDiff = diffCivilDays(nextDueStr, todayStr)
+      if (settledCurrent && Number.isFinite(nextDiff) && nextDiff < 30) {
         displayPeriod = nextPeriod
         displayPaid = paidMap.get(`${row.id}:${nextPeriod}`) ?? 0
       }
@@ -350,6 +406,7 @@ export async function buildDailyNotificationCandidates(
 
       const dueDateStr = formatPayableDueDateStr(row.due_day, displayPeriod)
       const daysUntil = diffCivilDays(dueDateStr, todayStr)
+      if (!Number.isFinite(daysUntil)) continue
       activePayables.push({
         row,
         period: displayPeriod,
@@ -362,29 +419,18 @@ export async function buildDailyNotificationCandidates(
   }
 
   // 3. 汇总「当日待还款账单（包含固定支出）」主动通知
-  const dueTodayBillEntries: Array<{
-    id: string
-    subject: string
-    remaining: number
-    currency: string
-    due_date: string
-  }> = []
-  const dueTodayPayableEntries: Array<{
-    id: string
-    name: string
-    category: string
-    remaining: number
-    currency: string
-    due_date: string
-  }> = []
+  const dueTodayBillEntries: NotificationBillMetadataItem[] = []
+  const dueTodayPayableEntries: NotificationPayableMetadataItem[] = []
 
   for (const bill of unpaidBills) {
     const daysUntil = diffCivilDays(bill.effective_due_date, todayStr)
+    if (!Number.isFinite(daysUntil)) continue
     const remaining = Math.max(0, Number(bill.effective_amount || 0) - Number(bill.paid_amount || 0))
     const currency = bill.currency || 'CNY'
     const subject = formatBillSubject(bill)
     const stmtDate = bill.effective_statement_date || bill.statement_end
-    const isUnissued = stmtDate ? diffCivilDays(stmtDate, todayStr) > 0 : false
+    const stmtDiff = stmtDate ? diffCivilDays(stmtDate, todayStr) : Number.NaN
+    const isUnissued = Number.isFinite(stmtDiff) && stmtDiff > 0
 
     if (daysUntil === 0) {
       if (switches.bill_due_today) {
@@ -405,7 +451,7 @@ export async function buildDailyNotificationCandidates(
           title: `已逾期：${subject}`,
           body: `${subject} 账单剩余待还 ${amtStr}，已逾期 ${Math.abs(daysUntil)} 天（到期日 ${bill.effective_due_date}）。`,
           target_url: `/bills/${bill.id}`,
-          metadata_json: JSON.stringify({
+          metadata_json: encodeMetadata({
             kind: 'bill_overdue',
             bill_id: bill.id,
             remaining,
@@ -424,7 +470,7 @@ export async function buildDailyNotificationCandidates(
           title: daysUntil === 1 ? `明天到期：${subject}` : `${daysUntil}天后还款：${subject}`,
           body: `${subject} 账单剩余待还 ${amtStr}，将于 ${daysUntil} 天后（${bill.effective_due_date}）到期。`,
           target_url: `/bills/${bill.id}`,
-          metadata_json: JSON.stringify({
+          metadata_json: encodeMetadata({
             kind: 'bill_due_advance',
             bill_id: bill.id,
             remaining,
@@ -458,7 +504,7 @@ export async function buildDailyNotificationCandidates(
           title: `固定支出已逾期：${p.row.name}`,
           body: `${p.row.name}（${p.categoryText}）本期应付 ${amtStr}，已逾期 ${Math.abs(p.daysUntil)} 天（应付日 ${p.dueDate}）。`,
           target_url: '/bills',
-          metadata_json: JSON.stringify({
+          metadata_json: encodeMetadata({
             kind: 'payable_overdue',
             payable_id: p.row.id,
             remaining: p.remaining,
@@ -477,7 +523,7 @@ export async function buildDailyNotificationCandidates(
           title: p.daysUntil === 1 ? `固定支出明天到期：${p.row.name}` : `${p.daysUntil}天后应付：${p.row.name}`,
           body: `${p.row.name}（${p.categoryText}）本期应付 ${amtStr}，将于 ${p.daysUntil} 天后（${p.dueDate}）到期。`,
           target_url: '/bills',
-          metadata_json: JSON.stringify({
+          metadata_json: encodeMetadata({
             kind: 'payable_due_advance',
             payable_id: p.row.id,
             remaining: p.remaining,
@@ -511,7 +557,7 @@ export async function buildDailyNotificationCandidates(
       title: `今日待还款 ${totalLabel}（共 ${totalDueTodayCount} 笔）`,
       body: `今天需完成以下 ${totalDueTodayCount} 笔还款：\n${lines.join('\n')}`,
       target_url: '/dashboard',
-      metadata_json: JSON.stringify({
+      metadata_json: encodeMetadata({
         kind: 'due_today_summary',
         date: todayStr,
         totals_by_currency: totalsByCurrency,
@@ -522,33 +568,8 @@ export async function buildDailyNotificationCandidates(
   }
 
   // 4. 今日新增最长免息期账单（昨日为账单日 → 今日进入最长免息期首日）
-  if (switches.grace_period_longest) {
-    const cardsStmt = await db
-      .prepare(
-        `SELECT cc.id, cc.holder_id, cc.account_id, cc.billing_day, cc.override_billing_day,
-                cc.override_due_type, cc.override_due_value, cc.name_override, cc.card_number_last4,
-                cp.bank_name, cp.card_name, cp.payment_due_type, cp.payment_due_value,
-                ca.statement_mode AS account_statement_mode
-         FROM credit_cards cc
-         JOIN card_holders ch ON cc.holder_id = ch.id
-         LEFT JOIN card_products cp ON cc.card_product_id = cp.id
-         LEFT JOIN credit_accounts ca ON cc.account_id = ca.id
-         WHERE (ch.created_by = ? OR ch.managed_by = ? OR ch.auth_user_id = ?)
-           AND cc.status = 'active'
-           AND COALESCE(cc.card_type, 'credit') = 'credit'`
-      )
-      .bind(userId, userId, userId)
-      .all<CreditCardGraceRow>()
-
-    interface GraceCardHit {
-      key: string
-      cardId: string
-      label: string
-      graceDays: number
-      nextBillingDate: string
-      nextDueDate: string
-    }
-    const groupedHits = new Map<string, GraceCardHit>()
+  if (switches.grace_period_longest && cardsStmt) {
+    const groupedHits = new Map<string, NotificationGraceCardMetadataItem>()
 
     for (const card of cardsStmt.results || []) {
       const effectiveBillingDay = Number(card.override_billing_day ?? card.billing_day ?? 10)
@@ -577,7 +598,6 @@ export async function buildDailyNotificationCandidates(
       const existing = groupedHits.get(groupKey)
       if (!existing || win.graceDays > existing.graceDays) {
         groupedHits.set(groupKey, {
-          key: groupKey,
           cardId: card.id,
           label,
           graceDays: win.graceDays,
@@ -608,7 +628,7 @@ export async function buildDailyNotificationCandidates(
         title,
         body,
         target_url: graceHits.length === 1 ? `/cards/${graceHits[0].cardId}` : '/bills',
-        metadata_json: JSON.stringify({
+        metadata_json: encodeMetadata({
           kind: 'grace_period_longest',
           date: todayStr,
           cards: graceHits,
@@ -633,14 +653,12 @@ export async function ensureDailyNotificationsForUser(
   const { candidates } = await buildDailyNotificationCandidates(db, userId, todayStr)
   if (candidates.length === 0) return 0
 
-  let inserted = 0
-  for (const candidate of candidates) {
-    const res = await db
-      .prepare(
-        `INSERT OR IGNORE INTO notification_history
-           (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status, push_sent_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'skipped', NULL)`
-      )
+  const stmtSql = `INSERT OR IGNORE INTO notification_history
+     (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status, push_sent_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'skipped', NULL)`
+  const statements = candidates.map(candidate =>
+    db
+      .prepare(stmtSql)
       .bind(
         crypto.randomUUID(),
         userId,
@@ -652,8 +670,7 @@ export async function ensureDailyNotificationsForUser(
         candidate.metadata_json,
         nowIso
       )
-      .run()
-    inserted += Number(res.meta?.changes ?? 0)
-  }
-  return inserted
+  )
+  const results = await db.batch(statements)
+  return results.reduce((sum, res) => sum + Number(res.meta?.changes ?? 0), 0)
 }

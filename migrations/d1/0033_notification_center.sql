@@ -1,5 +1,5 @@
 -- 0033_notification_center.sql — 通知中心：分类、跳转链接、结构化详情、已读态、软删除与推送标记
-ALTER TABLE notification_history ADD COLUMN category TEXT NOT NULL DEFAULT 'bill_due_advance';
+ALTER TABLE notification_history ADD COLUMN category TEXT NOT NULL DEFAULT 'system';
 ALTER TABLE notification_history ADD COLUMN target_url TEXT;
 ALTER TABLE notification_history ADD COLUMN metadata_json TEXT;
 ALTER TABLE notification_history ADD COLUMN read_at TEXT;

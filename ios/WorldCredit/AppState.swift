@@ -136,10 +136,19 @@ public final class AppState {
     public var unreadNotificationCount: Int = 0
     public var totalNotificationCount: Int = 0
     public var isLoadingNotifications: Bool = false
+    public var isLoadingMoreNotifications: Bool = false
+    public var hasMoreNotifications: Bool = false
     public var notificationsError: String?
+    public var pendingOpenNotifications: Bool = false
+    public var pendingWebDestination: DashboardWebDestination?
     public var reminderPreferences: UserReminderPreferences = UserReminderPreferences()
     public var isSavingReminderPreferences: Bool = false
     public var reminderPreferencesError: String?
+    @ObservationIgnored private var reminderPrefsRevision: Int = 0
+    @ObservationIgnored private var reminderPrefsSaveTail: Task<Void, Never>?
+    @ObservationIgnored private var lastConfirmedReminderPreferences: UserReminderPreferences?
+    @ObservationIgnored private var currentNotificationFilter: String = "all"
+    @ObservationIgnored private let notificationPageSize = 50
     /// 盘库打不开、退到内存库时的可恢复提示（数据不持久化），由 UI 展示。
     public var dbInitWarning: String?
 
@@ -608,8 +617,16 @@ public final class AppState {
         unreadNotificationCount = 0
         totalNotificationCount = 0
         isLoadingNotifications = false
+        isLoadingMoreNotifications = false
+        hasMoreNotifications = false
         notificationsError = nil
+        pendingOpenNotifications = false
+        pendingWebDestination = nil
+        currentNotificationFilter = "all"
         reminderPreferences = UserReminderPreferences()
+        lastConfirmedReminderPreferences = nil
+        reminderPrefsRevision += 1
+        reminderPrefsSaveTail = nil
         isSavingReminderPreferences = false
         reminderPreferencesError = nil
         lastSyncError = nil
@@ -943,13 +960,15 @@ public final class AppState {
         }
     }
 
-    public func loadNotifications(filter: String = "all") async {
+    public func loadNotifications(filter: String = "all", syncToday: Bool = true) async {
         guard isLoggedIn, !UITestConfiguration.isEnabled,
               !CommandLine.arguments.contains("--demo-mode"),
               apiClient.token != nil else { return }
         let epoch = sessionEpoch
         let credential = apiClient.token
+        currentNotificationFilter = filter
         isLoadingNotifications = true
+        isLoadingMoreNotifications = false
         notificationsError = nil
         defer {
             if sessionEpoch == epoch {
@@ -957,11 +976,19 @@ public final class AppState {
             }
         }
         do {
-            let page = try await notificationsRemote.fetchNotifications(filter: filter, limit: 100, offset: 0, syncToday: true)
-            guard isLoggedIn, sessionEpoch == epoch, apiClient.token == credential else { return }
+            let page = try await notificationsRemote.fetchNotifications(
+                filter: filter,
+                limit: notificationPageSize,
+                offset: 0,
+                syncToday: syncToday
+            )
+            guard isLoggedIn, sessionEpoch == epoch, apiClient.token == credential,
+                  currentNotificationFilter == filter else { return }
             notifications = page.items
             unreadNotificationCount = max(0, page.unreadCount)
             totalNotificationCount = max(0, page.totalCount)
+            let expectedTotal = filter == "unread" ? page.unreadCount : page.totalCount
+            hasMoreNotifications = page.items.count >= notificationPageSize && page.items.count < expectedTotal
         } catch is CancellationError {
             return
         } catch let urlError as URLError where urlError.code == .cancelled {
@@ -969,10 +996,109 @@ public final class AppState {
         } catch {
             guard isLoggedIn, sessionEpoch == epoch, apiClient.token == credential else { return }
             if let nsError = error as NSError?, nsError.code == 401, await trySilentRefresh() {
-                await loadNotifications(filter: filter)
+                await loadNotifications(filter: filter, syncToday: syncToday)
                 return
             }
             notificationsError = error.localizedDescription
+        }
+    }
+
+    public func loadMoreNotifications() async {
+        guard isLoggedIn,
+              !isLoadingNotifications,
+              !isLoadingMoreNotifications,
+              hasMoreNotifications,
+              !UITestConfiguration.isEnabled,
+              !CommandLine.arguments.contains("--demo-mode"),
+              apiClient.token != nil else { return }
+        let epoch = sessionEpoch
+        let credential = apiClient.token
+        let activeFilter = currentNotificationFilter
+        let offset = notifications.count
+        isLoadingMoreNotifications = true
+        defer {
+            if sessionEpoch == epoch {
+                isLoadingMoreNotifications = false
+            }
+        }
+        do {
+            let page = try await performWithSilentRefresh {
+                try await self.notificationsRemote.fetchNotifications(
+                    filter: activeFilter,
+                    limit: self.notificationPageSize,
+                    offset: offset,
+                    syncToday: false
+                )
+            }
+            guard isLoggedIn, sessionEpoch == epoch, apiClient.token == credential,
+                  currentNotificationFilter == activeFilter else { return }
+            var existingIds = Set(notifications.map(\.id))
+            let appended = page.items.filter { existingIds.insert($0.id).inserted }
+            notifications.append(contentsOf: appended)
+            unreadNotificationCount = max(0, page.unreadCount)
+            totalNotificationCount = max(0, page.totalCount)
+            let expectedTotal = activeFilter == "unread" ? page.unreadCount : page.totalCount
+            hasMoreNotifications = page.items.count >= notificationPageSize && notifications.count < expectedTotal
+        } catch is CancellationError {
+            return
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            return
+        } catch {
+            guard isLoggedIn, sessionEpoch == epoch, apiClient.token == credential else { return }
+            notificationsError = error.localizedDescription
+        }
+    }
+
+    public func handleNotificationRoute(_ rawUrl: String) {
+        let trimmed = rawUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/"), !trimmed.hasPrefix("//") else { return }
+        let noQuery = trimmed
+            .split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first
+            .map(String.init) ?? trimmed
+        let path = noQuery
+            .split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first
+            .map(String.init) ?? noQuery
+
+        if path == "/dashboard" || path == "/" {
+            pendingWebDestination = nil
+            pendingOpenNotifications = false
+            selectedTab = 0
+        } else if path == "/notifications" {
+            pendingWebDestination = nil
+            selectedTab = 0
+            pendingOpenNotifications = true
+        } else if path == "/bills" || path.hasPrefix("/bills/") {
+            pendingWebDestination = nil
+            pendingOpenNotifications = false
+            selectedTab = 1
+        } else if path == "/cards" || path.hasPrefix("/cards/") {
+            pendingWebDestination = nil
+            pendingOpenNotifications = false
+            selectedTab = 2
+        } else if path == "/settings" {
+            pendingWebDestination = nil
+            pendingOpenNotifications = false
+            selectedTab = 3
+        } else if path == "/promos" {
+            pendingOpenNotifications = false
+            selectedTab = 0
+            pendingWebDestination = .promos
+        } else if path == "/benefits/calendar" {
+            pendingOpenNotifications = false
+            selectedTab = 0
+            pendingWebDestination = .benefitCalendar
+        } else if path == "/benefits" || path.hasPrefix("/benefits/") {
+            pendingOpenNotifications = false
+            selectedTab = 0
+            pendingWebDestination = .benefits
+        } else if path == "/gmail-ledger" {
+            pendingOpenNotifications = false
+            selectedTab = 0
+            pendingWebDestination = .gmailLedger
+        } else {
+            pendingWebDestination = nil
+            selectedTab = 0
+            pendingOpenNotifications = true
         }
     }
 
@@ -1016,9 +1142,13 @@ public final class AppState {
               !CommandLine.arguments.contains("--demo-mode") else { return }
         let prevItems = notifications
         let prevUnread = unreadNotificationCount
+        let prevHasMore = hasMoreNotifications
         let nowIso = ISO8601DateFormatter().string(from: Date())
-        notifications = notifications.map { $0.markingRead(at: nowIso) }
+        notifications = currentNotificationFilter == "unread" ? [] : notifications.map { $0.markingRead(at: nowIso) }
         unreadNotificationCount = 0
+        if currentNotificationFilter == "unread" {
+            hasMoreNotifications = false
+        }
         do {
             let result = try await performWithSilentRefresh {
                 try await self.notificationsRemote.markAllRead()
@@ -1027,6 +1157,7 @@ public final class AppState {
         } catch {
             notifications = prevItems
             unreadNotificationCount = prevUnread
+            hasMoreNotifications = prevHasMore
             throw error
         }
     }
@@ -1063,9 +1194,11 @@ public final class AppState {
         let prevItems = notifications
         let prevUnread = unreadNotificationCount
         let prevTotal = totalNotificationCount
+        let prevHasMore = hasMoreNotifications
         notifications = []
         unreadNotificationCount = 0
         totalNotificationCount = 0
+        hasMoreNotifications = false
         do {
             let result = try await performWithSilentRefresh {
                 try await self.notificationsRemote.deleteAll()
@@ -1075,6 +1208,7 @@ public final class AppState {
             notifications = prevItems
             unreadNotificationCount = prevUnread
             totalNotificationCount = prevTotal
+            hasMoreNotifications = prevHasMore
             throw error
         }
     }
@@ -1095,6 +1229,7 @@ public final class AppState {
             guard isLoggedIn, sessionEpoch == epoch, apiClient.token == credential,
                   currentUser?.id == user.id else { return }
             reminderPreferences = prefs
+            lastConfirmedReminderPreferences = prefs
             reminderPreferencesError = nil
             try? await rescheduleLocalNotifications()
         } catch is CancellationError {
@@ -1117,38 +1252,72 @@ public final class AppState {
         guard isLoggedIn, !UITestConfiguration.isEnabled,
               !CommandLine.arguments.contains("--demo-mode") else {
             reminderPreferences = next
+            lastConfirmedReminderPreferences = next
             return
         }
-        let prev = reminderPreferences
+        reminderPrefsRevision += 1
+        let rev = reminderPrefsRevision
+        let epoch = sessionEpoch
+        let initialSnapshot = reminderPreferences
+        let prevTail = reminderPrefsSaveTail
+
         reminderPreferences = next
         isSavingReminderPreferences = true
         reminderPreferencesError = nil
-        defer { isSavingReminderPreferences = false }
 
-        do {
-            let (user, saved) = try await performWithSilentRefresh {
-                let resolvedUser: SessionUser
-                if let currentUser = self.currentUser {
-                    resolvedUser = currentUser
-                } else {
-                    resolvedUser = try await self.apiClient.fetchSessionUser()
+        let saveTask = Task<Void, Error> { @MainActor [weak self] in
+            if let prevTail {
+                _ = await prevTail.value
+            }
+            guard let self else { throw CancellationError() }
+            let fallback = self.lastConfirmedReminderPreferences ?? initialSnapshot
+
+            defer {
+                if rev == self.reminderPrefsRevision && self.sessionEpoch == epoch {
+                    self.isSavingReminderPreferences = false
                 }
-                self.currentUser = resolvedUser
-                let updated = try await self.notificationsRemote.updateReminderPreferences(
-                    userId: resolvedUser.id,
-                    config: next
-                )
-                return (resolvedUser, updated)
             }
-            if isLoggedIn, currentUser?.id == user.id {
-                reminderPreferences = saved
-                try? await rescheduleLocalNotifications()
+
+            guard self.isLoggedIn, self.sessionEpoch == epoch else {
+                throw CancellationError()
             }
-        } catch {
-            reminderPreferences = prev
-            reminderPreferencesError = error.localizedDescription
-            throw error
+
+            do {
+                let (user, saved) = try await self.performWithSilentRefresh {
+                    let resolvedUser: SessionUser
+                    if let currentUser = self.currentUser {
+                        resolvedUser = currentUser
+                    } else {
+                        resolvedUser = try await self.apiClient.fetchSessionUser()
+                    }
+                    self.currentUser = resolvedUser
+                    let updated = try await self.notificationsRemote.updateReminderPreferences(
+                        userId: resolvedUser.id,
+                        config: next
+                    )
+                    return (resolvedUser, updated)
+                }
+                if self.isLoggedIn, self.sessionEpoch == epoch, self.currentUser?.id == user.id {
+                    self.lastConfirmedReminderPreferences = saved
+                    if rev == self.reminderPrefsRevision {
+                        self.reminderPreferences = saved
+                        try? await self.rescheduleLocalNotifications()
+                    }
+                }
+            } catch {
+                if self.sessionEpoch == epoch && rev == self.reminderPrefsRevision {
+                    self.reminderPreferences = fallback
+                    self.reminderPreferencesError = error.localizedDescription
+                }
+                throw error
+            }
         }
+
+        reminderPrefsSaveTail = Task<Void, Never> {
+            _ = try? await saveTask.value
+        }
+
+        try await saveTask.value
     }
 
     public func payDashboardBills(_ ids: [String]) async throws -> Int {
@@ -1315,8 +1484,16 @@ public final class AppState {
         unreadNotificationCount = 0
         totalNotificationCount = 0
         isLoadingNotifications = false
+        isLoadingMoreNotifications = false
+        hasMoreNotifications = false
         notificationsError = nil
+        pendingOpenNotifications = false
+        pendingWebDestination = nil
+        currentNotificationFilter = "all"
         reminderPreferences = UserReminderPreferences()
+        lastConfirmedReminderPreferences = nil
+        reminderPrefsRevision += 1
+        reminderPrefsSaveTail = nil
         isSavingReminderPreferences = false
         reminderPreferencesError = nil
         notificationScheduler.center.removeAllPendingNotificationRequests()

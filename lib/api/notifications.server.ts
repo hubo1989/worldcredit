@@ -104,10 +104,29 @@ export async function getNotifications(
   }
 }
 
-export async function getUnreadNotificationCount(userId: string): Promise<number> {
+export async function getUnreadNotificationCount(userId: string, syncToday = true): Promise<number> {
   const db = getDb()
-  await ensureDailyNotificationsForUser(db, userId)
+  if (syncToday !== false) {
+    await ensureDailyNotificationsForUser(db, userId)
+  }
   return countUnreadForUser(db, userId)
+}
+
+async function softMutateNotifications(
+  userId: string,
+  sql: string,
+  bindings: unknown[]
+): Promise<{ changes: number; unread_count: number }> {
+  const db = getDb()
+  const res = await db
+    .prepare(sql)
+    .bind(...bindings)
+    .run()
+  const unread_count = await countUnreadForUser(db, userId)
+  return {
+    changes: Number(res.meta?.changes ?? 0),
+    unread_count,
+  }
 }
 
 export async function markNotificationRead(
@@ -117,41 +136,27 @@ export async function markNotificationRead(
   if (typeof notificationId !== 'string' || !notificationId.trim()) {
     throw new RpcDomainError('VALIDATION_FAILED', '缺少合法的通知 ID')
   }
-  const db = getDb()
   const nowIso = new Date().toISOString()
-  const res = await db
-    .prepare(
-      `UPDATE notification_history
-       SET read_at = COALESCE(read_at, ?)
-       WHERE id = ? AND user_id = ? AND deleted_at IS NULL`
-    )
-    .bind(nowIso, notificationId.trim(), userId)
-    .run()
-
-  const unread_count = await countUnreadForUser(db, userId)
-  return {
-    updated: Number(res.meta?.changes ?? 0) > 0,
-    unread_count,
-  }
+  const { changes, unread_count } = await softMutateNotifications(
+    userId,
+    `UPDATE notification_history
+     SET read_at = COALESCE(read_at, ?)
+     WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+    [nowIso, notificationId.trim(), userId]
+  )
+  return { updated: changes > 0, unread_count }
 }
 
 export async function markAllNotificationsRead(userId: string): Promise<NotificationBulkReadResult> {
-  const db = getDb()
   const nowIso = new Date().toISOString()
-  const res = await db
-    .prepare(
-      `UPDATE notification_history
-       SET read_at = COALESCE(read_at, ?)
-       WHERE user_id = ? AND deleted_at IS NULL AND read_at IS NULL`
-    )
-    .bind(nowIso, userId)
-    .run()
-
-  const unread_count = await countUnreadForUser(db, userId)
-  return {
-    updated_count: Number(res.meta?.changes ?? 0),
-    unread_count,
-  }
+  const { changes, unread_count } = await softMutateNotifications(
+    userId,
+    `UPDATE notification_history
+     SET read_at = COALESCE(read_at, ?)
+     WHERE user_id = ? AND deleted_at IS NULL AND read_at IS NULL`,
+    [nowIso, userId]
+  )
+  return { updated_count: changes, unread_count }
 }
 
 export async function deleteNotification(
@@ -161,39 +166,25 @@ export async function deleteNotification(
   if (typeof notificationId !== 'string' || !notificationId.trim()) {
     throw new RpcDomainError('VALIDATION_FAILED', '缺少合法的通知 ID')
   }
-  const db = getDb()
   const nowIso = new Date().toISOString()
-  const res = await db
-    .prepare(
-      `UPDATE notification_history
-       SET deleted_at = COALESCE(deleted_at, ?)
-       WHERE id = ? AND user_id = ? AND deleted_at IS NULL`
-    )
-    .bind(nowIso, notificationId.trim(), userId)
-    .run()
-
-  const unread_count = await countUnreadForUser(db, userId)
-  return {
-    deleted: Number(res.meta?.changes ?? 0) > 0,
-    unread_count,
-  }
+  const { changes, unread_count } = await softMutateNotifications(
+    userId,
+    `UPDATE notification_history
+     SET deleted_at = COALESCE(deleted_at, ?)
+     WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+    [nowIso, notificationId.trim(), userId]
+  )
+  return { deleted: changes > 0, unread_count }
 }
 
 export async function deleteAllNotifications(userId: string): Promise<NotificationBulkDeleteResult> {
-  const db = getDb()
   const nowIso = new Date().toISOString()
-  const res = await db
-    .prepare(
-      `UPDATE notification_history
-       SET deleted_at = COALESCE(deleted_at, ?)
-       WHERE user_id = ? AND deleted_at IS NULL`
-    )
-    .bind(nowIso, userId)
-    .run()
-
-  const unread_count = await countUnreadForUser(db, userId)
-  return {
-    deleted_count: Number(res.meta?.changes ?? 0),
-    unread_count,
-  }
+  const { changes, unread_count } = await softMutateNotifications(
+    userId,
+    `UPDATE notification_history
+     SET deleted_at = COALESCE(deleted_at, ?)
+     WHERE user_id = ? AND deleted_at IS NULL`,
+    [nowIso, userId]
+  )
+  return { deleted_count: changes, unread_count }
 }

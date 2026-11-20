@@ -113,13 +113,14 @@ describe('NotificationCenterView & ReminderPreferencesCard UI 交互', () => {
       expect(screen.getByText('今日最长免息期：招商银行 经典白(8888)')).toBeTruthy()
     })
 
-    // 切换未读筛选
+    // 切换未读筛选（首屏已同步过今日通知，切换筛选不重复 syncToday，且每页 50 条）
     fireEvent.click(screen.getByRole('button', { name: '未读 (1)' }))
     await waitFor(() => {
       expect(mockGetNotifications).toHaveBeenCalledWith({
         filter: 'unread',
-        limit: 100,
-        syncToday: true,
+        limit: 50,
+        offset: 0,
+        syncToday: false,
       })
       expect(screen.queryByText('今日最长免息期：招商银行 经典白(8888)')).toBeNull()
     })
@@ -202,5 +203,65 @@ describe('NotificationCenterView & ReminderPreferencesCard UI 交互', () => {
         opportunities: expect.objectContaining({ booking_enabled: false }),
       })
     )
+  })
+
+  it('支持加载更多分页，并拦截非站内危险 target_url', async () => {
+    const firstPage: UserNotificationItem[] = Array.from({ length: 50 }, (_, idx) => ({
+      ...SAMPLE_ITEMS[0],
+      id: `n-p1-${idx}`,
+      notification_key: `key-${idx}`,
+      title: `通知条目 ${idx + 1}`,
+      target_url: idx === 0 ? 'https://evil.example/phish' : idx === 1 ? '//evil.example' : '/bills/b-1',
+    }))
+    const secondPage: UserNotificationItem[] = [
+      {
+        ...SAMPLE_ITEMS[1],
+        id: 'n-p2-0',
+        notification_key: 'key-50',
+        title: '第二页第 51 条通知',
+        target_url: '/bills/b-51',
+        read_at: null,
+      },
+    ]
+    mockGetNotifications.mockReset().mockImplementation(async (opts?: { offset?: number }) => {
+      if ((opts?.offset ?? 0) === 0) {
+        return { items: firstPage, unread_count: 51, total_count: 51 }
+      }
+      return { items: secondPage, unread_count: 51, total_count: 51 }
+    })
+
+    render(<NotificationCenterView />)
+    await waitFor(() => {
+      expect(screen.getByText('通知条目 1')).toBeTruthy()
+      expect(screen.getByRole('button', { name: '加载更多' })).toBeTruthy()
+    })
+
+    // 点击 unsafe https://evil.example 不渲染「前往查看」
+    fireEvent.click(screen.getAllByRole('button', { name: /通知条目 1/ })[0])
+    await waitFor(() => {
+      expect(screen.getByText('删除通知')).toBeTruthy()
+    })
+    expect(screen.queryByRole('button', { name: '前往查看' })).toBeNull()
+    fireEvent.click(screen.getAllByRole('button', { name: '关闭' })[1])
+
+    // 点击合法站内路径 /bills/b-1 渲染「前往查看」并跳转
+    fireEvent.click(screen.getAllByRole('button', { name: /通知条目 3/ })[0])
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '前往查看' })).toBeTruthy()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '前往查看' }))
+    expect(mockPush).toHaveBeenCalledWith('/bills/b-1')
+
+    // 点击加载更多发起 offset: 50 请求并渲染第 51 条
+    fireEvent.click(screen.getByRole('button', { name: '加载更多' }))
+    await waitFor(() => {
+      expect(mockGetNotifications).toHaveBeenCalledWith({
+        filter: 'all',
+        limit: 50,
+        offset: 50,
+        syncToday: false,
+      })
+      expect(screen.getByText('第二页第 51 条通知')).toBeTruthy()
+    })
   })
 })

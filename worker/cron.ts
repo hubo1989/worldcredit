@@ -4,6 +4,7 @@
 import webpush from "web-push";
 import { getLocalTodayString } from "../lib/utils";
 import { sendApnsToUser } from "../lib/apns.server";
+import { isWebPushChannelEnabled } from "../lib/notifications.shared";
 import {
   buildDailyNotificationCandidates,
   isUserInQuietHours,
@@ -22,29 +23,44 @@ interface CronEnv {
 }
 
 /**
- * 校验用户的偏好设置是否开启了 Web Push（统一存量兼容口径与迁移判断）。
+ * 校验用户的偏好设置是否开启了主动推送通道（Web Push / APNs 共用主开关）。
  * 若 enabled_channels 未设置而旧 opportunities.web_push_enabled === false，绝不下发。
  */
 export function isUserWebPushEnabled(reminderConfigRaw?: string | null): boolean {
-  if (!reminderConfigRaw) return true;
-  try {
-    const parsed = JSON.parse(reminderConfigRaw) as {
-      enabled_channels?: string[];
-      opportunities?: { web_push_enabled?: boolean };
-    };
-    if (parsed.enabled_channels !== undefined) {
-      return (
-        Array.isArray(parsed.enabled_channels) &&
-        parsed.enabled_channels.includes("web_push")
-      );
+  return isWebPushChannelEnabled(reminderConfigRaw);
+}
+
+interface ExistingHistoryRow {
+  id: string;
+  notification_key: string;
+  read_at: string | null;
+  deleted_at: string | null;
+  push_sent_at: string | null;
+}
+
+async function loadExistingHistoryByKey(
+  db: D1Database,
+  userId: string,
+  keys: string[],
+): Promise<Map<string, ExistingHistoryRow>> {
+  const byKey = new Map<string, ExistingHistoryRow>();
+  const CHUNK_SIZE = 50;
+  for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
+    const chunk = keys.slice(i, i + CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = await db
+      .prepare(
+        `SELECT id, notification_key, read_at, deleted_at, push_sent_at
+         FROM notification_history
+         WHERE user_id = ? AND notification_key IN (${placeholders})`,
+      )
+      .bind(userId, ...chunk)
+      .all<ExistingHistoryRow>();
+    for (const row of rows.results || []) {
+      byKey.set(row.notification_key, row);
     }
-    if (parsed.opportunities && parsed.opportunities.web_push_enabled === false) {
-      return false;
-    }
-    return true;
-  } catch {
-    return true;
   }
+  return byKey;
 }
 
 export async function handleScheduled(
@@ -96,150 +112,143 @@ export async function handleScheduled(
   let inboxCount = 0;
 
   for (const userId of userIds) {
-    const userSubs = subscriptions.filter((s) => s.user_id === userId);
-    const userDevices = iosDevices.filter((d) => d.user_id === userId);
+    try {
+      const userSubs = subscriptions.filter((s) => s.user_id === userId);
+      const userDevices = iosDevices.filter((d) => d.user_id === userId);
 
-    const { context, candidates } = await buildDailyNotificationCandidates(db, userId, today);
-    if (!candidates.length) continue;
+      const { context, candidates } = await buildDailyNotificationCandidates(db, userId, today);
+      if (!candidates.length) continue;
 
-    const inQuiet = isUserInQuietHours(context, nowDate);
-    const canSendWebPush =
-      !inQuiet && userSubs.length > 0 && isUserWebPushEnabled(context.reminderConfigRaw);
-    const canSendApns =
-      !inQuiet &&
-      userDevices.length > 0 &&
-      Boolean(env.APNS_KEY_P8 && env.APNS_KEY_ID && env.APNS_TEAM_ID);
+      const inQuiet = isUserInQuietHours(context, nowDate);
+      const pushChannelEnabled = isUserWebPushEnabled(context.reminderConfigRaw);
+      const canSendWebPush = !inQuiet && userSubs.length > 0 && pushChannelEnabled;
+      const canSendApns =
+        !inQuiet &&
+        userDevices.length > 0 &&
+        pushChannelEnabled &&
+        Boolean(env.APNS_KEY_P8 && env.APNS_KEY_ID && env.APNS_TEAM_ID);
 
-    for (const candidate of candidates) {
-      const existing = await db
-        .prepare(
-          `SELECT id, read_at, deleted_at, push_sent_at
-           FROM notification_history
-           WHERE user_id = ? AND notification_key = ?`,
-        )
-        .bind(userId, candidate.notification_key)
-        .first<{
-          id: string;
-          read_at: string | null;
-          deleted_at: string | null;
-          push_sent_at: string | null;
-        }>();
+      const existingByKey = await loadExistingHistoryByKey(
+        db,
+        userId,
+        candidates.map((c) => c.notification_key),
+      );
 
-      // 已删除 / 已读 / 已推送：绝不复活或二次发送
-      if (existing && (existing.deleted_at || existing.read_at || existing.push_sent_at)) {
-        continue;
-      }
+      for (const candidate of candidates) {
+        const existing = existingByKey.get(candidate.notification_key);
 
-      if (!canSendWebPush && !canSendApns) {
-        if (!existing) {
-          await db
-            .prepare(
-              `INSERT OR IGNORE INTO notification_history
-                 (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status, push_sent_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'skipped', NULL)`,
-            )
-            .bind(
-              crypto.randomUUID(),
-              userId,
-              candidate.notification_key,
-              candidate.category,
+        // 已删除 / 已读 / 已推送：绝不复活或二次发送
+        if (existing && (existing.deleted_at || existing.read_at || existing.push_sent_at)) {
+          continue;
+        }
+
+        if (!canSendWebPush && !canSendApns) {
+          if (!existing) {
+            const insertRes = await db
+              .prepare(
+                `INSERT OR IGNORE INTO notification_history
+                   (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status, push_sent_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'skipped', NULL)`,
+              )
+              .bind(
+                crypto.randomUUID(),
+                userId,
+                candidate.notification_key,
+                candidate.category,
+                candidate.title,
+                candidate.body,
+                candidate.target_url,
+                candidate.metadata_json,
+                nowIso,
+              )
+              .run();
+            if (Number(insertRes.meta?.changes ?? 0) > 0) inboxCount++;
+          }
+          continue;
+        }
+
+        let deliveredAny = false;
+        const errors: string[] = [];
+
+        if (canSendWebPush) {
+          try {
+            const { sent, staleIds } = await sendPushToSubscriptions(
+              env,
+              userSubs,
               candidate.title,
               candidate.body,
               candidate.target_url,
-              candidate.metadata_json,
-              nowIso,
-            )
-            .run();
-          inboxCount++;
-        }
-        continue;
-      }
-
-      let deliveredAny = false;
-      const errors: string[] = [];
-
-      if (canSendWebPush) {
-        try {
-          const { sent, staleIds } = await sendPushToSubscriptions(
-            env,
-            userSubs,
-            candidate.title,
-            candidate.body,
-            candidate.target_url,
-          );
-          if (sent > 0) deliveredAny = true;
-          for (const id of staleIds) {
-            await db.prepare("DELETE FROM push_subscriptions WHERE id = ?").bind(id).run();
-          }
-        } catch (err) {
-          errors.push(err instanceof Error ? err.message : String(err));
-        }
-      }
-
-      if (canSendApns && env.APNS_KEY_P8 && env.APNS_KEY_ID && env.APNS_TEAM_ID) {
-        try {
-          const apnsResult = await sendApnsToUser(
-            userId,
-            {
-              alert: { title: candidate.title, body: candidate.body },
-              sound: "default",
-              badge: 1,
-              customData: {
-                type: candidate.category,
-                url: candidate.target_url,
-              },
-            },
-            {
-              keyP8: env.APNS_KEY_P8,
-              keyId: env.APNS_KEY_ID,
-              teamId: env.APNS_TEAM_ID,
-              bundleId: env.APNS_BUNDLE_ID,
-              isProduction: env.APNS_ENVIRONMENT === "production",
-            },
-            userDevices.map((d) => d.token),
-          );
-          if (apnsResult.sent > 0) deliveredAny = true;
-          if (apnsResult.failed > 0) {
-            console.warn(
-              `[cron] APNs delivery failed for ${apnsResult.failed}/${apnsResult.total} devices on ${candidate.notification_key}`,
             );
-            if (apnsResult.sent === 0) {
-              errors.push(`APNs failed for all ${apnsResult.total} devices`);
+            if (sent > 0) deliveredAny = true;
+            for (const id of staleIds) {
+              await db.prepare("DELETE FROM push_subscriptions WHERE id = ?").bind(id).run();
             }
+          } catch (err) {
+            errors.push(err instanceof Error ? err.message : String(err));
           }
-        } catch (err) {
-          errors.push(err instanceof Error ? err.message : String(err));
         }
-      }
 
-      const finalStatus = deliveredAny ? "sent" : errors.length > 0 ? "failed" : "skipped";
-      const finalError = errors.length > 0 && !deliveredAny ? errors.join("; ") : null;
-      const pushSentAt = deliveredAny ? nowIso : null;
+        if (canSendApns && env.APNS_KEY_P8 && env.APNS_KEY_ID && env.APNS_TEAM_ID) {
+          try {
+            const apnsResult = await sendApnsToUser(
+              userId,
+              {
+                alert: { title: candidate.title, body: candidate.body },
+                sound: "default",
+                badge: 1,
+                customData: {
+                  type: candidate.category,
+                  url: candidate.target_url,
+                },
+              },
+              {
+                keyP8: env.APNS_KEY_P8,
+                keyId: env.APNS_KEY_ID,
+                teamId: env.APNS_TEAM_ID,
+                bundleId: env.APNS_BUNDLE_ID,
+                isProduction: env.APNS_ENVIRONMENT === "production",
+              },
+              userDevices.map((d) => d.token),
+            );
+            if (apnsResult.sent > 0) deliveredAny = true;
+            if (apnsResult.failed > 0) {
+              console.warn(
+                `[cron] APNs delivery failed for ${apnsResult.failed}/${apnsResult.total} devices on ${candidate.notification_key}`,
+              );
+              errors.push(`APNs failed for ${apnsResult.failed}/${apnsResult.total} devices`);
+            }
+          } catch (err) {
+            errors.push(err instanceof Error ? err.message : String(err));
+          }
+        }
 
-      if (existing) {
-        await db
-          .prepare(
-            `UPDATE notification_history
-             SET title = ?, body = ?, target_url = ?, metadata_json = ?, status = ?, push_sent_at = ?, error = ?
-             WHERE id = ?`,
-          )
-          .bind(
-            candidate.title,
-            candidate.body,
-            candidate.target_url,
-            candidate.metadata_json,
-            finalStatus,
-            pushSentAt,
-            finalError,
-            existing.id,
-          )
-          .run();
-      } else {
+        let finalStatus: "sent" | "failed" | "skipped";
+        if (deliveredAny) {
+          finalStatus = "sent";
+        } else if (errors.length > 0) {
+          finalStatus = "failed";
+        } else {
+          finalStatus = "skipped";
+        }
+        const finalError = errors.length > 0 ? errors.join("; ") : null;
+        const pushSentAt = deliveredAny ? nowIso : null;
+
         await db
           .prepare(
             `INSERT INTO notification_history
                (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status, push_sent_at, error)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(user_id, notification_key) DO UPDATE SET
+               title = excluded.title,
+               body = excluded.body,
+               target_url = excluded.target_url,
+               metadata_json = excluded.metadata_json,
+               status = excluded.status,
+               push_sent_at = COALESCE(notification_history.push_sent_at, excluded.push_sent_at),
+               error = excluded.error
+             WHERE notification_history.deleted_at IS NULL
+               AND notification_history.read_at IS NULL
+               AND notification_history.push_sent_at IS NULL`,
           )
           .bind(
             crypto.randomUUID(),
@@ -256,10 +265,12 @@ export async function handleScheduled(
             finalError,
           )
           .run();
-      }
 
-      if (deliveredAny) sentCount++;
-      else inboxCount++;
+        if (deliveredAny) sentCount++;
+        else inboxCount++;
+      }
+    } catch (err) {
+      console.error(`[cron] Failed processing user ${userId}:`, err);
     }
   }
 

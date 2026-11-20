@@ -100,7 +100,7 @@ export default function SettingsPage() {
   const [showDisplaySheet, setShowDisplaySheet] = useState(false)
   const [showLogoutDialog, setShowLogoutDialog] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
-  const [unreadNotifications, setUnreadNotifications] = useState(0)
+  const [unreadNotifications, setUnreadNotifications] = useState<number | null>(null)
 
   const [notice, setNotice] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'info' }>({
     open: false,
@@ -126,19 +126,34 @@ export default function SettingsPage() {
     void loadGmail()
   }, [loadGmail])
 
-  useEffect(() => {
-    let cancelled = false
-    void getUnreadNotificationCount()
-      .then((n) => {
-        if (!cancelled) setUnreadNotifications(n)
-      })
-      .catch(() => {
-        if (!cancelled) setUnreadNotifications(0)
-      })
-    return () => {
-      cancelled = true
+  const refreshUnreadCount = useCallback(async () => {
+    try {
+      const count = await getUnreadNotificationCount(false)
+      setUnreadNotifications(count)
+    } catch (err) {
+      console.warn('[settings] failed to fetch unread notification count:', err)
+      setUnreadNotifications(null)
     }
   }, [])
+
+  useEffect(() => {
+    void refreshUnreadCount()
+    if (typeof window === 'undefined') return
+    const onFocus = () => {
+      void refreshUnreadCount()
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshUnreadCount()
+      }
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [refreshUnreadCount])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -303,17 +318,21 @@ export default function SettingsPage() {
                 title='通知中心'
                 subtitle='查看全部通知、标记已读与清理记录'
                 onClick={() => router.push('/notifications')}
-                badge={
-                  unreadNotifications > 0 ? (
-                    <span className='mr-0.5 shrink-0 rounded-full border border-d-danger/40 bg-d-danger-soft px-2.5 py-0.5 text-[11px] font-semibold text-d-danger-ink'>
-                      {unreadNotifications > 99 ? '99+' : `${unreadNotifications} 未读`}
-                    </span>
-                  ) : (
+                badge={(() => {
+                  if (unreadNotifications === null) return null
+                  if (unreadNotifications > 0) {
+                    return (
+                      <span className='mr-0.5 shrink-0 rounded-full border border-d-danger/40 bg-d-danger-soft px-2.5 py-0.5 text-[11px] font-semibold text-d-danger-ink'>
+                        {unreadNotifications > 99 ? '99+' : `${unreadNotifications} 未读`}
+                      </span>
+                    )
+                  }
+                  return (
                     <span className='mr-0.5 shrink-0 rounded-full border border-d-border bg-d-subtle px-2.5 py-0.5 text-[11px] font-semibold text-d-muted'>
                       全部已读
                     </span>
                   )
-                }
+                })()}
               />
 
               {/* 邮箱账单导入 */}

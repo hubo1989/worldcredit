@@ -9,6 +9,7 @@ import {
   computeMetrics,
   formatMoney,
   FUTURE_RANGES,
+  payableRemaining,
   type FutureRange,
   type HolderFilter,
 } from '@/lib/dashboard-metrics'
@@ -30,9 +31,9 @@ export interface DashboardViewProps {
   onTogglePrivacy: () => void
   amountClass: string
   displayCurrency: string
-  visibleBills: BillDashboardItem[]
   onPaySingle: (e: React.MouseEvent, bill: BillDashboardItem) => void
   onPayPayable?: (e: React.MouseEvent, payable: PayableWithStatus) => void
+  payingPayableId?: string | null
   onPayAllOpen: () => void
   onNavBills: () => void
   onNavPromos: () => void
@@ -54,12 +55,11 @@ export function DashboardView(vm: DashboardViewProps) {
   const {
     metrics, holderPills, holderFilter, onHolderFilter, futureRange, onFutureRange,
     debtExpanded, onDebtExpanded, privacyOn, privacyIcon, onTogglePrivacy,
-    amountClass, displayCurrency, visibleBills, onPaySingle, onPayPayable, onPayAllOpen,
+    amountClass, displayCurrency, onPaySingle, onPayPayable, payingPayableId, onPayAllOpen,
     onNavBills, onNavPromos, onNavNotifications, unreadNotificationCount = 0,
     totalCardCount, holders, cardsByHolder,
     quickActions, promoCount, userName, userEmail, urgentReminders,
   } = vm
-  void visibleBills
 
   // 头像/称呼都来自当前登录用户；邮箱前缀只是兜底，不能再写死成某一个人的名字。
   const emailPrefix = (userEmail || '').split('@')[0]
@@ -269,7 +269,8 @@ export function DashboardView(vm: DashboardViewProps) {
             </div>
           ))}
           {metrics.dueTodayPayables.map(p => {
-            const remaining = Math.max(0, (Number(p.amount) || 0) - (Number(p.paid_amount) || 0))
+            const remaining = payableRemaining(p)
+            const isPaying = payingPayableId === p.id
             return (
               <div key={`payable-${p.id}`} className="mt-2.5 flex items-center justify-between gap-3">
                 <div className="min-w-0 flex-1">
@@ -286,10 +287,11 @@ export function DashboardView(vm: DashboardViewProps) {
                 {onPayPayable ? (
                   <button
                     type="button"
+                    disabled={isPaying}
                     onClick={e => onPayPayable(e, p)}
-                    className="h-11 shrink-0 rounded-xl border border-d-gold-deep bg-d-gold-soft px-4 text-xs font-semibold text-d-gold"
+                    className="h-11 shrink-0 rounded-xl border border-d-gold-deep bg-d-gold-soft px-4 text-xs font-semibold text-d-gold disabled:opacity-50"
                   >
-                    标记已付
+                    {isPaying ? '处理中…' : '标记已付'}
                   </button>
                 ) : null}
               </div>

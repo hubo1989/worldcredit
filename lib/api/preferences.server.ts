@@ -2,7 +2,10 @@ import { queryOne, execute, uuid, now } from '../db'
 import type { UserPreferences, UserDisplayConfig, UserReminderConfig } from '../types'
 import { DEFAULT_DISPLAY_CONFIG, DEFAULT_REMINDER_CONFIG } from './preferences.shared'
 import { mergeOpportunityReminderConfig } from '../opportunities/reminders'
-import { resolveNotificationSwitches } from '../notifications.shared'
+import {
+  resolveNotificationSwitches,
+  syncItemSwitchesWithOpportunities,
+} from '../notifications.shared'
 
 export { DEFAULT_DISPLAY_CONFIG, DEFAULT_REMINDER_CONFIG }
 
@@ -58,24 +61,10 @@ export async function updateUserPreferences(
   const incomingReminder = updates.reminder_config || {}
 
   // 合并 items，并保持 items.opportunity_reset/booking 与 opportunities.reset_enabled/booking_enabled 双向一致
-  const mergedItems = {
-    ...resolveNotificationSwitches(current.reminder_config),
-    ...(incomingReminder.items || {}),
-  }
-  const mergedOpp = {
-    ...(current.reminder_config.opportunities || {}),
-    ...(incomingReminder.opportunities || {}),
-  }
-  if (incomingReminder.items?.opportunity_reset !== undefined && incomingReminder.opportunities?.reset_enabled === undefined) {
-    mergedOpp.reset_enabled = incomingReminder.items.opportunity_reset
-  } else if (incomingReminder.opportunities?.reset_enabled !== undefined && incomingReminder.items?.opportunity_reset === undefined) {
-    mergedItems.opportunity_reset = incomingReminder.opportunities.reset_enabled
-  }
-  if (incomingReminder.items?.opportunity_booking !== undefined && incomingReminder.opportunities?.booking_enabled === undefined) {
-    mergedOpp.booking_enabled = incomingReminder.items.opportunity_booking
-  } else if (incomingReminder.opportunities?.booking_enabled !== undefined && incomingReminder.items?.opportunity_booking === undefined) {
-    mergedItems.opportunity_booking = incomingReminder.opportunities.booking_enabled
-  }
+  const { items: mergedItems, opportunities: mergedOpp } = syncItemSwitchesWithOpportunities(
+    current.reminder_config,
+    incomingReminder
+  )
 
   // 更新只覆盖给出字段；opportunities 子树保留既有未传入字段。
   const updatedReminder: UserReminderConfig = {

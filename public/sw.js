@@ -41,16 +41,15 @@ self.addEventListener('push', (event) => {
 // 权益推送（tag 前缀 wc-op:）只允许跳转到站内白名单路径，之后由应用自身
 // 鉴权；不向任意入参 URL 导航。
 const OPPORTUNITY_ALLOWED_URLS = new Set(['/promos', '/benefits', '/benefits/calendar', '/notifications'])
+const EXACT_ALLOWED_URLS = new Set(['/dashboard', '/bills'])
+const ALLOWED_PREFIXES = ['/bills/', '/cards/']
 
 function normalizeInternalTargetUrl(raw) {
-  if (typeof raw !== 'string' || !raw.startsWith('/')) return '/bills'
+  if (typeof raw !== 'string' || !raw.startsWith('/') || raw.startsWith('//')) return '/bills'
   if (
-    raw === '/notifications' ||
-    raw === '/dashboard' ||
-    raw === '/bills' ||
-    raw.startsWith('/bills/') ||
-    raw.startsWith('/cards/') ||
-    OPPORTUNITY_ALLOWED_URLS.has(raw)
+    EXACT_ALLOWED_URLS.has(raw) ||
+    OPPORTUNITY_ALLOWED_URLS.has(raw) ||
+    ALLOWED_PREFIXES.some((prefix) => raw.startsWith(prefix))
   ) {
     return raw
   }

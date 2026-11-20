@@ -23,6 +23,7 @@ import {
   computeMetrics,
   countCardsByHolder,
   formatMoney,
+  payableRemaining,
 } from "@/lib/dashboard-metrics";
 import { useUserPreferences } from "@/lib/hooks/useUserPreferences";
 import { fetchRates, type FxRates } from "@/lib/fx";
@@ -96,6 +97,7 @@ export default function DashboardPage() {
   // 一键还款与 Toast 状态
   const [payAllOpen, setPayAllOpen] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [payingPayableId, setPayingPayableId] = useState<string | null>(null);
   const [toast, setToast] = useState<{
     open: boolean;
     message: string;
@@ -119,8 +121,19 @@ export default function DashboardPage() {
       const [holderList, allBills, payableList, unreadCount] = await Promise.all([
         getHolders(user.id),
         getBillDashboardItems(200, user.id),
-        getRecurringPayables(user.id).catch(() => []),
-        getUnreadNotificationCount().catch(() => 0),
+        getRecurringPayables(user.id).catch((err) => {
+          console.warn("[dashboard] Failed to load recurring payables:", err);
+          setToast({
+            open: true,
+            message: "固定支出加载失败，当日待还金额暂不含固定支出",
+            severity: "info",
+          });
+          return [];
+        }),
+        getUnreadNotificationCount().catch((err) => {
+          console.warn("[dashboard] Failed to load unread notification count:", err);
+          return 0;
+        }),
       ]);
       holderList.sort((a, b) => a.created_at.localeCompare(b.created_at));
       const holderIds = holderList.map((h) => h.id);
@@ -216,22 +229,26 @@ export default function DashboardPage() {
 
   const handlePayPayable = async (e: React.MouseEvent, payable: PayableWithStatus) => {
     e.stopPropagation();
+    if (payingPayableId === payable.id) return;
+    const remaining = payableRemaining(payable);
+    if (remaining <= 0) return;
+    setPayingPayableId(payable.id);
     try {
-      const remaining = Math.max(0, Number(payable.amount) - Number(payable.paid_amount));
-      if (remaining <= 0) return;
       await payRecurringPayable(payable.id, remaining);
       setToast({
         open: true,
         message: `🎉 已登记 ${payable.name} 本期付款（${formatMoney(remaining, payable.currency || displayCurrency)}）！`,
         severity: "success",
       });
-      loadData();
+      await loadData();
     } catch (err) {
       setToast({
         open: true,
         message: "登记付款失败: " + (err instanceof Error ? err.message : String(err)),
         severity: "error",
       });
+    } finally {
+      setPayingPayableId((curr) => (curr === payable.id ? null : curr));
     }
   };
 
@@ -393,9 +410,9 @@ export default function DashboardPage() {
         onTogglePrivacy={togglePrivacyMode}
         amountClass={amountClass}
         displayCurrency={displayCurrency}
-        visibleBills={visibleBills}
         onPaySingle={handlePaySingle}
         onPayPayable={handlePayPayable}
+        payingPayableId={payingPayableId}
         onPayAllOpen={openPayAllConfirm}
         onNavBills={goToBills}
         onNavPromos={goToPromos}

@@ -116,4 +116,16 @@ extension PushNotificationManager: UNUserNotificationCenterDelegate {
     ) {
         completionHandler([.banner, .badge, .sound, .list])
     }
+
+    public nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let rawUrl = (response.notification.request.content.userInfo["url"] as? String) ?? "/notifications"
+        Task { @MainActor in
+            PushNotificationManager.shared.appState?.handleNotificationRoute(rawUrl)
+        }
+        completionHandler()
+    }
 }

@@ -3,10 +3,12 @@ import WorldCreditCore
 
 struct NotificationsCenterView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
     @State private var filter: String = "all"
     @State private var selectedNotification: UserNotificationItem?
     @State private var showingDeleteAllConfirm = false
     @State private var actionError: String?
+    @State private var hasSyncedToday = false
 
     var body: some View {
         List {
@@ -72,6 +74,25 @@ struct NotificationsCenterView: View {
                             }
                         }
                     }
+
+                    if appState.hasMoreNotifications {
+                        Button {
+                            Task { await appState.loadMoreNotifications() }
+                        } label: {
+                            HStack {
+                                Spacer()
+                                if appState.isLoadingMoreNotifications {
+                                    ProgressView()
+                                        .padding(.trailing, 6)
+                                    Text("正在加载更多…")
+                                } else {
+                                    Text("加载更多")
+                                }
+                                Spacer()
+                            }
+                        }
+                        .disabled(appState.isLoadingMoreNotifications)
+                    }
                 }
             } header: {
                 if appState.totalNotificationCount > 0 {
@@ -108,10 +129,15 @@ struct NotificationsCenterView: View {
             }
         }
         .refreshable {
-            await appState.loadNotifications(filter: filter)
+            hasSyncedToday = true
+            await appState.loadNotifications(filter: filter, syncToday: true)
         }
         .task(id: filter) {
-            await appState.loadNotifications(filter: filter)
+            let shouldSync = !hasSyncedToday
+            await appState.loadNotifications(filter: filter, syncToday: shouldSync)
+            if appState.notificationsError == nil {
+                hasSyncedToday = true
+            }
         }
         .sheet(item: $selectedNotification) { item in
             notificationDetailSheet(item)
@@ -252,6 +278,22 @@ struct NotificationsCenterView: View {
                 }
 
                 Section {
+                    if let targetUrl = item.targetUrl,
+                       targetUrl.hasPrefix("/"),
+                       !targetUrl.hasPrefix("//") {
+                        Button {
+                            selectedNotification = nil
+                            appState.handleNotificationRoute(targetUrl)
+                            let cleanPath = targetUrl
+                                .split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first
+                                .map(String.init) ?? targetUrl
+                            if cleanPath != "/notifications" {
+                                dismiss()
+                            }
+                        } label: {
+                            Label("前往查看", systemImage: "arrow.up.right.square")
+                        }
+                    }
                     if item.isUnread {
                         Button("标记为已读") {
                             Task {
@@ -292,7 +334,7 @@ struct NotificationsCenterView: View {
         do {
             try await appState.markNotificationRead(id)
             if filter == "unread" {
-                await appState.loadNotifications(filter: "unread")
+                await appState.loadNotifications(filter: "unread", syncToday: false)
             }
         } catch {
             actionError = "标记已读失败：\(error.localizedDescription)"
@@ -304,7 +346,7 @@ struct NotificationsCenterView: View {
         do {
             try await appState.markAllNotificationsRead()
             if filter == "unread" {
-                await appState.loadNotifications(filter: "unread")
+                await appState.loadNotifications(filter: "unread", syncToday: false)
             }
         } catch {
             actionError = "全部已读失败：\(error.localizedDescription)"

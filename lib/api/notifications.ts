@@ -15,12 +15,19 @@ export function getNotifications(options?: Server.GetNotificationsOptions) {
   return callRpc<typeof Server.getNotifications>('notifications', 'getNotifications', '', options)
 }
 
-export function getUnreadNotificationCount() {
-  return callRpc<typeof Server.getUnreadNotificationCount>(
-    'notifications',
-    'getUnreadNotificationCount',
-    ''
-  )
+export function getUnreadNotificationCount(syncToday?: boolean) {
+  return syncToday === undefined
+    ? callRpc<typeof Server.getUnreadNotificationCount>(
+        'notifications',
+        'getUnreadNotificationCount',
+        ''
+      )
+    : callRpc<typeof Server.getUnreadNotificationCount>(
+        'notifications',
+        'getUnreadNotificationCount',
+        '',
+        syncToday
+      )
 }
 
 export function markNotificationRead(notificationId: string) {
