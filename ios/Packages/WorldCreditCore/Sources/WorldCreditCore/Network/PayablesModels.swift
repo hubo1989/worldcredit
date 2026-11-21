@@ -21,6 +21,23 @@ public enum PayableStatus: String, Codable, Sendable {
     case unpaid, paid, overdue
 }
 
+/// 固定支出周期（对齐 Web `lib/api/payables.shared.ts` 的 `PayableCycleType`）。
+public enum PayableCycleType: String, Codable, Sendable, CaseIterable, Identifiable {
+    case monthly
+    case everyNMonths = "every_n_months"
+    case yearly
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .monthly: return "每月"
+        case .everyNMonths: return "每 X 月"
+        case .yearly: return "每年"
+        }
+    }
+}
+
 /// 周期应付的封闭币种集（与 Web `lib/api/payables.shared.ts` 及 `shared/fixtures/payable-currencies.json` 三方对齐）。
 /// 存量记录里的 `PayableItem.currency` 仍保持 `String`，以便原样透传历史未知币种（如 EUR），绝不静默当成 CNY。
 public enum PayableCurrency: String, Codable, Sendable, CaseIterable, Identifiable {
@@ -96,9 +113,14 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
     public let createdBy: String
     public let name: String
     public let category: PayableCategory
+    public let customCategory: String?
     public let amount: Double
     public let currency: String
     public let dueDay: Int
+    public let cycleType: PayableCycleType
+    public let cycleMonths: Int
+    public let dueMonth: Int?
+    public let anchorPeriod: String?
     public let holderId: String?
     /// 归属银行名称；nil = 非银行，账单页筛选时单列一个桶。
     public let bankName: String?
@@ -130,15 +152,25 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
         dueDate: String,
         daysUntilDue: Int,
         paidAmount: Double,
-        status: PayableStatus
+        status: PayableStatus,
+        customCategory: String? = nil,
+        cycleType: PayableCycleType = .monthly,
+        cycleMonths: Int = 1,
+        dueMonth: Int? = nil,
+        anchorPeriod: String? = nil
     ) {
         self.id = id
         self.createdBy = createdBy
         self.name = name
         self.category = category
+        self.customCategory = customCategory
         self.amount = amount
         self.currency = currency
         self.dueDay = dueDay
+        self.cycleType = cycleType
+        self.cycleMonths = cycleMonths
+        self.dueMonth = dueMonth
+        self.anchorPeriod = anchorPeriod
         self.holderId = holderId
         self.bankName = bankName
         self.note = note
@@ -150,11 +182,41 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
         self.status = status
     }
 
+    public init(from decoder: Decoder) throws {
+        let row = try decoder.container(keyedBy: CodingKeys.self)
+        id = try row.decode(String.self, forKey: .id)
+        createdBy = try row.decode(String.self, forKey: .createdBy)
+        name = try row.decode(String.self, forKey: .name)
+        category = try row.decode(PayableCategory.self, forKey: .category)
+        customCategory = try row.decodeIfPresent(String.self, forKey: .customCategory)
+        amount = try row.decode(Double.self, forKey: .amount)
+        currency = try row.decode(String.self, forKey: .currency)
+        dueDay = try row.decode(Int.self, forKey: .dueDay)
+        cycleType = try row.decodeIfPresent(PayableCycleType.self, forKey: .cycleType) ?? .monthly
+        cycleMonths = try row.decodeIfPresent(Int.self, forKey: .cycleMonths) ?? 1
+        dueMonth = try row.decodeIfPresent(Int.self, forKey: .dueMonth)
+        anchorPeriod = try row.decodeIfPresent(String.self, forKey: .anchorPeriod)
+        holderId = try row.decodeIfPresent(String.self, forKey: .holderId)
+        bankName = try row.decodeIfPresent(String.self, forKey: .bankName)
+        note = try row.decodeIfPresent(String.self, forKey: .note)
+        bankAccount = try row.decodeIfPresent(String.self, forKey: .bankAccount)
+        period = try row.decode(String.self, forKey: .period)
+        dueDate = try row.decode(String.self, forKey: .dueDate)
+        daysUntilDue = try row.decode(Int.self, forKey: .daysUntilDue)
+        paidAmount = try row.decode(Double.self, forKey: .paidAmount)
+        status = try row.decode(PayableStatus.self, forKey: .status)
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case createdBy = "created_by"
         case name, category, amount, currency
+        case customCategory = "custom_category"
         case dueDay = "due_day"
+        case cycleType = "cycle_type"
+        case cycleMonths = "cycle_months"
+        case dueMonth = "due_month"
+        case anchorPeriod = "anchor_period"
         case holderId = "holder_id"
         case bankName = "bank_name"
         case note
@@ -164,6 +226,31 @@ public struct PayableItem: Codable, Equatable, Identifiable, Sendable {
         case daysUntilDue = "days_until_due"
         case paidAmount = "paid_amount"
         case status
+    }
+
+    public var categoryDisplayLabel: String {
+        if let customCategory {
+            let trimmed = customCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return category.label
+    }
+
+    public var cycleDisplayLabel: String {
+        switch cycleType {
+        case .monthly:
+            return "每月 \(dueDay) 日"
+        case .everyNMonths:
+            return "每 \(max(2, cycleMonths)) 个月 · \(dueDay) 日"
+        case .yearly:
+            let monthFromAnchor: Int? = anchorPeriod.flatMap { period in
+                let parts = period.split(separator: "-")
+                guard parts.count == 2 else { return nil }
+                return Int(parts[1])
+            }
+            let month = dueMonth ?? monthFromAnchor ?? 1
+            return "每年 \(month) 月 \(dueDay) 日"
+        }
     }
 
     public var remainingAmount: Double {
@@ -231,9 +318,14 @@ public struct PayablePaymentRecord: Codable, Sendable, Identifiable, Hashable {
 public struct PayableDraft: Codable, Equatable, Sendable {
     public var name: String
     public var category: PayableCategory
+    public var customCategory: String?
     public var amount: Double
     public var currency: String
     public var dueDay: Int
+    public var cycleType: PayableCycleType?
+    public var cycleMonths: Int?
+    public var dueMonth: Int?
+    public var anchorPeriod: String?
     public var holderId: String?
     public var bankName: String?
     public var note: String?
@@ -241,8 +333,14 @@ public struct PayableDraft: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case name, category, amount, currency
+        case customCategory = "custom_category"
         case dueDay = "due_day"
+        case cycleType = "cycle_type"
+        case cycleMonths = "cycle_months"
+        case dueMonth = "due_month"
+        case anchorPeriod = "anchor_period"
         case holderId = "holder_id"
+        case bankName = "bank_name"
         case note
         case bankAccount = "bank_account"
     }
@@ -256,13 +354,23 @@ public struct PayableDraft: Codable, Equatable, Sendable {
         holderId: String? = nil,
         bankName: String? = nil,
         note: String? = nil,
-        bankAccount: String? = nil
+        bankAccount: String? = nil,
+        customCategory: String? = nil,
+        cycleType: PayableCycleType? = nil,
+        cycleMonths: Int? = nil,
+        dueMonth: Int? = nil,
+        anchorPeriod: String? = nil
     ) {
         self.name = name
         self.category = category
+        self.customCategory = customCategory
         self.amount = amount
         self.currency = currency
         self.dueDay = dueDay
+        self.cycleType = cycleType
+        self.cycleMonths = cycleMonths
+        self.dueMonth = dueMonth
+        self.anchorPeriod = anchorPeriod
         self.holderId = holderId
         self.bankName = bankName
         self.note = note

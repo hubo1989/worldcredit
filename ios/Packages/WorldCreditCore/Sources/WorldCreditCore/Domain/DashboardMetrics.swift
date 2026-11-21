@@ -253,8 +253,8 @@ public struct DashboardMetrics: Equatable, Sendable {
         // 卡产品币种就是额度币种，缺产品时按目标币种计。
         let limitSum = DashboardFx.sumByCurrency(
             visibleCards
-                .filter { $0.card.status == "active" && $0.card.creditLimit > 0 }
-                .map { ($0.card.creditLimit, $0.product?.currency ?? displayCurrency) },
+                .filter { $0.card.status == "active" && $0.card.effectiveCreditLimit > 0 }
+                .map { ($0.card.effectiveCreditLimit, $0.product?.currency ?? displayCurrency) },
             target: displayCurrency,
             rates: rates
         )

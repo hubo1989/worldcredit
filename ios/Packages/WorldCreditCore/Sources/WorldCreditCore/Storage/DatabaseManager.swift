@@ -77,8 +77,7 @@ public final class DatabaseManager: @unchecked Sendable {
 
     /// Clears account-scoped rows, queued mutations and sync state on logout.
     ///
-    /// 这是登出防跨账号数据泄漏的最后防线，必须覆盖全部业务表
-    /// （banks/card_products/card_holders/credit_cards/bills/payments）、
+    /// 这是登出防跨账号数据泄漏的最后防线，必须覆盖全部 15 张业务表、
     /// mutation_outbox 与 sync_meta 整表（含 sync_cursor、sync_retry_after_%、
     /// sync_reconcile_targets 及任何未来新增键）。
     ///
@@ -86,16 +85,26 @@ public final class DatabaseManager: @unchecked Sendable {
     /// 1) 登出后沿用同一 clientId 会让服务端把同一设备跨账号关联（隐私泄漏面）；
     /// 2) mutation_outbox 已清空，不存在需要同一 clientId 续传的未确认操作；
     /// 3) 下次 SyncEngine 启动会自动生成新 id（见 SyncEngine.init）。
-    /// 删除顺序遵循外键约束：payments → bills → credit_cards（card_product_id
-    /// 为 ON DELETE RESTRICT，必须先于 card_products 删除）→ card_holders →
-    /// card_products → banks。
+    /// 删除顺序遵循外键约束：bill_card_subtotals → payments → bills → credit_cards →
+    /// credit_accounts → recurring_payable_payments → recurring_payables →
+    /// payable_custom_categories → user_preferences → notification_preferences →
+    /// card_holders → benefits → promos → card_products → banks → mutation_outbox → sync_meta。
     public func clearUserData() async throws {
         try await dbWriter.write { db in
             try db.execute(sql: """
+                DELETE FROM bill_card_subtotals;
                 DELETE FROM payments;
                 DELETE FROM bills;
                 DELETE FROM credit_cards;
+                DELETE FROM credit_accounts;
+                DELETE FROM recurring_payable_payments;
+                DELETE FROM recurring_payables;
+                DELETE FROM payable_custom_categories;
+                DELETE FROM user_preferences;
+                DELETE FROM notification_preferences;
                 DELETE FROM card_holders;
+                DELETE FROM benefits;
+                DELETE FROM promos;
                 DELETE FROM card_products;
                 DELETE FROM banks;
                 DELETE FROM mutation_outbox;
@@ -207,6 +216,183 @@ public final class DatabaseManager: @unchecked Sendable {
                 retry_count INTEGER NOT NULL DEFAULT 0,
                 last_error TEXT
             );
+            """)
+        }
+
+        migrator.registerMigration("v2_syncable_parity") { db in
+            try db.execute(sql: """
+            -- 1. Extend existing v1 tables to parity with D1 schema
+            ALTER TABLE banks ADD COLUMN full_name TEXT;
+            ALTER TABLE banks ADD COLUMN country TEXT NOT NULL DEFAULT 'CN';
+            ALTER TABLE banks ADD COLUMN customer_service_phone TEXT;
+            ALTER TABLE banks ADD COLUMN website_url TEXT;
+            ALTER TABLE banks ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE banks ADD COLUMN created_at TEXT;
+            UPDATE banks SET customer_service_phone = tel
+                WHERE customer_service_phone IS NULL AND tel IS NOT NULL;
+
+            ALTER TABLE card_products ADD COLUMN country TEXT NOT NULL DEFAULT 'CN';
+            ALTER TABLE card_products ADD COLUMN card_image_id TEXT;
+            ALTER TABLE card_products ADD COLUMN description_md TEXT;
+            ALTER TABLE card_products ADD COLUMN apply_url TEXT;
+            ALTER TABLE card_products ADD COLUMN rewards_summary TEXT;
+            ALTER TABLE card_products ADD COLUMN annual_fee_waiver TEXT;
+            ALTER TABLE card_products ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE card_products ADD COLUMN created_at TEXT;
+            UPDATE card_products SET card_image_id = card_art_url
+                WHERE card_image_id IS NULL AND card_art_url IS NOT NULL;
+
+            ALTER TABLE credit_cards ADD COLUMN account_id TEXT;
+            ALTER TABLE credit_cards ADD COLUMN credit_limit_override REAL;
+            ALTER TABLE credit_cards ADD COLUMN issued_on TEXT;
+            ALTER TABLE credit_cards ADD COLUMN activated_on TEXT;
+            CREATE INDEX IF NOT EXISTS idx_credit_cards_account ON credit_cards(account_id);
+
+            ALTER TABLE bills ADD COLUMN account_id TEXT;
+            ALTER TABLE bills ADD COLUMN min_payment_override REAL;
+            ALTER TABLE bills ADD COLUMN due_date_override TEXT;
+            ALTER TABLE bills ADD COLUMN statement_date_override TEXT;
+            ALTER TABLE bills ADD COLUMN statement_start_override TEXT;
+            ALTER TABLE bills ADD COLUMN statement_end_override TEXT;
+            CREATE INDEX IF NOT EXISTS idx_bills_account ON bills(account_id);
+
+            -- 2. Create the remaining 9 SYNCABLE_TABLES
+            CREATE TABLE IF NOT EXISTS credit_accounts (
+                id TEXT PRIMARY KEY,
+                holder_id TEXT NOT NULL REFERENCES card_holders(id) ON DELETE CASCADE,
+                bank_id TEXT REFERENCES banks(id) ON DELETE SET NULL,
+                bank_name TEXT NOT NULL DEFAULT '',
+                currency TEXT NOT NULL DEFAULT 'CNY',
+                account_tail TEXT,
+                statement_mode TEXT NOT NULL DEFAULT 'independent',
+                quota_mode TEXT NOT NULL DEFAULT 'independent',
+                shared_credit_limit REAL,
+                billing_day INTEGER,
+                due_type TEXT DEFAULT 'after_billing',
+                due_value INTEGER DEFAULT 20,
+                primary_card_id TEXT,
+                label TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_credit_accounts_holder_bank
+                ON credit_accounts(holder_id, bank_id, bank_name, currency);
+            CREATE INDEX IF NOT EXISTS idx_credit_accounts_primary_card
+                ON credit_accounts(primary_card_id);
+
+            CREATE TABLE IF NOT EXISTS bill_card_subtotals (
+                id TEXT PRIMARY KEY,
+                bill_id TEXT NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
+                card_id TEXT,
+                card_tail TEXT NOT NULL,
+                subtotal_amount REAL NOT NULL,
+                currency TEXT DEFAULT 'CNY',
+                source TEXT NOT NULL DEFAULT 'email',
+                created_at TEXT NOT NULL DEFAULT '',
+                UNIQUE(bill_id, card_tail)
+            );
+            CREATE INDEX IF NOT EXISTS idx_bill_card_subtotals_bill ON bill_card_subtotals(bill_id);
+            CREATE INDEX IF NOT EXISTS idx_bill_card_subtotals_card ON bill_card_subtotals(card_id);
+
+            CREATE TABLE IF NOT EXISTS benefits (
+                id TEXT PRIMARY KEY,
+                card_product_id TEXT NOT NULL REFERENCES card_products(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                description TEXT,
+                quota INTEGER NOT NULL DEFAULT 1,
+                period TEXT NOT NULL DEFAULT 'yearly',
+                reset_month INTEGER,
+                expiry_date TEXT,
+                created_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_benefits_product ON benefits(card_product_id);
+
+            CREATE TABLE IF NOT EXISTS promos (
+                id TEXT PRIMARY KEY,
+                card_product_id TEXT REFERENCES card_products(id) ON DELETE SET NULL,
+                bank_id TEXT REFERENCES banks(id) ON DELETE SET NULL,
+                bank_name TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL,
+                description TEXT,
+                discount_type TEXT,
+                start_date TEXT,
+                end_date TEXT,
+                conditions TEXT,
+                max_uses INTEGER,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_promos_product ON promos(card_product_id);
+            CREATE INDEX IF NOT EXISTS idx_promos_bank ON promos(bank_id);
+
+            CREATE TABLE IF NOT EXISTS user_preferences (
+                id TEXT,
+                user_id TEXT PRIMARY KEY,
+                display_config TEXT NOT NULL DEFAULT '{"privacy_mode":false,"show_min_payment":true,"show_statement_date":true,"show_annual_fee":true,"show_card_last4":true,"default_currency":"CNY"}',
+                reminder_config TEXT NOT NULL DEFAULT '{"remind_days_before":[3,1,0],"quiet_hours_start":"22:00","quiet_hours_end":"08:00","enabled_channels":["web_push"]}',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS notification_preferences (
+                user_id TEXT PRIMARY KEY,
+                bill_due_enabled INTEGER NOT NULL DEFAULT 1,
+                overdue_enabled INTEGER NOT NULL DEFAULT 1,
+                due_days_before INTEGER NOT NULL DEFAULT 3,
+                notify_time TEXT NOT NULL DEFAULT '09:00',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS recurring_payables (
+                id TEXT PRIMARY KEY,
+                created_by TEXT NOT NULL,
+                name TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'other',
+                custom_category TEXT,
+                amount REAL NOT NULL DEFAULT 0,
+                currency TEXT NOT NULL DEFAULT 'CNY',
+                due_day INTEGER NOT NULL,
+                cycle_type TEXT NOT NULL DEFAULT 'monthly',
+                cycle_months INTEGER NOT NULL DEFAULT 1,
+                due_month INTEGER,
+                anchor_period TEXT,
+                holder_id TEXT,
+                bank_name TEXT,
+                bank_account TEXT,
+                note TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_recurring_payables_user
+                ON recurring_payables(created_by, is_active);
+
+            CREATE TABLE IF NOT EXISTS recurring_payable_payments (
+                id TEXT PRIMARY KEY,
+                payable_id TEXT NOT NULL REFERENCES recurring_payables(id) ON DELETE CASCADE,
+                period TEXT NOT NULL,
+                amount REAL NOT NULL,
+                paid_at TEXT NOT NULL,
+                note TEXT,
+                created_at TEXT NOT NULL DEFAULT '',
+                UNIQUE(payable_id, period)
+            );
+            CREATE INDEX IF NOT EXISTS idx_recurring_payments_payable
+                ON recurring_payable_payments(payable_id, period);
+
+            CREATE TABLE IF NOT EXISTS payable_custom_categories (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                normalized_name TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT '',
+                UNIQUE(user_id, normalized_name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_payable_custom_categories_user
+                ON payable_custom_categories(user_id, created_at);
+
+            -- 3. Reset sync cursor if present so upgraded clients backfill all 15 tables & new columns.
+            UPDATE sync_meta SET value = '0' WHERE key = 'sync_cursor';
             """)
         }
 

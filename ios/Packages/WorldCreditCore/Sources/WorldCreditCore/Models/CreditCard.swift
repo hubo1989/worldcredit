@@ -1,14 +1,16 @@
 import Foundation
 import GRDB
 
-public struct CreditCard: Codable, FetchableRecord, TableRecord, PersistableRecord, Sendable, Identifiable {
+public struct CreditCard: Codable, FetchableRecord, TableRecord, PersistableRecord, Sendable, Identifiable, Equatable {
     public static let databaseTableName = "credit_cards"
 
     public var id: String
     public var holderId: String
+    public var accountId: String?
     public var cardProductId: String
     public var cardNumberLast4: String?
     public var creditLimit: Double
+    public var creditLimitOverride: Double?
     public var billingDay: Int
     public var status: String
     public var cardType: String
@@ -19,7 +21,13 @@ public struct CreditCard: Codable, FetchableRecord, TableRecord, PersistableReco
     public var nameOverride: String?
     public var annualFeeOverride: Double?
     public var accountModeOverride: String?
+    public var issuedOn: String?
+    public var activatedOn: String?
     public var createdAt: String
+
+    public var effectiveCreditLimit: Double {
+        creditLimitOverride ?? creditLimit
+    }
 
     public init(
         id: String,
@@ -37,10 +45,15 @@ public struct CreditCard: Codable, FetchableRecord, TableRecord, PersistableReco
         nameOverride: String? = nil,
         annualFeeOverride: Double? = nil,
         accountModeOverride: String? = nil,
-        createdAt: String = ISO8601DateFormatter().string(from: Date())
+        createdAt: String = ISO8601DateFormatter().string(from: Date()),
+        accountId: String? = nil,
+        creditLimitOverride: Double? = nil,
+        issuedOn: String? = nil,
+        activatedOn: String? = nil
     ) {
         self.id = id
         self.holderId = holderId
+        self.accountId = accountId
         self.cardProductId = cardProductId
         self.billingDay = billingDay
         self.overrideBillingDay = overrideBillingDay
@@ -48,21 +61,50 @@ public struct CreditCard: Codable, FetchableRecord, TableRecord, PersistableReco
         self.overrideDueValue = overrideDueValue
         self.cardNumberLast4 = cardNumberLast4
         self.creditLimit = creditLimit
+        self.creditLimitOverride = creditLimitOverride
         self.status = status
         self.cardType = cardType
         self.loanDueDay = loanDueDay
         self.nameOverride = nameOverride
         self.annualFeeOverride = annualFeeOverride
         self.accountModeOverride = accountModeOverride
+        self.issuedOn = issuedOn
+        self.activatedOn = activatedOn
         self.createdAt = createdAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let row = try decoder.container(keyedBy: CodingKeys.self)
+        id = try row.decode(String.self, forKey: .id)
+        holderId = try row.decode(String.self, forKey: .holderId)
+        accountId = try row.decodeIfPresent(String.self, forKey: .accountId)
+        cardProductId = try row.decode(String.self, forKey: .cardProductId)
+        cardNumberLast4 = try row.decodeIfPresent(String.self, forKey: .cardNumberLast4)
+        creditLimit = try row.decodeIfPresent(Double.self, forKey: .creditLimit) ?? 0
+        creditLimitOverride = try row.decodeIfPresent(Double.self, forKey: .creditLimitOverride)
+        billingDay = try row.decode(Int.self, forKey: .billingDay)
+        status = try row.decodeIfPresent(String.self, forKey: .status) ?? "active"
+        cardType = try row.decodeIfPresent(String.self, forKey: .cardType) ?? "credit"
+        loanDueDay = try row.decodeIfPresent(Int.self, forKey: .loanDueDay)
+        overrideBillingDay = try row.decodeIfPresent(Int.self, forKey: .overrideBillingDay)
+        overrideDueType = try row.decodeIfPresent(PaymentDueType.self, forKey: .overrideDueType)
+        overrideDueValue = try row.decodeIfPresent(Int.self, forKey: .overrideDueValue)
+        nameOverride = try row.decodeIfPresent(String.self, forKey: .nameOverride)
+        annualFeeOverride = try row.decodeIfPresent(Double.self, forKey: .annualFeeOverride)
+        accountModeOverride = try row.decodeIfPresent(String.self, forKey: .accountModeOverride)
+        issuedOn = try row.decodeIfPresent(String.self, forKey: .issuedOn)
+        activatedOn = try row.decodeIfPresent(String.self, forKey: .activatedOn)
+        createdAt = try row.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
     }
 
     enum CodingKeys: String, CodingKey {
         case id
         case holderId = "holder_id"
+        case accountId = "account_id"
         case cardProductId = "card_product_id"
         case cardNumberLast4 = "card_number_last4"
         case creditLimit = "credit_limit"
+        case creditLimitOverride = "credit_limit_override"
         case billingDay = "billing_day"
         case status
         case cardType = "card_type"
@@ -73,6 +115,8 @@ public struct CreditCard: Codable, FetchableRecord, TableRecord, PersistableReco
         case nameOverride = "name_override"
         case annualFeeOverride = "annual_fee_override"
         case accountModeOverride = "account_mode_override"
+        case issuedOn = "issued_on"
+        case activatedOn = "activated_on"
         case createdAt = "created_at"
     }
 }

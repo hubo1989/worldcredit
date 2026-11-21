@@ -44,6 +44,13 @@ struct WorldCreditApp: App {
         appState.sessionIdentityCleanup = { GIDSignIn.sharedInstance.signOut() }
     }
 
+    private var shouldShowPrivacyShield: Bool {
+        scenePhase != .active
+            && appState.isLoggedIn
+            && (appState.isBiometricsEnabled || appState.displayConfig.privacyMode)
+            && !appState.isLocked
+    }
+
     var body: some Scene {
         WindowGroup {
             ZStack {
@@ -55,9 +62,16 @@ struct WorldCreditApp: App {
                         .environment(appState)
                         .transition(.opacity)
                 }
+
+                if shouldShowPrivacyShield {
+                    PrivacyShieldView()
+                        .transition(.opacity)
+                        .zIndex(100)
+                }
             }
             .preferredColorScheme(appState.themeMode == .light ? .light : (appState.themeMode == .dark ? .dark : nil))
             .animation(.easeInOut(duration: 0.25), value: appState.isLocked)
+            .animation(.easeInOut(duration: 0.2), value: shouldShowPrivacyShield)
             .onChange(of: appState.isLoggedIn) { _, isLoggedIn in
                 if isLoggedIn {
                     PushNotificationManager.shared.requestAuthorizationAndRegister()
@@ -97,5 +111,43 @@ struct WorldCreditApp: App {
                 }
             }
         }
+    }
+}
+
+/// 退入多任务切换/后台瞬间覆盖全屏防截屏隐私遮罩，回到前台平滑移除。
+private struct PrivacyShieldView: View {
+    var body: some View {
+        ZStack {
+            WCColors.canvas.opacity(0.65)
+                .ignoresSafeArea()
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .fill(WCColors.surface)
+                        .frame(width: 84, height: 84)
+                        .overlay(
+                            Circle()
+                                .stroke(WCColors.border, lineWidth: 1)
+                        )
+
+                    Image(systemName: "lock.shield.fill")
+                        .font(.system(size: 38))
+                        .foregroundStyle(Color(red: 0.85, green: 0.65, blue: 0.25))
+                }
+
+                Text("WorldCredit")
+                    .font(.title3.bold())
+                    .foregroundStyle(WCColors.textPrimary)
+
+                Text("隐私保护中 · 切回应用后恢复显示")
+                    .font(.footnote)
+                    .foregroundStyle(WCColors.textSecondary)
+            }
+        }
+        .accessibilityIdentifier("app.privacyShield")
     }
 }

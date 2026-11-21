@@ -45,15 +45,41 @@ describe('F5 设置页重设计 · 移动端 /settings 与 BottomNav', () => {
   const displayCard = read('components/settings/DisplayPreferencesCard.tsx')
   const gmailPanel = read('components/mobile/GmailConnectPanel.tsx')
 
-  it('BottomNav 落地 4 Tab 结构（首页 / 账单 / 卡片 / 我的）', () => {
+  it('BottomNav 落地 5 Tab 结构（首页 / 账单 / 账户 / 权益 / 我的）', () => {
     expect(bottomNav).toMatch(/\/dashboard/)
     expect(bottomNav).toMatch(/\/bills/)
-    expect(bottomNav).toMatch(/\/cards/)
+    expect(bottomNav).toMatch(/\/accounts/)
+    expect(bottomNav).toMatch(/\/benefits/)
     expect(bottomNav).toMatch(/\/settings/)
     expect(bottomNav).toContain('首页')
     expect(bottomNav).toContain('账单')
-    expect(bottomNav).toContain('卡片')
+    expect(bottomNav).toContain('账户')
+    expect(bottomNav).toContain('权益')
     expect(bottomNav).toContain('我的')
+    expect(bottomNav).not.toContain("label: '卡片'")
+  })
+
+  it('/cards 路由重定向至 /accounts', () => {
+    const cardsPage = read('app/(mobile)/cards/page.tsx')
+    expect(cardsPage).toContain("redirect('/accounts')")
+  })
+
+  it('/accounts 落地 3 分段（信用卡 / 贷款 / 持卡人）、双视图切换与 ObsidianUI 合规约束', () => {
+    const accountsPage = read('app/(mobile)/accounts/page.tsx')
+    expect(accountsPage).toContain('信用卡')
+    expect(accountsPage).toContain('贷款')
+    expect(accountsPage).toContain('持卡人')
+    expect(accountsPage).toContain('账户共享池视图')
+    expect(accountsPage).toContain('单卡视图')
+    expect(accountsPage).toContain('CardCreateModal')
+    expect(accountsPage).toContain('AccountMergeWizardModal')
+    expect(accountsPage).toContain('/cards/')
+    expect(accountsPage).toContain('/holders')
+    expect(accountsPage).not.toContain('@mui')
+    expect(accountsPage).not.toContain('window.confirm')
+    expect(accountsPage).not.toContain('window.alert')
+    expect(accountsPage).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+    expect(bottomNav).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
   })
 
   it('移动端消除硬编码渐变与色值', () => {

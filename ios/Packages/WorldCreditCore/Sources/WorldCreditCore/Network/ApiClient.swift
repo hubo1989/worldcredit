@@ -295,7 +295,50 @@ public final class ApiClient: @unchecked Sendable {
         return try await exchangeToken(payload)
     }
 
+    /// 注册新账号并请求签发移动端 Bearer token（`issue_token: true`）。
+    /// 若服务端返回未包含 token（兼容旧版），自动回退调用密码登录交换 token。
+    public func register(email: String, password: String, name: String? = nil) async throws -> TokenResponse {
+        let url = baseURL.appendingPathComponent("api/auth/register")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var body: [String: Any] = [
+            "email": email,
+            "password": password,
+            "issue_token": true,
+        ]
+        if let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body["name"] = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await session.data(for: req)
+        guard let httpRes = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        guard (200...299).contains(httpRes.statusCode) else {
+            let errJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let msg = (errJson?["error"] as? String) ?? "注册失败 (\(httpRes.statusCode))"
+            throw NSError(domain: "ApiClient", code: httpRes.statusCode, userInfo: [NSLocalizedDescriptionKey: msg])
+        }
+
+        if let tokenRes = try? JSONDecoder().decode(TokenResponse.self, from: data),
+           !tokenRes.token.isEmpty {
+            self.token = tokenRes.token
+            if let refresh = tokenRes.refreshToken {
+                storeRefreshToken(refresh)
+            }
+            return tokenRes
+        }
+
+        return try await performTokenExchange(["grant_type": "password", "email": email, "password": password])
+    }
+
     private func exchangeToken(_ body: [String: String]) async throws -> SessionUser {
+        try await performTokenExchange(body).user
+    }
+
+    private func performTokenExchange(_ body: [String: String]) async throws -> TokenResponse {
         let url = baseURL.appendingPathComponent("api/auth/token")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -317,7 +360,7 @@ public final class ApiClient: @unchecked Sendable {
         if let refresh = tokenRes.refreshToken {
             storeRefreshToken(refresh)
         }
-        return tokenRes.user
+        return tokenRes
     }
 
     /// 登出吊销：凭 refresh_token 吊销本设备凭据（会话失效时服务端也接受）。
@@ -402,7 +445,17 @@ public final class ApiClient: @unchecked Sendable {
     /// Calls a named RPC and unwraps its {data,error} envelope. Does not mutate authentication.
     public func rpc<Value: Decodable & Sendable>(module: String, function: String,
                                                  args: [AnyCodable] = []) async throws -> Value {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_"))
+        let data = try await sendRPCRequest(module: module, function: function, args: args)
+        return try JSONDecoder().decode(RPCEnvelope<Value>.self, from: data).data
+    }
+
+    /// Calls a named RPC whose server implementation returns void/undefined/null.
+    public func rpcVoid(module: String, function: String, args: [AnyCodable] = []) async throws {
+        _ = try await sendRPCRequest(module: module, function: function, args: args)
+    }
+
+    private func sendRPCRequest(module: String, function: String, args: [AnyCodable]) async throws -> Data {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-"))
         guard [module, function].allSatisfy({ !$0.isEmpty && $0.unicodeScalars.allSatisfy(allowed.contains) }) else {
             throw URLError(.badURL)
         }
@@ -415,11 +468,317 @@ public final class ApiClient: @unchecked Sendable {
         if let error = failure.error {
             throw NSError(domain: "ApiClient", code: 500, userInfo: [NSLocalizedDescriptionKey: error])
         }
-        return try JSONDecoder().decode(RPCEnvelope<Value>.self, from: data).data
+        return data
     }
 
     private struct RPCErrorEnvelope: Decodable { let error: String? }
     private struct RPCEnvelope<Value: Decodable>: Decodable { let data: Value }
+
+    // MARK: - Phase 1 Online RPC Wrappers
+
+    public struct CreateBillSubtotalInput: Codable, Sendable, Equatable {
+        public var cardId: String?
+        public var cardTail: String
+        public var subtotalAmount: Double
+        public var currency: String?
+
+        public init(cardId: String? = nil, cardTail: String, subtotalAmount: Double, currency: String? = nil) {
+            self.cardId = cardId
+            self.cardTail = cardTail
+            self.subtotalAmount = subtotalAmount
+            self.currency = currency
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case cardId = "card_id"
+            case cardTail = "card_tail"
+            case subtotalAmount = "subtotal_amount"
+            case currency
+        }
+    }
+
+    public struct CreateBillInput: Codable, Sendable, Equatable {
+        public var cardId: String
+        public var accountId: String?
+        public var billMonth: String
+        public var statementStart: String?
+        public var statementEnd: String?
+        public var statementDate: String?
+        public var billAmount: Double
+        public var minPayment: Double?
+        public var dueDate: String
+        public var status: String
+        public var subtotals: [CreateBillSubtotalInput]?
+
+        public init(
+            cardId: String,
+            billMonth: String,
+            dueDate: String,
+            billAmount: Double,
+            minPayment: Double? = nil,
+            statementStart: String? = nil,
+            statementEnd: String? = nil,
+            statementDate: String? = nil,
+            accountId: String? = nil,
+            status: String = "unpaid",
+            subtotals: [CreateBillSubtotalInput]? = nil
+        ) {
+            self.cardId = cardId
+            self.accountId = accountId
+            self.billMonth = billMonth
+            self.statementStart = statementStart
+            self.statementEnd = statementEnd
+            self.statementDate = statementDate
+            self.billAmount = billAmount
+            self.minPayment = minPayment
+            self.dueDate = dueDate
+            self.status = status
+            self.subtotals = subtotals
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case cardId = "card_id"
+            case accountId = "account_id"
+            case billMonth = "bill_month"
+            case statementStart = "statement_start"
+            case statementEnd = "statement_end"
+            case statementDate = "statement_date"
+            case billAmount = "bill_amount"
+            case minPayment = "min_payment"
+            case dueDate = "due_date"
+            case status
+            case subtotals
+        }
+    }
+
+    public struct MergeAccountResult: Codable, Sendable, Equatable {
+        public let mergedCount: Int
+    }
+
+    public struct UpdateCreditAccountInput: Sendable, Equatable {
+        public var label: String?
+        public var clearLabel: Bool
+        public var sharedCreditLimit: Double?
+        public var clearSharedCreditLimit: Bool
+        public var billingDay: Int?
+        public var dueType: PaymentDueType?
+        public var clearDueType: Bool
+        public var dueValue: Int?
+        public var clearDueValue: Bool
+        public var statementMode: String?
+        public var quotaMode: String?
+
+        public init(
+            label: String? = nil,
+            clearLabel: Bool = false,
+            sharedCreditLimit: Double? = nil,
+            clearSharedCreditLimit: Bool = false,
+            billingDay: Int? = nil,
+            dueType: PaymentDueType? = nil,
+            clearDueType: Bool = false,
+            dueValue: Int? = nil,
+            clearDueValue: Bool = false,
+            statementMode: String? = nil,
+            quotaMode: String? = nil
+        ) {
+            self.label = label
+            self.clearLabel = clearLabel
+            self.sharedCreditLimit = sharedCreditLimit
+            self.clearSharedCreditLimit = clearSharedCreditLimit
+            self.billingDay = billingDay
+            self.dueType = dueType
+            self.clearDueType = clearDueType
+            self.dueValue = dueValue
+            self.clearDueValue = clearDueValue
+            self.statementMode = statementMode
+            self.quotaMode = quotaMode
+        }
+    }
+
+    private struct UserDisplayPreferencesEnvelope: Decodable {
+        let userId: String
+        let displayConfig: UserDisplayConfig
+
+        enum CodingKeys: String, CodingKey {
+            case userId = "user_id"
+            case displayConfig = "display_config"
+        }
+    }
+
+    @discardableResult
+    public func createBill(input: CreateBillInput) async throws -> Bill {
+        let payload = try encodeToAnyCodable(input)
+        return try await rpc(module: "bills", function: "createBill", args: [payload])
+    }
+
+    @discardableResult
+    public func createBill(
+        cardId: String,
+        billMonth: String,
+        dueDate: String,
+        billAmount: Double,
+        minPayment: Double? = nil,
+        statementStart: String? = nil,
+        statementEnd: String? = nil,
+        statementDate: String? = nil,
+        accountId: String? = nil,
+        status: String = "unpaid",
+        subtotals: [CreateBillSubtotalInput]? = nil
+    ) async throws -> Bill {
+        try await createBill(input: CreateBillInput(
+            cardId: cardId,
+            billMonth: billMonth,
+            dueDate: dueDate,
+            billAmount: billAmount,
+            minPayment: minPayment,
+            statementStart: statementStart,
+            statementEnd: statementEnd,
+            statementDate: statementDate,
+            accountId: accountId,
+            status: status,
+            subtotals: subtotals
+        ))
+    }
+
+    public func deleteBill(billId: String) async throws {
+        try await rpcVoid(module: "bills", function: "deleteBill", args: [AnyCodable(billId)])
+    }
+
+    @discardableResult
+    public func updatePayment(
+        paymentId: String,
+        amount: Double? = nil,
+        paidAt: String? = nil,
+        channel: String? = nil,
+        note: String? = nil,
+        clearChannel: Bool = false,
+        clearNote: Bool = false
+    ) async throws -> Payment {
+        var patch: [String: Any] = [:]
+        if let amount { patch["amount"] = amount }
+        if let paidAt { patch["paid_at"] = paidAt }
+        if clearChannel {
+            patch["channel"] = NSNull()
+        } else if let channel {
+            patch["channel"] = channel
+        }
+        if clearNote {
+            patch["note"] = NSNull()
+        } else if let note {
+            patch["note"] = note
+        }
+        return try await rpc(
+            module: "payments",
+            function: "updatePayment",
+            args: [AnyCodable(paymentId), AnyCodable(patch)]
+        )
+    }
+
+    public func deletePayment(paymentId: String) async throws {
+        try await rpcVoid(module: "payments", function: "deletePayment", args: [AnyCodable(paymentId)])
+    }
+
+    @discardableResult
+    public func mergeCardsIntoAccount(targetAccountId: String, cardIds: [String]) async throws -> MergeAccountResult {
+        try await rpc(
+            module: "accounts",
+            function: "mergeCardsIntoAccount",
+            args: [AnyCodable(targetAccountId), AnyCodable(cardIds)]
+        )
+    }
+
+    @discardableResult
+    public func splitCardFromAccount(cardId: String) async throws -> CreditAccount {
+        try await rpc(
+            module: "accounts",
+            function: "splitCardFromAccount",
+            args: [AnyCodable(cardId)]
+        )
+    }
+
+    @discardableResult
+    public func updateCreditAccount(
+        accountId: String,
+        input: UpdateCreditAccountInput
+    ) async throws -> CreditAccount {
+        var patch: [String: Any] = [:]
+        if input.clearLabel {
+            patch["label"] = NSNull()
+        } else if let label = input.label {
+            patch["label"] = label
+        }
+        if input.clearSharedCreditLimit {
+            patch["shared_credit_limit"] = NSNull()
+        } else if let sharedCreditLimit = input.sharedCreditLimit {
+            patch["shared_credit_limit"] = sharedCreditLimit
+        }
+        if let billingDay = input.billingDay {
+            patch["billing_day"] = billingDay
+        }
+        if input.clearDueType {
+            patch["due_type"] = NSNull()
+        } else if let dueType = input.dueType {
+            patch["due_type"] = dueType.rawValue
+        }
+        if input.clearDueValue {
+            patch["due_value"] = NSNull()
+        } else if let dueValue = input.dueValue {
+            patch["due_value"] = dueValue
+        }
+        if let statementMode = input.statementMode {
+            patch["statement_mode"] = statementMode
+        }
+        if let quotaMode = input.quotaMode {
+            patch["quota_mode"] = quotaMode
+        }
+        return try await rpc(
+            module: "accounts",
+            function: "updateCreditAccount",
+            args: [AnyCodable(accountId), AnyCodable(patch)]
+        )
+    }
+
+    @discardableResult
+    public func updateCreditAccount(
+        accountId: String,
+        label: String? = nil,
+        sharedCreditLimit: Double? = nil,
+        billingDay: Int? = nil,
+        dueType: PaymentDueType? = nil,
+        dueValue: Int? = nil,
+        statementMode: String? = nil,
+        quotaMode: String? = nil
+    ) async throws -> CreditAccount {
+        try await updateCreditAccount(
+            accountId: accountId,
+            input: UpdateCreditAccountInput(
+                label: label,
+                sharedCreditLimit: sharedCreditLimit,
+                billingDay: billingDay,
+                dueType: dueType,
+                dueValue: dueValue,
+                statementMode: statementMode,
+                quotaMode: quotaMode
+            )
+        )
+    }
+
+    @discardableResult
+    public func updateDisplayPreferences(_ config: UserDisplayConfig) async throws -> UserDisplayConfig {
+        let displayPayload = try encodeToAnyCodable(config)
+        let envelope: UserDisplayPreferencesEnvelope = try await rpc(
+            module: "preferences",
+            function: "updateUserPreferences",
+            args: [AnyCodable(""), AnyCodable(["display_config": displayPayload.value])]
+        )
+        return envelope.displayConfig
+    }
+
+    private func encodeToAnyCodable<T: Encodable>(_ value: T) throws -> AnyCodable {
+        let data = try JSONEncoder().encode(value)
+        let object = try JSONSerialization.jsonObject(with: data)
+        return AnyCodable(object)
+    }
 
     private func authenticatedRequest(path: String, method: String, timeoutInterval: TimeInterval = 20) throws -> URLRequest {
         // 默认 20s；确实耗时的慢端点（如 gmail/sync）在调用点显式传更长超时

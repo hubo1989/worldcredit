@@ -108,7 +108,8 @@ public final class NotificationScheduler: Sendable {
             if billDueAdvance { billOffsets.append(contentsOf: advanceDays) }
 
             for (bill, card, bank, totalPaid) in snapshot.billsWithCards {
-                guard let dueDate = df.date(from: bill.dueDate) else { continue }
+                let effectiveDueDate = bill.effectiveDueDate
+                guard let dueDate = df.date(from: effectiveDueDate) else { continue }
                 let remaining = bill.effectiveAmount - totalPaid
                 guard remaining > 0.01 else { continue }
                 let cardName = card.nameOverride ?? bank?.shortName ?? bank?.name ?? "信用卡"
@@ -128,7 +129,7 @@ public final class NotificationScheduler: Sendable {
                     } else {
                         identifier = "bill-\(daysBefore)d-\(bill.id)"
                         content.title = "还款提醒"
-                        content.body = "\(cardName)\(last4) 将在 \(daysBefore) 天后（\(bill.dueDate)）到期，剩余应还 ¥\(String(format: "%.2f", remaining))"
+                        content.body = "\(cardName)\(last4) 将在 \(daysBefore) 天后（\(effectiveDueDate)）到期，剩余应还 ¥\(String(format: "%.2f", remaining))"
                     }
                     content.sound = .default
                     let trigger = UNCalendarNotificationTrigger(dateMatching: comp, repeats: false)

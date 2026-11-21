@@ -26,7 +26,15 @@ const MAX_ID_LENGTH = 256;
 const OFFLINE_SYNC_MUTATIONS = new Set([
   "bills.recordPayment",
   "bills.setBillAmountOverride",
+  "bills.updateBillFields",
+  "bills.clearOverride",
   "cards.updateCard",
+  "payments.updatePayment",
+  "payables.createRecurringPayable",
+  "payables.updateRecurringPayable",
+  "notifications.markNotificationRead",
+  "notifications.markAllNotificationsRead",
+  "preferences.updateUserPreferences",
 ]);
 const inFlightByMutation = new Map<string, Promise<MutationResult>>();
 

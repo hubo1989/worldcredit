@@ -205,11 +205,11 @@ public final class WatchSnapshotManager: Sendable {
                 cardTitle: item.cardTitle,
                 last4: item.last4,
                 holderName: item.holderName,
-                dueDate: item.bill.dueDate,
-                statementDate: item.bill.statementDate,
+                dueDate: item.bill.effectiveDueDate,
+                statementDate: item.bill.effectiveStatementDate,
                 billAmount: item.bill.effectiveAmount,
                 remainingAmount: item.remainingAmount,
-                minPayment: item.bill.minPayment
+                minPayment: item.bill.effectiveMinPayment
             )
         }
 
@@ -225,7 +225,7 @@ public final class WatchSnapshotManager: Sendable {
                 cardTitle: item.displayName,
                 last4: item.last4,
                 holderName: item.holderName,
-                creditLimit: item.card.creditLimit,
+                creditLimit: item.card.effectiveCreditLimit,
                 billingDay: billingDay,
                 nextDueDate: df.string(from: item.nextDueDate),
                 unpaidAmount: item.remainingAmount,

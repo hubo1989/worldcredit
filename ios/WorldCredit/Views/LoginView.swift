@@ -9,6 +9,7 @@ struct LoginView: View {
     @State private var password: String = ""
     @State private var isLoading: Bool = false
     @State private var errorMessage: String?
+    @State private var showingRegisterSheet: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -100,6 +101,22 @@ struct LoginView: View {
                     }
                     .disabled(isLoading)
 
+                    Button {
+                        showingRegisterSheet = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("还没有账号？")
+                                .foregroundStyle(.secondary)
+                            Text("立即注册")
+                                .bold()
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .font(.footnote)
+                        .padding(.top, 4)
+                    }
+                    .disabled(isLoading)
+                    .accessibilityIdentifier("login.register")
+
                     Button("快速体验（演示账单数据）") {
                         Task {
                             await appState.loadDemoData()
@@ -107,7 +124,7 @@ struct LoginView: View {
                     }
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                    .padding(.top, 8)
+                    .padding(.top, 4)
                 }
                 .padding(.horizontal)
 
@@ -116,6 +133,9 @@ struct LoginView: View {
             }
             .padding()
             .background(Color(uiColor: .systemGroupedBackground))
+            .sheet(isPresented: $showingRegisterSheet) {
+                RegisterView()
+            }
         }
     }
 
@@ -132,8 +152,10 @@ struct LoginView: View {
         Task {
             do {
                 try await appState.login(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password)
+                HapticManager.success()
             } catch {
                 errorMessage = error.localizedDescription
+                HapticManager.error()
             }
             isLoading = false
         }
@@ -168,8 +190,10 @@ struct LoginView: View {
                     return
                 }
                 try await appState.loginWithGoogle(idToken: idToken)
+                HapticManager.success()
             } catch {
                 errorMessage = Self.friendlyGoogleError(error)
+                HapticManager.error()
             }
             isLoading = false
         }

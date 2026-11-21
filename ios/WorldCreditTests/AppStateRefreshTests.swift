@@ -1,4 +1,5 @@
 import XCTest
+import GRDB
 import WorldCreditCore
 @testable import WorldCredit
 
@@ -113,8 +114,8 @@ final class AppStateRefreshTests: XCTestCase {
     }
 
     func testLogoutCancelsPendingRefreshAndClearsLoadedDay() async throws {
-        var snapshots = 0
-        let fixture = try fixture(loggedIn: true) { _ in snapshots += 1 }
+        var sentSnapshots: [WatchSnapshot] = []
+        let fixture = try fixture(loggedIn: true) { snapshot in sentSnapshots.append(snapshot) }
         let state = fixture.state
         let gate = Gate()
         state.beforeLocalReload = { await gate.wait() }
@@ -125,13 +126,17 @@ final class AppStateRefreshTests: XCTestCase {
         await pending.value
         XCTAssertFalse(state.isLoggedIn)
         XCTAssertTrue(state.allBills.isEmpty)
-        XCTAssertEqual(snapshots, 0)
+        XCTAssertEqual(sentSnapshots.count, 1, "登出时仅允许发送一条清空手表的空快照")
+        XCTAssertTrue(sentSnapshots.allSatisfy { $0.bills.isEmpty && $0.totalDebt == 0 },
+                      "被取消的旧刷新不得向手表发送残留账单快照")
         state.apiClient.token = "next-token"
         state.isLoggedIn = true
         state.beforeLocalReload = nil
         await state.refreshForBusinessDayIfNeeded()
         XCTAssertNotNil(state.summary)
-        XCTAssertEqual(snapshots, 1)
+        XCTAssertEqual(state.summary?.totalDebt, 0)
+        XCTAssertEqual(sentSnapshots.count, 2)
+        XCTAssertEqual(sentSnapshots.last?.bills.count, 0)
     }
 
     func testForegroundAndDayEventJoinInitialLoad() async throws {
@@ -174,5 +179,152 @@ final class AppStateRefreshTests: XCTestCase {
         XCTAssertEqual(state.allBills.first?.isOverdue, true)
         let requests = await fixture.network.requests
         XCTAssertEqual(requests, 0)
+    }
+
+    func testFiveTabLaunchArgumentsAndNotificationRoutes() throws {
+        XCTAssertEqual(AppState.initialTab(for: ["WorldCredit"]), 0)
+        XCTAssertEqual(AppState.initialTab(for: ["WorldCredit", "--tab=bills"]), 1)
+        XCTAssertEqual(AppState.initialTab(for: ["WorldCredit", "--tab=accounts"]), 2)
+        XCTAssertEqual(AppState.initialTab(for: ["WorldCredit", "--tab=cards"]), 2)
+        XCTAssertEqual(AppState.initialTab(for: ["WorldCredit", "--tab=benefits"]), 3)
+        XCTAssertEqual(AppState.initialTab(for: ["WorldCredit", "--tab=mine"]), 4)
+        XCTAssertEqual(AppState.initialTab(for: ["WorldCredit", "--tab=settings"]), 4)
+
+        let fixture = try fixture(loggedIn: true)
+        let state = fixture.state
+
+        state.handleNotificationRoute("/accounts")
+        XCTAssertEqual(state.selectedTab, 2)
+        XCTAssertNil(state.pendingWebDestination)
+        XCTAssertFalse(state.pendingOpenNotifications)
+
+        state.handleNotificationRoute("/accounts/acc-1?source=push")
+        XCTAssertEqual(state.selectedTab, 2)
+
+        state.handleNotificationRoute("/cards")
+        XCTAssertEqual(state.selectedTab, 2)
+
+        state.handleNotificationRoute("/promos")
+        XCTAssertEqual(state.selectedTab, 3)
+        XCTAssertNil(state.pendingWebDestination)
+
+        state.handleNotificationRoute("/benefits")
+        XCTAssertEqual(state.selectedTab, 3)
+        XCTAssertNil(state.pendingWebDestination)
+
+        state.handleNotificationRoute("/benefits/calendar")
+        XCTAssertEqual(state.selectedTab, 3)
+        XCTAssertEqual(state.pendingWebDestination, .benefitCalendar)
+
+        state.handleNotificationRoute("/settings")
+        XCTAssertEqual(state.selectedTab, 4)
+        XCTAssertNil(state.pendingWebDestination)
+
+        state.handleNotificationRoute("/bills")
+        XCTAssertEqual(state.selectedTab, 1)
+
+        state.handleNotificationRoute("/dashboard")
+        XCTAssertEqual(state.selectedTab, 0)
+
+        // 非站内相对路径不得跳转
+        state.selectedTab = 2
+        state.handleNotificationRoute("https://evil.example/settings")
+        XCTAssertEqual(state.selectedTab, 2)
+        state.handleNotificationRoute("//evil.example/settings")
+        XCTAssertEqual(state.selectedTab, 2)
+    }
+
+    func testReloadDataReadsV2TablesAndLogoutClearsAllState() async throws {
+        let fixture = try fixture(loggedIn: true)
+        let state = fixture.state
+
+        try await state.dbManager.dbWriter.write { db in
+            let account = CreditAccount(
+                id: "acc-1",
+                holderId: "holder",
+                bankId: "bank",
+                bankName: "测试银行",
+                currency: "CNY",
+                statementMode: "merged",
+                quotaMode: "shared",
+                sharedCreditLimit: 50000,
+                billingDay: 10,
+                primaryCardId: "card",
+                label: "测试共享账户"
+            )
+            try account.save(db)
+            try db.execute(
+                sql: "UPDATE credit_cards SET account_id = 'acc-1' WHERE id = 'card'"
+            )
+
+            let promo = PromoRecord(
+                id: "promo-1",
+                cardProductId: "product",
+                bankId: "bank",
+                bankName: "测试银行",
+                title: "周三五折餐饮券",
+                description: "测试活动描述",
+                discountType: "折扣",
+                isActive: true
+            )
+            try promo.save(db)
+
+            let pref = try UserPreferenceRecord(
+                userId: "old-user",
+                displayConfig: UserDisplayConfig(
+                    privacyMode: false,
+                    showMinPayment: false,
+                    showStatementDate: false,
+                    showAnnualFee: false,
+                    showCardLast4: false,
+                    defaultCurrency: "USD"
+                )
+            )
+            try pref.save(db)
+        }
+
+        let reloaded = await state.reloadData()
+        XCTAssertTrue(reloaded)
+        XCTAssertEqual(state.creditAccountGroups.count, 1)
+        XCTAssertEqual(state.creditAccountGroups.first?.account.id, "acc-1")
+        XCTAssertEqual(state.creditAccountGroups.first?.creditLimit, 50000)
+        XCTAssertEqual(state.promos.map(\.id), ["promo-1"])
+        XCTAssertEqual(state.displayConfig, UserDisplayConfig(
+            privacyMode: false,
+            showMinPayment: false,
+            showStatementDate: false,
+            showAnnualFee: false,
+            showCardLast4: false,
+            defaultCurrency: "USD"
+        ))
+        XCTAssertFalse(state.dashboardPrivacy)
+        XCTAssertEqual(state.dashboardCurrency, "USD")
+
+        try await state.logout()
+        XCTAssertFalse(state.isLoggedIn)
+        XCTAssertNil(state.currentUser)
+        XCTAssertTrue(state.creditAccountGroups.isEmpty)
+        XCTAssertTrue(state.promos.isEmpty)
+        XCTAssertEqual(state.displayConfig, UserDisplayConfig())
+        XCTAssertTrue(state.dashboardPrivacy)
+        XCTAssertEqual(state.dashboardCurrency, "CNY")
+        XCTAssertTrue(state.allBills.isEmpty)
+        XCTAssertTrue(state.cards.isEmpty)
+        XCTAssertNil(state.summary)
+
+        let counts: (Int, Int, Int, Int, Int) = try await state.dbManager.dbWriter.read { db in
+            (
+                try CreditAccount.fetchCount(db),
+                try PromoRecord.fetchCount(db),
+                try UserPreferenceRecord.fetchCount(db),
+                try Bill.fetchCount(db),
+                try CreditCard.fetchCount(db)
+            )
+        }
+        XCTAssertEqual(counts.0, 0)
+        XCTAssertEqual(counts.1, 0)
+        XCTAssertEqual(counts.2, 0)
+        XCTAssertEqual(counts.3, 0)
+        XCTAssertEqual(counts.4, 0)
     }
 }
