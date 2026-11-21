@@ -3,6 +3,7 @@
 import { getDb } from '../db/client'
 import { ensureDailyNotificationsForUser } from '../notifications-engine.server'
 import type { NotificationCategory, UserNotificationItem } from '../types'
+import { parseIsoTimestampMs } from '../validation-patterns'
 import { RpcDomainError } from './errors'
 
 export interface GetNotificationsOptions {
@@ -151,14 +152,28 @@ export async function markNotificationRead(
   return { updated: changes > 0, unread_count }
 }
 
-export async function markAllNotificationsRead(userId: string): Promise<NotificationBulkReadResult> {
+export async function markAllNotificationsRead(
+  userId: string,
+  beforeIso?: string
+): Promise<NotificationBulkReadResult> {
   const nowIso = new Date().toISOString()
+  let cutoffSql = ''
+  const bindings: unknown[] = [nowIso, userId]
+  if (beforeIso !== undefined) {
+    const parsedMs = parseIsoTimestampMs(beforeIso)
+    if (parsedMs === null) {
+      throw new RpcDomainError('VALIDATION_FAILED', '无效的通知已读截止时间戳')
+    }
+    cutoffSql = ' AND julianday(sent_at) <= julianday(?)'
+    bindings.push(new Date(parsedMs).toISOString())
+  }
+
   const { changes, unread_count } = await softMutateNotifications(
     userId,
     `UPDATE notification_history
      SET read_at = COALESCE(read_at, ?)
-     WHERE user_id = ? AND deleted_at IS NULL AND read_at IS NULL`,
-    [nowIso, userId]
+     WHERE user_id = ? AND deleted_at IS NULL AND read_at IS NULL${cutoffSql}`,
+    bindings
   )
   return { updated_count: changes, unread_count }
 }

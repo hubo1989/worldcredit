@@ -8,14 +8,10 @@ struct ContentView: View {
     // 若每次渲染都新建 Binding(get:set:) 并直读 @Observable 状态，
     // 切 tab 会触发 set → 重渲染 → 新 Binding → TabView 重新协商 selection 的循环，
     // 主线程永不空闲（UI 测试表现为 wait-for-idle 挂起、弹窗检测超时）。
-    @State private var selectedTab: Int = {
-        if CommandLine.arguments.contains("--tab=bills") { return 1 }
-        if CommandLine.arguments.contains("--tab=cards") { return 2 }
-        if CommandLine.arguments.contains("--tab=settings") { return 3 }
-        return 0
-    }()
+    @State private var selectedTab: Int = AppState.initialTab(for: CommandLine.arguments)
 
     var body: some View {
+        @Bindable var bindableAppState = appState
         Group {
             if appState.isLoggedIn {
                 TabView(selection: $selectedTab) {
@@ -33,15 +29,21 @@ struct ContentView: View {
 
                     CardsView()
                         .tabItem {
-                            Label("卡片", systemImage: "creditcard.fill")
+                            Label("账户", systemImage: "creditcard.fill")
                         }
                         .tag(2)
 
-                    SettingsView()
+                    BenefitsHubView()
                         .tabItem {
-                            Label("设置", systemImage: "gearshape.fill")
+                            Label("权益", systemImage: "gift.fill")
                         }
                         .tag(3)
+
+                    SettingsView()
+                        .tabItem {
+                            Label("我的", systemImage: "person.crop.circle.fill")
+                        }
+                        .tag(4)
                 }
                 .onChange(of: selectedTab) { _, newValue in
                     // 单向同步：用户点 tab 写入本地状态后，再广播给 AppState
@@ -49,11 +51,40 @@ struct ContentView: View {
                     // 由下面的变更监听反向对齐。
                     if appState.selectedTab != newValue {
                         appState.selectedTab = newValue
+                        HapticManager.selection()
                     }
                 }
                 .onChange(of: appState.selectedTab) { _, newValue in
                     if selectedTab != newValue {
                         selectedTab = newValue
+                    }
+                }
+                .sheet(item: $bindableAppState.pendingWebDestination) { destination in
+                    // 全局唯一挂载 DashboardWebView sheet：无论用户在哪个 Tab 触发
+                    // 权益/权益日历/邮箱账单 或从通知深链进入，均统一由主壳弹出。
+                    if let token = appState.apiClient.token {
+                        DashboardWebView(destination: destination, sessionToken: token) {
+                            appState.pendingWebDestination = nil
+                            Task { await appState.refreshDashboard() }
+                        }
+                    } else {
+                        NavigationStack {
+                            ContentUnavailableView {
+                                Label("暂无法打开在线页面", systemImage: "safari")
+                            } description: {
+                                Text("演示模式暂不支持访问「\(destination.title)」，请登录正式账号后查看。")
+                            }
+                            .navigationTitle(destination.title)
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar {
+                                ToolbarItem(placement: .topBarLeading) {
+                                    Button("关闭") {
+                                        appState.pendingWebDestination = nil
+                                    }
+                                    .accessibilityIdentifier("webview.close")
+                                }
+                            }
+                        }
                     }
                 }
             } else {

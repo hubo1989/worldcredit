@@ -44,16 +44,25 @@ public final class AppState {
     public var pendingSyncCount: Int = 0
     public var lastSyncedAt: String?
 
-    public var selectedTab: Int = {
-        if CommandLine.arguments.contains("--tab=bills") { return 1 }
-        if CommandLine.arguments.contains("--tab=cards") { return 2 }
-        if CommandLine.arguments.contains("--tab=settings") { return 3 }
+    public static func initialTab(for arguments: [String]) -> Int {
+        if arguments.contains("--tab=bills") { return 1 }
+        if arguments.contains("--tab=accounts") || arguments.contains("--tab=cards") { return 2 }
+        if arguments.contains("--tab=benefits") { return 3 }
+        if arguments.contains("--tab=settings") || arguments.contains("--tab=mine") { return 4 }
         return 0
-    }()
+    }
+
+    public var selectedTab: Int = AppState.initialTab(for: CommandLine.arguments)
     public var dashboardBills: [BillDisplayItem] = []
     public var dashboardHolders: [CardHolder] = []
     /// 公开银行目录；固定支出归属选择用，加载失败时退回卡片上的银行名。
     public var bankOptions: [BankOption] = []
+    public var creditAccountGroups: [CreditAccountGroup] = []
+    public var promos: [PromoRecord] = []
+    public var displayConfig: UserDisplayConfig = UserDisplayConfig()
+    public var isolatedSyncChanges: [[String: String]] = []
+    public var showingCreateBillSheet: Bool = false
+    public var showingCreateCardSheet: Bool = false
     public var dashboardCurrency = "CNY"
     public var dashboardPrivacy = true
     public var dashboardRates: FxRates? {
@@ -147,6 +156,8 @@ public final class AppState {
     @ObservationIgnored private var reminderPrefsRevision: Int = 0
     @ObservationIgnored private var reminderPrefsSaveTail: Task<Void, Never>?
     @ObservationIgnored private var lastConfirmedReminderPreferences: UserReminderPreferences?
+    @ObservationIgnored private var displayConfigRevision: Int = 0
+    @ObservationIgnored private var hasRemotePayables: Bool = false
     @ObservationIgnored private var currentNotificationFilter: String = "all"
     @ObservationIgnored private let notificationPageSize = 50
     /// 盘库打不开、退到内存库时的可恢复提示（数据不持久化），由 UI 展示。
@@ -261,7 +272,7 @@ public final class AppState {
         sendWatchSnapshot: @escaping @MainActor (WatchSnapshot) throws -> Void = { _ in },
         clearUserData: (@Sendable () async throws -> Void)? = nil
     ) {
-        self.init(dbManager: dbManager, apiClient: apiClient)
+        self.init(dbManager: dbManager, baseURL: URL(string: "https://app.all-bill.com")!, apiClient: apiClient)
         self.watchSnapshots = watchSnapshots
         self.saveWatchSnapshot = { _ in }
         self.sendWatchSnapshot = sendWatchSnapshot
@@ -380,6 +391,7 @@ public final class AppState {
         #endif
         guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return false }
         do {
+            let userId = currentUser?.id
             let sum = try await queryService.fetchDashboardSummary(today: today)
             // 只读一次全量账单，筛选与模式切换在内存完成。
             let allBillsList = try await queryService.fetchBills(filter: .all, today: today)
@@ -387,15 +399,27 @@ public final class AppState {
             let cList = try await queryService.fetchCards(today: today)
             let dashboardList = try await queryService.fetchDashboardBills(today: today)
             let holders = try await queryService.fetchHolders()
-            let banks: [BankOption] = (try? await apiClient.rpc(
-                module: "banks", function: "getBankNames")) ?? []
+            let localBanks = try await queryService.fetchBanks()
+            let accountGroups = try await queryService.fetchCreditAccountGroups(today: today)
+            let promoList = try await queryService.fetchPromos(activeOnly: true, asOf: today, includeUpcoming: true)
+            let loadedDisplayConfig = try await queryService.fetchDisplayConfig(userId: userId)
+            let offlinePayables = try await fetchOfflinePayablesFallback(today: today)
 
             // 读失败只保留旧值，不把同步状态静默重置为「0 待同步/从未同步」。
-            let meta: (String?, Int)? = try? await dbManager.dbWriter.read { db in
-                (
-                    try SyncMeta.fetchOne(db, key: "last_synced_at")?.value,
-                    try MutationOutbox.fetchCount(db)
-                )
+            let meta: (String?, Int, [[String: String]], Bool)? = try? await dbManager.dbWriter.read { db in
+                let lastSync = try SyncMeta.fetchOne(db, key: "last_synced_at")?.value
+                let outboxCount = try MutationOutbox.fetchCount(db)
+                let isolatedRaw = try SyncMeta.fetchOne(db, key: "sync_isolated_changes")?.value
+                let isolated: [[String: String]] = isolatedRaw.flatMap {
+                    try? JSONDecoder().decode([[String: String]].self, from: Data($0.utf8))
+                } ?? []
+                let hasPrefRow: Bool
+                if let userId, !userId.isEmpty {
+                    hasPrefRow = (try UserPreferenceRecord.fetchOne(db, key: userId)) != nil
+                } else {
+                    hasPrefRow = try UserPreferenceRecord.fetchCount(db) > 0
+                }
+                return (lastSync, outboxCount, isolated, hasPrefRow)
             }
             guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return false }
 
@@ -405,12 +429,29 @@ public final class AppState {
             self.cards = cList
             self.dashboardBills = dashboardList
             self.dashboardHolders = holders
-            self.bankOptions = banks
+            if self.bankOptions.isEmpty && !localBanks.isEmpty {
+                self.bankOptions = localBanks.filter(\.isActive).map { BankOption(id: $0.id, name: $0.name) }
+            }
+            self.creditAccountGroups = accountGroups
+            self.promos = promoList
+            self.displayConfig = loadedDisplayConfig
+            let hasSyncedDisplayConfig = (meta?.3 ?? false) || (loadedDisplayConfig != UserDisplayConfig())
+            if hasSyncedDisplayConfig {
+                self.dashboardPrivacy = loadedDisplayConfig.privacyMode
+                self.dashboardCurrency = loadedDisplayConfig.defaultCurrency
+            }
+            if !UITestConfiguration.isEnabled,
+               !CommandLine.arguments.contains("--demo-mode"),
+               !hasRemotePayables,
+               !offlinePayables.isEmpty {
+                self.payables = offlinePayables
+            }
             self.dashboardLoadError = nil
             self.refreshState.markLoaded(today: today)
             if let meta {
                 self.lastSyncedAt = meta.0
                 self.pendingSyncCount = meta.1
+                self.isolatedSyncChanges = meta.2
             }
 
             // 生成并更新 Apple Watch 快照（复用本次已查数据，避免重复查询）
@@ -467,8 +508,19 @@ public final class AppState {
             let snapshot = await dashboardRemote.fetch(userId: user.id)
             guard dashboardRequestID == requestID, isLoggedIn, apiClient.token == credential,
                   currentUser?.id == user.id else { return }
-            if let currency = snapshot.displayCurrency { dashboardCurrency = currency }
-            if let privacy = snapshot.privacyMode { dashboardPrivacy = privacy }
+            if let currency = snapshot.displayCurrency {
+                dashboardCurrency = currency
+                displayConfig.defaultCurrency = currency
+            }
+            if let privacy = snapshot.privacyMode {
+                dashboardPrivacy = privacy
+                displayConfig.privacyMode = privacy
+            }
+            if let remoteBanks: [BankOption] = try? await apiClient.rpc(module: "banks", function: "getBankNames"),
+               !remoteBanks.isEmpty,
+               dashboardRequestID == requestID, isLoggedIn {
+                self.bankOptions = remoteBanks
+            }
             dashboardAvailableCount = snapshot.availableCount
             dashboardReminders = Array((snapshot.reminders ?? []).prefix(3))
             if let rates = snapshot.exchangeRates {
@@ -574,14 +626,174 @@ public final class AppState {
             currency: item.currency,
             dueDay: item.dueDay,
             holderId: item.holderId,
+            bankName: item.bankName,
             note: item.note,
             bankAccount: item.bankAccount,
             period: item.period,
             dueDate: item.dueDate,
             daysUntilDue: diff,
             paidAmount: item.paidAmount,
-            status: status
+            status: status,
+            customCategory: item.customCategory,
+            cycleType: item.cycleType,
+            cycleMonths: item.cycleMonths,
+            dueMonth: item.dueMonth,
+            anchorPeriod: item.anchorPeriod
         )
+    }
+
+    private func fetchOfflinePayablesFallback(today: Date) async throws -> [PayableItem] {
+        let records = try await queryService.fetchRecurringPayablesFromDB(activeOnly: true)
+        guard !records.isEmpty else { return [] }
+        let payments = try await dbManager.dbWriter.read { db in
+            try RecurringPayablePaymentRecord.fetchAll(db)
+        }
+        var paidByKey: [String: Double] = [:]
+        for p in payments {
+            paidByKey["\(p.payableId)|\(p.period)", default: 0.0] += p.amount
+        }
+
+        let cal = BillingDateCalculator.businessCalendar
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd"
+        df.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+
+        return records.map { record in
+            let cycleType = PayableCycleType(rawValue: record.cycleType) ?? .monthly
+            let category = PayableCategory(rawValue: record.category) ?? .other
+            var period = Self.offlinePayablePeriod(for: record, cycleType: cycleType, today: today, calendar: cal)
+            var paidAmount = paidByKey["\(record.id)|\(period)", default: 0.0]
+            let settled = record.amount > 0 && paidAmount >= record.amount - 0.01
+            let nextPeriod = Self.offlineNextPayablePeriod(from: period, record: record, cycleType: cycleType)
+            if settled,
+               let nextDue = Self.offlinePayableDueDate(dueDay: record.dueDay, period: nextPeriod, calendar: cal),
+               BillingDateCalculator.diffInCalendarDays(target: nextDue, today: today) < 30 {
+                period = nextPeriod
+                paidAmount = paidByKey["\(record.id)|\(nextPeriod)", default: 0.0]
+            }
+            let targetDate = Self.offlinePayableDueDate(dueDay: record.dueDay, period: period, calendar: cal) ?? today
+            let dueDateStr = df.string(from: targetDate)
+            let diff = BillingDateCalculator.diffInCalendarDays(target: targetDate, today: today)
+            let status: PayableStatus
+            if record.amount > 0 && paidAmount >= record.amount - 0.01 {
+                status = .paid
+            } else if diff < 0 {
+                status = .overdue
+            } else {
+                status = .unpaid
+            }
+            return PayableItem(
+                id: record.id,
+                createdBy: record.createdBy,
+                name: record.name,
+                category: category,
+                amount: record.amount,
+                currency: record.currency,
+                dueDay: record.dueDay,
+                holderId: record.holderId,
+                bankName: record.bankName,
+                note: record.note,
+                bankAccount: record.bankAccount,
+                period: period,
+                dueDate: dueDateStr,
+                daysUntilDue: diff,
+                paidAmount: paidAmount,
+                status: status,
+                customCategory: record.customCategory,
+                cycleType: cycleType,
+                cycleMonths: record.cycleMonths,
+                dueMonth: record.dueMonth,
+                anchorPeriod: record.anchorPeriod
+            )
+        }
+    }
+
+    private static func parsePayableYearMonth(_ raw: String?) -> (year: Int, month: Int)? {
+        guard let raw else { return nil }
+        let parts = raw.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "-")
+        guard parts.count == 2, let year = Int(parts[0]), let month = Int(parts[1]),
+              (1970...2100).contains(year), (1...12).contains(month) else {
+            return nil
+        }
+        return (year, month)
+    }
+
+    private static func formatPayableYearMonth(year: Int, month: Int) -> String {
+        String(format: "%04d-%02d", year, month)
+    }
+
+    private static func addMonthsToPayablePeriod(_ period: String, months: Int) -> String {
+        guard let parsed = parsePayableYearMonth(period) else { return period }
+        let total = parsed.year * 12 + (parsed.month - 1) + months
+        let nextYear = total / 12
+        let nextMonth = (total % 12) + 1
+        return formatPayableYearMonth(year: nextYear, month: nextMonth)
+    }
+
+    private static func offlinePayablePeriod(
+        for record: RecurringPayableRecord,
+        cycleType: PayableCycleType,
+        today: Date,
+        calendar: Calendar
+    ) -> String {
+        let todayYear = calendar.component(.year, from: today)
+        let todayMonth = calendar.component(.month, from: today)
+        let currentPeriod = formatPayableYearMonth(year: todayYear, month: todayMonth)
+
+        switch cycleType {
+        case .monthly:
+            return currentPeriod
+        case .yearly:
+            let parsedAnchor = parsePayableYearMonth(record.anchorPeriod)
+            let dueMonth = record.dueMonth.flatMap { (1...12).contains($0) ? $0 : nil }
+                ?? parsedAnchor?.month
+                ?? todayMonth
+            let anchorYear = (parsedAnchor?.month == dueMonth ? parsedAnchor?.year : nil) ?? todayYear
+            let diffMonths = (todayYear - anchorYear) * 12 + (todayMonth - dueMonth)
+            if diffMonths < 0 {
+                return formatPayableYearMonth(year: anchorYear, month: dueMonth)
+            }
+            return formatPayableYearMonth(year: anchorYear + (diffMonths / 12), month: dueMonth)
+        case .everyNMonths:
+            let step = record.cycleMonths >= 2 ? record.cycleMonths : 1
+            guard step > 1 else { return currentPeriod }
+            let anchor = parsePayableYearMonth(record.anchorPeriod) ?? (todayYear, todayMonth)
+            let anchorStr = formatPayableYearMonth(year: anchor.year, month: anchor.month)
+            let diffMonths = (todayYear - anchor.year) * 12 + (todayMonth - anchor.month)
+            if diffMonths < 0 { return anchorStr }
+            let cyclesElapsed = diffMonths / step
+            return addMonthsToPayablePeriod(anchorStr, months: cyclesElapsed * step)
+        }
+    }
+
+    private static func offlineNextPayablePeriod(
+        from period: String,
+        record: RecurringPayableRecord,
+        cycleType: PayableCycleType
+    ) -> String {
+        switch cycleType {
+        case .monthly:
+            return addMonthsToPayablePeriod(period, months: 1)
+        case .yearly:
+            let parsed = parsePayableYearMonth(period)
+            let year = parsed?.year ?? 2026
+            let month = record.dueMonth.flatMap { (1...12).contains($0) ? $0 : nil } ?? parsed?.month ?? 1
+            return formatPayableYearMonth(year: year + 1, month: month)
+        case .everyNMonths:
+            let step = record.cycleMonths >= 2 ? record.cycleMonths : 1
+            return addMonthsToPayablePeriod(period, months: step)
+        }
+    }
+
+    private static func offlinePayableDueDate(dueDay: Int, period: String, calendar: Calendar) -> Date? {
+        guard let parsed = parsePayableYearMonth(period) else { return nil }
+        var comp = DateComponents()
+        comp.year = parsed.year
+        comp.month = parsed.month
+        comp.day = 1
+        guard let monthStart = calendar.date(from: comp) else { return nil }
+        return BillingDateCalculator.getActualBillingDate(billingDay: max(1, min(31, dueDay)), month: monthStart)
     }
 
     /// 服务端判定会话失效（401）时落地到未登录态：本地 DB 保留，
@@ -602,6 +814,17 @@ public final class AppState {
         cards = []
         dashboardBills = []
         dashboardHolders = []
+        bankOptions = []
+        creditAccountGroups = []
+        promos = []
+        displayConfig = UserDisplayConfig()
+        displayConfigRevision += 1
+        isolatedSyncChanges = []
+        showingCreateBillSheet = false
+        showingCreateCardSheet = false
+        hasRemotePayables = false
+        dashboardCurrency = "CNY"
+        dashboardPrivacy = UITestConfiguration.isEnabled ? false : true
         dashboardRates = nil
         dashboardAvailableCount = nil
         dashboardReminders = []
@@ -688,6 +911,7 @@ public final class AppState {
             let items = try await payablesService.fetchPayables(userId: user.id)
             guard sessionEpoch == epoch, apiClient.token == token else { return }
 
+            hasRemotePayables = true
             payables = items
             payablesError = nil
             // 服务端列表已重取：先作废所有在途历史请求（否则其回调会把刷新前的旧数据写回），
@@ -730,10 +954,14 @@ public final class AppState {
             }
             self.payablesError = error.localizedDescription
 
-            // 网络失败时优先保留内存中已有的数据；若内存为空则尝试读取本用户的有效本地快照并重算倒计时
+            // 网络失败时优先保留内存中已有的数据；若内存为空则尝试读取本用户的有效本地快照并重算倒计时，再兜底读本地 DB
             if payables.isEmpty, let userId = fallbackUserId,
                let cached = Self.loadPayablesSnapshot(userId: userId) {
                 payables = cached.map { Self.recalculatePayableStatus($0) }
+            } else if payables.isEmpty,
+                      let dbFallback = try? await fetchOfflinePayablesFallback(today: Date()),
+                      !dbFallback.isEmpty {
+                payables = dbFallback
             }
         }
     }
@@ -918,15 +1146,7 @@ public final class AppState {
     }
 
     public func setDashboardPrivacy(_ enabled: Bool) async {
-        dashboardPrivacy = enabled
-        guard let user = currentUser else { return }
-        let credential = apiClient.token
-        do {
-            _ = try await dashboardRemote.updatePreferences(userId: user.id, privacyMode: enabled)
-        } catch {
-            guard currentUser?.id == user.id, apiClient.token == credential else { return }
-            dashboardRemoteErrors = ["隐私设置已在本次生效，云端保存失败：\(error.localizedDescription)"]
-        }
+        await updateDisplayConfig { $0.privacyMode = enabled }
     }
 
     // MARK: - Notifications & Reminder Preferences
@@ -1071,26 +1291,26 @@ public final class AppState {
             pendingWebDestination = nil
             pendingOpenNotifications = false
             selectedTab = 1
-        } else if path == "/cards" || path.hasPrefix("/cards/") {
+        } else if path == "/cards" || path.hasPrefix("/cards/") || path == "/accounts" || path.hasPrefix("/accounts/") {
             pendingWebDestination = nil
             pendingOpenNotifications = false
             selectedTab = 2
         } else if path == "/settings" {
             pendingWebDestination = nil
             pendingOpenNotifications = false
-            selectedTab = 3
+            selectedTab = 4
         } else if path == "/promos" {
+            pendingWebDestination = nil
             pendingOpenNotifications = false
-            selectedTab = 0
-            pendingWebDestination = .promos
+            selectedTab = 3
         } else if path == "/benefits/calendar" {
             pendingOpenNotifications = false
-            selectedTab = 0
+            selectedTab = 3
             pendingWebDestination = .benefitCalendar
         } else if path == "/benefits" || path.hasPrefix("/benefits/") {
+            pendingWebDestination = nil
             pendingOpenNotifications = false
-            selectedTab = 0
-            pendingWebDestination = .benefits
+            selectedTab = 3
         } else if path == "/gmail-ledger" {
             pendingOpenNotifications = false
             selectedTab = 0
@@ -1466,6 +1686,15 @@ public final class AppState {
         cards = []
         dashboardBills = []
         dashboardHolders = []
+        bankOptions = []
+        creditAccountGroups = []
+        promos = []
+        displayConfig = UserDisplayConfig()
+        displayConfigRevision += 1
+        isolatedSyncChanges = []
+        showingCreateBillSheet = false
+        showingCreateCardSheet = false
+        hasRemotePayables = false
         dashboardPrivacy = true
         dashboardCurrency = "CNY"
         dashboardRates = nil
@@ -1567,6 +1796,29 @@ public final class AppState {
         return UserSession(user: user, syncSuccess: syncResult)
     }
 
+    public func register(email: String, password: String, name: String) async throws {
+        advanceSession()
+        Self.clearLegacyPayablesCaches()
+        accountTransitionTask = Task {
+            do { try await dbManager.clearUserData() } catch {
+                throw LoginError.cleanupFailed(reason: error.localizedDescription)
+            }
+        }
+        try await accountTransitionTask?.value
+        accountTransitionTask = nil
+
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tokenResponse = try await apiClient.register(
+            email: trimmedEmail,
+            password: password,
+            name: trimmedName.isEmpty ? nil : trimmedName
+        )
+        self.currentUser = tokenResponse.user
+        self.isLoggedIn = true
+        await sync()
+    }
+
     public struct UserSession: Sendable {
         public let user: SessionUser
         public let syncSuccess: Bool
@@ -1621,6 +1873,283 @@ public final class AppState {
         Task {
             await self.sync()
         }
+    }
+
+    // MARK: - Phase 1 Bills, Payments, Accounts & Preferences
+
+    @discardableResult
+    public func createBill(
+        cardId: String,
+        billMonth: String,
+        billAmount: Double,
+        minPayment: Double?,
+        dueDate: String,
+        statementDate: String?,
+        statementStart: String? = nil,
+        statementEnd: String? = nil
+    ) async throws -> Bill {
+        let accountId = cards.first(where: { $0.id == cardId })?.card.accountId
+        let created = try await performWithSilentRefresh {
+            try await self.apiClient.createBill(
+                cardId: cardId,
+                billMonth: billMonth,
+                dueDate: dueDate,
+                billAmount: billAmount,
+                minPayment: minPayment,
+                statementStart: statementStart,
+                statementEnd: statementEnd,
+                statementDate: statementDate,
+                accountId: accountId
+            )
+        }
+        await sync()
+        try? await rescheduleLocalNotifications()
+        return created
+    }
+
+    public func updateBillFields(billId: String, input: BillFieldsUpdateInput) async throws {
+        try await billEditService.updateBillFields(billId: billId, input: input)
+        await reloadData()
+        do {
+            try await rescheduleLocalNotifications()
+        } catch {
+            lastSyncError = "本地修改已保存，提醒更新失败：\(error.localizedDescription)"
+        }
+        Task {
+            await self.sync()
+        }
+    }
+
+    public func clearBillOverride(billId: String, fields: [BillOverrideField]) async throws {
+        try await billEditService.clearOverride(billId: billId, fields: fields)
+        await reloadData()
+        do {
+            try await rescheduleLocalNotifications()
+        } catch {
+            lastSyncError = "本地修改已保存，提醒更新失败：\(error.localizedDescription)"
+        }
+        Task {
+            await self.sync()
+        }
+    }
+
+    public func deleteBill(billId: String) async throws {
+        try await performWithSilentRefresh {
+            try await self.apiClient.deleteBill(billId: billId)
+        }
+        try? await dbManager.dbWriter.write { db in
+            try Bill.deleteOne(db, id: billId)
+        }
+        await reloadData()
+        try? await rescheduleLocalNotifications()
+        await sync()
+    }
+
+    public func updatePayment(
+        paymentId: String,
+        billId: String,
+        amount: Double?,
+        paidAt: String?,
+        channel: String?,
+        note: String?,
+        clearChannel: Bool = false,
+        clearNote: Bool = false
+    ) async throws {
+        let updated = try await performWithSilentRefresh {
+            try await self.apiClient.updatePayment(
+                paymentId: paymentId,
+                amount: amount,
+                paidAt: paidAt,
+                channel: channel,
+                note: note,
+                clearChannel: clearChannel,
+                clearNote: clearNote
+            )
+        }
+        try? await dbManager.dbWriter.write { db in
+            try updated.save(db)
+            if var bill = try Bill.fetchOne(db, id: billId) {
+                let payments = try Payment.fetchAll(db).filter { $0.billId == billId }
+                let totalPaid = payments.reduce(0.0) { $0 + $1.amount }
+                if totalPaid >= bill.effectiveAmount - 0.01 {
+                    bill.status = "paid"
+                } else if totalPaid > 0 {
+                    bill.status = "partial"
+                } else {
+                    bill.status = "unpaid"
+                }
+                try bill.update(db)
+            }
+        }
+        await reloadData()
+        try? await rescheduleLocalNotifications()
+        await sync()
+    }
+
+    public func deletePayment(paymentId: String, billId: String) async throws {
+        try await performWithSilentRefresh {
+            try await self.apiClient.deletePayment(paymentId: paymentId)
+        }
+        try? await dbManager.dbWriter.write { db in
+            try Payment.deleteOne(db, id: paymentId)
+            if var bill = try Bill.fetchOne(db, id: billId) {
+                let payments = try Payment.fetchAll(db).filter { $0.billId == billId }
+                let totalPaid = payments.reduce(0.0) { $0 + $1.amount }
+                if totalPaid >= bill.effectiveAmount - 0.01 {
+                    bill.status = "paid"
+                } else if totalPaid > 0 {
+                    bill.status = "partial"
+                } else {
+                    bill.status = "unpaid"
+                }
+                try bill.update(db)
+            }
+        }
+        await reloadData()
+        try? await rescheduleLocalNotifications()
+        await sync()
+    }
+
+    @discardableResult
+    public func mergeCardsIntoAccount(targetAccountId: String, cardIds: [String]) async throws -> ApiClient.MergeAccountResult {
+        let result = try await performWithSilentRefresh {
+            try await self.apiClient.mergeCardsIntoAccount(targetAccountId: targetAccountId, cardIds: cardIds)
+        }
+        await sync()
+        return result
+    }
+
+    @discardableResult
+    public func splitCardFromAccount(cardId: String) async throws -> CreditAccount {
+        let account = try await performWithSilentRefresh {
+            try await self.apiClient.splitCardFromAccount(cardId: cardId)
+        }
+        await sync()
+        return account
+    }
+
+    @discardableResult
+    public func updateCreditAccount(accountId: String, input: ApiClient.UpdateCreditAccountInput) async throws -> CreditAccount {
+        let account = try await performWithSilentRefresh {
+            try await self.apiClient.updateCreditAccount(accountId: accountId, input: input)
+        }
+        try? await dbManager.dbWriter.write { db in
+            try account.save(db)
+        }
+        await reloadData()
+        await sync()
+        return account
+    }
+
+    public func updateDisplayConfig(_ mutate: @Sendable (inout UserDisplayConfig) -> Void) async {
+        var draft = displayConfig
+        mutate(&draft)
+        let next = draft
+        displayConfig = next
+        dashboardPrivacy = next.privacyMode
+        dashboardCurrency = next.defaultCurrency
+        displayConfigRevision += 1
+        let rev = displayConfigRevision
+        let epoch = sessionEpoch
+        let userId = currentUser?.id
+
+        if let userId, !userId.isEmpty {
+            try? await dbManager.dbWriter.write { db in
+                var record = try UserPreferenceRecord.fetchOne(db, key: userId)
+                    ?? UserPreferenceRecord(userId: userId)
+                try record.setDisplayConfig(next)
+                record.updatedAt = ISO8601DateFormatter().string(from: Date())
+                try record.save(db)
+            }
+        }
+
+        guard isLoggedIn, !UITestConfiguration.isEnabled,
+              !CommandLine.arguments.contains("--demo-mode"),
+              apiClient.token != nil else { return }
+
+        do {
+            let confirmed = try await performWithSilentRefresh {
+                try await self.apiClient.updateDisplayPreferences(next)
+            }
+            guard isLoggedIn, sessionEpoch == epoch, rev == displayConfigRevision else { return }
+            displayConfig = confirmed
+            dashboardPrivacy = confirmed.privacyMode
+            dashboardCurrency = confirmed.defaultCurrency
+            if let uid = currentUser?.id ?? userId, !uid.isEmpty {
+                try? await dbManager.dbWriter.write { db in
+                    var record = try UserPreferenceRecord.fetchOne(db, key: uid)
+                        ?? UserPreferenceRecord(userId: uid)
+                    try record.setDisplayConfig(confirmed)
+                    record.updatedAt = ISO8601DateFormatter().string(from: Date())
+                    try record.save(db)
+                }
+            }
+        } catch {
+            guard isLoggedIn, sessionEpoch == epoch, rev == displayConfigRevision else { return }
+            if let uid = currentUser?.id ?? userId,
+               let jsonString = try? next.toJsonString(),
+               let dict = try? JSONSerialization.jsonObject(with: Data(jsonString.utf8)),
+               let argsData = try? JSONSerialization.data(withJSONObject: [uid, ["display_config": dict]]),
+               let argsJson = String(data: argsData, encoding: .utf8) {
+                try? await dbManager.dbWriter.write { db in
+                    try MutationOutbox(
+                        name: "preferences.updateUserPreferences",
+                        argsJson: argsJson
+                    ).insert(db)
+                }
+                await reloadData()
+            }
+        }
+    }
+
+    public func fetchBillSubtotals(billId: String) async -> [BillCardSubtotal] {
+        (try? await queryService.fetchBillCardSubtotals(billId: billId)) ?? []
+    }
+
+    public func fetchCustomPayableCategories() async -> [String] {
+        if isLoggedIn, !UITestConfiguration.isEnabled,
+           !CommandLine.arguments.contains("--demo-mode"),
+           apiClient.token != nil {
+            if let remote = try? await performWithSilentRefresh({
+                try await self.payablesService.fetchCustomCategories()
+            }) {
+                return remote
+            }
+        }
+        return (try? await dbManager.dbWriter.read { db in
+            try PayableCustomCategoryRecord.fetchAll(db)
+                .sorted { lhs, rhs in
+                    if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+                    return lhs.name < rhs.name
+                }
+                .map(\.name)
+        }) ?? []
+    }
+
+    public func saveCustomPayableCategory(name: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if isLoggedIn, !UITestConfiguration.isEnabled,
+           !CommandLine.arguments.contains("--demo-mode"),
+           apiClient.token != nil {
+            _ = try? await performWithSilentRefresh {
+                try await self.payablesService.saveCustomCategory(name: trimmed)
+            }
+            await sync()
+        } else if let userId = currentUser?.id ?? (UITestConfiguration.isEnabled ? "user-1" : nil) {
+            try? await dbManager.dbWriter.write { db in
+                let record = PayableCustomCategoryRecord(
+                    id: "cat-\(UUID().uuidString.prefix(8).lowercased())",
+                    userId: userId,
+                    name: trimmed
+                )
+                try record.save(db)
+            }
+        }
+    }
+
+    public func openWebDestination(_ dest: DashboardWebDestination) {
+        pendingWebDestination = dest
     }
 
     @discardableResult
@@ -1900,6 +2429,34 @@ public final class AppState {
                     createdAt: now
                 )
                 try pay3.save(db)
+
+                let promo1 = PromoRecord(
+                    id: "demo-promo-cmb",
+                    cardProductId: "prod-cmb-1",
+                    bankId: "bank-cmb",
+                    bankName: "招商银行",
+                    title: "掌上生活周三 5 折餐饮券",
+                    description: "每周三 10:00 起可在掌上生活 App 抢指定品牌餐饮 5 折代金券。",
+                    discountType: "折扣",
+                    conditions: "招商银行信用卡持卡人限每周参与 1 次",
+                    isActive: true,
+                    createdAt: now
+                )
+                let promo2 = PromoRecord(
+                    id: "demo-promo-icbc",
+                    cardProductId: "prod-icbc-1",
+                    bankId: "bank-icbc",
+                    bankName: "工商银行",
+                    title: "工银信用卡周末商超满 100 减 20",
+                    description: "周五至周日绑定微信/支付宝使用工行信用卡单笔满 100 元立减 20 元。",
+                    discountType: "满减",
+                    conditions: "每自然月限享受 2 次优惠，名额有限先到先得",
+                    isActive: true,
+                    createdAt: now
+                )
+                try promo1.save(db)
+                try promo2.save(db)
+
                 if onlyIfNeeded {
                     try SyncMeta(key: "ui_test_seeded", value: "1").save(db)
                 }

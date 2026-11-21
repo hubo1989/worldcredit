@@ -37,7 +37,74 @@ public final class SyncEngine: @unchecked Sendable {
     /// 被隔离的坏变更（解码失败/约束冲突等）落在这里，丢弃但留痕，便于排查。
     private static let isolatedChangesMetaKey = "sync_isolated_changes"
     private static let isolatedChangesCap = 50
-    private static let supportedTables: Set<String> = ["banks", "card_products", "card_holders", "credit_cards", "bills", "payments"]
+    private static let supportedTables: Set<String> = [
+        "banks",
+        "card_products",
+        "benefits",
+        "promos",
+        "card_holders",
+        "credit_accounts",
+        "credit_cards",
+        "bills",
+        "bill_card_subtotals",
+        "payments",
+        "user_preferences",
+        "notification_preferences",
+        "recurring_payables",
+        "recurring_payable_payments",
+        "payable_custom_categories",
+    ]
+
+    private static let tableUpsertOrder: [String: Int] = [
+        "banks": 0,
+        "card_products": 1,
+        "benefits": 2,
+        "promos": 3,
+        "card_holders": 4,
+        "credit_accounts": 5,
+        "credit_cards": 6,
+        "bills": 7,
+        "bill_card_subtotals": 8,
+        "payments": 9,
+        "user_preferences": 10,
+        "notification_preferences": 11,
+        "payable_custom_categories": 12,
+        "recurring_payables": 13,
+        "recurring_payable_payments": 14,
+    ]
+
+    private static func pkColumn(for table: String) -> String {
+        switch table {
+        case "user_preferences", "notification_preferences":
+            return "user_id"
+        default:
+            return "id"
+        }
+    }
+
+    private static func orderedChangesForApply(_ changes: [PullChangeItem]) -> [PullChangeItem] {
+        let indexed = changes.enumerated().map { ($0.offset, $0.element) }
+        return indexed.sorted { lhs, rhs in
+            func rank(_ change: PullChangeItem) -> (Int, Int) {
+                let order = tableUpsertOrder[change.tbl] ?? Int.max
+                switch change.op {
+                case "delete":
+                    // Deletes first, children before parents.
+                    return (0, order == Int.max ? Int.max : -order)
+                case "upsert":
+                    // Upserts next, parents before children.
+                    return (1, order)
+                default:
+                    // Unknown ops preserve relative order so isolation still records them.
+                    return (2, 0)
+                }
+            }
+            let r1 = rank(lhs.1)
+            let r2 = rank(rhs.1)
+            if r1 != r2 { return r1 < r2 }
+            return lhs.0 < rhs.0
+        }.map(\.1)
+    }
 
     public init(
         dbManager: DatabaseManager,
@@ -119,7 +186,7 @@ public final class SyncEngine: @unchecked Sendable {
                 // 永久重放、同步永久死锁。这里隔离坏行（记录后继续），保证游标
                 // 总能前进；全部成功或部分隔离都提交事务并保存 cursor。
                 var isolated: [[String: String]] = []
-                for change in response.changes {
+                for change in Self.orderedChangesForApply(response.changes) {
                     do {
                         try self.applyChange(change, in: db)
                     } catch {
@@ -202,7 +269,7 @@ public final class SyncEngine: @unchecked Sendable {
                     // has not changed since our last cursor or the app exits before pull.
                     let additions: [SyncReconcileTarget]
                     do {
-                        additions = try self.targetsForRejectedMutation(item)
+                        additions = try self.targetsForRejectedMutation(item, in: db)
                     } catch {
                         // 解析失败（mutation 名/args 形状漂移）只标记该条并继续其余条目，
                         // 绝不能抛出导致整个事务回滚：服务端已幂等记录永久拒绝，
@@ -247,34 +314,65 @@ public final class SyncEngine: @unchecked Sendable {
             switch tbl {
             case "banks": try Bank.deleteOne(db, id: rowId)
             case "card_products": try CardProduct.deleteOne(db, id: rowId)
+            case "benefits": try BenefitRecord.deleteOne(db, id: rowId)
+            case "promos": try PromoRecord.deleteOne(db, id: rowId)
             case "card_holders": try CardHolder.deleteOne(db, id: rowId)
+            case "credit_accounts": try CreditAccount.deleteOne(db, id: rowId)
             case "credit_cards": try CreditCard.deleteOne(db, id: rowId)
             case "bills": try Bill.deleteOne(db, id: rowId)
+            case "bill_card_subtotals": try BillCardSubtotal.deleteOne(db, id: rowId)
             case "payments": try Payment.deleteOne(db, id: rowId)
+            case "user_preferences":
+                try UserPreferenceRecord.filter(Column("user_id") == rowId).deleteAll(db)
+            case "notification_preferences":
+                try NotificationPreferenceRecord.filter(Column("user_id") == rowId).deleteAll(db)
+            case "recurring_payables": try RecurringPayableRecord.deleteOne(db, id: rowId)
+            case "recurring_payable_payments": try RecurringPayablePaymentRecord.deleteOne(db, id: rowId)
+            case "payable_custom_categories": try PayableCustomCategoryRecord.deleteOne(db, id: rowId)
             default: break
             }
             return
         }
 
+        let pkCol = Self.pkColumn(for: tbl)
         guard change.op == "upsert", let rowDict = change.row,
-              rowDict["id"]?.value as? String == rowId else {
+              rowDict[pkCol]?.value as? String == rowId else {
             throw SyncError.invalidChange(table: tbl, rowID: rowId)
         }
         let jsonData = try JSONEncoder().encode(rowDict)
+        let decoder = JSONDecoder()
 
         switch tbl {
         case "banks":
-            try JSONDecoder().decode(Bank.self, from: jsonData).save(db)
+            try decoder.decode(Bank.self, from: jsonData).save(db)
         case "card_products":
-            try JSONDecoder().decode(CardProduct.self, from: jsonData).save(db)
+            try decoder.decode(CardProduct.self, from: jsonData).save(db)
+        case "benefits":
+            try decoder.decode(BenefitRecord.self, from: jsonData).save(db)
+        case "promos":
+            try decoder.decode(PromoRecord.self, from: jsonData).save(db)
         case "card_holders":
-            try JSONDecoder().decode(CardHolder.self, from: jsonData).save(db)
+            try decoder.decode(CardHolder.self, from: jsonData).save(db)
+        case "credit_accounts":
+            try decoder.decode(CreditAccount.self, from: jsonData).save(db)
         case "credit_cards":
-            try JSONDecoder().decode(CreditCard.self, from: jsonData).save(db)
+            try decoder.decode(CreditCard.self, from: jsonData).save(db)
         case "bills":
-            try JSONDecoder().decode(Bill.self, from: jsonData).save(db)
+            try decoder.decode(Bill.self, from: jsonData).save(db)
+        case "bill_card_subtotals":
+            try decoder.decode(BillCardSubtotal.self, from: jsonData).save(db)
         case "payments":
-            try JSONDecoder().decode(Payment.self, from: jsonData).save(db)
+            try decoder.decode(Payment.self, from: jsonData).save(db)
+        case "user_preferences":
+            try decoder.decode(UserPreferenceRecord.self, from: jsonData).save(db)
+        case "notification_preferences":
+            try decoder.decode(NotificationPreferenceRecord.self, from: jsonData).save(db)
+        case "recurring_payables":
+            try decoder.decode(RecurringPayableRecord.self, from: jsonData).save(db)
+        case "recurring_payable_payments":
+            try decoder.decode(RecurringPayablePaymentRecord.self, from: jsonData).save(db)
+        case "payable_custom_categories":
+            try decoder.decode(PayableCustomCategoryRecord.self, from: jsonData).save(db)
         default: break
         }
     }
@@ -309,7 +407,7 @@ public final class SyncEngine: @unchecked Sendable {
                      value: String(decoding: data, as: UTF8.self)).save(db)
     }
 
-    private func targetsForRejectedMutation(_ item: MutationOutbox) throws -> [SyncReconcileTarget] {
+    private func targetsForRejectedMutation(_ item: MutationOutbox, in db: Database) throws -> [SyncReconcileTarget] {
         let args = try JSONDecoder().decode([AnyCodable].self, from: Data(item.argsJson.utf8))
         switch item.name {
         case "bills.recordPayment":
@@ -318,9 +416,43 @@ public final class SyncEngine: @unchecked Sendable {
                 throw SyncError.invalidMutation(item.id)
             }
             return [.init(tbl: "bills", rowId: billID), .init(tbl: "payments", rowId: paymentID)]
-        case "bills.setBillAmountOverride", "cards.updateCard":
-            guard let id = args.first?.value as? String else { throw SyncError.invalidMutation(item.id) }
-            return [.init(tbl: item.name == "cards.updateCard" ? "credit_cards" : "bills", rowId: id)]
+        case "bills.setBillAmountOverride", "bills.updateBillFields", "bills.clearOverride":
+            guard let id = args.first?.value as? String, !id.trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            return [.init(tbl: "bills", rowId: id)]
+        case "cards.updateCard":
+            guard let id = args.first?.value as? String, !id.trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            return [.init(tbl: "credit_cards", rowId: id)]
+        case "payments.updatePayment":
+            guard let paymentId = args.first?.value as? String, !paymentId.trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            var targets = [SyncReconcileTarget(tbl: "payments", rowId: paymentId)]
+            if let existing = try Payment.fetchOne(db, id: paymentId) {
+                targets.append(SyncReconcileTarget(tbl: "bills", rowId: existing.billId))
+            }
+            return targets
+        case "payables.updateRecurringPayable":
+            guard let id = args.first?.value as? String, !id.trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            return [.init(tbl: "recurring_payables", rowId: id)]
+        case "payables.createRecurringPayable",
+             "notifications.markNotificationRead",
+             "notifications.markAllNotificationsRead":
+            // Either server-generated ID or table outside SYNCABLE_TABLES: drop cleanly without invalid reconcile targets.
+            return []
+        case "preferences.updateUserPreferences":
+            if let userId = args.first?.value as? String, !userId.trimmingCharacters(in: .whitespaces).isEmpty {
+                return [.init(tbl: "user_preferences", rowId: userId)]
+            }
+            if let local = try UserPreferenceRecord.fetchOne(db), !local.userId.isEmpty {
+                return [.init(tbl: "user_preferences", rowId: local.userId)]
+            }
+            return []
         default:
             throw SyncError.invalidMutation(item.id)
         }

@@ -221,6 +221,8 @@ public final class SessionDataRefreshState {
     private var initialLoadEpoch: UUID?
     private var initialLoadTask: Task<Void, Never>?
     private var businessDayEpoch: UUID?
+    private var businessDayTargetDay: Date?
+    private var businessDayTaskToken: UUID?
     private var businessDayTask: Task<Void, Never>?
 
     public init() {}
@@ -232,6 +234,8 @@ public final class SessionDataRefreshState {
         initialLoadEpoch = nil
         businessDayTask?.cancel()
         businessDayTask = nil
+        businessDayTaskToken = nil
+        businessDayTargetDay = nil
         businessDayEpoch = nil
         loadedBusinessDay = nil
         sessionEpoch = UUID()
@@ -295,18 +299,27 @@ public final class SessionDataRefreshState {
         guard isCurrent(epoch, isLoggedIn: isLoggedIn()),
               BillingDateCalculator.needsBusinessDayRefresh(lastLoadedDay: loadedBusinessDay, now: now)
         else { return }
-        if businessDayEpoch == epoch, let businessDayTask {
+        let targetDay = BillingDateCalculator.businessDayStart(for: now)
+        if businessDayEpoch == epoch, businessDayTargetDay == targetDay, let businessDayTask {
             await businessDayTask.value
             return
         }
         businessDayTask?.cancel()
+        let token = UUID()
         businessDayEpoch = epoch
+        businessDayTargetDay = targetDay
+        businessDayTaskToken = token
         let task = Task { @MainActor in
             guard isCurrent(epoch, isLoggedIn: isLoggedIn()) else { return }
             await refresh(epoch, now)
         }
         businessDayTask = task
         await task.value
-        // 同 initialLoad：完成后引用保留，由 advanceSession 统一清理。
+        if businessDayTaskToken == token {
+            businessDayTask = nil
+            businessDayTaskToken = nil
+            businessDayTargetDay = nil
+            businessDayEpoch = nil
+        }
     }
 }

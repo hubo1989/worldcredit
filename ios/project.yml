@@ -10,6 +10,9 @@ options:
 packages:
   WorldCreditCore:
     path: Packages/WorldCreditCore
+  GRDB:
+    url: https://github.com/groue/GRDB.swift.git
+    revision: 0d8cf958b4b66a0473ec6e6986eb9da462171da9
   # Google Sign-In 只给 iPhone 主 App 用。该包仅声明 iOS/macOS，且 Watch/Widget
   # 不做登录，不要把依赖挂到 WorldCreditCore 或任何扩展 target 上。
   GoogleSignIn:
@@ -33,6 +36,8 @@ targets:
     dependencies:
       - target: WorldCredit
       - package: WorldCreditCore
+      - package: GRDB
+        product: GRDB
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.chunfenshijie.worldcredit.tests
@@ -58,6 +63,8 @@ targets:
       - path: WorldCredit
     dependencies:
       - package: WorldCreditCore
+      - package: GRDB
+        product: GRDB
       - package: GoogleSignIn
         product: GoogleSignIn
       - target: WorldCreditWidgets
@@ -67,6 +74,7 @@ targets:
     info:
       path: WorldCredit/Info.plist
       properties:
+        CFBundleVersion: "20261029.1"
         CFBundleDisplayName: WorldCredit
         NSFaceIDUsageDescription: "使用 Face ID 保护您的账单和信用卡财务数据安全"
         # GoogleSignIn 从 Info.plist 读 client id；URL scheme 必须是 client id 的反转形式，
@@ -90,7 +98,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.chunfenshijie.worldcredit
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
-        CURRENT_PROJECT_VERSION: 1
+        CURRENT_PROJECT_VERSION: "20261029.1"
         MARKETING_VERSION: "1.0.0"
       configs:
         Debug:

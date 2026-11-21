@@ -4,50 +4,35 @@ import Foundation
 
 /// 原生首页 → 尚未原生实现的 Web 业务入口。
 ///
-/// 六个 case 与产品约定的受限 path 一一对应；`createBill` / `createCard` 通过
-/// `?native_action=` 打开 Web `QuickActionSheet` 的录入账单 / 添加卡片子动作。
+/// Phase 1 原生化移除了 `.promos`、`.createBill`、`.createCard`，仅保留 3 个受限入口。
 /// 纯值类型，不依赖 WebKit / SwiftUI，便于路由约束单测。
 public enum DashboardWebDestination: String, CaseIterable, Identifiable, Sendable {
-    case promos
     case benefits
     case benefitCalendar
     case gmailLedger
-    case createBill
-    case createCard
 
     public var id: String { rawValue }
 
-    /// 导航栏标题（与 Web 页面/表单文案一致，供 DashboardWebView 的 NavigationStack 使用）。
+    /// 导航栏标题（与 Web 页面文案一致，供 DashboardWebView 的 NavigationStack 使用）。
     public var title: String {
         switch self {
-        case .promos: return "优惠"
         case .benefits: return "权益"
         case .benefitCalendar: return "权益日历"
         case .gmailLedger: return "邮箱账单"
-        case .createBill: return "录入账单"
-        case .createCard: return "添加卡片"
         }
     }
 
     /// 受限 path（不含 query）。
     public var path: String {
         switch self {
-        case .promos: return "/promos"
         case .benefits: return "/benefits"
         case .benefitCalendar: return "/benefits/calendar"
         case .gmailLedger: return "/gmail-ledger"
-        case .createBill, .createCard: return "/dashboard"
         }
     }
 
-    /// Web 快捷动作参数。仅 `createBill`/`createCard` 产生 `native_action=bill|card`。
-    public var queryItems: [URLQueryItem] {
-        switch self {
-        case .createBill: return [URLQueryItem(name: "native_action", value: "bill")]
-        case .createCard: return [URLQueryItem(name: "native_action", value: "card")]
-        case .promos, .benefits, .benefitCalendar, .gmailLedger: return []
-        }
-    }
+    /// 保留入口均无桥接 query 参数。
+    public var queryItems: [URLQueryItem] { [] }
 
     /// 生产 host 固定为 app.all-bill.com；cookie 与 URL 均不接受入参拼 host。
     public static let webHost = "app.all-bill.com"
@@ -88,9 +73,6 @@ public enum DashboardWebRoutePolicy: Sendable {
         Set(DashboardWebDestination.allCases.map(\.path))
     }
 
-    /// 允许进入受限 WebView 的 native_action 值（Web QuickActionSheet 桥）。
-    public static let allowedNativeActions: Set<String> = ["bill", "card"]
-
     public static func decision(for url: URL) -> DashboardWebNavigationDecision {
         // 1) URL 内嵌 credentials（user[:pass]@host）一律拒绝，防 host 混淆与凭据泄漏。
         if url.user != nil || url.password != nil {
@@ -105,16 +87,11 @@ public enum DashboardWebRoutePolicy: Sendable {
             return .reject
         }
 
-        // 3) 目标站：精确 host + https + 443 + 受限 path。
+        // 3) 目标站：精确 host + https + 443 + 受限 path（仅保留 /benefits, /benefits/calendar, /gmail-ledger）。
         if host == allowedHost {
             guard scheme == "https" else { return .reject }
             if let port = url.port, port != 443 { return .reject }
             guard let path = normalizedPath(of: url), allowedPaths.contains(path) else {
-                return .reject
-            }
-            // /dashboard 仅接受 native_action=bill|card（缺省亦可，供 SPA 清理 query 后重载）。
-            if path == "/dashboard", let action = queryValue("native_action", in: url),
-               !allowedNativeActions.contains(action) {
                 return .reject
             }
             return .loadInWebView

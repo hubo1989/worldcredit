@@ -186,6 +186,59 @@ export async function mergeCardsIntoAccount(
     }
   }
 
+  // 1.1 保护多卡源账户主卡：批量核验源账户与成员卡，不允许单独迁走仍有其余成员卡的源账户锚点卡
+  const cardIdSet = new Set(cardIds);
+  const sourceAccountIds = Array.from(
+    new Set(
+      cards
+        .map((c) => (c.account_id ? String(c.account_id) : null))
+        .filter((id): id is string => Boolean(id && id !== targetAccountId)),
+    ),
+  );
+  const emptySourceAccountIds: string[] = [];
+  if (sourceAccountIds.length > 0) {
+    const accPlaceholders = sourceAccountIds.map(() => "?").join(",");
+    const [accRes, cardsRes] = await Promise.all([
+      query<{ id: string; primary_card_id: string | null }>(
+        `SELECT id, primary_card_id FROM credit_accounts WHERE id IN (${accPlaceholders})`,
+        sourceAccountIds,
+      ),
+      query<{ id: string; account_id: string }>(
+        `SELECT id, account_id FROM credit_cards WHERE account_id IN (${accPlaceholders})`,
+        sourceAccountIds,
+      ),
+    ]);
+    if (accRes.error) throw new Error(accRes.error.message);
+    if (cardsRes.error) throw new Error(cardsRes.error.message);
+
+    const accById = new Map((accRes.data || []).map((a) => [a.id, a]));
+    const cardsByAccount = new Map<string, string[]>();
+    for (const row of cardsRes.data || []) {
+      const list = cardsByAccount.get(row.account_id);
+      if (list) list.push(row.id);
+      else cardsByAccount.set(row.account_id, [row.id]);
+    }
+
+    for (const sourceAccountId of sourceAccountIds) {
+      const sourceAcc = accById.get(sourceAccountId);
+      const sourceCards = cardsByAccount.get(sourceAccountId) || [];
+      const remainingCardIds = sourceCards.filter((id) => !cardIdSet.has(id));
+      if (
+        sourceAcc?.primary_card_id &&
+        cardIdSet.has(sourceAcc.primary_card_id) &&
+        remainingCardIds.length > 0
+      ) {
+        throw new RpcDomainError(
+          "VALIDATION_FAILED",
+          "待合并卡片包含多卡账户主卡，请先在卡片详情中拆出该主卡或将该原账户全部卡片一并合并",
+        );
+      }
+      if (remainingCardIds.length === 0) {
+        emptySourceAccountIds.push(sourceAccountId);
+      }
+    }
+  }
+
   // 2. 同月账单碰撞检查
   // (a) 检查待合并各卡与目标账户已有账单是否存在相同月份
   const { data: targetBills } = await query<{ bill_month: string }>(
@@ -194,9 +247,16 @@ export async function mergeCardsIntoAccount(
   );
   const targetMonths = new Set((targetBills || []).map((b) => b.bill_month));
 
-  const { data: candidateBills } = await query<{ card_id: string; bill_month: string }>(
-    `SELECT card_id, bill_month FROM bills WHERE card_id IN (${placeholders})`,
-    cardIds,
+  let candidateQuery = `SELECT DISTINCT id, card_id, bill_month FROM bills WHERE card_id IN (${placeholders})`;
+  const candidateParams: unknown[] = [...cardIds];
+  if (emptySourceAccountIds.length > 0) {
+    const accPlaceholders = emptySourceAccountIds.map(() => "?").join(",");
+    candidateQuery += ` OR account_id IN (${accPlaceholders})`;
+    candidateParams.push(...emptySourceAccountIds);
+  }
+  const { data: candidateBills } = await query<{ id: string; card_id: string; bill_month: string }>(
+    candidateQuery,
+    candidateParams,
   );
   const candidateList = candidateBills || [];
 
@@ -249,15 +309,35 @@ export async function mergeCardsIntoAccount(
     });
   }
 
-  // 将待合并卡片历史 bills 迁移至目标账户，并对齐 anchor card_id
-  for (const cid of cardIds) {
+  // 精确按已通过碰撞检查的 bill.id 迁移历史账单并对齐 anchor card_id，关闭 TOCTOU 窗口
+  for (const cb of candidateList) {
     updates.push({
-      sql: "UPDATE bills SET account_id = ?, card_id = ? WHERE card_id = ?",
-      params: [targetAccountId, anchorCardId, cid],
+      sql: "UPDATE bills SET account_id = ?, card_id = ? WHERE id = ?",
+      params: [targetAccountId, anchorCardId, cb.id],
     });
   }
 
-  await batch(updates);
+  // 清除已迁空的源账户（与 cards.server.ts deleteCard 同构），避免保留 primary_card_id 跨账户悬空引用：
+  // - 窗口期内的并发账单由 bills.account_id ON DELETE RESTRICT 回滚整个 batch；
+  // - 注意 credit_cards.account_id 与 bill_import_drafts.matched_account_id 为 ON DELETE SET NULL，
+  //   竞态下新挂到源账户的卡片与既有导入草稿不会被回滚，而是被置空外键引用。
+  for (const emptiedAccId of emptySourceAccountIds) {
+    updates.push({
+      sql: "DELETE FROM credit_accounts WHERE id = ?",
+      params: [emptiedAccId],
+    });
+  }
+
+  const { error: batchError } = await batch(updates);
+  if (batchError) {
+    if (/FOREIGN KEY|UNIQUE|constraint failed/i.test(batchError.message)) {
+      throw new RpcDomainError(
+        "CONFLICT",
+        `合并期间源账户数据发生并发变更，请刷新后重试：${batchError.message}`,
+      );
+    }
+    throw new Error(batchError.message);
+  }
   return { mergedCount: cardIds.length };
 }
 

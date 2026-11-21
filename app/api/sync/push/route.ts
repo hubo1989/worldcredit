@@ -3,6 +3,7 @@
 import { getDb } from "@/lib/db";
 import { readSession } from "@/lib/session";
 import { dispatchRpc } from "@/lib/api/rpc-dispatch";
+import { isValidUuid, parseIsoTimestampMs } from "@/lib/validation-patterns";
 
 interface MutationItem {
   id: string;
@@ -26,12 +27,40 @@ const MAX_ID_LENGTH = 256;
 const OFFLINE_SYNC_MUTATIONS = new Set([
   "bills.recordPayment",
   "bills.setBillAmountOverride",
+  "bills.updateBillFields",
+  "bills.clearOverride",
   "cards.updateCard",
+  "payments.updatePayment",
+  "payables.createRecurringPayable",
+  "payables.updateRecurringPayable",
+  "notifications.markNotificationRead",
+  "notifications.markAllNotificationsRead",
+  "preferences.updateUserPreferences",
 ]);
 const inFlightByMutation = new Map<string, Promise<MutationResult>>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function validateOfflineReplaySafety(mut: MutationItem): { error: string; code: string } | null {
+  if (mut.name === "payables.createRecurringPayable") {
+    const payload = mut.args[0];
+    if (!isRecord(payload) || !isValidUuid(payload.id)) {
+      return {
+        error: "离线创建固定支出必须提供合法的客户端 UUID id",
+        code: "VALIDATION_FAILED",
+      };
+    }
+  } else if (mut.name === "notifications.markAllNotificationsRead") {
+    if (parseIsoTimestampMs(mut.args[1]) === null) {
+      return {
+        error: "离线全部标记已读必须提供合法的截止时间戳 (beforeIso)",
+        code: "VALIDATION_FAILED",
+      };
+    }
+  }
+  return null;
 }
 
 export async function POST(request: Request) {
@@ -196,6 +225,23 @@ export async function POST(request: Request) {
     const fn = mut.name.slice(dot + 1);
     const execution = (async (): Promise<MutationResult> => {
       try {
+        const safetyError = validateOfflineReplaySafety(mut);
+        if (safetyError) {
+          const invalidResult: MutationResult = {
+            id: mut.id,
+            ok: false,
+            error: safetyError.error,
+            code: safetyError.code,
+            permanent: true,
+          };
+          await db
+            .prepare(
+              "UPDATE sync_mutations SET result = ? WHERE user_id = ? AND client_id = ? AND mutation_id = ?",
+            )
+            .bind(JSON.stringify(invalidResult), session.id, clientId, mut.id)
+            .run();
+          return invalidResult;
+        }
         const dispatchRes = await dispatchRpc(module, fn, mut.args, session);
         if (dispatchRes.ok) {
           const successResult: MutationResult = { id: mut.id, ok: true, data: dispatchRes.data };

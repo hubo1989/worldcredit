@@ -131,5 +131,288 @@
       }
     ],
     "server_time": "2026-10-22T00:00:00Z"
+  },
+  "extended_response": {
+    "cursor": 15,
+    "has_more": false,
+    "changes": [
+      {
+        "tbl": "banks",
+        "row_id": "sync-fixture-bank",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-bank",
+          "name": "测试银行",
+          "full_name": "测试银行股份有限公司",
+          "logo_url": "https://example.test/bank.png",
+          "country": "CN",
+          "customer_service_phone": "95555",
+          "website_url": "https://example.test",
+          "is_active": 1,
+          "created_at": "2026-10-01T00:00:00Z",
+          "short_name": "测试",
+          "quota_mode": "shared",
+          "statement_mode": "merged"
+        }
+      },
+      {
+        "tbl": "card_products",
+        "row_id": "sync-fixture-product",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-product",
+          "country": "CN",
+          "bank_id": "sync-fixture-bank",
+          "bank_name": "测试银行",
+          "card_name": "测试信用卡",
+          "card_image_id": "img-card-1",
+          "description_md": "经典双币白金卡",
+          "apply_url": "https://example.test/apply",
+          "rewards_summary": "境外消费 3% 返现",
+          "currency": "CNY",
+          "payment_due_type": "after_billing",
+          "payment_due_value": 20,
+          "annual_fee": 300.0,
+          "annual_fee_waiver": "年刷 6 笔免年费",
+          "is_active": 1,
+          "created_at": "2026-10-01T00:00:00Z"
+        }
+      },
+      {
+        "tbl": "benefits",
+        "row_id": "sync-fixture-benefit",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-benefit",
+          "card_product_id": "sync-fixture-product",
+          "name": "机场贵宾厅",
+          "description": "每年 6 次免费",
+          "quota": 6,
+          "period": "yearly",
+          "reset_month": 1,
+          "expiry_date": "2026-12-31",
+          "created_at": "2026-10-01T00:00:00Z"
+        }
+      },
+      {
+        "tbl": "promos",
+        "row_id": "sync-fixture-promo",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-promo",
+          "card_product_id": "sync-fixture-product",
+          "bank_id": "sync-fixture-bank",
+          "bank_name": "测试银行",
+          "title": "周五餐饮满 100 减 20",
+          "description": "指定餐饮商户可用",
+          "discount_type": "满减",
+          "start_date": "2026-10-01",
+          "end_date": "2026-12-31",
+          "conditions": "单笔满 100 元",
+          "max_uses": 4,
+          "is_active": 1,
+          "created_at": "2026-10-01T00:00:00Z"
+        }
+      },
+      {
+        "tbl": "card_holders",
+        "row_id": "sync-fixture-holder",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-holder",
+          "created_by": "sync-fixture-user",
+          "managed_by": "sync-fixture-user",
+          "name": "测试用户",
+          "phone": null,
+          "email": null,
+          "aliases": null,
+          "avatar_color": "#1976d2",
+          "created_at": "2026-10-01T00:00:00Z",
+          "auth_user_id": "sync-fixture-user"
+        }
+      },
+      {
+        "tbl": "credit_accounts",
+        "row_id": "sync-fixture-account",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-account",
+          "holder_id": "sync-fixture-holder",
+          "bank_id": "sync-fixture-bank",
+          "bank_name": "测试银行",
+          "currency": "CNY",
+          "account_tail": "8888",
+          "statement_mode": "merged",
+          "quota_mode": "shared",
+          "shared_credit_limit": 80000.0,
+          "billing_day": 5,
+          "due_type": "after_billing",
+          "due_value": 20,
+          "primary_card_id": "sync-fixture-card",
+          "label": "主力合并账户",
+          "status": "active",
+          "created_at": "2026-10-01T00:00:00Z",
+          "updated_at": "2026-10-01T00:00:00Z"
+        }
+      },
+      {
+        "tbl": "credit_cards",
+        "row_id": "sync-fixture-card",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-card",
+          "holder_id": "sync-fixture-holder",
+          "card_product_id": "sync-fixture-product",
+          "card_number_last4": "8888",
+          "credit_limit": 50000.0,
+          "credit_limit_override": 80000.0,
+          "billing_day": 5,
+          "status": "active",
+          "card_type": "credit",
+          "loan_due_day": null,
+          "account_id": "sync-fixture-account",
+          "override_billing_day": null,
+          "override_due_type": null,
+          "override_due_value": null,
+          "created_at": "2026-10-01T00:00:00Z",
+          "name_override": null,
+          "annual_fee_override": null,
+          "account_mode_override": null,
+          "issued_on": "2025-05-01",
+          "activated_on": "2025-05-10"
+        }
+      },
+      {
+        "tbl": "bills",
+        "row_id": "sync-fixture-bill",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-bill",
+          "card_id": "sync-fixture-card",
+          "account_id": "sync-fixture-account",
+          "bill_month": "2026-10",
+          "statement_start": "2026-09-06",
+          "statement_end": "2026-10-05",
+          "statement_date": "2026-10-05",
+          "bill_amount": 1000.0,
+          "min_payment": 100.0,
+          "due_date": "2026-10-25",
+          "status": "partial",
+          "created_at": "2026-10-01T00:00:00Z",
+          "bill_amount_override": null,
+          "min_payment_override": 120.0,
+          "due_date_override": "2026-10-26",
+          "statement_date_override": "2026-10-06"
+        }
+      },
+      {
+        "tbl": "bill_card_subtotals",
+        "row_id": "sync-fixture-subtotal",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-subtotal",
+          "bill_id": "sync-fixture-bill",
+          "card_id": "sync-fixture-card",
+          "card_tail": "8888",
+          "subtotal_amount": 1000.0,
+          "currency": "CNY",
+          "source": "email",
+          "created_at": "2026-10-05T00:00:00Z"
+        }
+      },
+      {
+        "tbl": "payments",
+        "row_id": "sync-fixture-payment",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-payment",
+          "bill_id": "sync-fixture-bill",
+          "amount": 100.0,
+          "paid_at": "2026-10-20",
+          "channel": "手动还款",
+          "note": null,
+          "idempotency_key": "sync-fixture-idempotency",
+          "created_at": "2026-10-20T00:00:00Z"
+        }
+      },
+      {
+        "tbl": "user_preferences",
+        "row_id": "sync-fixture-user",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-user-pref",
+          "user_id": "sync-fixture-user",
+          "display_config": "{\"privacy_mode\":true,\"show_min_payment\":false,\"show_statement_date\":true,\"show_annual_fee\":true,\"show_card_last4\":true,\"default_currency\":\"USD\"}",
+          "reminder_config": "{\"remind_days_before\":[3,1,0],\"quiet_hours_start\":\"22:00\",\"quiet_hours_end\":\"08:00\",\"enabled_channels\":[\"web_push\"]}",
+          "updated_at": "2026-10-01T00:00:00Z"
+        }
+      },
+      {
+        "tbl": "notification_preferences",
+        "row_id": "sync-fixture-user",
+        "op": "upsert",
+        "row": {
+          "user_id": "sync-fixture-user",
+          "bill_due_enabled": 1,
+          "overdue_enabled": 1,
+          "due_days_before": 3,
+          "notify_time": "09:30",
+          "created_at": "2026-10-01T00:00:00Z",
+          "updated_at": "2026-10-01T00:00:00Z"
+        }
+      },
+      {
+        "tbl": "recurring_payables",
+        "row_id": "sync-fixture-payable",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-payable",
+          "created_by": "sync-fixture-user",
+          "name": "季度物业费",
+          "category": "other",
+          "custom_category": "物业费",
+          "amount": 1200.0,
+          "currency": "CNY",
+          "due_day": 15,
+          "cycle_type": "every_n_months",
+          "cycle_months": 3,
+          "due_month": null,
+          "anchor_period": "2026-10",
+          "holder_id": "sync-fixture-holder",
+          "bank_name": "测试银行",
+          "bank_account": "622200001234",
+          "note": "每季度缴纳",
+          "is_active": 1,
+          "created_at": "2026-10-01T00:00:00Z"
+        }
+      },
+      {
+        "tbl": "recurring_payable_payments",
+        "row_id": "sync-fixture-payable-payment",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-payable-payment",
+          "payable_id": "sync-fixture-payable",
+          "period": "2026-10",
+          "amount": 1200.0,
+          "paid_at": "2026-10-15",
+          "note": "已转账",
+          "created_at": "2026-10-15T00:00:00Z"
+        }
+      },
+      {
+        "tbl": "payable_custom_categories",
+        "row_id": "sync-fixture-custom-cat",
+        "op": "upsert",
+        "row": {
+          "id": "sync-fixture-custom-cat",
+          "user_id": "sync-fixture-user",
+          "name": "物业费",
+          "normalized_name": "物业费",
+          "created_at": "2026-10-01T00:00:00Z"
+        }
+      }
+    ],
+    "server_time": "2026-10-22T00:00:00Z"
   }
 }

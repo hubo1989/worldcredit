@@ -4,6 +4,7 @@
 // 免息期等所有口径（见 migrations/d1/0009 的说明）。
 
 import { query, queryOne, execute, uuid, now } from '../db'
+import { isValidUuid } from '../validation-patterns'
 import { payablePeriodOf, payableDueDate, nextPayablePeriodOf, diffInCalendarDays } from '../utils'
 import {
   CUSTOM_CATEGORY_SENTINEL,
@@ -53,6 +54,8 @@ export interface RecurringPayable {
 }
 
 export interface RecurringPayableInput {
+  /** 可选客户端稳定 UUID（离线重放幂等键；传入时须为合法 UUID） */
+  id?: string
   name: string
   category: PayableCategory
   custom_category?: string | null
@@ -446,6 +449,14 @@ export async function createRecurringPayable(
   today: Date = new Date()
 ): Promise<PayableWithStatus> {
   const effectiveToday = today instanceof Date ? today : new Date()
+  if (typeof input.created_by !== 'string' || !input.created_by.trim()) {
+    throw new RpcDomainError('VALIDATION_FAILED', '缺少创建者标识')
+  }
+  if (input.id !== undefined && !isValidUuid(input.id)) {
+    throw new RpcDomainError('VALIDATION_FAILED', '无效的固定支出 ID 格式')
+  }
+  const clientStableId = input.id !== undefined ? input.id.toLowerCase() : null
+
   if (!input.name?.trim()) throw new RpcDomainError('VALIDATION_FAILED', '请填写名称')
   if (!Number.isFinite(input.amount) || input.amount < 0) {
     throw new RpcDomainError('VALIDATION_FAILED', '金额必须是不小于 0 的数字')
@@ -465,18 +476,34 @@ export async function createRecurringPayable(
   const bankName = normalizePayableBankName(input.bank_name)
   const categorySelection = normalizePayableCategorySelection(input.category, input.custom_category)
 
+  if (clientStableId) {
+    const existingPre = await queryOne<RecurringPayable>(
+      'SELECT * FROM recurring_payables WHERE id = ?',
+      [clientStableId]
+    )
+    if (existingPre.error) throw new Error(existingPre.error.message)
+    if (existingPre.data) {
+      if (existingPre.data.created_by !== input.created_by) {
+        throw new RpcDomainError('CONFLICT', '记录 ID 已存在且无权访问')
+      }
+      const { period, paidAmount } = await resolveDisplayPeriod(existingPre.data, effectiveToday)
+      return withStatus(existingPre.data, period, paidAmount, effectiveToday)
+    }
+  }
+
   let customCategory = categorySelection.custom_category
   if (categorySelection.shouldPersistCustom && customCategory && input.created_by) {
     customCategory = await persistCustomCategoryForUser(input.created_by, customCategory)
   }
 
-  const id = uuid()
-  const { error } = await execute(
+  const id = clientStableId ?? uuid()
+  const { data: insertMeta, error } = await execute(
     `INSERT INTO recurring_payables (
        id, created_by, name, category, custom_category, amount, currency,
        cycle_type, cycle_months, due_month, due_day, anchor_period,
        holder_id, note, bank_name, bank_account, is_active, created_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+     ON CONFLICT(id) DO NOTHING`,
     [
       id,
       input.created_by,
@@ -498,10 +525,14 @@ export async function createRecurringPayable(
     ]
   )
   if (error) throw new Error(error.message)
-  const created = await queryOne<RecurringPayable>('SELECT * FROM recurring_payables WHERE id = ?', [id])
-  if (!created.data) throw new Error('创建失败')
-  const { period, paidAmount } = await resolveDisplayPeriod(created.data, effectiveToday)
-  return withStatus(created.data, period, paidAmount, effectiveToday)
+
+  const existingOrCreated = await queryOne<RecurringPayable>('SELECT * FROM recurring_payables WHERE id = ?', [id])
+  if (!existingOrCreated.data) throw new Error('创建失败')
+  if ((insertMeta?.changes ?? 0) === 0 && existingOrCreated.data.created_by !== input.created_by) {
+    throw new RpcDomainError('CONFLICT', '记录 ID 已存在且无权访问')
+  }
+  const { period, paidAmount } = await resolveDisplayPeriod(existingOrCreated.data, effectiveToday)
+  return withStatus(existingOrCreated.data, period, paidAmount, effectiveToday)
 }
 
 export async function updateRecurringPayable(

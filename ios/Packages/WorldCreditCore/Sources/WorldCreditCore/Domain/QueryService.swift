@@ -177,6 +177,38 @@ public struct CardDisplayItem: Identifiable, Sendable {
     }
 }
 
+public struct CreditAccountGroup: Identifiable, Sendable {
+    public let account: CreditAccount
+    public let cards: [CardDisplayItem]
+    public let bank: Bank?
+    public let holder: CardHolder?
+    public let creditLimit: Double
+    public let unpaidAmount: Double
+    public let availableLimit: Double
+
+    public var id: String { account.id }
+    public var isMergedStatement: Bool { account.statementMode == "merged" }
+    public var isSharedQuota: Bool { account.quotaMode == "shared" }
+
+    public init(
+        account: CreditAccount,
+        cards: [CardDisplayItem],
+        bank: Bank?,
+        holder: CardHolder?,
+        creditLimit: Double,
+        unpaidAmount: Double,
+        availableLimit: Double
+    ) {
+        self.account = account
+        self.cards = cards
+        self.bank = bank
+        self.holder = holder
+        self.creditLimit = creditLimit
+        self.unpaidAmount = unpaidAmount
+        self.availableLimit = availableLimit
+    }
+}
+
 public struct DashboardSummary: Sendable {
     public let totalDebt: Double
     public let overdueAmount: Double
@@ -257,7 +289,7 @@ public final class QueryService: Sendable {
                     continue
                 }
 
-                let dueDate = df.date(from: bill.dueDate) ?? today
+                let dueDate = df.date(from: bill.effectiveDueDate) ?? today
                 let days = BillingDateCalculator.diffInCalendarDays(target: dueDate, today: today)
                 let isOverdue = days < 0 && remaining > 0.01
                 let label = BillingDateCalculator.dueDistanceLabel(days: days)
@@ -324,10 +356,28 @@ public final class QueryService: Sendable {
         let urgentBills = unpaidBills.filter { $0.isOverdue || $0.daysUntilDue <= 7 }
         let nextDueBill = unpaidBills.first
 
-        // Total credit limit & utilization
+        // Total credit limit & utilization (respect shared quota pools when credit_accounts exist)
         let totalLimit = try await dbManager.dbWriter.read { db in
             let cards = try CreditCard.filter(Column("status") == "active").fetchAll(db)
-            return cards.reduce(0.0) { $0 + $1.creditLimit }
+            let accounts = try CreditAccount.fetchAll(db)
+            let accountsById = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
+
+            var independentTotal = 0.0
+            var sharedPoolMaxByAccount: [String: Double] = [:]
+
+            for card in cards {
+                let cardLimit = card.effectiveCreditLimit
+                if let accountId = card.accountId,
+                   let account = accountsById[accountId],
+                   account.quotaMode == "shared" {
+                    let existing = sharedPoolMaxByAccount[accountId] ?? 0.0
+                    let poolLimit = max(account.sharedCreditLimit ?? 0.0, cardLimit)
+                    sharedPoolMaxByAccount[accountId] = max(existing, poolLimit)
+                } else {
+                    independentTotal += cardLimit
+                }
+            }
+            return independentTotal + sharedPoolMaxByAccount.values.reduce(0.0, +)
         }
 
         return DashboardSummary(
@@ -345,49 +395,195 @@ public final class QueryService: Sendable {
     public func fetchCards(today: Date = Date()) async throws -> [CardDisplayItem] {
         try await dbManager.dbWriter.read { db in
             let cards = try CreditCard.filter(Column("status") == "active").fetchAll(db)
-            var items: [CardDisplayItem] = []
-
-            for card in cards {
-                let holder = try CardHolder.fetchOne(db, id: card.holderId)
-                let product = try CardProduct.fetchOne(db, id: card.cardProductId)
-                let bank: Bank? = if let bankId = product?.bankId {
-                    try Bank.fetchOne(db, id: bankId)
-                } else {
-                    nil
-                }
-
-                // Latest bill
-                let latestBill = try Bill.filter(Column("card_id") == card.id)
-                    .order(Column("bill_month").desc)
-                    .fetchOne(db)
-
-                let remaining: Double
-                if let latestBill {
-                    let payments = try Payment.filter(Column("bill_id") == latestBill.id).fetchAll(db)
-                    let totalPaid = payments.reduce(0.0) { $0 + $1.amount }
-                    remaining = max(0.0, latestBill.effectiveAmount - totalPaid)
-                } else {
-                    remaining = 0.0
-                }
-
-                let grace = BillingDateCalculator.calculateCardGracePeriod(card: card, cardProduct: product, today: today)
-
-                items.append(CardDisplayItem(
-                    card: card,
-                    product: product,
-                    bank: bank,
-                    holder: holder,
-                    latestBill: latestBill,
-                    remainingAmount: remaining,
-                    interestFreeDaysToday: grace.graceDays,
-                    nextDueDate: grace.nextDueDate
-                ))
-            }
-
+            var items = try cards.map { try self.makeCardDisplayItem(for: $0, in: db, today: today) }
             // Default sort: highest interest free days first
             items.sort { $0.interestFreeDaysToday > $1.interestFreeDaysToday }
             return items
         }
+    }
+
+    private func makeCardDisplayItem(
+        for card: CreditCard,
+        in db: Database,
+        today: Date
+    ) throws -> CardDisplayItem {
+        let holder = try CardHolder.fetchOne(db, id: card.holderId)
+        let product = try CardProduct.fetchOne(db, id: card.cardProductId)
+        let bank: Bank? = if let bankId = product?.bankId {
+            try Bank.fetchOne(db, id: bankId)
+        } else {
+            nil
+        }
+
+        let latestBill = try Bill.filter(Column("card_id") == card.id)
+            .order(Column("bill_month").desc)
+            .fetchOne(db)
+
+        let remaining: Double
+        if let latestBill {
+            let payments = try Payment.filter(Column("bill_id") == latestBill.id).fetchAll(db)
+            let totalPaid = payments.reduce(0.0) { $0 + $1.amount }
+            remaining = max(0.0, latestBill.effectiveAmount - totalPaid)
+        } else {
+            remaining = 0.0
+        }
+
+        let grace = BillingDateCalculator.calculateCardGracePeriod(card: card, cardProduct: product, today: today)
+
+        return CardDisplayItem(
+            card: card,
+            product: product,
+            bank: bank,
+            holder: holder,
+            latestBill: latestBill,
+            remainingAmount: remaining,
+            interestFreeDaysToday: grace.graceDays,
+            nextDueDate: grace.nextDueDate
+        )
+    }
+
+    /// 按信用账户聚合卡片与账单：兼容合并账户（statement_mode = 'merged'）账单不翻倍计算，
+    /// 共享额度池（quota_mode = 'shared'）额度不重复叠加。
+    public func fetchCreditAccountGroups(today: Date = Date()) async throws -> [CreditAccountGroup] {
+        try await dbManager.dbWriter.read { db in
+            let accounts = try CreditAccount
+                .filter(Column("status") != "archived")
+                .order(Column("created_at").desc, Column("id").asc)
+                .fetchAll(db)
+            guard !accounts.isEmpty else { return [] }
+
+            let allCards = try CreditCard.fetchAll(db)
+            let allBills = try Bill.fetchAll(db)
+            let allPayments = try Payment.fetchAll(db)
+            var paidByBill: [String: Double] = [:]
+            for payment in allPayments {
+                paidByBill[payment.billId, default: 0.0] += payment.amount
+            }
+
+            var groups: [CreditAccountGroup] = []
+            for account in accounts {
+                let accountCardsAll = allCards.filter { $0.accountId == account.id }
+                let activeAccountCards = accountCardsAll.filter { $0.status == "active" }
+                let cardItems = try activeAccountCards.map {
+                    try self.makeCardDisplayItem(for: $0, in: db, today: today)
+                }.sorted { $0.interestFreeDaysToday > $1.interestFreeDaysToday }
+
+                let memberCardIds = Set(accountCardsAll.map(\.id))
+                var seenBillIds = Set<String>()
+                var unpaidAmount = 0.0
+                for bill in allBills {
+                    let belongsToAccount = (bill.accountId == account.id) || memberCardIds.contains(bill.cardId)
+                    guard belongsToAccount else { continue }
+                    guard seenBillIds.insert(bill.id).inserted else { continue }
+                    guard bill.status != "paid" else { continue }
+                    let remaining = max(0.0, bill.effectiveAmount - (paidByBill[bill.id] ?? 0.0))
+                    if remaining > 0.01 {
+                        unpaidAmount += remaining
+                    }
+                }
+
+                let creditLimit: Double
+                if account.quotaMode == "shared" {
+                    if let shared = account.sharedCreditLimit, shared > 0 {
+                        creditLimit = shared
+                    } else {
+                        creditLimit = activeAccountCards.map(\.effectiveCreditLimit).max() ?? 0.0
+                    }
+                } else if let shared = account.sharedCreditLimit, shared > 0 {
+                    creditLimit = shared
+                } else {
+                    creditLimit = activeAccountCards.reduce(0.0) { $0 + $1.effectiveCreditLimit }
+                }
+
+                let availableLimit = creditLimit > 0 ? max(0.0, creditLimit - unpaidAmount) : 0.0
+                let holder = try CardHolder.fetchOne(db, id: account.holderId)
+                let bank: Bank? = if let bankId = account.bankId {
+                    try Bank.fetchOne(db, id: bankId)
+                } else {
+                    cardItems.first?.bank
+                }
+
+                groups.append(CreditAccountGroup(
+                    account: account,
+                    cards: cardItems,
+                    bank: bank,
+                    holder: holder,
+                    creditLimit: creditLimit,
+                    unpaidAmount: unpaidAmount,
+                    availableLimit: availableLimit
+                ))
+            }
+            return groups
+        }
+    }
+
+    /// 查询合并账单的分卡小计列表（按卡尾号升序）。
+    public func fetchBillCardSubtotals(billId: String) async throws -> [BillCardSubtotal] {
+        try await dbManager.dbWriter.read { db in
+            try BillCardSubtotal
+                .filter(Column("bill_id") == billId)
+                .order(Column("card_tail").asc, Column("id").asc)
+                .fetchAll(db)
+        }
+    }
+
+    /// 查询本地同步的银行优惠活动列表。
+    public func fetchPromos(
+        activeOnly: Bool = true,
+        asOf: Date? = nil,
+        includeUpcoming: Bool = false
+    ) async throws -> [PromoRecord] {
+        try await dbManager.dbWriter.read { db in
+            var query = PromoRecord.all()
+            if activeOnly {
+                query = query.filter(Column("is_active") == true)
+            }
+            let promos = try query
+                .order(Column("end_date").asc, Column("created_at").desc, Column("id").asc)
+                .fetchAll(db)
+            guard let asOf else { return promos }
+            let df = DateFormatter()
+            df.locale = Locale(identifier: "en_US_POSIX")
+            df.dateFormat = "yyyy-MM-dd"
+            df.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+            let dayString = df.string(from: asOf)
+            return promos.filter { promo in
+                let afterStart = includeUpcoming ? true : (promo.startDate.map { $0 <= dayString } ?? true)
+                let beforeEnd = promo.endDate.map { $0 >= dayString } ?? true
+                return afterStart && beforeEnd
+            }
+        }
+    }
+
+    /// 从本地 user_preferences 表读取展示偏好，未落库时返回默认配置。
+    public func fetchDisplayConfig(userId: String? = nil) async throws -> UserDisplayConfig {
+        try await dbManager.dbWriter.read { db in
+            let record: UserPreferenceRecord?
+            if let userId, !userId.isEmpty {
+                record = try UserPreferenceRecord.filter(Column("user_id") == userId).fetchOne(db)
+            } else {
+                record = try UserPreferenceRecord.fetchOne(db)
+            }
+            return record?.decodedDisplayConfig() ?? UserDisplayConfig()
+        }
+    }
+
+    /// 从本地 recurring_payables 表读取周期性固定支出列表。
+    public func fetchRecurringPayablesFromDB(activeOnly: Bool = true) async throws -> [RecurringPayableRecord] {
+        try await dbManager.dbWriter.read { db in
+            var request = RecurringPayableRecord.all()
+            if activeOnly {
+                request = request.filter(Column("is_active") == true)
+            }
+            return try request
+                .order(Column("due_day").asc, Column("created_at").asc, Column("id").asc)
+                .fetchAll(db)
+        }
+    }
+
+    /// 从本地 card_holders 表读取全部持卡人列表。
+    public func fetchHoldersFromDB() async throws -> [CardHolder] {
+        try await fetchHolders()
     }
 
     /// 首页账单数据源：全量未还（覆盖全部持卡人、全部币种）。

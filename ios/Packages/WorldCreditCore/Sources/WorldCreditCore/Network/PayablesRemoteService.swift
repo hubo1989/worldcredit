@@ -70,9 +70,22 @@ public actor PayablesRemoteService {
     }
 
     public func delete(payableId: String) async throws {
-        let _: EmptyAck = try await apiClient.rpc(
+        try await apiClient.rpcVoid(
             module: "payables", function: "deleteRecurringPayable",
             args: [AnyCodable(payableId)])
+    }
+
+    public func fetchCustomCategories() async throws -> [String] {
+        try await apiClient.rpc(
+            module: "payables", function: "getPayableCustomCategories",
+            args: [AnyCodable("")])
+    }
+
+    @discardableResult
+    public func saveCustomCategory(name: String) async throws -> [String] {
+        try await apiClient.rpc(
+            module: "payables", function: "savePayableCustomCategory",
+            args: [AnyCodable(""), AnyCodable(name)])
     }
 
     /// AnyCodable 只接受 JSON 原生类型；自定义 Encodable 先序列化再还原成字典。
@@ -94,9 +107,14 @@ private struct PayableCreatePayload: Codable {
     let createdBy: String
     let name: String
     let category: PayableCategory
+    let customCategory: String?
     let amount: Double
     let currency: String
     let dueDay: Int
+    let cycleType: PayableCycleType?
+    let cycleMonths: Int?
+    let dueMonth: Int?
+    let anchorPeriod: String?
     let holderId: String?
     let bankName: String?
     let note: String?
@@ -105,7 +123,12 @@ private struct PayableCreatePayload: Codable {
     enum CodingKeys: String, CodingKey {
         case createdBy = "created_by"
         case name, category, amount, currency
+        case customCategory = "custom_category"
         case dueDay = "due_day"
+        case cycleType = "cycle_type"
+        case cycleMonths = "cycle_months"
+        case dueMonth = "due_month"
+        case anchorPeriod = "anchor_period"
         case holderId = "holder_id"
         case bankName = "bank_name"
         case note
@@ -116,15 +139,17 @@ private struct PayableCreatePayload: Codable {
         self.createdBy = createdBy
         self.name = draft.name
         self.category = draft.category
+        self.customCategory = draft.customCategory
         self.amount = draft.amount
         self.currency = draft.currency
         self.dueDay = draft.dueDay
+        self.cycleType = draft.cycleType
+        self.cycleMonths = draft.cycleMonths
+        self.dueMonth = draft.dueMonth
+        self.anchorPeriod = draft.anchorPeriod
         self.holderId = draft.holderId
         self.bankName = draft.bankName
         self.note = draft.note
         self.bankAccount = draft.bankAccount
     }
 }
-
-/// deleteRecurringPayable 返回 void，RPC envelope 的 data 为 null。
-private struct EmptyAck: Decodable {}

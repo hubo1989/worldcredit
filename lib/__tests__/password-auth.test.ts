@@ -169,4 +169,18 @@ describe("password authentication", () => {
     const { SESSION_TTL_SECONDS } = await import("../session");
     expect(b1.expires_in).toBe(SESSION_TTL_SECONDS);
   });
+
+  it("trims email whitespace consistently across token and cookie password login", async () => {
+    const tokenRes = await tokenLogin(tokenRequest("  member@example.test  ", "correct-password"));
+    expect(tokenRes.status).toBe(200);
+
+    const cookieRes = await cookieLogin(cookieRequest("  member@example.test  ", "correct-password"));
+    expect(cookieRes.status).toBe(200);
+
+    const blankToken = await tokenLogin(tokenRequest("   ", "correct-password"));
+    expect(blankToken.status).toBe(400);
+
+    const blankCookie = await cookieLogin(cookieRequest("   ", "correct-password"));
+    expect(blankCookie.status).toBe(400);
+  });
 });

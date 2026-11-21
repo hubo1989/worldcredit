@@ -8,12 +8,19 @@ struct SyncIntegrityTests {
     private let billID = "sync-fixture-bill"
     private let cardID = "sync-fixture-card"
 
-    private func fixtureResponse() throws -> [String: Any] {
+    private func fixtureRoot() -> [String: Any] {
         var root = URL(fileURLWithPath: #filePath)
         for _ in 0..<6 { root.deleteLastPathComponent() }
-        let data = try Data(contentsOf: root.appendingPathComponent("shared/fixtures/sync-d1-rows.json"))
-        let fixture = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        return try #require(fixture["response"] as? [String: Any])
+        let data = try! Data(contentsOf: root.appendingPathComponent("shared/fixtures/sync-d1-rows.json"))
+        return try! #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private func fixtureResponse() throws -> [String: Any] {
+        try #require(fixtureRoot()["response"] as? [String: Any])
+    }
+
+    private func extendedFixtureResponse() throws -> [String: Any] {
+        try #require(fixtureRoot()["extended_response"] as? [String: Any])
     }
 
     private func responseData(changes: [[String: Any]], cursor: Int = 6) throws -> Data {
@@ -176,7 +183,7 @@ struct SyncIntegrityTests {
     @Test("Unsupported server entities remain forward compatible")
     func unsupportedTable() async throws {
         let manager = try database()
-        let data = try responseData(changes: [["tbl": "benefits", "row_id": "benefit", "op": "upsert"]], cursor: 7)
+        let data = try responseData(changes: [["tbl": "opportunity_definitions", "row_id": "opp-def-1", "op": "upsert"]], cursor: 7)
         try await engine(manager) { _ in data }.pull()
         try await manager.dbWriter.read { (db: Database) throws -> Void in
             #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "7")
@@ -358,6 +365,350 @@ struct SyncIntegrityTests {
         try await manager.dbWriter.read { (db: Database) throws -> Void in
             #expect(try SyncMeta.fetchOne(db, key: "sync_reconcile_targets")?.value.contains("bills") == true)
             #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "6")
+        }
+    }
+
+    @Test("15 SYNCABLE_TABLES complete pull upsert and delete including user_id primary keys")
+    func full15TablesPullUpsertAndDelete() async throws {
+        let manager = try DatabaseManager.inMemory()
+        let extended = try extendedFixtureResponse()
+        let upsertData = try JSONSerialization.data(withJSONObject: extended)
+        try await engine(manager) { _ in upsertData }.pull()
+
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            #expect(try Bank.fetchCount(db) == 1)
+            #expect(try CardProduct.fetchCount(db) == 1)
+            #expect(try BenefitRecord.fetchCount(db) == 1)
+            #expect(try PromoRecord.fetchCount(db) == 1)
+            #expect(try CardHolder.fetchCount(db) == 1)
+            #expect(try CreditAccount.fetchCount(db) == 1)
+            #expect(try CreditCard.fetchCount(db) == 1)
+            #expect(try Bill.fetchCount(db) == 1)
+            #expect(try BillCardSubtotal.fetchCount(db) == 1)
+            #expect(try Payment.fetchCount(db) == 1)
+            #expect(try UserPreferenceRecord.fetchCount(db) == 1)
+            #expect(try NotificationPreferenceRecord.fetchCount(db) == 1)
+            #expect(try RecurringPayableRecord.fetchCount(db) == 1)
+            #expect(try RecurringPayablePaymentRecord.fetchCount(db) == 1)
+            #expect(try PayableCustomCategoryRecord.fetchCount(db) == 1)
+
+            let bank = try #require(try Bank.fetchOne(db, id: "sync-fixture-bank"))
+            #expect(bank.fullName == "测试银行股份有限公司")
+            #expect(bank.country == "CN")
+            #expect(bank.customerServicePhone == "95555")
+            #expect(bank.tel == "95555")
+            #expect(bank.websiteUrl == "https://example.test")
+            #expect(bank.isActive == true)
+
+            let product = try #require(try CardProduct.fetchOne(db, id: "sync-fixture-product"))
+            #expect(product.cardImageId == "img-card-1")
+            #expect(product.cardArtUrl == "img-card-1")
+            #expect(product.annualFeeWaiver == "年刷 6 笔免年费")
+            #expect(product.rewardsSummary == "境外消费 3% 返现")
+            #expect(product.isActive == true)
+
+            let card = try #require(try CreditCard.fetchOne(db, id: "sync-fixture-card"))
+            #expect(card.accountId == "sync-fixture-account")
+            #expect(card.creditLimit == 50000.0)
+            #expect(card.creditLimitOverride == 80000.0)
+            #expect(card.effectiveCreditLimit == 80000.0)
+            #expect(card.issuedOn == "2025-05-01")
+            #expect(card.activatedOn == "2025-05-10")
+
+            let bill = try #require(try Bill.fetchOne(db, id: "sync-fixture-bill"))
+            #expect(bill.accountId == "sync-fixture-account")
+            #expect(bill.effectiveMinPayment == 120.0)
+            #expect(bill.effectiveDueDate == "2026-10-26")
+            #expect(bill.effectiveStatementDate == "2026-10-06")
+
+            let userPref = try #require(
+                try UserPreferenceRecord.filter(Column("user_id") == "sync-fixture-user").fetchOne(db)
+            )
+            let display = userPref.decodedDisplayConfig()
+            #expect(display.privacyMode == true)
+            #expect(display.showMinPayment == false)
+            #expect(display.defaultCurrency == "USD")
+
+            let notifPref = try #require(
+                try NotificationPreferenceRecord.filter(Column("user_id") == "sync-fixture-user").fetchOne(db)
+            )
+            #expect(notifPref.billDueEnabled == true)
+            #expect(notifPref.notifyTime == "09:30")
+
+            let payable = try #require(try RecurringPayableRecord.fetchOne(db, id: "sync-fixture-payable"))
+            #expect(payable.cycleType == "every_n_months")
+            #expect(payable.cycleMonths == 3)
+            #expect(payable.anchorPeriod == "2026-10")
+            #expect(payable.customCategory == "物业费")
+            #expect(payable.bankAccount == "622200001234")
+            #expect(payable.isActive == true)
+
+            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "15")
+            #expect(try SyncMeta.fetchOne(db, key: "sync_isolated_changes") == nil)
+        }
+
+        // Now send delete operations for all 15 tables (even in parent-before-child order to verify topological ordering)
+        let originalChanges = try #require(extended["changes"] as? [[String: Any]])
+        let deleteChanges: [[String: Any]] = originalChanges.map { change in
+            ["tbl": change["tbl"]!, "row_id": change["row_id"]!, "op": "delete"]
+        }
+        let deleteData = try responseData(changes: deleteChanges, cursor: 30)
+        try await engine(manager) { _ in deleteData }.pull()
+
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            #expect(try Bank.fetchCount(db) == 0)
+            #expect(try CardProduct.fetchCount(db) == 0)
+            #expect(try BenefitRecord.fetchCount(db) == 0)
+            #expect(try PromoRecord.fetchCount(db) == 0)
+            #expect(try CardHolder.fetchCount(db) == 0)
+            #expect(try CreditAccount.fetchCount(db) == 0)
+            #expect(try CreditCard.fetchCount(db) == 0)
+            #expect(try Bill.fetchCount(db) == 0)
+            #expect(try BillCardSubtotal.fetchCount(db) == 0)
+            #expect(try Payment.fetchCount(db) == 0)
+            #expect(try UserPreferenceRecord.fetchCount(db) == 0)
+            #expect(try NotificationPreferenceRecord.fetchCount(db) == 0)
+            #expect(try RecurringPayableRecord.fetchCount(db) == 0)
+            #expect(try RecurringPayablePaymentRecord.fetchCount(db) == 0)
+            #expect(try PayableCustomCategoryRecord.fetchCount(db) == 0)
+            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "30")
+            #expect(try SyncMeta.fetchOne(db, key: "sync_isolated_changes") == nil)
+        }
+    }
+
+    @Test("v1 -> v2 migration preserves v1 rows, adds parity columns/tables and resets existing sync_cursor")
+    func v1ToV2MigrationRegression() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let dbURL = root.appendingPathComponent("legacy-v1.sqlite")
+
+        // Create a real v1-only database using v1_initial_schema DDL and seed v1 rows + sync_cursor='42'
+        do {
+            var v1Config = Configuration()
+            v1Config.foreignKeysEnabled = true
+            let queue = try DatabaseQueue(path: dbURL.path, configuration: v1Config)
+            var v1Migrator = DatabaseMigrator()
+            v1Migrator.registerMigration("v1_initial_schema") { db in
+                try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS banks (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    short_name TEXT,
+                    logo_url TEXT,
+                    tel TEXT,
+                    quota_mode TEXT,
+                    statement_mode TEXT
+                );
+                CREATE TABLE IF NOT EXISTS card_products (
+                    id TEXT PRIMARY KEY,
+                    bank_id TEXT REFERENCES banks(id) ON DELETE SET NULL,
+                    bank_name TEXT NOT NULL DEFAULT '',
+                    card_name TEXT NOT NULL,
+                    card_type TEXT NOT NULL DEFAULT 'credit',
+                    currency TEXT NOT NULL DEFAULT 'CNY',
+                    payment_due_type TEXT NOT NULL,
+                    payment_due_value INTEGER NOT NULL,
+                    annual_fee REAL,
+                    card_art_url TEXT
+                );
+                CREATE TABLE IF NOT EXISTS card_holders (
+                    id TEXT PRIMARY KEY,
+                    created_by TEXT NOT NULL,
+                    managed_by TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    phone TEXT,
+                    email TEXT,
+                    aliases TEXT,
+                    avatar_color TEXT DEFAULT '#1976d2',
+                    auth_user_id TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE IF NOT EXISTS credit_cards (
+                    id TEXT PRIMARY KEY,
+                    holder_id TEXT NOT NULL REFERENCES card_holders(id) ON DELETE CASCADE,
+                    card_product_id TEXT NOT NULL REFERENCES card_products(id) ON DELETE RESTRICT,
+                    card_number_last4 TEXT,
+                    credit_limit REAL NOT NULL DEFAULT 0,
+                    billing_day INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    card_type TEXT NOT NULL DEFAULT 'credit',
+                    loan_due_day INTEGER,
+                    override_billing_day INTEGER,
+                    override_due_type TEXT,
+                    override_due_value INTEGER,
+                    name_override TEXT,
+                    annual_fee_override REAL,
+                    account_mode_override TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE IF NOT EXISTS bills (
+                    id TEXT PRIMARY KEY,
+                    card_id TEXT NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
+                    bill_month TEXT NOT NULL,
+                    statement_start TEXT,
+                    statement_end TEXT,
+                    statement_date TEXT,
+                    bill_amount REAL NOT NULL DEFAULT 0,
+                    min_payment REAL DEFAULT 0,
+                    due_date TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'unpaid',
+                    bill_amount_override REAL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(card_id, bill_month)
+                );
+                CREATE TABLE IF NOT EXISTS payments (
+                    id TEXT PRIMARY KEY,
+                    bill_id TEXT NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
+                    amount REAL NOT NULL,
+                    paid_at TEXT NOT NULL DEFAULT (date('now')),
+                    channel TEXT DEFAULT '手动还款',
+                    note TEXT,
+                    idempotency_key TEXT UNIQUE NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE IF NOT EXISTS sync_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS mutation_outbox (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    args_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT
+                );
+                """)
+            }
+            try v1Migrator.migrate(queue)
+            try queue.write { db in
+                try db.execute(sql: """
+                    INSERT INTO banks (id, name, short_name, tel) VALUES ('b-v1', '招商银行', '招行', '95555');
+                    INSERT INTO card_products (id, bank_id, bank_name, card_name, payment_due_type, payment_due_value, card_art_url)
+                    VALUES ('p-v1', 'b-v1', '招商银行', '经典白', 'after_billing', 18, 'images/classic');
+                    INSERT INTO card_holders (id, created_by, managed_by, name) VALUES ('h-v1', 'u-1', 'u-1', '张三');
+                    INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day, credit_limit)
+                    VALUES ('c-v1', 'h-v1', 'p-v1', 5, 60000);
+                    INSERT INTO bills (id, card_id, bill_month, due_date, bill_amount, status)
+                    VALUES ('bill-v1', 'c-v1', '2026-09', '2026-09-23', 2500, 'partial');
+                    INSERT INTO payments (id, bill_id, amount, paid_at, idempotency_key)
+                    VALUES ('pay-v1', 'bill-v1', 500, '2026-09-10', 'idem-v1');
+                    INSERT INTO sync_meta (key, value) VALUES ('sync_cursor', '42'), ('sync_client_id', 'cid-v1');
+                """)
+            }
+        }
+
+        // Reopen via DatabaseManager -> executes v2_syncable_parity
+        let upgraded = try DatabaseManager.file(at: dbURL, fileManager: .default, requiresProtectionReadback: false)
+        try upgraded.dbWriter.read { db in
+            let bank = try #require(try Bank.fetchOne(db, id: "b-v1"))
+            #expect(bank.tel == "95555")
+            #expect(bank.customerServicePhone == "95555")
+            #expect(bank.country == "CN")
+            #expect(bank.isActive == true)
+
+            let product = try #require(try CardProduct.fetchOne(db, id: "p-v1"))
+            #expect(product.cardArtUrl == "images/classic")
+            #expect(product.cardImageId == "images/classic")
+            #expect(product.isActive == true)
+
+            let card = try #require(try CreditCard.fetchOne(db, id: "c-v1"))
+            #expect(card.effectiveCreditLimit == 60000)
+            #expect(card.accountId == nil)
+
+            let bill = try #require(try Bill.fetchOne(db, id: "bill-v1"))
+            #expect(bill.effectiveDueDate == "2026-09-23")
+
+            // Cursor must reset to "0" so upgraded app backfills 15 tables & new columns
+            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "0")
+            #expect(try SyncMeta.fetchOne(db, key: "sync_client_id")?.value == "cid-v1")
+
+            let tables = try String.fetchAll(db, sql: """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'grdb_migrations'
+            """)
+            for expected in [
+                "credit_accounts", "bill_card_subtotals", "benefits", "promos",
+                "user_preferences", "notification_preferences", "recurring_payables",
+                "recurring_payable_payments", "payable_custom_categories"
+            ] {
+                #expect(tables.contains(expected))
+            }
+        }
+    }
+
+    @Test("clearUserData wipes every single business and sync table reflected from sqlite_master")
+    func sqliteMasterFullWipeAssertion() async throws {
+        let manager = try DatabaseManager.inMemory()
+        let extendedData = try JSONSerialization.data(withJSONObject: try extendedFixtureResponse())
+        try await engine(manager) { _ in extendedData }.pull()
+
+        try await manager.dbWriter.write { db in
+            try MutationOutbox(id: "mut-wipe", name: "bills.updateBillFields", argsJson: "[]").insert(db)
+            try SyncMeta(key: "sync_client_id", value: "client-wipe").save(db)
+        }
+
+        let reflectedTablesBefore = try await manager.dbWriter.read { db in
+            try String.fetchAll(db, sql: """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'grdb_migrations'
+                ORDER BY name
+            """)
+        }
+        #expect(reflectedTablesBefore.count == 17)
+
+        for table in reflectedTablesBefore {
+            let count = try await manager.dbWriter.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \"\(table)\"") ?? -1
+            }
+            #expect(count > 0, Comment(rawValue: "Table \(table) must be populated before clearUserData()"))
+        }
+
+        try await manager.clearUserData()
+
+        for table in reflectedTablesBefore {
+            let count = try await manager.dbWriter.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \"\(table)\"") ?? -1
+            }
+            #expect(count == 0, Comment(rawValue: "Table \(table) leaked rows after clearUserData()"))
+        }
+    }
+
+    @Test("Permanent rejections of Phase 1 offline mutations clean outbox without deadlock")
+    func phase1OfflineMutationsPermanentRejectionDoesNotDeadlock() async throws {
+        let manager = try database()
+        try await manager.dbWriter.write { db in
+            try UserPreferenceRecord(userId: "u-pref-1").insert(db)
+            try RecurringPayableRecord(
+                id: "pay-rec-1", createdBy: "u-pref-1", name: "房租", amount: 2000, dueDay: 5
+            ).insert(db)
+            try MutationOutbox(id: "m1", name: "bills.updateBillFields", argsJson: #"["\#(billID)",{"amount":500}]"#).insert(db)
+            try MutationOutbox(id: "m2", name: "bills.clearOverride", argsJson: #"["\#(billID)",["amount"]]"#).insert(db)
+            try MutationOutbox(id: "m3", name: "payments.updatePayment", argsJson: #"["sync-fixture-payment",{"amount":120}]"#).insert(db)
+            try MutationOutbox(id: "m4", name: "payables.createRecurringPayable", argsJson: #"[{"id":"11111111-1111-4111-8111-111111111111","name":"车贷","category":"loan","amount":1000,"currency":"CNY","due_day":10}]"#).insert(db)
+            try MutationOutbox(id: "m5", name: "payables.updateRecurringPayable", argsJson: #"["pay-rec-1",{"amount":2200}]"#).insert(db)
+            try MutationOutbox(id: "m6", name: "notifications.markNotificationRead", argsJson: #"["","notif-1"]"#).insert(db)
+            try MutationOutbox(id: "m7", name: "notifications.markAllNotificationsRead", argsJson: #"["","2026-10-21T09:00:00Z"]"#).insert(db)
+            try MutationOutbox(id: "m8", name: "preferences.updateUserPreferences", argsJson: #"["u-pref-1",{"display_config":{"privacy_mode":true}}]"#).insert(db)
+        }
+
+        let sync = engine(manager) { request in
+            if request.url?.path == "/api/sync/push" { return try self.rejection(request, permanent: true) }
+            throw URLError(.notConnectedToInternet)
+        }
+        try await sync.push()
+
+        try await manager.dbWriter.read { db in
+            #expect(try MutationOutbox.fetchCount(db) == 0)
+            let rawTargets = try SyncMeta.fetchOne(db, key: "sync_reconcile_targets")?.value ?? "[]"
+            let targets = try JSONDecoder().decode([SyncReconcileTarget].self, from: Data(rawTargets.utf8))
+            #expect(targets.contains(SyncReconcileTarget(tbl: "bills", rowId: billID)))
+            #expect(targets.contains(SyncReconcileTarget(tbl: "payments", rowId: "sync-fixture-payment")))
+            #expect(targets.contains(SyncReconcileTarget(tbl: "recurring_payables", rowId: "pay-rec-1")))
+            #expect(targets.contains(SyncReconcileTarget(tbl: "user_preferences", rowId: "u-pref-1")))
+            // Non-syncable or server-generated mutations must not insert empty or invalid targets
+            #expect(targets.allSatisfy { !$0.rowId.isEmpty && $0.tbl != "notification_history" })
         }
     }
 }

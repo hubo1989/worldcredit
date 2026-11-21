@@ -303,9 +303,16 @@ struct BillsGroupingTests {
         }
         #expect(dayRefreshes == 1)
 
+        let dayThree = dayTwo.addingTimeInterval(86_400)
+        await state.refreshBusinessDayIfNeeded(isLoggedIn: { true }, now: dayThree) { _, now in
+            dayRefreshes += 1
+            state.markLoaded(today: now)
+        }
+        #expect(dayRefreshes == 2, "同一会话内连续跨越多个业务日仍须触发刷新")
+
         let gate = Gate()
         let stale = Task { @MainActor in
-            await state.refreshBusinessDayIfNeeded(isLoggedIn: { true }, now: dayTwo.addingTimeInterval(86_400)) { epoch, _ in
+            await state.refreshBusinessDayIfNeeded(isLoggedIn: { true }, now: dayThree.addingTimeInterval(86_400)) { epoch, _ in
                 await gate.wait()
                 guard state.isCurrent(epoch, isLoggedIn: true) else { return }
                 dayRefreshes += 1
@@ -315,14 +322,14 @@ struct BillsGroupingTests {
         state.advanceSession()
         gate.release()
         await stale.value
-        #expect(dayRefreshes == 1, "换号后旧任务不得写入新会话")
+        #expect(dayRefreshes == 2, "换号后旧任务不得写入新会话")
 
-        state.markLoaded(today: dayTwo)
-        await state.refreshBusinessDayIfNeeded(isLoggedIn: { true }, now: dayTwo.addingTimeInterval(86_400)) { _, now in
+        state.markLoaded(today: dayThree)
+        await state.refreshBusinessDayIfNeeded(isLoggedIn: { true }, now: dayThree.addingTimeInterval(86_400)) { _, now in
             dayRefreshes += 1
             state.markLoaded(today: now)
         }
-        #expect(dayRefreshes == 2, "新会话必须能继续跨日刷新，不能被旧任务永久短路")
+        #expect(dayRefreshes == 3, "新会话必须能继续跨日刷新，不能被旧任务永久短路")
     }
 
     @MainActor

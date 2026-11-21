@@ -3,6 +3,7 @@ import { createOpportunityDb } from "./helpers/sqlite-d1";
 import { setDb } from "../db";
 import { createCard, deleteCard } from "../api/cards.server";
 import { mergeCardsIntoAccount, splitCardFromAccount, getCreditAccountDetail } from "../api/accounts.server";
+import { RpcDomainError } from "../api/errors";
 
 describe("Anchor Card Lifecycle Guard & Account Operations", () => {
   let db: ReturnType<typeof createOpportunityDb>;
@@ -161,5 +162,123 @@ describe("Anchor Card Lifecycle Guard & Account Operations", () => {
     await expect(mergeCardsIntoAccount(card1.account_id!, [cardH2.id])).rejects.toThrow(
       /不可跨持卡人合并/,
     );
+  });
+
+  it("mergeCardsIntoAccount rejects moving primary card of a multi-card source account alone", async () => {
+    // 源多卡账户（cardSrcPrimary + cardSrcSecondary）
+    const cardSrcPrimary = await createCard({
+      holder_id: "h1",
+      card_product_id: "cp_cmb",
+      billing_day: 5,
+    });
+    const cardSrcSecondary = await createCard({
+      holder_id: "h1",
+      card_product_id: "cp_cmb",
+      billing_day: 5,
+    });
+    const srcAccountId = cardSrcPrimary.account_id!;
+
+    // 拆出第 3 张卡形成独立目标账户 targetAcc
+    const cardTarget = await createCard({
+      holder_id: "h1",
+      card_product_id: "cp_cmb",
+      billing_day: 5,
+    });
+    const targetAcc = await splitCardFromAccount(cardTarget.id);
+
+    // 源账户已有挂在 primary_card_id 上的历史账单
+    await db.exec(`
+      INSERT INTO bills (id, account_id, card_id, bill_month, due_date, bill_amount)
+      VALUES ('b_src_1', '${srcAccountId}', '${cardSrcPrimary.id}', '2026-09', '2026-09-25', 3200);
+    `);
+
+    // 单独将源多卡账户的主卡合并入目标账户必须被拒绝
+    await expect(mergeCardsIntoAccount(targetAcc.id, [cardSrcPrimary.id])).rejects.toThrow(
+      /包含多卡账户主卡/,
+    );
+
+    // 源账户锚点与历史账单完好无损
+    const srcAcc = await getCreditAccountDetail(srcAccountId);
+    expect(srcAcc?.primary_card_id).toBe(cardSrcPrimary.id);
+    expect(srcAcc?.cards.map((c) => c.id)).toEqual(
+      expect.arrayContaining([cardSrcPrimary.id, cardSrcSecondary.id]),
+    );
+    const bill = await db
+      .prepare("SELECT account_id, card_id FROM bills WHERE id = 'b_src_1'")
+      .first<{ account_id: string; card_id: string }>();
+    expect(bill).toEqual({ account_id: srcAccountId, card_id: cardSrcPrimary.id });
+  });
+
+  it("mergeCardsIntoAccount removes emptied source account and migrates its bills to target anchor", async () => {
+    const cardTarget = await createCard({
+      holder_id: "h1",
+      card_product_id: "cp_cmb",
+      billing_day: 5,
+    });
+    const cardExtra = await createCard({
+      holder_id: "h1",
+      card_product_id: "cp_cmb",
+      billing_day: 5,
+    });
+    // 拆出为独立单卡源账户
+    const indepAcc = await splitCardFromAccount(cardExtra.id);
+
+    await db.exec(`
+      INSERT INTO bills (id, account_id, card_id, bill_month, due_date, bill_amount)
+      VALUES ('b_indep_1', '${indepAcc.id}', '${cardExtra.id}', '2026-08', '2026-08-25', 1500);
+    `);
+
+    const merged = await mergeCardsIntoAccount(cardTarget.account_id!, [cardExtra.id]);
+    expect(merged.mergedCount).toBe(1);
+
+    // 被清空的原独立账户应被删除，不留跨账户悬空 primary_card_id
+    const emptied = await getCreditAccountDetail(indepAcc.id);
+    expect(emptied).toBeNull();
+
+    // 卡片与历史账单迁移至目标账户并对齐主卡
+    const migratedBill = await db
+      .prepare("SELECT account_id, card_id FROM bills WHERE id = 'b_indep_1'")
+      .first<{ account_id: string; card_id: string }>();
+    expect(migratedBill).toEqual({
+      account_id: cardTarget.account_id,
+      card_id: cardTarget.id,
+    });
+  });
+
+  it("mergeCardsIntoAccount translates batch constraint failures into RpcDomainError CONFLICT", async () => {
+    const cardTarget = await createCard({
+      holder_id: "h1",
+      card_product_id: "cp_cmb",
+      billing_day: 5,
+    });
+    const cardExtra = await createCard({
+      holder_id: "h1",
+      card_product_id: "cp_cmb",
+      billing_day: 5,
+    });
+    const indepAcc = await splitCardFromAccount(cardExtra.id);
+
+    await db.exec(`
+      CREATE TRIGGER test_block_account_delete
+      BEFORE DELETE ON credit_accounts
+      WHEN OLD.id = '${indepAcc.id}'
+      BEGIN
+        SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed');
+      END;
+    `);
+
+    await expect(
+      mergeCardsIntoAccount(cardTarget.account_id!, [cardExtra.id]),
+    ).rejects.toMatchObject({
+      name: RpcDomainError.name,
+      code: "CONFLICT",
+    });
+
+    // Trigger aborted batch cleanly: cardExtra stays on indepAcc without orphan state
+    const cardExtraRow = await db
+      .prepare("SELECT account_id FROM credit_cards WHERE id = ?")
+      .bind(cardExtra.id)
+      .first<{ account_id: string }>();
+    expect(cardExtraRow?.account_id).toBe(indepAcc.id);
   });
 });

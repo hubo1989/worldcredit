@@ -4,6 +4,8 @@
 // 库里只存 SHA-256 哈希。每次 refresh 一次性轮换（旧的立即吊销 + 签发新的），
 // 防止旧 token 被重放。有效期 180 天，远长于 access token 的 7 天滑动窗口。
 
+/// <reference types="@cloudflare/workers-types" />
+
 import { getDb } from "@/lib/db";
 
 export const REFRESH_TOKEN_TTL_DAYS = 180;
@@ -26,21 +28,32 @@ export interface IssuedRefreshToken {
   id: string;
 }
 
-/** 为用户签发一个新 refresh token（不吊销其他在用 token，多设备并存）。 */
-export async function issueRefreshToken(userId: string): Promise<IssuedRefreshToken> {
+export interface PreparedRefreshToken extends IssuedRefreshToken {
+  /** 待与注册写库等操作放入同一 db.batch 隐式事务执行的预编译插入语句 */
+  statement: D1PreparedStatement;
+}
+
+/** 构造用户 refresh token 及其预编译 INSERT 语句（供注册流程纳入 db.batch 原子提交）。 */
+export async function prepareIssueRefreshToken(userId: string): Promise<PreparedRefreshToken> {
   const raw = crypto.getRandomValues(new Uint8Array(32));
   const token = Array.from(raw)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  await getDb()
+  const statement = getDb()
     .prepare(
       "INSERT INTO session_refresh_tokens (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
     )
-    .bind(id, userId, await hashToken(token), expiryDate(), now)
-    .run();
-  return { token, id };
+    .bind(id, userId, await hashToken(token), expiryDate(), now);
+  return { token, id, statement };
+}
+
+/** 为用户签发一个新 refresh token（不吊销其他在用 token，多设备并存）。 */
+export async function issueRefreshToken(userId: string): Promise<IssuedRefreshToken> {
+  const prepared = await prepareIssueRefreshToken(userId);
+  await prepared.statement.run();
+  return { token: prepared.token, id: prepared.id };
 }
 
 export type RefreshResult =

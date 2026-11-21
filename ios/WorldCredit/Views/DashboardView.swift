@@ -8,8 +8,9 @@ struct DashboardView: View {
     @State private var futureDays = 7
     @State private var debtExpanded = false
     @State private var showPayAllConfirm = false
-    @State private var webDestination: DashboardWebDestination?
     @State private var showPushNotificationsCenter = false
+    @State private var showingCreateBillSheet = false
+    @State private var showingCreateCardSheet = false
 
     private let futureOptions = [7, 14, 30]
 
@@ -35,17 +36,30 @@ struct DashboardView: View {
             .navigationDestination(for: BillDetailRoute.self) { route in
                 BillDetailView(item: route.item)
             }
+            .navigationDestination(for: CardDetailRoute.self) { route in
+                CardDetailView(cardId: route.cardId)
+            }
             .navigationDestination(isPresented: $showPushNotificationsCenter) {
                 NotificationsCenterView()
             }
             .onAppear {
                 consumePendingNotificationRoutes()
+                consumePendingCreateSheets()
             }
             .onChange(of: appState.pendingOpenNotifications) { _, _ in
                 consumePendingNotificationRoutes()
             }
-            .onChange(of: appState.pendingWebDestination) { _, _ in
-                consumePendingNotificationRoutes()
+            .onChange(of: appState.showingCreateBillSheet) { _, newValue in
+                if newValue {
+                    appState.showingCreateBillSheet = false
+                    showingCreateBillSheet = true
+                }
+            }
+            .onChange(of: appState.showingCreateCardSheet) { _, newValue in
+                if newValue && appState.selectedTab == 0 {
+                    appState.showingCreateCardSheet = false
+                    showingCreateCardSheet = true
+                }
             }
             .refreshable { await appState.refreshDashboard() }
             .task { await appState.loadInitialDataIfNeeded() }
@@ -57,14 +71,11 @@ struct DashboardView: View {
                     )
                 }
             }
-            .sheet(item: $webDestination) { destination in
-                // 会话 cookie 需要真实 token；未登录时不打开内嵌页面，避免注入空会话。
-                if let token = appState.apiClient.token {
-                    DashboardWebView(destination: destination, sessionToken: token) {
-                        webDestination = nil
-                        Task { await appState.refreshDashboard() }
-                    }
-                }
+            .sheet(isPresented: $showingCreateBillSheet) {
+                BillCreateSheetView()
+            }
+            .sheet(isPresented: $showingCreateCardSheet) {
+                CardCreateSheetView()
             }
             .confirmationDialog(
                 "一键结清 \(metrics.overdueBills.count) 笔逾期账单？",
@@ -75,7 +86,9 @@ struct DashboardView: View {
                     Task {
                         do {
                             _ = try await appState.payDashboardBills(ids)
+                            HapticManager.success()
                         } catch {
+                            HapticManager.error()
                             appState.lastSyncError = error.localizedDescription
                         }
                     }
@@ -94,7 +107,8 @@ struct DashboardView: View {
             futureDays: futureDays,
             displayCurrency: appState.dashboardCurrency,
             rates: appState.dashboardRates,
-            payables: appState.payables
+            payables: appState.payables,
+            creditAccounts: appState.creditAccountGroups.map(\.account)
         )
     }
 
@@ -105,9 +119,16 @@ struct DashboardView: View {
             appState.pendingOpenNotifications = false
             showPushNotificationsCenter = true
         }
-        if let dest = appState.pendingWebDestination {
-            appState.pendingWebDestination = nil
-            webDestination = dest
+    }
+
+    private func consumePendingCreateSheets() {
+        if appState.showingCreateBillSheet {
+            appState.showingCreateBillSheet = false
+            showingCreateBillSheet = true
+        }
+        if appState.showingCreateCardSheet && appState.selectedTab == 0 {
+            appState.showingCreateCardSheet = false
+            showingCreateCardSheet = true
         }
     }
 
@@ -160,6 +181,7 @@ struct DashboardView: View {
                 .accessibilityIdentifier("dashboard.notifications")
 
                 Button {
+                    HapticManager.selection()
                     Task { await appState.setDashboardPrivacy(!appState.dashboardPrivacy) }
                 } label: {
                     Image(systemName: appState.dashboardPrivacy ? "eye.slash" : "eye")
@@ -500,7 +522,8 @@ struct DashboardView: View {
 
     private var promoEntry: some View {
         Button {
-            webDestination = .promos
+            HapticManager.selection()
+            appState.selectedTab = 3
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "percent")
@@ -509,8 +532,7 @@ struct DashboardView: View {
                     .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("优惠活动").font(.subheadline.bold())
-                    Text(appState.dashboardAvailableCount.map { "今天可用 \($0) 项" }
-                         ?? "查看可用机会（暂无法获取数量）")
+                    Text(promoSubtitle)
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -524,6 +546,16 @@ struct DashboardView: View {
         .accessibilityIdentifier("dashboard.promos")
     }
 
+    private var promoSubtitle: String {
+        if let count = appState.dashboardAvailableCount {
+            return "今天可用 \(count) 项"
+        }
+        if !appState.promos.isEmpty {
+            return "查看 \(appState.promos.count) 项银行优惠活动"
+        }
+        return "查看可用机会与银行优惠"
+    }
+
     private var remindersSection: some View {
         Group {
             if !appState.dashboardReminders.isEmpty {
@@ -531,11 +563,11 @@ struct DashboardView: View {
                     HStack {
                         Text("权益待办").font(.headline)
                         Spacer()
-                        Button("全部 ›") { webDestination = .benefitCalendar }
+                        Button("全部 ›") { appState.openWebDestination(.benefitCalendar) }
                             .font(.caption.bold())
                     }
                     ForEach(appState.dashboardReminders) { reminder in
-                        Button { webDestination = .benefitCalendar } label: {
+                        Button { appState.openWebDestination(.benefitCalendar) } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(reminder.title).font(.subheadline.bold())
                                     .lineLimit(1)
@@ -593,10 +625,22 @@ struct DashboardView: View {
 
     private var quickActionsRow: some View {
         HStack(spacing: 10) {
-            quickAction("记一笔", systemImage: "square.and.pencil") { webDestination = .createBill }
-            quickAction("优惠", systemImage: "percent") { webDestination = .promos }
-            quickAction("权益", systemImage: "gift") { webDestination = .benefits }
-            quickAction("邮箱账单", systemImage: "envelope") { webDestination = .gmailLedger }
+            quickAction("记一笔", systemImage: "square.and.pencil") {
+                HapticManager.impactLight()
+                showingCreateBillSheet = true
+            }
+            quickAction("优惠", systemImage: "percent") {
+                HapticManager.selection()
+                appState.selectedTab = 3
+            }
+            quickAction("权益", systemImage: "gift") {
+                HapticManager.impactLight()
+                appState.openWebDestination(.benefits)
+            }
+            quickAction("邮箱账单", systemImage: "envelope") {
+                HapticManager.impactLight()
+                appState.openWebDestination(.gmailLedger)
+            }
         }
     }
 

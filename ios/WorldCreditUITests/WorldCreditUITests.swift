@@ -52,16 +52,16 @@ final class WorldCreditUITests: XCTestCase {
         tab("账单", in: app)
         XCTAssertTrue(app.buttons["bill.row.bill-cmb-202610"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["bill.row.bill-icbc-202609"].exists)
-        setBillStatus("已还", in: app)
+        setBillStatus("未出账", in: app)
         XCTAssertTrue(app.buttons["bill.row.bill-boc-202609"].waitForExistence(timeout: 5))
         attachScreenshot(app, name: "02-bills-paid-filter")
 
-        tab("卡片", in: app)
+        tab("账户", in: app)
         XCTAssertTrue(app.buttons["card.row.card-cmb-1"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["card.row.card-icbc-1"].exists)
         attachScreenshot(app, name: "03-cards")
 
-        tab("设置", in: app)
+        tab("我的", in: app)
         let databaseRow = app.staticTexts.matching(NSPredicate(
             format: "label == %@ OR label == %@", "SQLite (GRDB)", "本地数据库, SQLite (GRDB)"
         )).firstMatch
@@ -89,7 +89,7 @@ final class WorldCreditUITests: XCTestCase {
 
         tab("概览", in: app)
         assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥5,430")
-        tab("设置", in: app)
+        tab("我的", in: app)
         assertPendingChanges(1, in: app)
         attachScreenshot(app, name: "07-offline-payment-outbox")
 
@@ -98,7 +98,7 @@ final class WorldCreditUITests: XCTestCase {
         tab("账单", in: app)
         XCTAssertTrue(app.buttons["bill.row.bill-icbc-202609"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["bill.row.bill-cmb-202610"].exists)
-        setBillStatus("已还", in: app)
+        setBillStatus("未出账", in: app)
         let paidBill = app.buttons["bill.row.bill-cmb-202610"]
         XCTAssertTrue(paidBill.waitForExistence(timeout: 5))
         paidBill.tap()
@@ -123,7 +123,7 @@ final class WorldCreditUITests: XCTestCase {
         attachScreenshot(app, name: "09-adjusted-current-detail")
         tab("概览", in: app)
         assertLabel(app.staticTexts["dashboard.totalDebt"], equals: "¥18,800.5")
-        tab("设置", in: app)
+        tab("我的", in: app)
         assertPendingChanges(1, in: app)
 
         relaunch(app)
@@ -136,33 +136,64 @@ final class WorldCreditUITests: XCTestCase {
 
     func test04OfflineCardConfigurationPersistsAfterRelaunch() {
         let app = launchScenario()
-        tab("卡片", in: app)
+        tab("账户", in: app)
         let card = app.buttons["card.row.card-cmb-1"]
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         card.tap()
-        let name = app.textFields["card.edit.name"]
+
+        // 进入 CardDetailView，分别通过「卡片定义设置」与「账户与账单规则」完成编辑
+        let editDef = app.buttons["card.detail.editDefinition"]
+        XCTAssertTrue(editDef.waitForExistence(timeout: 5))
+        editDef.tap()
+        let name = app.textFields["card.def.name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         replaceText(in: name, with: "UI Test Card")
-        replaceText(in: app.textFields["card.edit.limit"], with: "65000")
-        replaceText(in: app.textFields["card.edit.billingDay"], with: "7")
+        app.buttons["card.def.save"].tap()
+        XCTAssertTrue(app.buttons["card.def.save"].waitForNonExistence(timeout: 10),
+                      "Card definition edit must finish and dismiss its sheet before editing rules")
+
+        let editRules = app.buttons["card.detail.editRules"]
+        XCTAssertTrue(editRules.waitForExistence(timeout: 5))
+        editRules.tap()
+        let limit = app.textFields["card.rules.limit"]
+        XCTAssertTrue(limit.waitForExistence(timeout: 5))
+        replaceText(in: limit, with: "65000")
+        replaceText(in: app.textFields["card.rules.billingDay"], with: "7")
         // Saving with notification permission denied must still commit the local edit.
-        app.buttons["card.edit.save"].tap()
-        XCTAssertTrue(app.buttons["card.edit.save"].waitForNonExistence(timeout: 10), "Card edit must finish and dismiss its sheet before switching tabs")
+        app.buttons["card.rules.save"].tap()
+        XCTAssertTrue(app.buttons["card.rules.save"].waitForNonExistence(timeout: 10),
+                      "Card rules edit must finish and dismiss its sheet before navigating back")
+        XCTAssertTrue(app.staticTexts["UI Test Card"].waitForExistence(timeout: 5))
+
+        let back = app.navigationBars.buttons.element(boundBy: 0)
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        back.tap()
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         let updated = NSPredicate(format: "label CONTAINS %@", "UI Test Card")
         expectation(for: updated, evaluatedWith: card)
         waitForExpectations(timeout: 5)
         attachScreenshot(app, name: "11-edited-card")
-        tab("设置", in: app)
-        assertPendingChanges(1, in: app)
+        tab("我的", in: app)
+        assertPendingChanges(2, in: app)
 
         relaunch(app)
-        tab("卡片", in: app)
-        app.buttons["card.row.card-cmb-1"].tap()
-        XCTAssertTrue(app.textFields["card.edit.name"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.textFields["card.edit.name"].value as? String, "UI Test Card")
-        XCTAssertEqual(app.textFields["card.edit.limit"].value as? String, "65000")
-        XCTAssertEqual(app.textFields["card.edit.billingDay"].value as? String, "7")
+        tab("账户", in: app)
+        let cardAfter = app.buttons["card.row.card-cmb-1"]
+        XCTAssertTrue(cardAfter.waitForExistence(timeout: 5))
+        cardAfter.tap()
+
+        XCTAssertTrue(app.buttons["card.detail.editDefinition"].waitForExistence(timeout: 5))
+        app.buttons["card.detail.editDefinition"].tap()
+        XCTAssertTrue(app.textFields["card.def.name"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["card.def.name"].value as? String, "UI Test Card")
+        app.navigationBars["卡片定义设置"].buttons["取消"].tap()
+        XCTAssertTrue(app.textFields["card.def.name"].waitForNonExistence(timeout: 5))
+
+        XCTAssertTrue(app.buttons["card.detail.editRules"].waitForExistence(timeout: 5))
+        app.buttons["card.detail.editRules"].tap()
+        XCTAssertTrue(app.textFields["card.rules.limit"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["card.rules.limit"].value as? String, "65000")
+        XCTAssertEqual(app.textFields["card.rules.billingDay"].value as? String, "7")
         attachScreenshot(app, name: "12-card-settings-after-relaunch")
     }
 
@@ -211,7 +242,7 @@ final class WorldCreditUITests: XCTestCase {
     /// 快捷入口打开受限业务页，可正常关闭并回到首页。
     func test07DashboardQuickActionOpensAndClosesWebPage() {
         let app = launchScenario()
-        let quick = app.buttons["dashboard.quick.记一笔"]
+        let quick = app.buttons["dashboard.quick.权益"]
         XCTAssertTrue(quick.waitForExistence(timeout: 5))
         quick.tap()
 
@@ -219,7 +250,7 @@ final class WorldCreditUITests: XCTestCase {
         XCTAssertTrue(close.waitForExistence(timeout: 5), "业务页必须提供显式关闭")
         attachScreenshot(app, name: "17-dashboard-webview")
         close.tap()
-        XCTAssertTrue(app.buttons["dashboard.quick.记一笔"].waitForExistence(timeout: 5),
+        XCTAssertTrue(app.buttons["dashboard.quick.权益"].waitForExistence(timeout: 5),
                       "关闭后应回到首页")
     }
 
@@ -279,7 +310,7 @@ final class WorldCreditUITests: XCTestCase {
             XCTAssertTrue(nearest.isSelected)
             XCTAssertTrue(app.staticTexts["待还汇总"].exists)
         }
-        setBillStatus("已还", in: app)
+        setBillStatus("未出账", in: app)
         let paid = app.buttons["bill.row.bill-boc-202609"]
         scrollTo(paid, in: app)
         XCTAssertTrue(paid.exists)
@@ -311,7 +342,7 @@ final class WorldCreditUITests: XCTestCase {
         XCTAssertFalse(app.buttons["bills.payAllOverdue"].exists, "逾期结清后横幅应消失")
         attachScreenshot(app, name: "19-bills-after-banner-pay-all")
 
-        tab("设置", in: app)
+        tab("我的", in: app)
         assertPendingChanges(1, in: app)
     }
 
@@ -332,14 +363,14 @@ final class WorldCreditUITests: XCTestCase {
         XCTAssertTrue(app.buttons["bill.row.bill-cmb-202610"].waitForNonExistence(timeout: 5), "结清账单应离开待还列表")
         XCTAssertTrue(app.buttons["bill.row.bill-icbc-202609"].exists, "其他账单不受影响")
 
-        tab("设置", in: app)
+        tab("我的", in: app)
         assertPendingChanges(1, in: app)
     }
 
     /// Gmail 账单同步卡片：契约 mock 验证未连接/已连接两套布局与断开确认。
     func test11SettingsGmailSyncCardLayouts() {
         let app = launchScenario()
-        tab("设置", in: app)
+        tab("我的", in: app)
         let connect = app.buttons["gmail.connect"]
         scrollTo(connect, in: app)
         XCTAssertTrue(connect.waitForExistence(timeout: 5), "未连接时应展示「连接 Gmail（只读）」")
@@ -348,7 +379,7 @@ final class WorldCreditUITests: XCTestCase {
 
         app.launchEnvironment["WORLDCREDIT_UI_TEST_GMAIL"] = "connected"
         relaunch(app)
-        tab("设置", in: app)
+        tab("我的", in: app)
         let sync = app.buttons["gmail.sync"]
         scrollTo(sync, in: app)
         XCTAssertTrue(sync.waitForExistence(timeout: 5), "已连接时应展示「立即同步」")
@@ -369,11 +400,16 @@ final class WorldCreditUITests: XCTestCase {
         if dismiss.waitForExistence(timeout: 2) { dismiss.tap() }
     }
 
-    /// 状态筛选：打开筛选抽屉 → 选状态 → 点击查看账单（应用） → 断言列表切换完成。
+    /// 状态筛选：打开筛选抽屉 → 重置并选状态 → 点击查看账单（应用） → 断言列表切换完成。
     private func setBillStatus(_ status: String, in app: XCUIApplication) {
         app.buttons["bills.holderBankFilter"].tap()
-        let item = app.buttons[status].firstMatch
-        XCTAssertTrue(item.waitForExistence(timeout: 5), "筛选菜单里应提供状态项「\(status)」")
+        let reset = app.buttons["bills.filter.reset"]
+        if reset.waitForExistence(timeout: 2) {
+            reset.tap()
+        }
+        let byId = app.buttons["bills.status.\(status)"]
+        let item = byId.waitForExistence(timeout: 5) ? byId : app.buttons[status].firstMatch
+        XCTAssertTrue(item.exists, "筛选菜单里应提供状态项「\(status)」")
         item.tap()
         let apply = app.buttons["bills.filter.apply"]
         if apply.waitForExistence(timeout: 2) {
@@ -485,7 +521,7 @@ final class WorldCreditUITests: XCTestCase {
         let app = launchScenario()
 
         // 1. 设置页切换到深色模式
-        tab("设置", in: app)
+        tab("我的", in: app)
         let themePicker = app.segmentedControls["settings.themePicker"]
         if themePicker.waitForExistence(timeout: 5) {
             themePicker.buttons["深色"].tap()
@@ -549,7 +585,7 @@ final class WorldCreditUITests: XCTestCase {
         }
 
         // 6. 还款记录页面（深色模式）
-        setBillStatus("已还", in: app)
+        setBillStatus("未出账", in: app)
         Thread.sleep(forTimeInterval: 0.5)
         let viewHistoryDark = app.buttons["bill.row.pay.bill-boc-202609"]
         if viewHistoryDark.waitForExistence(timeout: 5) {
@@ -566,7 +602,7 @@ final class WorldCreditUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
 
         // 7. 设置页切换到浅色模式
-        tab("设置", in: app)
+        tab("我的", in: app)
         if themePicker.waitForExistence(timeout: 5) {
             themePicker.buttons["浅色"].tap()
             Thread.sleep(forTimeInterval: 0.8)
@@ -608,7 +644,7 @@ final class WorldCreditUITests: XCTestCase {
         }
 
         // 12. 还款记录页面（浅色模式）
-        setBillStatus("已还", in: app)
+        setBillStatus("未出账", in: app)
         Thread.sleep(forTimeInterval: 0.5)
         let viewHistoryLight = app.buttons["bill.row.pay.bill-boc-202609"]
         if viewHistoryLight.waitForExistence(timeout: 5) {
@@ -624,7 +660,7 @@ final class WorldCreditUITests: XCTestCase {
         setBillStatus("待还", in: app)
 
         // 13. 设置页切换回跟随系统并截图
-        tab("设置", in: app)
+        tab("我的", in: app)
         if themePicker.waitForExistence(timeout: 5) {
             themePicker.buttons["跟随系统"].tap()
             Thread.sleep(forTimeInterval: 0.8)
