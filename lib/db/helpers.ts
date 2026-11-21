@@ -29,6 +29,38 @@ export async function query<T = Record<string, unknown>>(
   }
 }
 
+export const D1_MAX_BIND_PARAMS = 100
+
+/**
+ * 按 Cloudflare D1 单条 SQL 最多 100 个绑定参数的硬上限分片执行 IN 查询并合并结果。
+ * 任意分片出错立即返回 error，绝不静默丢数据。
+ */
+export async function queryByChunks<T = Record<string, unknown>, V = string>(
+  values: readonly V[],
+  buildQuery: (chunk: V[], placeholders: string) => { sql: string; params: unknown[] },
+  chunkSize = 80
+): Promise<DbResult<T[]>> {
+  if (values.length === 0) return { data: [], error: null }
+  const size = Math.max(1, Math.min(chunkSize, D1_MAX_BIND_PARAMS))
+  const chunks: V[][] = []
+  for (let i = 0; i < values.length; i += size) {
+    chunks.push(values.slice(i, i + size))
+  }
+  const results = await Promise.all(
+    chunks.map(chunk => {
+      const placeholders = chunk.map(() => '?').join(',')
+      const { sql, params } = buildQuery(chunk, placeholders)
+      return query<T>(sql, params)
+    })
+  )
+  const merged: T[] = []
+  for (const res of results) {
+    if (res.error) return { data: null, error: res.error }
+    if (res.data) merged.push(...res.data)
+  }
+  return { data: merged, error: null }
+}
+
 export async function queryOne<T = Record<string, unknown>>(
   sql: string,
   params: unknown[] = []
