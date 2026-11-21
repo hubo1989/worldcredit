@@ -148,4 +148,67 @@ struct DashboardMetricsTests {
         #expect(holderBMetrics.dueTodayPayables.map(\.id) == ["p-other-holder"])
         #expect(holderBMetrics.dueTodayCount == 1)
     }
+
+    @Test("Shared credit accounts deduplicate credit limit pools across cards")
+    func sharedCreditPoolsAreDeduplicated() {
+        let product = CardProduct(id: "cp-cmb", bankName: "招商银行", cardName: "招行卡", currency: "CNY", paymentDueType: .afterBilling, paymentDueValue: 18)
+        let sharedAcc = CreditAccount(
+            id: "acc-shared",
+            holderId: "h1",
+            bankName: "招商银行",
+            currency: "CNY",
+            statementMode: "merged",
+            quotaMode: "shared",
+            sharedCreditLimit: 50000
+        )
+        let fallbackSharedAcc = CreditAccount(
+            id: "acc-shared-fallback",
+            holderId: "h1",
+            bankName: "广发银行",
+            currency: "CNY",
+            statementMode: "independent",
+            quotaMode: "shared",
+            sharedCreditLimit: nil
+        )
+        let indepAcc = CreditAccount(
+            id: "acc-indep",
+            holderId: "h1",
+            bankName: "工商银行",
+            currency: "CNY",
+            statementMode: "independent",
+            quotaMode: "independent"
+        )
+
+        func makeCardDisplay(id: String, accountId: String?, limit: Double, status: String = "active") -> CardDisplayItem {
+            let c = CreditCard(id: id, holderId: "h1", cardProductId: "cp-cmb", billingDay: 5, creditLimit: limit, status: status, accountId: accountId)
+            return CardDisplayItem(
+                card: c, product: product, bank: nil, holder: nil, latestBill: nil,
+                remainingAmount: 0, interestFreeDaysToday: 0, nextDueDate: Date(timeIntervalSince1970: 0)
+            )
+        }
+
+        let cards = [
+            makeCardDisplay(id: "c1", accountId: "acc-shared", limit: 50000),
+            makeCardDisplay(id: "c2", accountId: "acc-shared", limit: 50000),
+            makeCardDisplay(id: "c3", accountId: "acc-shared-fallback", limit: 20000),
+            makeCardDisplay(id: "c4", accountId: "acc-shared-fallback", limit: 30000),
+            makeCardDisplay(id: "c5", accountId: "acc-indep", limit: 15000),
+            makeCardDisplay(id: "c6", accountId: "acc-indep", limit: 10000),
+            makeCardDisplay(id: "c7-frozen", accountId: "acc-shared", limit: 80000, status: "frozen"),
+        ]
+
+        // Expect: 50000 (acc-shared once) + 30000 (fallback max) + (15000 + 10000 indep) = 105000
+        let metrics = DashboardMetrics.compute(
+            bills: [],
+            cards: cards,
+            holderId: nil,
+            futureDays: 7,
+            displayCurrency: "CNY",
+            rates: nil,
+            payables: [],
+            creditAccounts: [sharedAcc, fallbackSharedAcc, indepAcc]
+        )
+        #expect(metrics.totalCreditLimit == 105000)
+        #expect(metrics.creditLimitByCurrency == ["CNY": 105000])
+    }
 }

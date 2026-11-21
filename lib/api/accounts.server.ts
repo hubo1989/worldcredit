@@ -186,6 +186,43 @@ export async function mergeCardsIntoAccount(
     }
   }
 
+  // 1.1 保护多卡源账户主卡：不允许单独迁走仍有其余成员卡的源账户锚点卡，避免源账户 primary_card_id 悬空或历史合并账单错迁
+  const cardIdSet = new Set(cardIds);
+  const sourceAccountIds = Array.from(
+    new Set(
+      cards
+        .map((c) => (c.account_id ? String(c.account_id) : null))
+        .filter((id): id is string => Boolean(id && id !== targetAccountId)),
+    ),
+  );
+  const emptySourceAccountIds: string[] = [];
+  for (const sourceAccountId of sourceAccountIds) {
+    const { data: sourceAcc } = await queryOne<{ primary_card_id: string | null }>(
+      "SELECT primary_card_id FROM credit_accounts WHERE id = ?",
+      [sourceAccountId],
+    );
+    const { data: sourceCards } = await query<{ id: string }>(
+      "SELECT id FROM credit_cards WHERE account_id = ?",
+      [sourceAccountId],
+    );
+    const remainingCardIds = (sourceCards || [])
+      .map((row) => row.id)
+      .filter((id) => !cardIdSet.has(id));
+    if (
+      sourceAcc?.primary_card_id &&
+      cardIdSet.has(sourceAcc.primary_card_id) &&
+      remainingCardIds.length > 0
+    ) {
+      throw new RpcDomainError(
+        "VALIDATION_FAILED",
+        "待合并卡片包含多卡账户主卡，请先在卡片详情中拆出该主卡或将该原账户全部卡片一并合并",
+      );
+    }
+    if (remainingCardIds.length === 0) {
+      emptySourceAccountIds.push(sourceAccountId);
+    }
+  }
+
   // 2. 同月账单碰撞检查
   // (a) 检查待合并各卡与目标账户已有账单是否存在相同月份
   const { data: targetBills } = await query<{ bill_month: string }>(
@@ -194,9 +231,16 @@ export async function mergeCardsIntoAccount(
   );
   const targetMonths = new Set((targetBills || []).map((b) => b.bill_month));
 
+  let candidateQuery = `SELECT card_id, bill_month FROM bills WHERE card_id IN (${placeholders})`;
+  const candidateParams: unknown[] = [...cardIds];
+  if (emptySourceAccountIds.length > 0) {
+    const accPlaceholders = emptySourceAccountIds.map(() => "?").join(",");
+    candidateQuery += ` OR account_id IN (${accPlaceholders})`;
+    candidateParams.push(...emptySourceAccountIds);
+  }
   const { data: candidateBills } = await query<{ card_id: string; bill_month: string }>(
-    `SELECT card_id, bill_month FROM bills WHERE card_id IN (${placeholders})`,
-    cardIds,
+    candidateQuery,
+    candidateParams,
   );
   const candidateList = candidateBills || [];
 
@@ -254,6 +298,12 @@ export async function mergeCardsIntoAccount(
     updates.push({
       sql: "UPDATE bills SET account_id = ?, card_id = ? WHERE card_id = ?",
       params: [targetAccountId, anchorCardId, cid],
+    });
+  }
+  for (const emptiedAccId of emptySourceAccountIds) {
+    updates.push({
+      sql: "UPDATE bills SET account_id = ?, card_id = ? WHERE account_id = ?",
+      params: [targetAccountId, anchorCardId, emptiedAccId],
     });
   }
 

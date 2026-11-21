@@ -107,7 +107,8 @@ struct DashboardView: View {
             futureDays: futureDays,
             displayCurrency: appState.dashboardCurrency,
             rates: appState.dashboardRates,
-            payables: appState.payables
+            payables: appState.payables,
+            creditAccounts: appState.creditAccountGroups.map(\.account)
         )
     }
 

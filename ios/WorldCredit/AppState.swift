@@ -401,7 +401,7 @@ public final class AppState {
             let holders = try await queryService.fetchHolders()
             let localBanks = try await queryService.fetchBanks()
             let accountGroups = try await queryService.fetchCreditAccountGroups(today: today)
-            let promoList = try await queryService.fetchPromos(activeOnly: true, asOf: today)
+            let promoList = try await queryService.fetchPromos(activeOnly: true, asOf: today, includeUpcoming: true)
             let loadedDisplayConfig = try await queryService.fetchDisplayConfig(userId: userId)
             let offlinePayables = try await fetchOfflinePayablesFallback(today: today)
 

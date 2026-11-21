@@ -1,8 +1,9 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createOpportunityDb, type SqliteD1 } from "./helpers/sqlite-d1";
 import { setDb, setWorkerEnv } from "../db/client";
 import { verifySessionValue, SESSION_TTL_SECONDS, SESSION_COOKIE } from "../session";
 import { ADMIN_EMAILS } from "../admin-emails";
+import * as refreshTokensServer from "../refresh-tokens.server";
 import { POST as registerHandler } from "../../app/api/auth/register/route";
 import { POST as refreshHandler } from "../../app/api/auth/refresh/route";
 import { POST as pullHandler } from "../../app/api/sync/pull/route";
@@ -41,6 +42,7 @@ describe("POST /api/auth/register dual cookie and Bearer+refresh token flow", ()
       })
     );
     expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
     const setCookie = res.headers.get("Set-Cookie");
     expect(setCookie).toContain(`${SESSION_COOKIE}=`);
     expect(setCookie).toContain("HttpOnly");
@@ -185,5 +187,58 @@ describe("POST /api/auth/register dual cookie and Bearer+refresh token flow", ()
     );
     expect(badRes.status).toBe(400);
     expect(badRes.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("trims email consistently and rolls back inserted user when issueRefreshToken fails", async () => {
+    // Whitespace around email must be trimmed consistently before duplicate checks & INSERT
+    const spacedRes = await registerHandler(
+      registerReq({
+        email: "  spaced@example.test  ",
+        password: "strong-password-123",
+      })
+    );
+    expect(spacedRes.status).toBe(200);
+    const spacedBody = (await spacedRes.json()) as { user: { email: string } };
+    expect(spacedBody.user.email).toBe("spaced@example.test");
+
+    const dupTrimmedRes = await registerHandler(
+      registerReq({
+        email: "spaced@example.test",
+        password: "strong-password-123",
+      })
+    );
+    expect(dupTrimmedRes.status).toBe(409);
+
+    // If issueRefreshToken throws, newly inserted user must be rolled back so retry succeeds cleanly
+    const spy = vi
+      .spyOn(refreshTokensServer, "issueRefreshToken")
+      .mockRejectedValueOnce(new Error("simulated refresh storage failure"));
+    try {
+      const failRes = await registerHandler(
+        registerReq({
+          email: "rollback-retry@example.test",
+          password: "strong-password-123",
+          issue_token: true,
+        })
+      );
+      expect(failRes.status).toBe(500);
+      expect(failRes.headers.get("Cache-Control")).toBe("no-store");
+      expect(
+        db.raw
+          .prepare("SELECT COUNT(*) AS n FROM users WHERE email = 'rollback-retry@example.test'")
+          .get()
+      ).toEqual({ n: 0 });
+
+      const retryRes = await registerHandler(
+        registerReq({
+          email: "rollback-retry@example.test",
+          password: "strong-password-123",
+          issue_token: true,
+        })
+      );
+      expect(retryRes.status).toBe(200);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

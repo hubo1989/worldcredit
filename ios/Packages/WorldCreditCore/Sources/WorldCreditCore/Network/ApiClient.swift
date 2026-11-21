@@ -561,6 +561,7 @@ public final class ApiClient: @unchecked Sendable {
         public var sharedCreditLimit: Double?
         public var clearSharedCreditLimit: Bool
         public var billingDay: Int?
+        public var clearBillingDay: Bool
         public var dueType: PaymentDueType?
         public var clearDueType: Bool
         public var dueValue: Int?
@@ -574,6 +575,7 @@ public final class ApiClient: @unchecked Sendable {
             sharedCreditLimit: Double? = nil,
             clearSharedCreditLimit: Bool = false,
             billingDay: Int? = nil,
+            clearBillingDay: Bool = false,
             dueType: PaymentDueType? = nil,
             clearDueType: Bool = false,
             dueValue: Int? = nil,
@@ -586,6 +588,7 @@ public final class ApiClient: @unchecked Sendable {
             self.sharedCreditLimit = sharedCreditLimit
             self.clearSharedCreditLimit = clearSharedCreditLimit
             self.billingDay = billingDay
+            self.clearBillingDay = clearBillingDay
             self.dueType = dueType
             self.clearDueType = clearDueType
             self.dueValue = dueValue
@@ -712,7 +715,9 @@ public final class ApiClient: @unchecked Sendable {
         } else if let sharedCreditLimit = input.sharedCreditLimit {
             patch["shared_credit_limit"] = sharedCreditLimit
         }
-        if let billingDay = input.billingDay {
+        if input.clearBillingDay {
+            patch["billing_day"] = NSNull()
+        } else if let billingDay = input.billingDay {
             patch["billing_day"] = billingDay
         }
         if input.clearDueType {

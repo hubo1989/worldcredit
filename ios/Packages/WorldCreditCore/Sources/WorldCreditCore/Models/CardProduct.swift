@@ -16,7 +16,11 @@ public struct CardProduct: Codable, FetchableRecord, TableRecord, PersistableRec
     public var bankName: String
     public var cardName: String
     public var cardType: String
-    public var cardImageId: String?
+    /// 派生别名：始终与 `cardArtUrl` 保持单一事实来源一致；自定义 `encode(to:)` 会同步写入 `card_image_id`。
+    public var cardImageId: String? {
+        get { cardArtUrl }
+        set { cardArtUrl = newValue }
+    }
     public var descriptionMd: String?
     public var applyUrl: String?
     public var rewardsSummary: String?
@@ -56,7 +60,6 @@ public struct CardProduct: Codable, FetchableRecord, TableRecord, PersistableRec
         self.bankName = bankName
         self.cardName = cardName
         self.cardType = cardType
-        self.cardImageId = resolvedImage
         self.descriptionMd = descriptionMd
         self.applyUrl = applyUrl
         self.rewardsSummary = rewardsSummary
@@ -93,9 +96,29 @@ public struct CardProduct: Codable, FetchableRecord, TableRecord, PersistableRec
         // D1 stores card_image_id while existing local records/tests may provide card_art_url.
         let remoteImage = try row.decodeIfPresent(String.self, forKey: .cardImageId)
         let localImage = try row.decodeIfPresent(String.self, forKey: .cardArtUrl)
-        let resolvedImage = remoteImage ?? localImage
-        cardImageId = resolvedImage
-        cardArtUrl = resolvedImage
+        cardArtUrl = remoteImage ?? localImage
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var row = encoder.container(keyedBy: CodingKeys.self)
+        try row.encode(id, forKey: .id)
+        try row.encode(country, forKey: .country)
+        try row.encodeIfPresent(bankId, forKey: .bankId)
+        try row.encode(bankName, forKey: .bankName)
+        try row.encode(cardName, forKey: .cardName)
+        try row.encode(cardType, forKey: .cardType)
+        try row.encodeIfPresent(cardArtUrl, forKey: .cardImageId)
+        try row.encodeIfPresent(descriptionMd, forKey: .descriptionMd)
+        try row.encodeIfPresent(applyUrl, forKey: .applyUrl)
+        try row.encodeIfPresent(rewardsSummary, forKey: .rewardsSummary)
+        try row.encode(currency, forKey: .currency)
+        try row.encode(paymentDueType, forKey: .paymentDueType)
+        try row.encode(paymentDueValue, forKey: .paymentDueValue)
+        try row.encodeIfPresent(annualFee, forKey: .annualFee)
+        try row.encodeIfPresent(annualFeeWaiver, forKey: .annualFeeWaiver)
+        try row.encodeIfPresent(cardArtUrl, forKey: .cardArtUrl)
+        try row.encode(isActive, forKey: .isActive)
+        try row.encodeIfPresent(createdAt, forKey: .createdAt)
     }
 
     enum CodingKeys: String, CodingKey {

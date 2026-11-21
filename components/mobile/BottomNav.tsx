@@ -20,7 +20,8 @@ export function BottomNav() {
   const currentIndex = navItems.findIndex(item =>
     pathname === item.path ||
     (item.path !== '/' && pathname.startsWith(item.path)) ||
-    (item.path === '/accounts' && (pathname.startsWith('/cards') || pathname.startsWith('/holders')))
+    (item.path === '/accounts' && (pathname.startsWith('/cards') || pathname.startsWith('/holders'))) ||
+    (item.path === '/benefits' && pathname.startsWith('/promos'))
   )
   const activeIdx = currentIndex === -1 ? 0 : currentIndex
 

@@ -71,10 +71,24 @@ struct BillCreateSheetView: View {
         String(format: "%04d-%02d", selectedYear, selectedMonth)
     }
 
+    private var selectedAccountGroup: CreditAccountGroup? {
+        guard let accountId = selectedCard?.card.accountId, !accountId.isEmpty else { return nil }
+        return appState.creditAccountGroups.first(where: { $0.account.id == accountId })
+    }
+
     private var duplicateBillExists: Bool {
-        guard !selectedCardId.isEmpty else { return false }
-        return appState.allBills.contains {
-            $0.card.id == selectedCardId && $0.bill.billMonth == billMonthString
+        guard let selected = selectedCard, !selectedCardId.isEmpty else { return false }
+        let targetAccountId = selected.card.accountId
+        let isMergedAccount = selectedAccountGroup?.isMergedStatement ?? false
+        return appState.allBills.contains { item in
+            guard item.bill.billMonth == billMonthString else { return false }
+            if item.card.id == selectedCardId { return true }
+            if isMergedAccount, let targetAccountId, !targetAccountId.isEmpty {
+                return item.bill.accountId == targetAccountId
+                    || item.card.accountId == targetAccountId
+                    || item.card.id == selectedAccountGroup?.account.primaryCardId
+            }
+            return false
         }
     }
 
@@ -133,7 +147,7 @@ struct BillCreateSheetView: View {
                         .accessibilityIdentifier("bill.create.month")
 
                         if duplicateBillExists {
-                            Label("该卡 \(billMonthString) 期已存在本地账单，重复录入可能冲突。", systemImage: "exclamationmark.triangle.fill")
+                            Label("该账户/卡片 \(billMonthString) 期已存在本地账单，重复录入可能冲突。", systemImage: "exclamationmark.triangle.fill")
                                 .font(.caption)
                                 .foregroundStyle(WCColors.warningInk)
                         }

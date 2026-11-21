@@ -528,7 +528,11 @@ public final class QueryService: Sendable {
     }
 
     /// 查询本地同步的银行优惠活动列表。
-    public func fetchPromos(activeOnly: Bool = true, asOf: Date? = nil) async throws -> [PromoRecord] {
+    public func fetchPromos(
+        activeOnly: Bool = true,
+        asOf: Date? = nil,
+        includeUpcoming: Bool = false
+    ) async throws -> [PromoRecord] {
         try await dbManager.dbWriter.read { db in
             var query = PromoRecord.all()
             if activeOnly {
@@ -544,7 +548,7 @@ public final class QueryService: Sendable {
             df.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
             let dayString = df.string(from: asOf)
             return promos.filter { promo in
-                let afterStart = promo.startDate.map { $0 <= dayString } ?? true
+                let afterStart = includeUpcoming ? true : (promo.startDate.map { $0 <= dayString } ?? true)
                 let beforeEnd = promo.endDate.map { $0 >= dayString } ?? true
                 return afterStart && beforeEnd
             }

@@ -11,7 +11,11 @@ public struct Bank: Codable, FetchableRecord, TableRecord, PersistableRecord, Se
     public var logoUrl: String?
     public var country: String
     public var tel: String?
-    public var customerServicePhone: String?
+    /// 派生别名：始终与 `tel` 保持单一事实来源一致；自定义 `encode(to:)` 会同步写入 `customer_service_phone`。
+    public var customerServicePhone: String? {
+        get { tel }
+        set { tel = newValue }
+    }
     public var websiteUrl: String?
     public var quotaMode: String?
     public var statementMode: String?
@@ -41,7 +45,6 @@ public struct Bank: Codable, FetchableRecord, TableRecord, PersistableRecord, Se
         self.logoUrl = logoUrl
         self.country = country
         self.tel = resolvedPhone
-        self.customerServicePhone = resolvedPhone
         self.websiteUrl = websiteUrl
         self.quotaMode = quotaMode
         self.statementMode = statementMode
@@ -66,9 +69,24 @@ public struct Bank: Codable, FetchableRecord, TableRecord, PersistableRecord, Se
         // D1 sends customer_service_phone; older local/JSON payloads may use tel.
         let remotePhone = try row.decodeIfPresent(String.self, forKey: .customerServicePhone)
         let localPhone = try row.decodeIfPresent(String.self, forKey: .tel)
-        let resolvedPhone = remotePhone ?? localPhone
-        customerServicePhone = resolvedPhone
-        tel = resolvedPhone
+        tel = remotePhone ?? localPhone
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var row = encoder.container(keyedBy: CodingKeys.self)
+        try row.encode(id, forKey: .id)
+        try row.encode(name, forKey: .name)
+        try row.encodeIfPresent(shortName, forKey: .shortName)
+        try row.encodeIfPresent(fullName, forKey: .fullName)
+        try row.encodeIfPresent(logoUrl, forKey: .logoUrl)
+        try row.encode(country, forKey: .country)
+        try row.encodeIfPresent(tel, forKey: .tel)
+        try row.encodeIfPresent(tel, forKey: .customerServicePhone)
+        try row.encodeIfPresent(websiteUrl, forKey: .websiteUrl)
+        try row.encodeIfPresent(quotaMode, forKey: .quotaMode)
+        try row.encodeIfPresent(statementMode, forKey: .statementMode)
+        try row.encode(isActive, forKey: .isActive)
+        try row.encodeIfPresent(createdAt, forKey: .createdAt)
     }
 
     enum CodingKeys: String, CodingKey {

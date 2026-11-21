@@ -271,17 +271,37 @@ describe("Phase 1 /api/sync/push OFFLINE_SYNC_MUTATIONS expansion", () => {
     expect(pulled.changes.some((c) => c.tbl === "bills" && c.row_id === "bill-a")).toBe(true);
   });
 
-  it("supports payables.createRecurringPayable with server-bound created_by, holder guard, and mutation dedup", async () => {
+  it("supports payables.createRecurringPayable with client UUID idempotency, server-bound created_by, and holder guard", async () => {
     const startCursor = (await pullSince(0)).cursor;
+    const stableId = "11111111-1111-4111-8111-111111111111";
 
-    // Spoofed created_by must be overwritten by session.id; server generates UUID id
+    // Missing or invalid client UUID must fail permanently so unsafe non-idempotent replay is blocked
+    const [missingId] = await push([
+      {
+        id: "mut-payable-no-id",
+        name: "payables.createRecurringPayable",
+        args: [
+          {
+            created_by: "u-member-a",
+            name: "无UUID支出",
+            category: "rent",
+            amount: 500,
+            currency: "CNY",
+            due_day: 10,
+          },
+        ],
+      },
+    ]);
+    expect(missingId).toMatchObject({ ok: false, permanent: true, code: "VALIDATION_FAILED" });
+
+    // Spoofed created_by must be overwritten by session.id; client-supplied UUID id is preserved
     const [created] = await push([
       {
         id: "mut-payable-create-1",
         name: "payables.createRecurringPayable",
         args: [
           {
-            id: "client-temp-id-ignored",
+            id: stableId,
             created_by: "u-member-b",
             name: "车位租金",
             category: "rent",
@@ -295,8 +315,7 @@ describe("Phase 1 /api/sync/push OFFLINE_SYNC_MUTATIONS expansion", () => {
     ]);
     expect(created.ok).toBe(true);
     expect(created.data?.created_by).toBe("u-member-a");
-    expect(typeof created.data?.id).toBe("string");
-    expect(created.data?.id).not.toBe("client-temp-id-ignored");
+    expect(created.data?.id).toBe(stableId);
 
     // Replaying exact same mutation_id deduplicates via sync_mutations
     const [replayed] = await push([
@@ -305,6 +324,7 @@ describe("Phase 1 /api/sync/push OFFLINE_SYNC_MUTATIONS expansion", () => {
         name: "payables.createRecurringPayable",
         args: [
           {
+            id: stableId,
             created_by: "u-member-b",
             name: "车位租金",
             category: "rent",
@@ -318,12 +338,61 @@ describe("Phase 1 /api/sync/push OFFLINE_SYNC_MUTATIONS expansion", () => {
     ]);
     expect(replayed.ok).toBe(true);
     expect(replayed.already_processed).toBe(true);
-    expect(replayed.data?.id).toBe(created.data?.id);
+    expect(replayed.data?.id).toBe(stableId);
+
+    // Simulating stale lock cleanup (receipt lost after commit) + replay must stay idempotent
+    db.raw
+      .prepare("DELETE FROM sync_mutations WHERE mutation_id = 'mut-payable-create-1'")
+      .run();
+    const [replayedAfterReceiptLoss] = await push([
+      {
+        id: "mut-payable-create-1",
+        name: "payables.createRecurringPayable",
+        args: [
+          {
+            id: stableId,
+            created_by: "u-member-b",
+            name: "车位租金",
+            category: "rent",
+            amount: 800,
+            currency: "CNY",
+            due_day: 15,
+            holder_id: "holder-a",
+          },
+        ],
+      },
+    ]);
+    expect(replayedAfterReceiptLoss.ok).toBe(true);
+    expect(replayedAfterReceiptLoss.data?.id).toBe(stableId);
     expect(
       db.raw
         .prepare("SELECT COUNT(*) AS n FROM recurring_payables WHERE name = '车位租金'")
         .get()
     ).toEqual({ n: 1 });
+
+    // Another user trying to reuse the same UUID must be rejected cleanly (no cross-user disclosure)
+    const [crossUserConflict] = await push(
+      [
+        {
+          id: "mut-payable-cross-uuid",
+          name: "payables.createRecurringPayable",
+          args: [
+            {
+              id: stableId,
+              created_by: "u-member-b",
+              name: "冲突测试",
+              category: "other",
+              amount: 100,
+              currency: "CNY",
+              due_day: 1,
+              holder_id: "holder-b",
+            },
+          ],
+        },
+      ],
+      otherMemberToken
+    );
+    expect(crossUserConflict).toMatchObject({ ok: false, permanent: true, code: "CONFLICT" });
 
     // Member referencing another user's holder_id must fail closed
     const [forbiddenHolder] = await push([
@@ -332,6 +401,7 @@ describe("Phase 1 /api/sync/push OFFLINE_SYNC_MUTATIONS expansion", () => {
         name: "payables.createRecurringPayable",
         args: [
           {
+            id: "22222222-2222-4222-8222-222222222222",
             created_by: "u-member-a",
             name: "越权支出",
             category: "other",
@@ -349,7 +419,7 @@ describe("Phase 1 /api/sync/push OFFLINE_SYNC_MUTATIONS expansion", () => {
     const pulled = await pullSince(startCursor);
     expect(
       pulled.changes.some(
-        (c) => c.tbl === "recurring_payables" && c.row_id === created.data?.id
+        (c) => c.tbl === "recurring_payables" && c.row_id === stableId
       )
     ).toBe(true);
   });
@@ -401,7 +471,7 @@ describe("Phase 1 /api/sync/push OFFLINE_SYNC_MUTATIONS expansion", () => {
     ).toBe(true);
   });
 
-  it("supports notifications.markNotificationRead & markAllNotificationsRead with session bindUser", async () => {
+  it("supports notifications.markNotificationRead & markAllNotificationsRead with session bindUser and cutoff timestamp", async () => {
     // Spoofed args[0] = 'u-member-b' must be overwritten with session.id ('u-member-a')
     const [oneRes] = await push([
       {
@@ -431,12 +501,23 @@ describe("Phase 1 /api/sync/push OFFLINE_SYNC_MUTATIONS expansion", () => {
       db.raw.prepare("SELECT read_at FROM notification_history WHERE id = 'notif-b1'").get()
     ).toEqual({ read_at: null });
 
-    // markAllNotificationsRead with spoofed userId only marks u-member-a's remaining unread
+    // markAllNotificationsRead via sync/push without valid cutoff timestamp fails permanently
+    const [missingCutoff] = await push([
+      {
+        id: "mut-notif-read-all-no-cutoff",
+        name: "notifications.markAllNotificationsRead",
+        args: ["u-member-b"],
+      },
+    ]);
+    expect(missingCutoff).toMatchObject({ ok: false, permanent: true, code: "VALIDATION_FAILED" });
+
+    // markAllNotificationsRead with spoofed userId and cutoff only marks u-member-a's unread at/before cutoff
+    const cutoffIso = "2026-10-21T09:00:00Z";
     const [allRes] = await push([
       {
         id: "mut-notif-read-all",
         name: "notifications.markAllNotificationsRead",
-        args: ["u-member-b"],
+        args: ["u-member-b", cutoffIso],
       },
     ]);
     expect(allRes).toMatchObject({
@@ -445,6 +526,29 @@ describe("Phase 1 /api/sync/push OFFLINE_SYNC_MUTATIONS expansion", () => {
     });
     expect(
       db.raw.prepare("SELECT read_at FROM notification_history WHERE id = 'notif-b1'").get()
+    ).toEqual({ read_at: null });
+
+    // Simulate new notification delivered after cutoff + replay after stale receipt prune
+    db.raw.exec(`
+      INSERT INTO notification_history (id, user_id, notification_key, category, title, body, sent_at, status)
+      VALUES ('notif-a3-new', 'u-member-a', 'key-a3', 'bill_due', '新账单提醒', '内容3', '2026-10-21T09:05:00Z', 'sent');
+    `);
+    db.raw
+      .prepare("DELETE FROM sync_mutations WHERE mutation_id = 'mut-notif-read-all'")
+      .run();
+    const [replayedAll] = await push([
+      {
+        id: "mut-notif-read-all",
+        name: "notifications.markAllNotificationsRead",
+        args: ["u-member-b", cutoffIso],
+      },
+    ]);
+    expect(replayedAll).toMatchObject({
+      ok: true,
+      data: { updated_count: 0, unread_count: 1 },
+    });
+    expect(
+      db.raw.prepare("SELECT read_at FROM notification_history WHERE id = 'notif-a3-new'").get()
     ).toEqual({ read_at: null });
   });
 

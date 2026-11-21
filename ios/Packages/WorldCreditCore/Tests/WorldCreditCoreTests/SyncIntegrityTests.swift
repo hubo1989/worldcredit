@@ -686,10 +686,10 @@ struct SyncIntegrityTests {
             try MutationOutbox(id: "m1", name: "bills.updateBillFields", argsJson: #"["\#(billID)",{"amount":500}]"#).insert(db)
             try MutationOutbox(id: "m2", name: "bills.clearOverride", argsJson: #"["\#(billID)",["amount"]]"#).insert(db)
             try MutationOutbox(id: "m3", name: "payments.updatePayment", argsJson: #"["sync-fixture-payment",{"amount":120}]"#).insert(db)
-            try MutationOutbox(id: "m4", name: "payables.createRecurringPayable", argsJson: #"[{"name":"车贷","category":"loan","amount":1000,"currency":"CNY","due_day":10}]"#).insert(db)
+            try MutationOutbox(id: "m4", name: "payables.createRecurringPayable", argsJson: #"[{"id":"11111111-1111-4111-8111-111111111111","name":"车贷","category":"loan","amount":1000,"currency":"CNY","due_day":10}]"#).insert(db)
             try MutationOutbox(id: "m5", name: "payables.updateRecurringPayable", argsJson: #"["pay-rec-1",{"amount":2200}]"#).insert(db)
             try MutationOutbox(id: "m6", name: "notifications.markNotificationRead", argsJson: #"["","notif-1"]"#).insert(db)
-            try MutationOutbox(id: "m7", name: "notifications.markAllNotificationsRead", argsJson: #"[""]"#).insert(db)
+            try MutationOutbox(id: "m7", name: "notifications.markAllNotificationsRead", argsJson: #"["","2026-10-21T09:00:00Z"]"#).insert(db)
             try MutationOutbox(id: "m8", name: "preferences.updateUserPreferences", argsJson: #"["u-pref-1",{"display_config":{"privacy_mode":true}}]"#).insert(db)
         }
 

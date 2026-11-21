@@ -112,6 +112,20 @@ struct AccountMergeWizardSheet: View {
         candidateAccounts.first(where: { $0.account.id == targetAccountId }) ?? candidateAccounts.first
     }
 
+    private func isProtectedSourcePrimary(_ card: CardDisplayItem) -> Bool {
+        guard let sourceAccountId = card.card.accountId,
+              !sourceAccountId.isEmpty,
+              sourceAccountId != targetAccountId else {
+            return false
+        }
+        guard let sourceGroup = appState.creditAccountGroups.first(where: { $0.account.id == sourceAccountId }),
+              sourceGroup.account.primaryCardId == card.id else {
+            return false
+        }
+        let activeCount = appState.cards.filter { $0.card.accountId == sourceAccountId }.count
+        return sourceGroup.cards.count > 1 || activeCount > 1
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -180,10 +194,12 @@ struct AccountMergeWizardSheet: View {
                         ForEach(bucket.cards) { card in
                             let alreadyInTarget = !targetAccountId.isEmpty && card.card.accountId == targetAccountId
                             let isAnchor = alreadyInTarget && selectedTargetGroup?.account.primaryCardId == card.id
-                            let isSelected = !alreadyInTarget && selectedCardIds.contains(card.id)
+                            let protectedSourcePrimary = !alreadyInTarget && isProtectedSourcePrimary(card)
+                            let isDisabled = alreadyInTarget || protectedSourcePrimary
+                            let isSelected = !isDisabled && selectedCardIds.contains(card.id)
 
                             Button {
-                                guard !alreadyInTarget else { return }
+                                guard !isDisabled else { return }
                                 HapticManager.selection()
                                 errorMessage = nil
                                 if isSelected {
@@ -193,15 +209,19 @@ struct AccountMergeWizardSheet: View {
                                 }
                             } label: {
                                 HStack(spacing: 12) {
-                                    Image(systemName: alreadyInTarget ? "checkmark.circle.fill" : (isSelected ? "checkmark.circle.fill" : "circle"))
+                                    Image(systemName: alreadyInTarget
+                                        ? "checkmark.circle.fill"
+                                        : (protectedSourcePrimary
+                                            ? "lock.circle"
+                                            : (isSelected ? "checkmark.circle.fill" : "circle")))
                                         .font(.title3)
-                                        .foregroundStyle(alreadyInTarget ? WCColors.textSecondary : (isSelected ? WCColors.primaryAccent : WCColors.textSecondary))
+                                        .foregroundStyle(isDisabled ? WCColors.textSecondary : (isSelected ? WCColors.primaryAccent : WCColors.textSecondary))
 
                                     VStack(alignment: .leading, spacing: 3) {
                                         HStack(spacing: 6) {
                                             Text(card.displayName)
                                                 .font(.subheadline.bold())
-                                                .foregroundStyle(alreadyInTarget ? WCColors.textSecondary : WCColors.textPrimary)
+                                                .foregroundStyle(isDisabled ? WCColors.textSecondary : WCColors.textPrimary)
                                             if !card.last4.isEmpty {
                                                 Text("尾号 \(card.last4)")
                                                     .font(.caption)
@@ -217,6 +237,10 @@ struct AccountMergeWizardSheet: View {
                                             Text("已在目标账户中")
                                                 .font(.caption2)
                                                 .foregroundStyle(WCColors.textSecondary)
+                                        } else if protectedSourcePrimary {
+                                            Text("原多卡账户主卡（需先在卡片详情拆出后再合并）")
+                                                .font(.caption2)
+                                                .foregroundStyle(WCColors.warningInk)
                                         } else {
                                             Text("账单日每月 \(card.card.overrideBillingDay ?? card.card.billingDay) 日 · 额度 \(DashboardMoney.format(card.card.effectiveCreditLimit, currency: bucket.currency))")
                                                 .font(.caption2)
@@ -228,7 +252,7 @@ struct AccountMergeWizardSheet: View {
                                 }
                             }
                             .buttonStyle(.plain)
-                            .disabled(alreadyInTarget)
+                            .disabled(isDisabled)
                             .accessibilityIdentifier("merge.card.\(card.id)")
                         }
                     }
@@ -280,7 +304,8 @@ struct AccountMergeWizardSheet: View {
             }
             .onChange(of: targetAccountId) { _, _ in
                 selectedCardIds = selectedCardIds.filter { cardId in
-                    activeBucket?.cards.first(where: { $0.id == cardId })?.card.accountId != targetAccountId
+                    guard let card = activeBucket?.cards.first(where: { $0.id == cardId }) else { return false }
+                    return card.card.accountId != targetAccountId && !isProtectedSourcePrimary(card)
                 }
             }
             .confirmationDialog(
@@ -321,7 +346,8 @@ struct AccountMergeWizardSheet: View {
             selectedBucketId = matchedBucket.id
             syncTargetAccountAndCards(preferPreservingCards: false)
             if let preCard = matchedBucket.cards.first(where: { $0.id == preselectedCardId }),
-               preCard.card.accountId != targetAccountId {
+               preCard.card.accountId != targetAccountId,
+               !isProtectedSourcePrimary(preCard) {
                 selectedCardIds.insert(preselectedCardId)
             }
         } else if let firstBucket = buckets.first {

@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import OSLog
 
 public struct UserDisplayConfig: Codable, Equatable, Hashable, Sendable {
     public var privacyMode: Bool
@@ -108,8 +109,15 @@ public struct UserPreferenceRecord: Codable, FetchableRecord, TableRecord, Persi
         updatedAt = try row.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
     }
 
+    private static let logger = Logger(subsystem: "com.worldcredit.core", category: "UserPreferenceRecord")
+
     public func decodedDisplayConfig() -> UserDisplayConfig {
-        (try? UserDisplayConfig.decode(fromJsonString: displayConfig)) ?? UserDisplayConfig()
+        do {
+            return try UserDisplayConfig.decode(fromJsonString: displayConfig)
+        } catch {
+            Self.logger.error("Failed to decode display_config JSON: \(error.localizedDescription, privacy: .public)")
+            return UserDisplayConfig()
+        }
     }
 
     public mutating func setDisplayConfig(_ config: UserDisplayConfig) throws {
@@ -117,11 +125,16 @@ public struct UserPreferenceRecord: Codable, FetchableRecord, TableRecord, Persi
     }
 
     public func decodedReminderConfig() -> UserReminderPreferences {
-        guard let data = reminderConfig.data(using: .utf8),
-              let prefs = try? JSONDecoder().decode(UserReminderPreferences.self, from: data) else {
+        guard let data = reminderConfig.data(using: .utf8) else {
+            Self.logger.error("Failed to convert reminder_config to UTF-8 data")
             return UserReminderPreferences()
         }
-        return prefs
+        do {
+            return try JSONDecoder().decode(UserReminderPreferences.self, from: data)
+        } catch {
+            Self.logger.error("Failed to decode reminder_config JSON: \(error.localizedDescription, privacy: .public)")
+            return UserReminderPreferences()
+        }
     }
 
     enum CodingKeys: String, CodingKey {

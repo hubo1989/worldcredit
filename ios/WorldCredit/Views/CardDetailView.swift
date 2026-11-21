@@ -1184,7 +1184,9 @@ struct CreditAccountEditSheet: View {
         }
 
         let trimmedDay = billingDayText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedDay.isEmpty {
+        if trimmedDay.isEmpty {
+            if account.billingDay != nil { input.clearBillingDay = true }
+        } else {
             guard let day = Int(trimmedDay), (1...31).contains(day) else {
                 errorMessage = "账单日必须在 1 到 31 之间"
                 return

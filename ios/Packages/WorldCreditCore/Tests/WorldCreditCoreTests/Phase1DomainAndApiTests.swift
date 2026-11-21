@@ -221,6 +221,8 @@ struct Phase1DomainAndApiTests {
             try BillCardSubtotal(id: "sub-1", billId: "bill-1", cardId: "c-1", cardTail: "1001", subtotalAmount: 7000).insert(db)
             try BillCardSubtotal(id: "sub-2", billId: "bill-1", cardId: "c-2", cardTail: "1002", subtotalAmount: 5000).insert(db)
             try PromoRecord(id: "pr-active", bankId: "b-cmb", bankName: "招商银行", title: "周五半价", startDate: "2026-10-01", endDate: "2026-10-31", isActive: true).insert(db)
+            try PromoRecord(id: "pr-upcoming", bankId: "b-cmb", bankName: "招商银行", title: "双十一预热", startDate: "2026-11-01", endDate: "2026-11-11", isActive: true).insert(db)
+            try PromoRecord(id: "pr-expired", bankId: "b-cmb", bankName: "招商银行", title: "国庆已结束", startDate: "2026-10-01", endDate: "2026-10-07", isActive: true).insert(db)
             try PromoRecord(id: "pr-inactive", bankId: "b-cmb", bankName: "招商银行", title: "已下线", isActive: false).insert(db)
             try UserPreferenceRecord(
                 userId: "u-1",
@@ -242,10 +244,15 @@ struct Phase1DomainAndApiTests {
         #expect(subtotals.map(\.cardTail) == ["1001", "1002"])
         #expect(subtotals.map(\.subtotalAmount) == [7000, 5000])
 
+        let today = instant("2026-10-15T00:00:00Z")
         let activePromos = try await query.fetchPromos()
-        #expect(activePromos.map(\.id) == ["pr-active"])
+        #expect(activePromos.map(\.id) == ["pr-expired", "pr-active", "pr-upcoming"])
+        let onlyStartedToday = try await query.fetchPromos(activeOnly: true, asOf: today)
+        #expect(onlyStartedToday.map(\.id) == ["pr-active"])
+        let currentAndUpcoming = try await query.fetchPromos(activeOnly: true, asOf: today, includeUpcoming: true)
+        #expect(currentAndUpcoming.map(\.id) == ["pr-active", "pr-upcoming"])
         let allPromos = try await query.fetchPromos(activeOnly: false)
-        #expect(allPromos.count == 2)
+        #expect(allPromos.count == 4)
 
         let display = try await query.fetchDisplayConfig(userId: "u-1")
         #expect(display.privacyMode == true)
@@ -392,6 +399,27 @@ struct Phase1DomainAndApiTests {
         #expect(updatedDisplay.privacyMode == true)
         #expect(updatedDisplay.showAnnualFee == false)
         #expect(updatedDisplay.defaultCurrency == "USD")
+    }
+
+    @Test("ApiClient updateCreditAccount encodes null for billing_day when clearBillingDay is true")
+    func updateCreditAccountClearsBillingDay() async throws {
+        let session = MockNetworkSession { request in
+            #expect(request.url?.path == "/api/rpc/accounts/updateCreditAccount")
+            let body = try #require(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
+            let args = try #require(body["args"] as? [Any])
+            #expect(args.first as? String == "acc-1")
+            let patch = try #require(args[1] as? [String: Any])
+            #expect(patch["billing_day"] is NSNull)
+            #expect(patch["label"] is NSNull)
+            let json = #"{"data":{"id":"acc-1","holder_id":"h-1","bank_name":"招商银行","currency":"CNY","statement_mode":"merged","quota_mode":"shared","billing_day":null,"label":null,"status":"active","created_at":"2026-10-01T00:00:00Z","updated_at":"2026-11-01T00:00:00Z"},"error":null}"#
+            return (Data(json.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+
+        let client = ApiClient(baseURL: baseURL, session: session, token: "tok", useKeychain: false)
+        let input = ApiClient.UpdateCreditAccountInput(clearLabel: true, clearBillingDay: true, statementMode: "merged", quotaMode: "shared")
+        let updated = try await client.updateCreditAccount(accountId: "acc-1", input: input)
+        #expect(updated.billingDay == nil)
+        #expect(updated.label == nil)
     }
 
     // MARK: - Payables 0030 Cycles & Custom Categories

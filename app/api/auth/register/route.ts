@@ -12,9 +12,10 @@ import { issueRefreshToken } from '@/lib/refresh-tokens.server'
 const NO_STORE_HEADERS = { 'Cache-Control': 'no-store' }
 
 export async function POST(request: Request) {
-  let issueToken = false
-  const withHeaders = (extra?: Record<string, string>) =>
-    issueToken ? { ...NO_STORE_HEADERS, ...extra } : extra
+  const withHeaders = (extra?: Record<string, string>) => ({
+    ...NO_STORE_HEADERS,
+    ...extra,
+  })
 
   try {
     const body = (await request.json().catch(() => ({}))) as {
@@ -23,12 +24,12 @@ export async function POST(request: Request) {
       name?: unknown
       issue_token?: unknown
     }
-    issueToken = body.issue_token === true
-    const email = typeof body.email === 'string' ? body.email : ''
+    const issueToken = body.issue_token === true
+    const email = typeof body.email === 'string' ? body.email.trim() : ''
     const password = typeof body.password === 'string' ? body.password : ''
     const name = typeof body.name === 'string' ? body.name : null
 
-    if (!email.trim() || !password) {
+    if (!email || !password) {
       return Response.json(
         { error: '缺少邮箱或密码' },
         { status: 400, headers: withHeaders() }
@@ -59,7 +60,10 @@ export async function POST(request: Request) {
         .run()
     } catch (insertErr) {
       const msg = insertErr instanceof Error ? insertErr.message : String(insertErr)
-      if (msg.includes('UNIQUE constraint failed')) {
+      if (
+        msg.includes('UNIQUE constraint failed: users.email') ||
+        (msg.includes('UNIQUE constraint failed') && !msg.includes('users.'))
+      ) {
         return Response.json(
           { error: '该邮箱已注册' },
           { status: 409, headers: withHeaders() }
@@ -72,7 +76,14 @@ export async function POST(request: Request) {
     const token = await createSessionValue(user)
     if (issueToken) {
       // App 端静默续期凭据：原文仅此一次下发（库内只存哈希），与 /api/auth/token 同构
-      const refresh = await issueRefreshToken(id)
+      // 签发失败时回滚刚插入的用户行，避免留下无凭据且重试即 409 冲突的孤儿账号
+      let refresh: Awaited<ReturnType<typeof issueRefreshToken>>
+      try {
+        refresh = await issueRefreshToken(id)
+      } catch (refreshErr) {
+        await db.prepare('DELETE FROM users WHERE id = ?').bind(id).run().catch(() => {})
+        throw refreshErr
+      }
       return Response.json(
         {
           token,
@@ -82,10 +93,9 @@ export async function POST(request: Request) {
           refresh_token: refresh.token,
         },
         {
-          headers: {
-            ...NO_STORE_HEADERS,
+          headers: withHeaders({
             'Set-Cookie': sessionCookieHeader(token),
-          },
+          }),
         }
       )
     }
@@ -93,9 +103,9 @@ export async function POST(request: Request) {
     return Response.json(
       { user },
       {
-        headers: {
+        headers: withHeaders({
           'Set-Cookie': sessionCookieHeader(token),
-        },
+        }),
       }
     )
   } catch (err) {

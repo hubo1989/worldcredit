@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { buildAccountPools, type AccountPoolGroup } from '@/lib/account-pools'
 import { getCreditAccounts } from '@/lib/api/accounts'
 import { getCardsWithBillsSummary, type CardWithBillsSummary } from '@/lib/api/bills'
 import { getHolders } from '@/lib/api/holders'
@@ -13,7 +14,8 @@ import {
 } from '@/lib/api/payables'
 import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
 import { useAuth } from '@/lib/auth'
-import { currencySymbol, fetchRates, sumByCurrency, type FxRates } from '@/lib/fx'
+import { formatMoney } from '@/lib/dashboard-metrics'
+import { fetchRates, sumByCurrency, type FxRates } from '@/lib/fx'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
 import type { CardHolder, CreditAccount } from '@/lib/types'
 import {
@@ -48,124 +50,37 @@ import { Toast } from '@/components/obsidian/overlays'
 type AccountSegment = 'credit' | 'loans' | 'holders'
 type CreditViewMode = 'pool' | 'single'
 
-interface AccountPoolGroup {
-  key: string
-  account: CreditAccount | null
-  bankName: string
-  holderId: string
-  currency: string
-  title: string
-  isMergedStatement: boolean
-  isSharedQuota: boolean
-  cards: CardWithBillsSummary[]
-  poolLimit: number | null
-  poolUsed: number
-  poolAvailable: number | null
-}
-
-function formatMoney(amount: number, currency: string): string {
-  const sym = currencySymbol(currency)
-  const formatted =
-    amount % 1 === 0
-      ? amount.toLocaleString()
-      : amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  return `${sym}${formatted}`
-}
-
-function resolvePoolLimit(
-  account: CreditAccount | null,
-  cards: CardWithBillsSummary[],
-  isSharedQuota: boolean
-): number | null {
-  if (isSharedQuota) {
-    if (account?.shared_credit_limit != null && account.shared_credit_limit > 0) {
-      return Number(account.shared_credit_limit)
-    }
-    let maxLimit = 0
-    for (const item of cards) {
-      const eff = getEffectiveCreditLimit(item.card)
-      if (eff !== null && eff > maxLimit) maxLimit = eff
-    }
-    return maxLimit > 0 ? maxLimit : null
-  }
-
-  let total = 0
-  let hasAnyLimit = false
-  for (const item of cards) {
-    const eff = getEffectiveCreditLimit(item.card)
-    if (eff !== null) {
-      total += eff
-      hasAnyLimit = true
-    }
-  }
-  return hasAnyLimit ? total : null
-}
-
-function buildAccountPools(
-  cards: CardWithBillsSummary[],
-  accountsById: Map<string, CreditAccount>
-): AccountPoolGroup[] {
-  const grouped = new Map<string, CardWithBillsSummary[]>()
-  for (const item of cards) {
-    const accountId = item.account?.id || item.card.account_id
-    const key = accountId || `standalone:${item.card.id}`
-    const list = grouped.get(key)
-    if (list) list.push(item)
-    else grouped.set(key, [item])
-  }
-
-  const pools: AccountPoolGroup[] = []
-  for (const [key, groupCards] of grouped.entries()) {
-    const first = groupCards[0]
-    const accountId = first.account?.id || first.card.account_id || null
-    const account = (accountId ? accountsById.get(accountId) : undefined) ?? first.account ?? null
-    const bankName =
-      account?.bank_name || first.card.card_product?.bank_name || '银行卡'
-    const currency =
-      account?.currency || first.card.card_product?.currency || 'CNY'
-    const isMergedStatement = account?.statement_mode === 'merged'
-    const isSharedQuota = account?.quota_mode === 'shared'
-    const poolLimit = resolvePoolLimit(account, groupCards, isSharedQuota)
-    const poolUsed = groupCards.reduce((sum, c) => sum + Number(c.unpaidAmount || 0), 0)
-    const poolAvailable = poolLimit !== null ? Math.max(0, poolLimit - poolUsed) : null
-
-    const sortedCards = [...groupCards].sort((a, b) => {
-      const aPrimary = account?.primary_card_id === a.card.id ? 0 : 1
-      const bPrimary = account?.primary_card_id === b.card.id ? 0 : 1
-      if (aPrimary !== bPrimary) return aPrimary - bPrimary
-      return getEffectiveCardName(a.card, a.card.card_product).localeCompare(
-        getEffectiveCardName(b.card, b.card.card_product),
-        'zh-CN'
-      )
-    })
-
-    const title =
-      account?.label ||
-      (groupCards.length > 1 || isMergedStatement
-        ? `${bankName}共享账户`
-        : getEffectiveCardName(first.card, first.card.card_product))
-
-    pools.push({
-      key,
-      account,
-      bankName,
-      holderId: account?.holder_id || first.holder_id,
-      currency,
-      title,
-      isMergedStatement,
-      isSharedQuota,
-      cards: sortedCards,
-      poolLimit,
-      poolUsed,
-      poolAvailable,
-    })
-  }
-
-  return pools.sort((a, b) => {
-    if (b.cards.length !== a.cards.length) return b.cards.length - a.cards.length
-    if (b.poolUsed !== a.poolUsed) return b.poolUsed - a.poolUsed
-    return a.bankName.localeCompare(b.bankName, 'zh-CN')
-  })
+function StatGrid({
+  items,
+  blurClass,
+  compact = false,
+  className = '',
+}: {
+  items: { label: string; value: string; valueClass?: string }[]
+  blurClass: string
+  compact?: boolean
+  className?: string
+}) {
+  return (
+    <div
+      className={`grid grid-cols-3 gap-2 rounded-xl bg-d-subtle ${
+        compact ? 'px-3 py-2.5' : 'p-3'
+      } ${className}`}
+    >
+      {items.map((item) => (
+        <div key={item.label}>
+          <p className='text-[11px] text-d-muted'>{item.label}</p>
+          <p
+            className={`num-tabular mt-0.5 ${
+              compact ? 'text-[14px]' : 'text-[15px]'
+            } font-bold ${item.valueClass ?? 'text-d-text'} ${blurClass}`}
+          >
+            {item.value}
+          </p>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export default function AccountsPage() {
@@ -188,6 +103,7 @@ export default function AccountsPage() {
 
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [payablesDegraded, setPayablesDegraded] = useState(false)
   const [cardCreateOpen, setCardCreateOpen] = useState(false)
   const [mergeWizardOpen, setMergeWizardOpen] = useState(false)
   const [toast, setToast] = useState<{
@@ -221,10 +137,16 @@ export default function AccountsPage() {
           console.warn('[accounts] Failed to load credit accounts:', err)
           return [] as CreditAccount[]
         }),
-        getRecurringPayables(user.id).catch((err) => {
-          console.warn('[accounts] Failed to load recurring payables:', err)
-          return [] as PayableWithStatus[]
-        }),
+        getRecurringPayables(user.id)
+          .then((list) => {
+            setPayablesDegraded(false)
+            return list
+          })
+          .catch((err) => {
+            console.warn('[accounts] Failed to load recurring payables:', err)
+            setPayablesDegraded(true)
+            return [] as PayableWithStatus[]
+          }),
       ])
       setCardsSummary(summaryData)
       setHolders(holderList)
@@ -236,6 +158,13 @@ export default function AccountsPage() {
       setLoading(false)
     }
   }, [user?.id])
+
+  // 持卡人列表刷新后若原选持卡人已不存在，复位为全部避免误显示空态
+  useEffect(() => {
+    if (!loading && selectedHolderId !== 'all' && !holders.some((h) => h.id === selectedHolderId)) {
+      setSelectedHolderId('all')
+    }
+  }, [loading, holders, selectedHolderId])
 
   useEffect(() => {
     void loadData()
@@ -323,13 +252,15 @@ export default function AccountsPage() {
     const unconverted = Array.from(
       new Set([...limitSum.unconverted_currencies, ...unpaidSum.unconverted_currencies])
     ).sort()
-    const hasKnownLimit = accountPools.some((pool) => pool.poolLimit !== null)
+    const knownLimitPoolCount = accountPools.filter((pool) => pool.poolLimit !== null).length
+    const hasKnownLimit = knownLimitPoolCount > 0
 
     return {
       limitTotal: hasKnownLimit ? limitSum.total : null,
       unpaidTotal: unpaidSum.total,
       availableTotal: hasKnownLimit ? availableSum.total : null,
       unconverted,
+      unknownLimitPoolCount: accountPools.length - knownLimitPoolCount,
     }
   }, [accountPools, displayCurrency, fxRates])
 
@@ -513,6 +444,7 @@ export default function AccountsPage() {
                   unpaidTotal={creditTotals.unpaidTotal}
                   availableTotal={creditTotals.availableTotal}
                   unconverted={creditTotals.unconverted}
+                  unknownLimitPoolCount={creditTotals.unknownLimitPoolCount}
                   blurClass={blurClass}
                 />
               )}
@@ -560,6 +492,8 @@ export default function AccountsPage() {
             <LoansSection
               loanCards={loanCards}
               loanPayables={loanPayables}
+              payablesDegraded={payablesDegraded}
+              onRetry={() => void loadData()}
               holderMap={holderMap}
               displayCurrency={displayCurrency}
               fxRates={fxRates}
@@ -616,6 +550,7 @@ function CreditSummaryCard({
   unpaidTotal,
   availableTotal,
   unconverted,
+  unknownLimitPoolCount,
   blurClass,
 }: {
   cardCount: number
@@ -625,6 +560,7 @@ function CreditSummaryCard({
   unpaidTotal: number
   availableTotal: number | null
   unconverted: string[]
+  unknownLimitPoolCount: number
   blurClass: string
 }) {
   const usagePct =
@@ -642,26 +578,26 @@ function CreditSummaryCard({
         <PillBadge className='bg-d-subtle text-d-accent-light'>{displayCurrency}</PillBadge>
       </div>
 
-      <div className='grid grid-cols-3 gap-2 rounded-xl bg-d-subtle p-3'>
-        <div>
-          <p className='text-[11px] text-d-muted'>总额度</p>
-          <p className={`num-tabular mt-0.5 text-[15px] font-bold text-d-text ${blurClass}`}>
-            {limitTotal !== null ? formatMoney(limitTotal, displayCurrency) : '未设置'}
-          </p>
-        </div>
-        <div>
-          <p className='text-[11px] text-d-muted'>当前待还</p>
-          <p className={`num-tabular mt-0.5 text-[15px] font-bold text-d-gold ${blurClass}`}>
-            {formatMoney(unpaidTotal, displayCurrency)}
-          </p>
-        </div>
-        <div>
-          <p className='text-[11px] text-d-muted'>估算可用</p>
-          <p className={`num-tabular mt-0.5 text-[15px] font-bold text-d-success-ink ${blurClass}`}>
-            {availableTotal !== null ? formatMoney(availableTotal, displayCurrency) : '—'}
-          </p>
-        </div>
-      </div>
+      <StatGrid
+        blurClass={blurClass}
+        items={[
+          {
+            label: '总额度',
+            value: limitTotal !== null ? formatMoney(limitTotal, displayCurrency) : '未设置',
+            valueClass: 'text-d-text',
+          },
+          {
+            label: '当前待还',
+            value: formatMoney(unpaidTotal, displayCurrency),
+            valueClass: 'text-d-gold',
+          },
+          {
+            label: '估算可用',
+            value: availableTotal !== null ? formatMoney(availableTotal, displayCurrency) : '—',
+            valueClass: 'text-d-success-ink',
+          },
+        ]}
+      />
 
       {limitTotal !== null && limitTotal > 0 && (
         <div className='mt-3'>
@@ -671,6 +607,12 @@ function CreditSummaryCard({
           </div>
           <ProgressBar value={usagePct} />
         </div>
+      )}
+
+      {unknownLimitPoolCount > 0 && (
+        <p className='mt-2 text-[11px] text-d-muted'>
+          {unknownLimitPoolCount} 个账户暂未设置额度，总额度与可用合计暂未包含
+        </p>
       )}
 
       {unconverted.length > 0 && (
@@ -736,26 +678,28 @@ function AccountPoolCard({
       </div>
 
       {/* 账户池额度行 */}
-      <div className='mb-3 grid grid-cols-3 gap-2 rounded-xl bg-d-subtle px-3 py-2.5'>
-        <div>
-          <p className='text-[11px] text-d-muted'>账户额度</p>
-          <p className={`num-tabular mt-0.5 text-[14px] font-bold text-d-text ${blurClass}`}>
-            {pool.poolLimit !== null ? formatMoney(pool.poolLimit, pool.currency) : '未获取'}
-          </p>
-        </div>
-        <div>
-          <p className='text-[11px] text-d-muted'>待还金额</p>
-          <p className={`num-tabular mt-0.5 text-[14px] font-bold text-d-gold ${blurClass}`}>
-            {formatMoney(pool.poolUsed, pool.currency)}
-          </p>
-        </div>
-        <div>
-          <p className='text-[11px] text-d-muted'>可用额度</p>
-          <p className={`num-tabular mt-0.5 text-[14px] font-bold text-d-success-ink ${blurClass}`}>
-            {pool.poolAvailable !== null ? formatMoney(pool.poolAvailable, pool.currency) : '—'}
-          </p>
-        </div>
-      </div>
+      <StatGrid
+        compact
+        className='mb-3'
+        blurClass={blurClass}
+        items={[
+          {
+            label: '账户额度',
+            value: pool.poolLimit !== null ? formatMoney(pool.poolLimit, pool.currency) : '未获取',
+            valueClass: 'text-d-text',
+          },
+          {
+            label: '待还金额',
+            value: formatMoney(pool.poolUsed, pool.currency),
+            valueClass: 'text-d-gold',
+          },
+          {
+            label: '可用额度',
+            value: pool.poolAvailable !== null ? formatMoney(pool.poolAvailable, pool.currency) : '—',
+            valueClass: 'text-d-success-ink',
+          },
+        ]}
+      />
 
       {usagePct !== undefined && (
         <div className='mb-3'>
@@ -916,6 +860,8 @@ function SingleCardRow({
 function LoansSection({
   loanCards,
   loanPayables,
+  payablesDegraded,
+  onRetry,
   holderMap,
   displayCurrency,
   fxRates,
@@ -923,6 +869,8 @@ function LoansSection({
 }: {
   loanCards: CardWithBillsSummary[]
   loanPayables: PayableWithStatus[]
+  payablesDegraded: boolean
+  onRetry: () => void
   holderMap: Map<string, CardHolder>
   displayCurrency: string
   fxRates: FxRates | null
@@ -950,6 +898,23 @@ function LoansSection({
           独立贷款合同（房贷组合贷、LPR+BP 分段重算、等额本息/本金/先息后本期表与提前还款试算器）将于 Phase 3 上线；当前为已录入贷款卡与贷款固定支出的只读聚合视图。
         </p>
       </Alert>
+
+      {payablesDegraded && (
+        <Alert severity='warning'>
+          <div className='flex items-center justify-between gap-2'>
+            <span className='text-[12px] text-d-warn-ink'>
+              贷款类固定支出加载失败，当前展示可能不完整
+            </span>
+            <button
+              type='button'
+              onClick={onRetry}
+              className='min-h-[44px] shrink-0 rounded-lg border border-d-border px-3 text-[12px] font-semibold text-d-text'
+            >
+              重试
+            </button>
+          </div>
+        </Alert>
+      )}
 
       {(loanCards.length > 0 || loanPayables.length > 0) && (
         <div className='rounded-2xl border border-d-border bg-d-surface p-3.5'>
@@ -982,13 +947,15 @@ function LoansSection({
       )}
 
       {loanCards.length === 0 && loanPayables.length === 0 ? (
-        <div className='rounded-2xl border border-d-border bg-d-surface'>
-          <WcEmptyState
-            title='暂无贷款记录'
-            description='可在账单页添加贷款类固定支出，或等待 Phase 3 独立贷款合同上线后导入房贷/车贷计划'
-            icon={<BankIcon size={32} />}
-          />
-        </div>
+        payablesDegraded ? null : (
+          <div className='rounded-2xl border border-d-border bg-d-surface'>
+            <WcEmptyState
+              title='暂无贷款记录'
+              description='可在账单页添加贷款类固定支出，或等待 Phase 3 独立贷款合同上线后导入房贷/车贷计划'
+              icon={<BankIcon size={32} />}
+            />
+          </div>
+        )
       ) : (
         <>
           {loanCards.length > 0 && (
@@ -1001,7 +968,7 @@ function LoansSection({
                 const cardName = getEffectiveCardName(item.card, product)
                 const currency = product?.currency || 'CNY'
                 const holderName = holderMap.get(item.holder_id)?.name
-                const dueDay = item.card.loan_due_day ?? getEffectiveBillingDay(item.card)
+                const dueDay = item.card.loan_due_day ?? null
                 const effLimit = getEffectiveCreditLimit(item.card)
 
                 return (
@@ -1021,7 +988,7 @@ function LoansSection({
                       <div className='mt-1 flex flex-wrap items-center gap-3 text-[12px] text-d-muted'>
                         <span className='inline-flex items-center gap-1'>
                           <CalendarIcon size={12} />
-                          每月 {dueDay} 日还款
+                          {dueDay ? `每月 ${dueDay} 日还款` : '还款日未设置'}
                         </span>
                         {effLimit !== null && (
                           <span className={`num-tabular ${blurClass}`}>

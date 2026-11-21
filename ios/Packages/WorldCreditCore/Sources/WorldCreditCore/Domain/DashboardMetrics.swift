@@ -198,6 +198,7 @@ public struct DashboardMetrics: Equatable, Sendable {
     ///   - displayCurrency: 目标展示币种；rates 缺失时同币种部分仍精确计入。
     ///   - rates: 汇率快照；nil 时跨币种金额被排除并记入 unconverted 列表。
     ///   - payables: 当期固定支出列表（默认为空以保持调用方兼容）。
+    ///   - creditAccounts: 信用账户列表（用于识别 `quotaMode == "shared"` 账户并去重计算共享额度池）。
     public static func compute(
         bills: [BillDisplayItem],
         cards: [CardDisplayItem],
@@ -205,7 +206,8 @@ public struct DashboardMetrics: Equatable, Sendable {
         futureDays: Int,
         displayCurrency: String,
         rates: FxRates?,
-        payables: [PayableItem] = []
+        payables: [PayableItem] = [],
+        creditAccounts: [CreditAccount] = []
     ) -> DashboardMetrics {
         // 当前持卡人筛选下的账单、卡片与固定支出（nil = 全部）。
         let visibleBills: [BillDisplayItem]
@@ -250,11 +252,41 @@ public struct DashboardMetrics: Equatable, Sendable {
         let futureSum = sum(futureBills)
 
         // 额度：只算 active 且额度 > 0 的卡（额度未知的外币卡不进分母）；
-        // 卡产品币种就是额度币种，缺产品时按目标币种计。
+        // 对 `quotaMode == "shared"` 的同一信用账户只计一次共享池额度（不按卡片数翻倍）；
+        // 卡产品/账户币种就是额度币种，缺省时回退到目标币种。
+        let accountsById = Dictionary(uniqueKeysWithValues: creditAccounts.map { ($0.id, $0) })
+        let activeCards = visibleCards.filter { $0.card.status == "active" }
+        var sharedCardsByAccount: [String: [CardDisplayItem]] = [:]
+        var limitEntries: [(Double, String)] = []
+
+        for item in activeCards {
+            if let accountId = item.card.accountId,
+               let account = accountsById[accountId],
+               account.quotaMode == "shared" {
+                sharedCardsByAccount[accountId, default: []].append(item)
+            } else if item.card.effectiveCreditLimit > 0 {
+                limitEntries.append((item.card.effectiveCreditLimit, item.product?.currency ?? displayCurrency))
+            }
+        }
+
+        for (accountId, groupCards) in sharedCardsByAccount {
+            guard let account = accountsById[accountId] else { continue }
+            let poolLimit: Double
+            if let explicitShared = account.sharedCreditLimit, explicitShared > 0 {
+                poolLimit = explicitShared
+            } else {
+                poolLimit = groupCards.map(\.card.effectiveCreditLimit).max() ?? 0.0
+            }
+            guard poolLimit > 0 else { continue }
+            let trimmedAccCurrency = account.currency.trimmingCharacters(in: .whitespacesAndNewlines)
+            let currency = trimmedAccCurrency.isEmpty
+                ? (groupCards.first?.product?.currency ?? displayCurrency)
+                : trimmedAccCurrency
+            limitEntries.append((poolLimit, currency))
+        }
+
         let limitSum = DashboardFx.sumByCurrency(
-            visibleCards
-                .filter { $0.card.status == "active" && $0.card.effectiveCreditLimit > 0 }
-                .map { ($0.card.effectiveCreditLimit, $0.product?.currency ?? displayCurrency) },
+            limitEntries,
             target: displayCurrency,
             rates: rates
         )

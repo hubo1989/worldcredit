@@ -56,6 +56,7 @@ describe('F5 设置页重设计 · 移动端 /settings 与 BottomNav', () => {
     expect(bottomNav).toContain('账户')
     expect(bottomNav).toContain('权益')
     expect(bottomNav).toContain('我的')
+    expect(bottomNav).toContain("pathname.startsWith('/promos')")
     expect(bottomNav).not.toContain("label: '卡片'")
   })
 
