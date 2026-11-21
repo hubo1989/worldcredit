@@ -40,12 +40,34 @@ self.addEventListener('push', (event) => {
 // ── Notification click ────────────────────────────────────────────────────
 // 权益推送（tag 前缀 wc-op:）只允许跳转到站内白名单路径，之后由应用自身
 // 鉴权；不向任意入参 URL 导航。
-const OPPORTUNITY_ALLOWED_URLS = new Set(['/promos', '/benefits', '/benefits/calendar'])
+const OPPORTUNITY_ALLOWED_URLS = new Set(['/promos', '/benefits', '/benefits/calendar', '/notifications'])
+const EXACT_ALLOWED_URLS = new Set(['/dashboard', '/bills'])
+const ALLOWED_PREFIXES = ['/bills/', '/cards/']
+
+function normalizeInternalTargetUrl(raw) {
+  if (typeof raw !== 'string' || !raw.startsWith('/') || raw.startsWith('//')) return '/bills'
+  let pathname
+  try {
+    pathname = new URL(raw, self.location.origin).pathname
+  } catch {
+    return '/bills'
+  }
+  if (
+    EXACT_ALLOWED_URLS.has(pathname) ||
+    OPPORTUNITY_ALLOWED_URLS.has(pathname) ||
+    ALLOWED_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+  ) {
+    return pathname
+  }
+  return '/bills'
+}
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
 
-  let targetUrl = (event.notification.data && event.notification.data.url) || '/bills'
+  let targetUrl = normalizeInternalTargetUrl(
+    event.notification.data && event.notification.data.url
+  )
   const tag = (event.notification.data && event.notification.data.tag) || event.notification.tag || ''
   if (tag.startsWith('wc-op:')) {
     if (!OPPORTUNITY_ALLOWED_URLS.has(targetUrl)) targetUrl = '/benefits'

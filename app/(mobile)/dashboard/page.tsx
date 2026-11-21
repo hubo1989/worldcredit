@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   getBillDashboardItems,
@@ -11,12 +11,19 @@ import {
 import { getHolders } from "@/lib/api/holders";
 import { getCardsBasicByHolders } from "@/lib/api/cards";
 import {
+  getRecurringPayables,
+  payRecurringPayable,
+  type PayableWithStatus,
+} from "@/lib/api/payables";
+import { getUnreadNotificationCount } from "@/lib/api/notifications";
+import {
   type HolderFilter,
   type FutureRange,
   billCurrency,
   computeMetrics,
   countCardsByHolder,
   formatMoney,
+  payableRemaining,
 } from "@/lib/dashboard-metrics";
 import { useUserPreferences } from "@/lib/hooks/useUserPreferences";
 import { fetchRates, type FxRates } from "@/lib/fx";
@@ -61,7 +68,10 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [holders, setHolders] = useState<CardHolder[]>([]);
   const [bills, setBills] = useState<BillDashboardItem[]>([]);
+  const [payables, setPayables] = useState<PayableWithStatus[]>([]);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [cards, setCards] = useState<Array<{ id: string; holder_id: string }>>([]);
+  const unreadSyncedRef = useRef(false);
 
   // ---- 交互状态 ----
   const [holderFilter, setHolderFilter] = useState<HolderFilter>("all");
@@ -88,6 +98,7 @@ export default function DashboardPage() {
   // 一键还款与 Toast 状态
   const [payAllOpen, setPayAllOpen] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [payingPayableId, setPayingPayableId] = useState<string | null>(null);
   const [toast, setToast] = useState<{
     open: boolean;
     message: string;
@@ -102,15 +113,39 @@ export default function DashboardPage() {
   const blurClass = privacyOn ? "privacy-blur" : "privacy-clear";
 
   // ---- 数据加载 ----
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (opts?: { silent?: boolean }) => {
     if (!user?.id) return;
-    setLoading(true);
+    const silent = Boolean(opts?.silent);
+    if (!silent) {
+      setLoading(true);
+    }
     setError(null);
+    const shouldSyncUnread = !unreadSyncedRef.current;
     try {
-      // 并行：持卡人 / 账单；卡片依赖持卡人 id，随后批量查询
-      const [holderList, allBills] = await Promise.all([
+      // 并行：持卡人 / 账单 / 固定支出 / 未读通知数（仅首载同步当日通知）；卡片依赖持卡人 id
+      const [holderList, allBills, payableList, unreadCount] = await Promise.all([
         getHolders(user.id),
         getBillDashboardItems(200, user.id),
+        getRecurringPayables(user.id).catch((err) => {
+          console.warn("[dashboard] Failed to load recurring payables:", err);
+          if (!silent) {
+            setToast({
+              open: true,
+              message: "固定支出加载失败，当日待还金额暂不含固定支出",
+              severity: "info",
+            });
+          }
+          return [];
+        }),
+        getUnreadNotificationCount(shouldSyncUnread)
+          .then((count) => {
+            if (shouldSyncUnread) unreadSyncedRef.current = true;
+            return count;
+          })
+          .catch((err) => {
+            console.warn("[dashboard] Failed to load unread notification count:", err);
+            return 0;
+          }),
       ]);
       holderList.sort((a, b) => a.created_at.localeCompare(b.created_at));
       const holderIds = holderList.map((h) => h.id);
@@ -119,11 +154,15 @@ export default function DashboardPage() {
       setHolders(holderList);
       setCards(cardsRes);
       setBills(allBills);
+      setPayables(payableList);
+      setUnreadNotificationCount(unreadCount);
     } catch (err) {
       console.error("Dashboard load failed:", err);
       setError(err instanceof Error ? err.message : "加载失败，请下拉重试");
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [user?.id]);
 
@@ -202,6 +241,31 @@ export default function DashboardPage() {
     }
   };
 
+  const handlePayPayable = async (e: React.MouseEvent, payable: PayableWithStatus) => {
+    e.stopPropagation();
+    if (payingPayableId === payable.id) return;
+    const remaining = payableRemaining(payable);
+    if (remaining <= 0) return;
+    setPayingPayableId(payable.id);
+    try {
+      await payRecurringPayable(payable.id, remaining);
+      setToast({
+        open: true,
+        message: `🎉 已登记 ${payable.name} 本期付款（${formatMoney(remaining, payable.currency || displayCurrency)}）！`,
+        severity: "success",
+      });
+      await loadData({ silent: true });
+    } catch (err) {
+      setToast({
+        open: true,
+        message: "登记付款失败: " + (err instanceof Error ? err.message : String(err)),
+        severity: "error",
+      });
+    } finally {
+      setPayingPayableId((curr) => (curr === payable.id ? null : curr));
+    }
+  };
+
   const handlePayAllOverdue = async () => {
     if (!user?.id) return;
     setPaying(true);
@@ -240,12 +304,19 @@ export default function DashboardPage() {
   const closeToast = useCallback(() => setToast((prev) => ({ ...prev, open: false })), []);
   const goToBills = useCallback(() => router.push("/bills"), [router]);
   const goToPromos = useCallback(() => router.push("/promos"), [router]);
+  const goToNotifications = useCallback(() => router.push("/notifications"), [router]);
 
   // 当前选中持卡人下的账单
   const visibleBills = useMemo(() => {
     if (holderFilter === "all") return bills;
     return bills.filter((b) => b.card?.holder_id === holderFilter);
   }, [bills, holderFilter]);
+
+  // 当前选中持卡人下的固定支出
+  const visiblePayables = useMemo(() => {
+    if (holderFilter === "all") return payables;
+    return payables.filter((p) => p.holder_id === holderFilter);
+  }, [payables, holderFilter]);
 
   // 当前选中持卡人下的卡片
   const visibleCards = useMemo(() => {
@@ -254,8 +325,8 @@ export default function DashboardPage() {
   }, [cards, holderFilter]);
 
   const metrics = useMemo(
-    () => computeMetrics(visibleBills, futureRange, displayCurrency, fxRates),
-    [visibleBills, futureRange, displayCurrency, fxRates],
+    () => computeMetrics(visibleBills, futureRange, displayCurrency, fxRates, visiblePayables),
+    [visibleBills, futureRange, displayCurrency, fxRates, visiblePayables],
   );
 
   const cardsByHolder = useMemo(() => countCardsByHolder(cards), [cards]);
@@ -353,11 +424,14 @@ export default function DashboardPage() {
         onTogglePrivacy={togglePrivacyMode}
         amountClass={amountClass}
         displayCurrency={displayCurrency}
-        visibleBills={visibleBills}
         onPaySingle={handlePaySingle}
+        onPayPayable={handlePayPayable}
+        payingPayableId={payingPayableId}
         onPayAllOpen={openPayAllConfirm}
         onNavBills={goToBills}
         onNavPromos={goToPromos}
+        onNavNotifications={goToNotifications}
+        unreadNotificationCount={unreadNotificationCount}
         totalCardCount={totalCardCount}
         holders={holders}
         cardsByHolder={cardsByHolder}
@@ -380,13 +454,13 @@ export default function DashboardPage() {
         toast={toast}
         onToastClose={closeToast}
         error={error}
-        onRetry={loadData}
+        onRetry={() => void loadData()}
       />
 
       <QuickActionSheet
         open={quickSheetOpen}
         onClose={closeQuickSheet}
-        onChanged={loadData}
+        onChanged={() => void loadData({ silent: true })}
         initialAction={quickInitialAction}
       />
     </>

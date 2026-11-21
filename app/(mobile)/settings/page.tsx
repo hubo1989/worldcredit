@@ -11,6 +11,8 @@ import { DisplayPreferencesCard } from '@/components/settings/DisplayPreferences
 import { ReminderPreferencesCard } from '@/components/settings/ReminderPreferencesCard'
 import { GmailConnectPanel } from '@/components/mobile/GmailConnectPanel'
 import { getGmailConnection, type GmailConnectionStatus } from '@/lib/api/gmail'
+import { getUnreadNotificationCount } from '@/lib/api/notifications'
+import { countEnabledNotificationItems } from '@/lib/notifications.shared'
 import {
   UserIcon,
   PromoIcon,
@@ -98,6 +100,7 @@ export default function SettingsPage() {
   const [showDisplaySheet, setShowDisplaySheet] = useState(false)
   const [showLogoutDialog, setShowLogoutDialog] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
+  const [unreadNotifications, setUnreadNotifications] = useState<number | null>(null)
 
   const [notice, setNotice] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'info' }>({
     open: false,
@@ -122,6 +125,47 @@ export default function SettingsPage() {
   useEffect(() => {
     void loadGmail()
   }, [loadGmail])
+
+  const refreshUnreadCount = useCallback(async () => {
+    try {
+      const count = await getUnreadNotificationCount(false)
+      setUnreadNotifications(count)
+    } catch (err) {
+      console.warn('[settings] failed to fetch unread notification count:', err)
+      setUnreadNotifications(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshUnreadCount()
+    if (typeof window === 'undefined') return
+    const onFocus = () => {
+      void refreshUnreadCount()
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshUnreadCount()
+      }
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [refreshUnreadCount])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('open') === 'reminders') {
+      setShowReminderSheet(true)
+      params.delete('open')
+      const qs = params.toString()
+      const cleanUrl = window.location.pathname + (qs ? `?${qs}` : '')
+      window.history.replaceState(null, '', cleanUrl)
+    }
+  }, [])
 
   const isAdmin = user?.role === 'admin'
   const forwardAddress = user ? 'bills+' + user.id + '@' + DOMAIN : null
@@ -159,9 +203,9 @@ export default function SettingsPage() {
   // 计算偏好摘要胶囊文案（映射表/函数化，去嵌套三元；完整展示已选节点）
   const gmailSummary = formatGmailSummary(gmailStatus, gmailLoading, gmailError)
   const billDays = reminderConfig?.remind_days_before ?? [3, 1, 0]
-  const oppEnabled = reminderConfig?.opportunities?.enabled !== false
+  const switchCounts = countEnabledNotificationItems(reminderConfig)
   const billDaysLabel = billDays.length > 0 ? `提前${billDays.join('/')}天` : '未设提醒'
-  const reminderSummary = `${billDaysLabel} · 权益${oppEnabled ? '开' : '关'}`
+  const reminderSummary = `${billDaysLabel} · ${switchCounts.enabled}/${switchCounts.total}项开`
   const displaySummary = `${displayConfig?.default_currency || 'CNY'} · ${displayConfig?.privacy_mode ? '隐私开启' : '隐私关闭'}`
 
   return (
@@ -268,6 +312,29 @@ export default function SettingsPage() {
               数据同步与偏好设置
             </p>
             <div className='overflow-hidden rounded-2xl border border-d-border bg-d-surface divide-y divide-d-border/60'>
+              {/* 通知中心 */}
+              <SettingsMenuRow
+                icon={<BellIcon size={20} />}
+                title='通知中心'
+                subtitle='查看全部通知、标记已读与清理记录'
+                onClick={() => router.push('/notifications')}
+                badge={(() => {
+                  if (unreadNotifications === null) return null
+                  if (unreadNotifications > 0) {
+                    return (
+                      <span className='mr-0.5 shrink-0 rounded-full border border-d-danger/40 bg-d-danger-soft px-2.5 py-0.5 text-[11px] font-semibold text-d-danger-ink'>
+                        {unreadNotifications > 99 ? '99+' : `${unreadNotifications} 未读`}
+                      </span>
+                    )
+                  }
+                  return (
+                    <span className='mr-0.5 shrink-0 rounded-full border border-d-border bg-d-subtle px-2.5 py-0.5 text-[11px] font-semibold text-d-muted'>
+                      全部已读
+                    </span>
+                  )
+                })()}
+              />
+
               {/* 邮箱账单导入 */}
               <SettingsMenuRow
                 icon={<ImportIcon size={20} />}

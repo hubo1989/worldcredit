@@ -151,6 +151,8 @@ public struct DashboardMetrics: Equatable, Sendable {
     public let totalPending: Double
     /// 已逾期（已过还款日且未还清）合计，折算口径同上。
     public let overdueAmount: Double
+    /// 当日待还合计（今日到期未结清信用卡账单 + 今日到期未结清固定支出），折算口径同上。
+    public let dueTodayAmount: Double
     /// 未来 N 天（含今天）待还合计，折算口径同上。
     public let futureAmount: Double
     /// 普通未还（当前数据模型仅普通未还，分期/贷款暂未接入）。
@@ -161,6 +163,12 @@ public struct DashboardMetrics: Equatable, Sendable {
     public let overdueBills: [BillDisplayItem]
     /// 今天到期且未结清的账单（原币金额）。
     public let dueTodayBills: [BillDisplayItem]
+    /// 今天到期且未结清的固定支出（原币金额）。
+    public let dueTodayPayables: [PayableItem]
+    /// 今天待还款总笔数（账单 + 固定支出）。
+    public let dueTodayCount: Int
+    /// 当日待还按原币种的小计。
+    public let dueTodayByCurrency: [String: Double]
     /// 还款日在今天到 N 天内（含今天）的未还账单。
     public let futureBills: [BillDisplayItem]
     /// 当前持卡人筛选下的全部账单（与账单页 tab 无关）。
@@ -189,29 +197,37 @@ public struct DashboardMetrics: Equatable, Sendable {
     ///   - futureDays: 未来 N 天区间（7 / 14 / 30），区间含今天。
     ///   - displayCurrency: 目标展示币种；rates 缺失时同币种部分仍精确计入。
     ///   - rates: 汇率快照；nil 时跨币种金额被排除并记入 unconverted 列表。
+    ///   - payables: 当期固定支出列表（默认为空以保持调用方兼容）。
     public static func compute(
         bills: [BillDisplayItem],
         cards: [CardDisplayItem],
         holderId: String?,
         futureDays: Int,
         displayCurrency: String,
-        rates: FxRates?
+        rates: FxRates?,
+        payables: [PayableItem] = []
     ) -> DashboardMetrics {
-        // 当前持卡人筛选下的账单与卡片（nil = 全部）。
+        // 当前持卡人筛选下的账单、卡片与固定支出（nil = 全部）。
         let visibleBills: [BillDisplayItem]
         let visibleCards: [CardDisplayItem]
+        let visiblePayables: [PayableItem]
         if let holderId {
             visibleBills = bills.filter { $0.card.holderId == holderId }
             visibleCards = cards.filter { $0.card.holderId == holderId }
+            visiblePayables = payables.filter { $0.holderId == holderId }
         } else {
             visibleBills = bills
             visibleCards = cards
+            visiblePayables = payables
         }
 
         // 只统计未还清的账单：已结清（status = paid）或剩余 ≤ 0.01 浮点容差的排除。
         let unpaid = visibleBills.filter { $0.bill.status != "paid" && $0.remainingAmount > 0.01 }
         let overdueBills = unpaid.filter { $0.daysUntilDue < 0 }
         let dueTodayBills = unpaid.filter { $0.daysUntilDue == 0 }
+        let dueTodayPayables = visiblePayables.filter {
+            $0.daysUntilDue == 0 && $0.status != .paid && !$0.isSettled && $0.remainingAmount > 0.01
+        }
         let futureBills = unpaid.filter { $0.daysUntilDue >= 0 && $0.daysUntilDue <= futureDays }
 
         func sum(_ list: [BillDisplayItem]) -> (convertedCurrency: String, byCurrency: [String: Double], total: Double,
@@ -225,6 +241,12 @@ public struct DashboardMetrics: Equatable, Sendable {
 
         let pendingSum = sum(unpaid)
         let overdueSum = sum(overdueBills)
+        let dueTodaySum = DashboardFx.sumByCurrency(
+            dueTodayBills.map { ($0.remainingAmount, $0.currency) }
+                + dueTodayPayables.map { ($0.remainingAmount, $0.currency) },
+            target: displayCurrency,
+            rates: rates
+        )
         let futureSum = sum(futureBills)
 
         // 额度：只算 active 且额度 > 0 的卡（额度未知的外币卡不进分母）；
@@ -239,17 +261,22 @@ public struct DashboardMetrics: Equatable, Sendable {
 
         let unconvertedCurrencies = Set(pendingSum.unconvertedCurrencies)
             .union(overdueSum.unconvertedCurrencies)
+            .union(dueTodaySum.unconvertedCurrencies)
             .union(futureSum.unconvertedCurrencies)
             .sorted()
 
         return DashboardMetrics(
             totalPending: pendingSum.total,
             overdueAmount: overdueSum.total,
+            dueTodayAmount: dueTodaySum.total,
             futureAmount: futureSum.total,
             plainOwed: pendingSum.total,
             unconvertedCurrencies: unconvertedCurrencies,
             overdueBills: overdueBills,
             dueTodayBills: dueTodayBills,
+            dueTodayPayables: dueTodayPayables,
+            dueTodayCount: dueTodayBills.count + dueTodayPayables.count,
+            dueTodayByCurrency: dueTodaySum.byCurrency,
             futureBills: futureBills,
             visibleBills: visibleBills,
             unpaidCount: unpaid.count,

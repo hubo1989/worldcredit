@@ -1,4 +1,5 @@
 import type { BillDashboardItem } from './api/bills.server'
+import type { PayableWithStatus } from './api/payables.server'
 import { currencySymbol, sumByCurrency } from './fx'
 import type { FxRates } from './fx'
 
@@ -42,7 +43,8 @@ export function computeMetrics(
   bills: BillDashboardItem[],
   futureDays: FutureRange,
   targetCurrency: string,
-  rates: FxRates | null
+  rates: FxRates | null,
+  payables: PayableWithStatus[] = []
 ) {
   // 只统计未还清的账单（§3.4）
   const unpaid = bills.filter(b => b.computed_status !== 'paid')
@@ -61,6 +63,18 @@ export function computeMetrics(
   const futureBills = unpaid.filter(b => b.days_until_due >= 0 && b.days_until_due <= futureDays)
   const futureSum = sumByCurrency(futureBills, pickAmount, targetCurrency, rates)
 
+  // 当日待还：当天到期且尚未结清的信用卡账单 + 固定支出
+  const dueTodayBills = getDueTodayBills(bills)
+  const dueTodayPayables = getDueTodayPayables(payables)
+  const dueTodayEntries = [
+    ...dueTodayBills.map(pickAmount),
+    ...dueTodayPayables.map(p => ({
+      amount: payableRemaining(p),
+      currency: p.currency || targetCurrency,
+    })),
+  ]
+  const dueTodaySum = sumByCurrency(dueTodayEntries, entry => entry, targetCurrency, rates)
+
   // 总欠款：当前数据模型仅"普通未还"，分期/贷款暂未接入（§3.2）
   const plainOwedSum = pendingSum
 
@@ -69,6 +83,10 @@ export function computeMetrics(
     overdueAmount: overdueSum.total,
     overdueBills,
     futureAmount: futureSum.total,
+    dueTodayAmount: dueTodaySum.total,
+    dueTodayBills,
+    dueTodayPayables,
+    dueTodayCount: dueTodayBills.length + dueTodayPayables.length,
     plainOwed: plainOwedSum.total,
     unpaidCount: unpaid.length,
     /** 汇率拿到没有：为 false 时下面的合计是不完整的，必须显式标注。 */
@@ -78,13 +96,19 @@ export function computeMetrics(
       ...pendingSum.unconverted_currencies,
       ...overdueSum.unconverted_currencies,
       ...futureSum.unconverted_currencies,
+      ...dueTodaySum.unconverted_currencies,
     ])).sort(),
-    fx: { pending: pendingSum, overdue: overdueSum, future: futureSum, plainOwed: plainOwedSum },
+    fx: {
+      pending: pendingSum,
+      overdue: overdueSum,
+      future: futureSum,
+      dueToday: dueTodaySum,
+      plainOwed: plainOwedSum,
+    },
     /** 当前口径下是否出现多币种，用于决定要不要展示币种构成。 */
     mixed: pendingSum.mixed,
   }
 }
-
 
 /**
  * 「今天需还款」列表：当天到期、尚未结清、且还有剩余待还的账单。
@@ -96,6 +120,23 @@ export function computeMetrics(
 export function getDueTodayBills(bills: BillDashboardItem[]): BillDashboardItem[] {
   return bills.filter(
     b => b.days_until_due === 0 && b.computed_status !== 'paid' && b.remaining_amount > 0
+  )
+}
+
+/** 浮点结算精度容差（与服务端 remaining > 0.01 保持一致，排除已结清记录）。 */
+const SETTLED_AMOUNT_EPSILON = 0.01
+
+/** 统一计算固定支出剩余待付金额；缺失或非数值字段按约定静默兜底为 0。 */
+export function payableRemaining(p: { amount: unknown; paid_amount?: unknown }): number {
+  const amount = Number(p.amount)
+  const paid = Number(p.paid_amount ?? 0)
+  return Math.max(0, (Number.isFinite(amount) ? amount : 0) - (Number.isFinite(paid) ? paid : 0))
+}
+
+/** 当天到期、未结清且有剩余待付金额的固定支出列表。 */
+export function getDueTodayPayables(payables: PayableWithStatus[]): PayableWithStatus[] {
+  return payables.filter(
+    p => p.days_until_due === 0 && p.status !== 'paid' && payableRemaining(p) > SETTLED_AMOUNT_EPSILON
   )
 }
 

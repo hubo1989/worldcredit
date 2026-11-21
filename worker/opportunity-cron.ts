@@ -27,6 +27,12 @@ import {
   type OpportunityCalendarEvent,
   type OpportunityReminderConfig,
 } from '../lib/opportunities/reminders'
+import {
+  isOpportunitySwitchEnabled,
+  isWebPushChannelEnabled,
+  type OpportunitySwitchKey,
+} from '../lib/notifications.shared'
+import type { UserReminderConfig } from '../lib/types'
 
 export interface OpportunityCronEnv {
   DB: D1Database
@@ -70,6 +76,7 @@ export interface ScanReport {
   failed: number
   cancelled: number
   skipped_no_subscription: number
+  skipped_web_push_disabled: number
   subscriptions_deleted: number
 }
 
@@ -90,6 +97,7 @@ interface AccountWorld {
   account_id: string
   holder_id: string
   definition_id: string
+  definition_kind: string
   version_id: string
   rules_json: string
   verification: string
@@ -108,6 +116,7 @@ interface UserWorld {
   /** Holders this user may be notified about (server-side rule, §10.3). */
   holderIds: Set<string>
   config: OpportunityReminderConfig
+  rawConfig: Partial<UserReminderConfig> | null
   quiet: { quiet_hours_start?: string; quiet_hours_end?: string } | undefined
   webPushGloballyEnabled: boolean
 }
@@ -115,14 +124,15 @@ interface UserWorld {
 interface EventWorld {
   events: OpportunityCalendarEvent[]
   holderId: string
+  definitionKind: string
 }
 
 /** Every active account's events, keyed by account id (batched queries only). */
 async function loadAllEvents(deps: ScanDeps): Promise<Map<string, EventWorld>> {
   const { results: accounts } = await deps.db
     .prepare(
-      `SELECT a.id AS account_id, a.holder_id, a.definition_id, v.id AS version_id,
-              v.rules_json, v.verification
+      `SELECT a.id AS account_id, a.holder_id, a.definition_id, d.kind AS definition_kind,
+              v.id AS version_id, v.rules_json, v.verification
        FROM opportunity_accounts a
        JOIN opportunity_definitions d ON d.id = a.definition_id AND d.status = 'active'
        LEFT JOIN opportunity_rule_versions v
@@ -172,7 +182,11 @@ async function loadAllEvents(deps: ScanDeps): Promise<Map<string, EventWorld>> {
         })),
       )
     }
-    byAccount.set(account.account_id, { events, holderId: account.holder_id })
+    byAccount.set(account.account_id, {
+      events,
+      holderId: account.holder_id,
+      definitionKind: account.definition_kind,
+    })
   }
   return byAccount
 }
@@ -202,17 +216,14 @@ async function loadUsers(db: D1Database): Promise<UserWorld[]> {
   const { results: userRows } = await db.prepare('SELECT id FROM users').all<{ id: string }>()
   return userRows.map((u) => {
     let config: OpportunityReminderConfig
+    let rawConfig: Partial<UserReminderConfig> | null = null
     let legacy: Record<string, unknown> = {}
     const raw = prefByUser.get(u.id)
     if (raw) {
       try {
-        const parsed = JSON.parse(raw) as {
-          opportunities?: unknown
-          quiet_hours_start?: string
-          quiet_hours_end?: string
-          enabled_channels?: string[]
-        }
+        const parsed = JSON.parse(raw) as Partial<UserReminderConfig> & Record<string, unknown>
         config = mergeOpportunityReminderConfig(parsed.opportunities ?? null)
+        rawConfig = { ...parsed, opportunities: config }
         legacy = parsed
       } catch {
         config = mergeOpportunityReminderConfig(null)
@@ -220,18 +231,52 @@ async function loadUsers(db: D1Database): Promise<UserWorld[]> {
     } else {
       config = mergeOpportunityReminderConfig(null)
     }
-    const channels = (legacy.enabled_channels as string[] | undefined) ?? ['web_push']
+    const webPushGloballyEnabled = isWebPushChannelEnabled(raw ?? null)
     return {
       user_id: u.id,
       holderIds: holdersByUser.get(u.id) ?? new Set<string>(),
       config,
+      rawConfig,
       quiet: {
         quiet_hours_start: legacy.quiet_hours_start as string | undefined,
         quiet_hours_end: legacy.quiet_hours_end as string | undefined,
       },
-      webPushGloballyEnabled: channels.includes('web_push'),
+      webPushGloballyEnabled,
     }
   })
+}
+
+const DELIVERY_EVENT_TYPE_TO_SWITCH: Record<string, OpportunitySwitchKey | undefined> = {
+  reset: 'opportunity_reset',
+  claim_open: 'opportunity_claim',
+  claim_deadline: 'opportunity_claim',
+  booking_service: 'opportunity_booking',
+  task_deadline: 'opportunity_task',
+  reward_window: 'opportunity_task',
+}
+
+function opportunitySwitchKeyForEvent(
+  kind: OpportunityCalendarEvent['kind'],
+  definitionKind?: string
+): OpportunitySwitchKey {
+  if (kind === 'cycle_reset') return 'opportunity_reset'
+  if (kind === 'claim_window_open' || kind === 'claim_window_deadline') return 'opportunity_claim'
+  if (kind === 'booking_service') return 'opportunity_booking'
+  if (kind === 'task_deadline' || kind === 'reward_window') return 'opportunity_task'
+  if (kind === 'cycle_expiry' && definitionKind === 'promo') return 'opportunity_activity'
+  return 'opportunity_expiry'
+}
+
+function notificationCategoryForDeliveryKey(
+  deliveryKey: string,
+  definitionKind?: string
+): OpportunitySwitchKey {
+  const parts = deliveryKey.split(':')
+  if (parts[0] === 'op') {
+    const mapped = DELIVERY_EVENT_TYPE_TO_SWITCH[parts[1] ?? '']
+    if (mapped) return mapped
+  }
+  return definitionKind === 'promo' ? 'opportunity_activity' : 'opportunity_expiry'
 }
 
 interface DueDelivery {
@@ -242,10 +287,20 @@ interface DueDelivery {
   scheduled_at: string
 }
 
+function isOpportunityInboxEnabled(userWorld: UserWorld, switchKey: OpportunitySwitchKey): boolean {
+  if (!userWorld.config.enabled) return false
+  if (!isOpportunitySwitchEnabled(userWorld.rawConfig, switchKey)) return false
+  if (switchKey === 'opportunity_reset' && !userWorld.config.reset_enabled) return false
+  if (switchKey === 'opportunity_booking' && !userWorld.config.booking_enabled) return false
+  return true
+}
+
 /** Every due (user, event, step) delivery for this scan instant. */
-async function buildDueDeliveries(deps: ScanDeps): Promise<DueDelivery[]> {
-  const worlds = await loadAllEvents(deps)
-  const users = await loadUsers(deps.db)
+async function buildDueDeliveries(
+  deps: ScanDeps,
+  users: UserWorld[],
+  worlds: Map<string, EventWorld>,
+): Promise<DueDelivery[]> {
   const due: DueDelivery[] = []
 
   for (const user of users) {
@@ -254,6 +309,8 @@ async function buildDueDeliveries(deps: ScanDeps): Promise<DueDelivery[]> {
       if (!user.holderIds.has(world.holderId)) continue
       for (const event of world.events) {
         if (event.needs_review) continue // 未核实数据不催用
+        const switchKey = opportunitySwitchKeyForEvent(event.kind, world.definitionKind)
+        if (!isOpportunityInboxEnabled(user, switchKey)) continue
         // “今天”以该事件的规则时区评估（§10.3：不依赖主机 locale）
         const todayOn = localDateInZone(deps.now, event.time_zone)
 
@@ -269,7 +326,9 @@ async function buildDueDeliveries(deps: ScanDeps): Promise<DueDelivery[]> {
         // window-open are on-the-day nodes and never fan out dN variants.
         if (
           event.deadline_before !== null &&
-          (event.kind === 'cycle_expiry' || event.kind === 'claim_window_deadline')
+          (event.kind === 'cycle_expiry' ||
+            event.kind === 'claim_window_deadline' ||
+            event.kind === 'task_deadline')
         ) {
           // Thresholds count back from the LAST USABLE day: a cycle's deadline
           // (usable_end_before) is exclusive, so d1 on the final evening would
@@ -279,10 +338,16 @@ async function buildDueDeliveries(deps: ScanDeps): Promise<DueDelivery[]> {
           const daysLeft = Math.round(
             (Date.parse(`${base}T00:00:00Z`) - Date.parse(`${todayOn}T00:00:00Z`)) / 86_400_000,
           )
-          const daySets =
-            event.kind === 'claim_window_deadline'
-              ? user.config.claim_days_before
-              : user.config.expiry_days_before
+          let daySets: number[]
+          if (event.kind === 'claim_window_deadline') {
+            daySets = user.config.claim_days_before
+          } else if (event.kind === 'task_deadline') {
+            daySets = user.config.task_days_before
+          } else if (world.definitionKind === 'promo') {
+            daySets = user.config.activity_days_before
+          } else {
+            daySets = user.config.expiry_days_before
+          }
           for (const n of daySets) {
             if (daysLeft === n && n !== 0) steps.push(`d${n}`)
           }
@@ -334,11 +399,14 @@ export async function scanOpportunityNotifications(deps: ScanDeps): Promise<Scan
   const nowIso = toRfc3339Utc(deps.now)
   const report: ScanReport = {
     jobs_created: 0, jobs_claimed: 0, sent: 0, partial: 0, failed: 0,
-    cancelled: 0, skipped_no_subscription: 0, subscriptions_deleted: 0,
+    cancelled: 0, skipped_no_subscription: 0, skipped_web_push_disabled: 0, subscriptions_deleted: 0,
   }
 
   // 1. Create due jobs — UNIQUE(user_id, delivery_key) dedupes scans/workers.
-  const due = await buildDueDeliveries(deps)
+  const initialWorlds = await loadAllEvents(deps)
+  const users = await loadUsers(deps.db)
+  const usersById = new Map(users.map((u) => [u.user_id, u]))
+  const due = await buildDueDeliveries(deps, users, initialWorlds)
   for (const delivery of due) {
     const expiresAt = delivery.event.deadline_before
       ? `${delivery.event.deadline_before}T23:59:59Z`
@@ -397,13 +465,64 @@ export async function scanOpportunityNotifications(deps: ScanDeps): Promise<Scan
   const worlds = await loadAllEvents(deps)
 
   for (const job of claimed) {
-    // 4. Re-verify against CURRENT state before any send.
+    // 4. Re-verify against CURRENT state & notification switch state before any send.
     if (!(await reverify(deps, job, worlds, nowIso))) {
       await db
         .prepare(`UPDATE opportunity_notification_jobs SET status = 'cancelled', updated_at = ? WHERE id = ?`)
         .bind(nowIso, job.id)
         .run()
       report.cancelled += 1
+      continue
+    }
+
+    const userWorld = usersById.get(job.user_id)
+    const world = worlds.get(job.object_id)
+    const inboxCategory = notificationCategoryForDeliveryKey(job.delivery_key, world?.definitionKind)
+    if (userWorld && !isOpportunityInboxEnabled(userWorld, inboxCategory)) {
+      await db
+        .prepare(`UPDATE opportunity_notification_jobs SET status = 'cancelled', updated_at = ? WHERE id = ?`)
+        .bind(nowIso, job.id)
+        .run()
+      report.cancelled += 1
+      continue
+    }
+
+    // 4.5 Write in-app notification to notification_history (respects soft-delete / dedupe)
+    const body = await buildBody(deps, job)
+    const inboxKey = `opp:${job.delivery_key}`
+    await db
+      .prepare(
+        `INSERT OR IGNORE INTO notification_history
+           (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status, push_sent_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'skipped', NULL)`,
+      )
+      .bind(
+        crypto.randomUUID(),
+        job.user_id,
+        inboxKey,
+        inboxCategory,
+        body.title,
+        body.body,
+        body.url,
+        JSON.stringify({
+          kind: 'opportunity',
+          event_key: job.event_key,
+          delivery_key: job.delivery_key,
+          object_id: job.object_id,
+        }),
+        nowIso,
+      )
+      .run()
+
+    // 4.6 Respect user's Web Push channel preference (and switch state) before pushing
+    if (userWorld && !userWorld.webPushGloballyEnabled) {
+      await db
+        .prepare(
+          `UPDATE opportunity_notification_jobs SET status = 'skipped', last_error = 'web_push_disabled', updated_at = ? WHERE id = ?`,
+        )
+        .bind(nowIso, job.id)
+        .run()
+      report.skipped_web_push_disabled += 1
       continue
     }
 
@@ -434,7 +553,6 @@ export async function scanOpportunityNotifications(deps: ScanDeps): Promise<Scan
     )
     const pendingSubs = subs.filter((sub) => !acceptedSubs.has(sub.id))
 
-    const body = await buildBody(deps, job)
     const payload = JSON.stringify({
       title: body.title,
       body: body.body,
@@ -484,14 +602,32 @@ export async function scanOpportunityNotifications(deps: ScanDeps): Promise<Scan
     else if (accepted > 0) status = 'partial'
     else if (job.attempt_count >= MAX_ATTEMPTS) status = 'failed'
     else status = 'pending' // retry the failed devices on a later pass
+    const errorSummary = failures > 0 ? `${failures} 台设备发送失败` : null
     await db
       .prepare(
         `UPDATE opportunity_notification_jobs
          SET status = ?, lease_until = NULL, updated_at = ?, last_error = ?
          WHERE id = ?`,
       )
-      .bind(status, nowIso, failures > 0 ? `${failures} 台设备发送失败` : null, job.id)
+      .bind(status, nowIso, errorSummary, job.id)
       .run()
+    if (accepted > 0 || status === 'failed') {
+      await db
+        .prepare(
+          `UPDATE notification_history
+           SET status = ?, push_sent_at = COALESCE(push_sent_at, ?), error = ?
+           WHERE user_id = ? AND notification_key = ?
+             AND deleted_at IS NULL AND read_at IS NULL`,
+        )
+        .bind(
+          accepted > 0 ? 'sent' : 'failed',
+          accepted > 0 ? nowIso : null,
+          errorSummary,
+          job.user_id,
+          inboxKey,
+        )
+        .run()
+    }
     if (status === 'sent') report.sent += 1
     else if (status === 'partial') report.partial += 1
     else if (status === 'failed') report.failed += 1

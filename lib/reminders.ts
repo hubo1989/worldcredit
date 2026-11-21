@@ -10,6 +10,9 @@
 
 import { callRpc } from './api/rpc-client'
 import type * as RemindersServer from './api/reminders.server'
+import { getUserPreferences } from './api/preferences'
+import { isWebPushChannelEnabled } from './api/push'
+import { resolveNotificationSwitches } from './notifications.shared'
 import { getLoanNextDueDate } from './utils'
 import { currencySymbol, normalizeCurrencyOrDefault } from './fx'
 
@@ -62,7 +65,12 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
   if (!('Notification' in window) || Notification.permission !== 'granted') return
 
   try {
-    await checkLoanReminders()
+    const prefs = await getUserPreferences(userId)
+    if (!isWebPushChannelEnabled(prefs.reminder_config)) return
+    const switches = resolveNotificationSwitches(prefs.reminder_config)
+    const allowedDays = new Set(prefs.reminder_config.remind_days_before ?? [3, 1, 0])
+
+    await checkLoanReminders(switches, allowedDays)
 
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -88,6 +96,8 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
       const days = daysUntilDue(bill.due_date)
       const remindType = remindTypeForDays(days)
       if (!remindType) continue
+      if (days === 0 && !switches.bill_due_today) continue
+      if (days > 0 && (!switches.bill_due_advance || !allowedDays.has(days))) continue
 
       const key = `${bill.id}:${remindType}`
       if (sentKeys.has(key)) continue
@@ -121,7 +131,10 @@ export async function checkAndSendReminders(userId: string): Promise<void> {
   }
 }
 
-async function checkLoanReminders(): Promise<void> {
+async function checkLoanReminders(
+  switches: ReturnType<typeof resolveNotificationSwitches>,
+  allowedDays: Set<number>
+): Promise<void> {
   const rawLoanCards = await callRpc<typeof RemindersServer.getActiveLoanCards>(
     'reminders', 'getActiveLoanCards'
   )
@@ -140,6 +153,8 @@ async function checkLoanReminders(): Promise<void> {
     else if (daysUntil === 1) remindType = 'loan_1day'
     else if (daysUntil === 0) remindType = 'loan_due_day'
     if (!remindType) continue
+    if (daysUntil === 0 && !switches.payable_due_today) continue
+    if (daysUntil > 0 && (!switches.payable_due_advance || !allowedDays.has(daysUntil))) continue
 
     const remindDateStr = nextDue.toISOString().slice(0, 10)
     const alreadySent = await callRpc<typeof RemindersServer.hasLoanReminderLog>(

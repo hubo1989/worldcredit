@@ -2,8 +2,13 @@
 // Deployed as part of the main Worker (cron trigger in wrangler.jsonc)
 
 import webpush from "web-push";
-import { getLocalTodayString } from "../lib/utils";
 import { sendApnsToUser } from "../lib/apns.server";
+import { isWebPushChannelEnabled } from "../lib/notifications.shared";
+import {
+  buildDailyNotificationCandidates,
+  isUserInQuietHours,
+  type PrefetchedUserNotificationPrefs,
+} from "../lib/notifications-engine.server";
 
 interface CronEnv {
   DB: D1Database;
@@ -18,52 +23,48 @@ interface CronEnv {
 }
 
 /**
- * 校验用户的偏好设置是否开启了 Web Push（统一存量兼容口径与迁移判断）。
+ * 校验用户的偏好设置是否开启了主动推送通道（Web Push / APNs 共用主开关）。
  * 若 enabled_channels 未设置而旧 opportunities.web_push_enabled === false，绝不下发。
  */
 export function isUserWebPushEnabled(reminderConfigRaw?: string | null): boolean {
-  if (!reminderConfigRaw) return true;
-  try {
-    const parsed = JSON.parse(reminderConfigRaw) as {
-      enabled_channels?: string[];
-      opportunities?: { web_push_enabled?: boolean };
-    };
-    if (parsed.enabled_channels !== undefined) {
-      return (
-        Array.isArray(parsed.enabled_channels) &&
-        parsed.enabled_channels.includes("web_push")
-      );
-    }
-    if (parsed.opportunities && parsed.opportunities.web_push_enabled === false) {
-      return false;
-    }
-    return true;
-  } catch {
-    return true;
-  }
+  return isWebPushChannelEnabled(reminderConfigRaw);
 }
 
-interface BillWithCard {
+interface ExistingHistoryRow {
   id: string;
-  account_id: string | null;
-  card_id: string;
-  bill_month: string;
-  bill_amount: number;
-  min_payment: number | null;
-  due_date: string;
-  status: string;
-  holder_id: string;
-  created_by: string;
-  bank_name: string | null;
-  card_name: string | null;
-  card_number_last4: string | null;
-  account_statement_mode: string | null;
-  /** 卡级别名称覆盖（NULL = 使用卡产品默认名称）。 */
-  name_override: string | null;
+  notification_key: string;
+  read_at: string | null;
+  deleted_at: string | null;
+  push_sent_at: string | null;
+}
+
+async function loadExistingHistoryByKey(
+  db: D1Database,
+  userId: string,
+  keys: string[],
+): Promise<Map<string, ExistingHistoryRow>> {
+  const byKey = new Map<string, ExistingHistoryRow>();
+  const CHUNK_SIZE = 50;
+  for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
+    const chunk = keys.slice(i, i + CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = await db
+      .prepare(
+        `SELECT id, notification_key, read_at, deleted_at, push_sent_at
+         FROM notification_history
+         WHERE user_id = ? AND notification_key IN (${placeholders})`,
+      )
+      .bind(userId, ...chunk)
+      .all<ExistingHistoryRow>();
+    for (const row of rows.results || []) {
+      byKey.set(row.notification_key, row);
+    }
+  }
+  return byKey;
 }
 
 export async function handleScheduled(
-  _event: ScheduledEvent,
+  scheduledEvent: ScheduledEvent,
   env: CronEnv,
   _ctx: ExecutionContext,
 ): Promise<void> {
@@ -71,238 +72,238 @@ export async function handleScheduled(
 
   const db = env.DB;
   await pruneStaleMutationsAndAuthAttempts(db);
-  const today = getLocalTodayString("Asia/Shanghai");
+  const nowDate =
+    scheduledEvent &&
+    typeof scheduledEvent.scheduledTime === "number" &&
+    Number.isFinite(scheduledEvent.scheduledTime)
+      ? new Date(scheduledEvent.scheduledTime)
+      : new Date();
+  const nowIso = nowDate.toISOString();
 
-  // 1. Get all unpaid/overdue bills with card + holder info + account mode
-  const bills = await db
+  // 1. Collect target users (users table + fallback preference tables for isolated tests)
+  const userRows = await db
     .prepare(
-      `
-    SELECT b.id, b.account_id, b.card_id, b.bill_month,
-           COALESCE(b.bill_amount_override, b.bill_amount) AS bill_amount,
-           b.min_payment, b.due_date, b.status,
-           ch.id AS holder_id, ch.created_by,
-           cp.bank_name, cp.card_name, cc.name_override, cc.card_number_last4,
-           ca.statement_mode AS account_statement_mode
-    FROM bills b
-    JOIN credit_cards cc ON b.card_id = cc.id
-    JOIN card_holders ch ON cc.holder_id = ch.id
-    LEFT JOIN card_products cp ON cc.card_product_id = cp.id
-    LEFT JOIN credit_accounts ca ON (b.account_id = ca.id OR (b.account_id IS NULL AND cc.account_id = ca.id))
-    WHERE b.status IN ('unpaid', 'partial', 'overdue')
-  `,
+      `SELECT id FROM users
+       UNION
+       SELECT user_id AS id FROM user_preferences
+       UNION
+       SELECT user_id AS id FROM notification_preferences`,
     )
-    .all<BillWithCard>();
-  const allBills = bills.results || [];
+    .all<{ id: string }>();
+  const userIds = (userRows.results || []).map((r) => r.id).filter(Boolean);
 
-  // 1.1 批量收集合并账户下的 active 卡信息
-  const mergedAccountIds = Array.from(
-    new Set(
-      allBills
-        .filter((b) => b.account_statement_mode === "merged" && b.account_id)
-        .map((b) => b.account_id as string),
-    ),
-  );
-  const accountCardsMap: Record<string, { count: number; firstTail: string }> = {};
-  if (mergedAccountIds.length > 0) {
-    const placeholders = mergedAccountIds.map(() => "?").join(",");
-    const memberStmt = await db
-      .prepare(
-        `SELECT account_id, card_number_last4 FROM credit_cards WHERE account_id IN (${placeholders}) AND status = 'active' ORDER BY created_at ASC`,
-      )
-      .bind(...mergedAccountIds)
-      .all<{ account_id: string; card_number_last4: string | null }>();
-    for (const mc of memberStmt.results || []) {
-      if (!accountCardsMap[mc.account_id]) {
-        accountCardsMap[mc.account_id] = { count: 0, firstTail: mc.card_number_last4 || "" };
-      }
-      accountCardsMap[mc.account_id].count++;
-    }
-  }
-
-  // 2. Get all notification preferences and user preferences (reminder channels)
-  const prefs = await db
-    .prepare(
-      "SELECT user_id, bill_due_enabled, overdue_enabled, due_days_before FROM notification_preferences",
-    )
-    .all<{
-      user_id: string;
-      bill_due_enabled: number;
-      overdue_enabled: number;
-      due_days_before: number;
-    }>();
-  const allPrefs = prefs.results || [];
-
-  const userPrefs = await db
-    .prepare("SELECT user_id, reminder_config FROM user_preferences")
-    .all<{ user_id: string; reminder_config: string }>();
-  const reminderConfigMap = new Map<string, string>();
-  for (const row of userPrefs.results || []) {
-    reminderConfigMap.set(row.user_id, row.reminder_config);
-  }
-
-  if (!allPrefs.length || !allBills.length) {
-    console.log("[cron] No preferences or no bills. Done.");
+  if (!userIds.length) {
+    console.log("[cron] No users found. Done.");
     return;
   }
 
-  // 3. Get all push subscriptions (Web Push & iOS device tokens)
-  const subs = await db
-    .prepare("SELECT id, user_id, endpoint, p256dh, auth FROM push_subscriptions")
-    .all<{ id: string; user_id: string; endpoint: string; p256dh: string; auth: string }>();
+  // 2. Batch-prefetch subscriptions, iOS tokens, and preference tables once before the user loop
+  const [subs, iosTokens, prefRows, legacyRows] = await Promise.all([
+    db
+      .prepare("SELECT id, user_id, endpoint, p256dh, auth FROM push_subscriptions")
+      .all<{ id: string; user_id: string; endpoint: string; p256dh: string; auth: string }>(),
+    db
+      .prepare("SELECT id, user_id, token FROM device_tokens WHERE platform = 'ios'")
+      .all<{ id: string; user_id: string; token: string }>(),
+    db
+      .prepare("SELECT user_id, reminder_config FROM user_preferences")
+      .all<{ user_id: string; reminder_config: string | null }>(),
+    db
+      .prepare("SELECT user_id, bill_due_enabled, overdue_enabled, due_days_before FROM notification_preferences")
+      .all<{ user_id: string; bill_due_enabled: number; overdue_enabled: number; due_days_before: number }>(),
+  ]);
   const subscriptions = subs.results || [];
-
-  const iosTokens = await db
-    .prepare("SELECT id, user_id, token FROM device_tokens WHERE platform = 'ios'")
-    .all<{ id: string; user_id: string; token: string }>();
   const iosDevices = iosTokens.results || [];
+  const prefByUser = new Map<string, string | null>(
+    (prefRows.results || []).map((row) => [row.user_id, row.reminder_config ?? null]),
+  );
+  const legacyByUser = new Map<
+    string,
+    { bill_due_enabled: number; overdue_enabled: number; due_days_before: number }
+  >((legacyRows.results || []).map((row) => [row.user_id, row]));
 
-  if (!subscriptions.length && !iosDevices.length) {
-    console.log("[cron] No push subscriptions or iOS devices.");
-    return;
-  }
-
-  // 4. Process each user
+  // 3. Process each user
   let sentCount = 0;
-  for (const pref of allPrefs) {
-    const userId = pref.user_id;
-    const userSubs = subscriptions.filter((s) => s.user_id === userId);
-    const userDevices = iosDevices.filter((d) => d.user_id === userId);
-    if (!userSubs.length && !userDevices.length) continue;
+  let inboxCount = 0;
 
-    for (const bill of allBills) {
-      // Skip bills not belonging to this user
-      if (bill.created_by !== userId) continue;
-      if (bill.status === "paid") continue;
+  for (const userId of userIds) {
+    try {
+      const userSubs = subscriptions.filter((s) => s.user_id === userId);
+      const userDevices = iosDevices.filter((d) => d.user_id === userId);
+      const prefetched: PrefetchedUserNotificationPrefs = {
+        reminderConfigRaw: prefByUser.get(userId) ?? null,
+        legacyRow: legacyByUser.get(userId) ?? null,
+      };
 
-      const dueDate = new Date(bill.due_date);
-      const todayDate = new Date(today);
-      const daysUntil = Math.ceil(
-        (dueDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24),
+      const { context, candidates } = await buildDailyNotificationCandidates(db, userId, undefined, {
+        now: nowDate,
+        prefetched,
+      });
+      if (!candidates.length) continue;
+
+      const inQuiet = isUserInQuietHours(context, nowDate);
+      const pushChannelEnabled = isUserWebPushEnabled(context.reminderConfigRaw);
+      const canSendWebPush = !inQuiet && userSubs.length > 0 && pushChannelEnabled;
+      const canSendApns =
+        !inQuiet &&
+        userDevices.length > 0 &&
+        pushChannelEnabled &&
+        Boolean(env.APNS_KEY_P8 && env.APNS_KEY_ID && env.APNS_TEAM_ID);
+
+      const existingByKey = await loadExistingHistoryByKey(
+        db,
+        userId,
+        candidates.map((c) => c.notification_key),
       );
 
-      let title: string | null = null;
-      let body: string | null = null;
-      const notificationKey = `bill:${bill.id}:${today}`;
+      for (const candidate of candidates) {
+        const existing = existingByKey.get(candidate.notification_key);
 
-      // 若为合并账户且有多张 active 卡，文案升级为合并账单口径
-      const accInfo = bill.account_id ? accountCardsMap[bill.account_id] : null;
-      const isMultiCardMerged = Boolean(
-        bill.account_statement_mode === "merged" && accInfo && accInfo.count > 1,
-      );
-
-      const bankPrefix = bill.bank_name || "";
-      let cardSubject: string;
-      if (isMultiCardMerged && accInfo) {
-        cardSubject = `${bankPrefix}合并账单（含尾号 ${accInfo.firstTail} 等 ${accInfo.count} 张卡）`;
-      } else {
-        const cardName = bill.name_override || bill.card_name || "";
-        cardSubject = `${bankPrefix} ${cardName}`.trim();
-      }
-
-      if (daysUntil < 0 && pref.overdue_enabled === 1) {
-        title = `已逾期：${cardSubject}`;
-        body = `${cardSubject}账单 ¥${bill.bill_amount} 已逾期 ${Math.abs(daysUntil)} 天`;
-      } else if (
-        daysUntil >= 0 &&
-        daysUntil <= pref.due_days_before &&
-        pref.bill_due_enabled === 1
-      ) {
-        if (daysUntil === 0) {
-          title = `今天到期：${cardSubject}`;
-          body = `${cardSubject}账单 ¥${bill.bill_amount} 今天到期`;
-        } else {
-          title = `${daysUntil}天后还款：${cardSubject}`;
-          body = `${cardSubject}账单 ¥${bill.bill_amount} ${daysUntil}天后到期`;
+        // 已删除 / 已读 / 已推送：绝不复活或二次发送
+        if (existing && (existing.deleted_at || existing.read_at || existing.push_sent_at)) {
+          continue;
         }
-      }
 
-      if (!title || !body) continue;
-
-      // 5. Check dedup
-      const existing = await db
-        .prepare("SELECT id FROM notification_history WHERE user_id = ? AND notification_key = ?")
-        .bind(userId, notificationKey)
-        .first();
-      if (existing) continue;
-
-      // 6. Send push notification
-      try {
-        const canSendWebPush = isUserWebPushEnabled(reminderConfigMap.get(userId));
-        if (userSubs.length > 0 && canSendWebPush) {
-          const { staleIds } = await sendPushToSubscriptions(env, userSubs, title, body);
-          // Drop subscriptions the push service reports as gone (404/410).
-          for (const id of staleIds) {
-            await db.prepare("DELETE FROM push_subscriptions WHERE id = ?").bind(id).run();
+        if (!canSendWebPush && !canSendApns) {
+          if (!existing) {
+            const insertRes = await db
+              .prepare(
+                `INSERT OR IGNORE INTO notification_history
+                   (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status, push_sent_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'skipped', NULL)`,
+              )
+              .bind(
+                crypto.randomUUID(),
+                userId,
+                candidate.notification_key,
+                candidate.category,
+                candidate.title,
+                candidate.body,
+                candidate.target_url,
+                candidate.metadata_json,
+                nowIso,
+              )
+              .run();
+            if (Number(insertRes.meta?.changes ?? 0) > 0) inboxCount++;
           }
+          continue;
         }
 
-        // Send to iOS devices via APNs if configured
-        if (userDevices.length > 0 && env.APNS_KEY_P8 && env.APNS_KEY_ID && env.APNS_TEAM_ID) {
-          const apnsResult = await sendApnsToUser(
-            userId,
-            {
-              alert: { title, body },
-              sound: "default",
-              badge: 1,
-              customData: {
-                type: "bill_reminder",
-                billId: bill.id,
-              },
-            },
-            {
-              keyP8: env.APNS_KEY_P8,
-              keyId: env.APNS_KEY_ID,
-              teamId: env.APNS_TEAM_ID,
-              bundleId: env.APNS_BUNDLE_ID,
-              isProduction: env.APNS_ENVIRONMENT === "production",
-            },
-            userDevices.map((d) => d.token),
-          );
-          if (apnsResult.failed > 0) {
-            console.warn(
-              `[cron] APNs delivery failed for ${apnsResult.failed}/${apnsResult.total} devices on bill ${bill.id}`,
+        let deliveredAny = false;
+        const errors: string[] = [];
+
+        if (canSendWebPush) {
+          try {
+            const { sent, staleIds } = await sendPushToSubscriptions(
+              env,
+              userSubs,
+              candidate.title,
+              candidate.body,
+              candidate.target_url,
             );
-            if (userSubs.length === 0 && apnsResult.sent === 0) {
-              throw new Error(`APNs failed for all ${apnsResult.total} devices`);
+            if (sent > 0) deliveredAny = true;
+            for (const id of staleIds) {
+              await db.prepare("DELETE FROM push_subscriptions WHERE id = ?").bind(id).run();
             }
+          } catch (err) {
+            errors.push(err instanceof Error ? err.message : String(err));
           }
         }
 
-        await db
+        if (canSendApns && env.APNS_KEY_P8 && env.APNS_KEY_ID && env.APNS_TEAM_ID) {
+          try {
+            const apnsResult = await sendApnsToUser(
+              userId,
+              {
+                alert: { title: candidate.title, body: candidate.body },
+                sound: "default",
+                badge: 1,
+                customData: {
+                  type: candidate.category,
+                  url: candidate.target_url,
+                },
+              },
+              {
+                keyP8: env.APNS_KEY_P8,
+                keyId: env.APNS_KEY_ID,
+                teamId: env.APNS_TEAM_ID,
+                bundleId: env.APNS_BUNDLE_ID,
+                isProduction: env.APNS_ENVIRONMENT === "production",
+              },
+              userDevices.map((d) => d.token),
+            );
+            if (apnsResult.sent > 0) deliveredAny = true;
+            if (apnsResult.failed > 0) {
+              console.warn(
+                `[cron] APNs delivery failed for ${apnsResult.failed}/${apnsResult.total} devices on ${candidate.notification_key}`,
+              );
+              errors.push(`APNs failed for ${apnsResult.failed}/${apnsResult.total} devices`);
+            }
+          } catch (err) {
+            errors.push(err instanceof Error ? err.message : String(err));
+          }
+        }
+
+        let finalStatus: "sent" | "failed" | "skipped";
+        if (deliveredAny) {
+          finalStatus = "sent";
+        } else if (errors.length > 0) {
+          finalStatus = "failed";
+        } else {
+          finalStatus = "skipped";
+        }
+        const finalError = errors.length > 0 ? errors.join("; ") : null;
+        const pushSentAt = deliveredAny ? nowIso : null;
+
+        const upsertRes = await db
           .prepare(
-            "INSERT INTO notification_history (id, user_id, notification_key, title, body, status) VALUES (?, ?, ?, ?, ?, ?)",
-          )
-          .bind(crypto.randomUUID(), userId, notificationKey, title, body, "sent")
-          .run();
-        sentCount++;
-      } catch (err) {
-        console.error(`[cron] Failed to send notification for bill ${bill.id}:`, err);
-        await db
-          .prepare(
-            "INSERT INTO notification_history (id, user_id, notification_key, title, body, status, error) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            `INSERT INTO notification_history
+               (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status, push_sent_at, error)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(user_id, notification_key) DO UPDATE SET
+               title = excluded.title,
+               body = excluded.body,
+               target_url = excluded.target_url,
+               metadata_json = excluded.metadata_json,
+               status = excluded.status,
+               push_sent_at = COALESCE(notification_history.push_sent_at, excluded.push_sent_at),
+               error = excluded.error
+             WHERE notification_history.deleted_at IS NULL
+               AND notification_history.read_at IS NULL
+               AND notification_history.push_sent_at IS NULL`,
           )
           .bind(
             crypto.randomUUID(),
             userId,
-            notificationKey,
-            title,
-            body,
-            "failed",
-            err instanceof Error ? err.message : String(err),
+            candidate.notification_key,
+            candidate.category,
+            candidate.title,
+            candidate.body,
+            candidate.target_url,
+            candidate.metadata_json,
+            nowIso,
+            finalStatus,
+            pushSentAt,
+            finalError,
           )
           .run();
+
+        if (deliveredAny) sentCount++;
+        else if (Number(upsertRes.meta?.changes ?? 0) > 0) inboxCount++;
       }
+    } catch (err) {
+      console.error(`[cron] Failed processing user ${userId}:`, err);
     }
   }
 
-  console.log(`[cron] Notification scan complete. Sent ${sentCount} notifications.`);
+  console.log(
+    `[cron] Notification scan complete. Sent ${sentCount} push notifications, saved ${inboxCount} inbox items.`,
+  );
 }
 
 async function pruneStaleMutationsAndAuthAttempts(db: D1Database): Promise<void> {
   try {
     const now = new Date().toISOString();
-    // Prune stale sync mutations that have been pending for > 10 minutes without progress.
-    // This clears orphaned locks from crashed Workers while preserving legitimate in-flight operations.
     await db
       .prepare(
         "DELETE FROM sync_mutations WHERE result IS NULL AND processed_at < datetime(?, '-10 minutes')",
@@ -310,9 +311,6 @@ async function pruneStaleMutationsAndAuthAttempts(db: D1Database): Promise<void>
       .bind(now)
       .run();
 
-    // 只清理已过窗的登录限流记录。sync_changes 不能按时间删除：
-    // 新装或长期离线设备的 cursor 仍指向旧 seq，删行会让它们永久漏账，而
-    // reconcile 只能找回客户端已知的实体，无法补回这些历史变更。
     await db
       .prepare("DELETE FROM auth_login_attempts WHERE window_expires_at <= datetime(?)")
       .bind(now)
@@ -327,6 +325,7 @@ async function sendPushToSubscriptions(
   subs: { id: string; endpoint: string; p256dh: string; auth: string }[],
   title: string,
   body: string,
+  targetUrl = "/bills",
 ): Promise<{ sent: number; staleIds: string[] }> {
   const publicKey = env.VAPID_PUBLIC_KEY;
   const privateKey = env.VAPID_PRIVATE_KEY;
@@ -339,7 +338,7 @@ async function sendPushToSubscriptions(
     privateKey,
   );
 
-  const payload = JSON.stringify({ title, body, url: "/bills" });
+  const payload = JSON.stringify({ title, body, url: targetUrl });
   let sent = 0;
   const staleIds: string[] = [];
   for (const sub of subs) {
@@ -353,7 +352,6 @@ async function sendPushToSubscriptions(
     } catch (err) {
       const status = (err as { statusCode?: number }).statusCode;
       if (status === 404 || status === 410) {
-        // Subscription expired or removed — let the caller clean it up.
         staleIds.push(sub.id);
       } else {
         throw err;

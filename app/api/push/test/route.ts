@@ -5,6 +5,7 @@ import webpush from 'web-push'
 import { getDb } from '@/lib/db'
 import { getWorkerEnv } from '@/lib/db/client'
 import { readSession } from '@/lib/session'
+import { getLocalTodayString } from '@/lib/utils'
 
 async function sessionUserId(request: Request): Promise<string | null> {
   const session = await readSession(request)
@@ -64,6 +65,41 @@ export async function POST(request: Request) {
   }
   for (const id of staleIds) {
     await db.prepare('DELETE FROM push_subscriptions WHERE id = ?').bind(id).run()
+  }
+  if (sent > 0) {
+    const ts = new Date().toISOString()
+    const todayStr = getLocalTodayString('Asia/Shanghai')
+    try {
+      await db
+        .prepare(
+          `INSERT INTO notification_history
+             (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status, push_sent_at)
+           VALUES (?, ?, ?, 'system', ?, ?, '/notifications', ?, ?, 'sent', ?)
+           ON CONFLICT(user_id, notification_key) DO UPDATE SET
+             title = excluded.title,
+             body = excluded.body,
+             metadata_json = excluded.metadata_json,
+             sent_at = excluded.sent_at,
+             status = 'sent',
+             push_sent_at = excluded.push_sent_at,
+             -- 测试推送由用户在设置页显式触发，有意重置同日记录阅读/删除状态；勿复制到 Cron 路径
+             read_at = NULL,
+             deleted_at = NULL`
+        )
+        .bind(
+          crypto.randomUUID(),
+          userId,
+          `test:${todayStr}`,
+          'WorldCredit 测试推送',
+          '推送通道已就绪 ✅ 到期提醒将按时送达。',
+          JSON.stringify({ kind: 'system_test', sent }),
+          ts,
+          ts
+        )
+        .run()
+    } catch (err) {
+      console.warn('[push/test] failed to record notification_history:', err)
+    }
   }
   return Response.json({ data: { subscriptions: subs.length, sent, removed: staleIds.length, errors }, error: null })
 }

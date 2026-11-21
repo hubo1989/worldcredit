@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { BillDashboardItem } from '../api/bills.server'
+import type { PayableWithStatus } from '../api/payables.server'
 import {
   billCurrency,
   computeMetrics,
   countCardsByHolder,
   formatMoney,
   getDueTodayBills,
+  getDueTodayPayables,
 } from '../dashboard-metrics'
 
 /** 最小账单夹具：只带 computeMetrics 读取的字段（characterization 钉行为用）。 */
@@ -16,6 +18,27 @@ function bill(p: { days_until_due: number; remaining_amount: number; currency?: 
     days_until_due: p.days_until_due,
     card: { card_product: { currency: p.currency ?? 'CNY' } },
   } as unknown as BillDashboardItem
+}
+
+/** 最小固定支出夹具。 */
+function payable(p: {
+  id?: string
+  days_until_due: number
+  amount: number
+  paid_amount?: number
+  currency?: string
+  status?: 'unpaid' | 'paid' | 'overdue'
+}): PayableWithStatus {
+  return {
+    id: p.id ?? 'pay-1',
+    name: '房租',
+    category: 'rent',
+    amount: p.amount,
+    paid_amount: p.paid_amount ?? 0,
+    currency: p.currency ?? 'CNY',
+    days_until_due: p.days_until_due,
+    status: p.status ?? 'unpaid',
+  } as unknown as PayableWithStatus
 }
 
 const RATES = { base: 'USD', rates: { USD: 1, CNY: 7.2 }, timestamp: 0, fetched_at: 0 }
@@ -129,3 +152,46 @@ describe('getDueTodayBills（今天需还款列表）', () => {
     ])).toEqual([due])
   })
 })
+
+describe('当日待还总金额（账单 + 固定支出）', () => {
+  it('getDueTodayPayables 只保留当天到期且仍有剩余待付的固定支出', () => {
+    const partialToday = payable({ id: 'p-partial', days_until_due: 0, amount: 3000, paid_amount: 1200 })
+    const settledPaid = payable({ id: 'p-paid', days_until_due: 0, amount: 1000, paid_amount: 1000, status: 'paid' })
+    const centZero = payable({ id: 'p-cent', days_until_due: 0, amount: 100, paid_amount: 99.995, status: 'unpaid' })
+    const tomorrow = payable({ id: 'p-tmr', days_until_due: 1, amount: 500 })
+    const overdue = payable({ id: 'p-ov', days_until_due: -2, amount: 500, status: 'overdue' })
+
+    expect(
+      getDueTodayPayables([partialToday, settledPaid, centZero, tomorrow, overdue])
+    ).toEqual([partialToday])
+  })
+
+  it('computeMetrics 汇总当日到期账单与固定支出并按汇率折算，缺汇率排除进 unconvertedCurrencies', () => {
+    const m = computeMetrics(
+      [
+        bill({ days_until_due: 0, remaining_amount: 1000, currency: 'CNY' }),
+        bill({ days_until_due: 3, remaining_amount: 500, currency: 'CNY' }),
+      ],
+      7,
+      'CNY',
+      RATES,
+      [
+        payable({ id: 'p-usd', days_until_due: 0, amount: 150, paid_amount: 50, currency: 'USD' }),
+        payable({ id: 'p-hkd', days_until_due: 0, amount: 200, currency: 'HKD' }),
+        payable({ id: 'p-paid', days_until_due: 0, amount: 900, paid_amount: 900, status: 'paid' }),
+        payable({ id: 'p-next', days_until_due: 2, amount: 400, currency: 'CNY' }),
+      ]
+    )
+
+    // USD 100 * 7.2 + CNY 1000 = 1720；HKD 缺汇率不得 1:1 混加
+    expect(m.dueTodayAmount).toBe(1720)
+    expect(m.dueTodayBills).toHaveLength(1)
+    expect(m.dueTodayPayables.map(p => p.id)).toEqual(['p-usd', 'p-hkd'])
+    expect(m.dueTodayCount).toBe(3)
+    expect(m.unconvertedCurrencies).toContain('HKD')
+    expect(m.fx.dueToday.unconverted_currencies).toEqual(['HKD'])
+    // totalPending 仅统计账单未还，不被固定支出污染
+    expect(m.totalPending).toBe(1500)
+  })
+})
+

@@ -2,7 +2,13 @@
 
 import { useState, useEffect } from 'react'
 import { BellIcon, ClockIcon } from '@/components/icons/WcIcon'
-import type { UserReminderConfig } from '@/lib/types'
+import type { NotificationItemSwitches, UserReminderConfig } from '@/lib/types'
+import {
+  DEFAULT_ACTIVITY_DAYS,
+  DEFAULT_TASK_DAYS,
+  NOTIFICATION_SWITCH_ITEMS,
+  resolveNotificationSwitches,
+} from '@/lib/notifications.shared'
 import { Toggle } from '@/components/obsidian/controls'
 import { ConfirmDialog, Toast } from '@/components/obsidian/overlays'
 import { sendTestPush } from '@/lib/api/push'
@@ -26,6 +32,8 @@ const BILL_DAY_CHOICES = [
 ]
 
 const OPPORTUNITY_DAY_CHOICES = [0, 1, 3, 7, 15]
+const ACTIVITY_DAY_CHOICES = [1, 3, 7, 15]
+const TASK_DAY_CHOICES = [0, 1, 3, 7]
 
 const TIMEZONE_DEFINITIONS = [
   { value: 'Asia/Shanghai', name: '中国标准时间' },
@@ -134,6 +142,27 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
   const updateOpp = (patch: Partial<NonNullable<UserReminderConfig['opportunities']>>) =>
     onChange({ opportunities: { ...(opp ?? {}), ...patch } })
 
+  const switches = resolveNotificationSwitches(config)
+  const billSwitchItems = NOTIFICATION_SWITCH_ITEMS.filter((item) => item.group === 'bills')
+  const oppSwitchItems = NOTIFICATION_SWITCH_ITEMS.filter((item) => item.group === 'opportunities')
+
+  const handleToggleItemSwitch = (key: keyof NotificationItemSwitches, nextVal: boolean) => {
+    const nextItems: NotificationItemSwitches = { ...switches, [key]: nextVal }
+    if (key === 'opportunity_reset') {
+      onChange({
+        items: nextItems,
+        opportunities: { ...(opp ?? {}), reset_enabled: nextVal },
+      })
+    } else if (key === 'opportunity_booking') {
+      onChange({
+        items: nextItems,
+        opportunities: { ...(opp ?? {}), booking_enabled: nextVal },
+      })
+    } else {
+      onChange({ items: nextItems })
+    }
+  }
+
   // 存量节点合并：已选但不在预设选项集的值动态追加，支持查看与点击取消
   const billDayChoices = (() => {
     const selected = config.remind_days_before || []
@@ -162,16 +191,34 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
 
   return (
     <div className='flex flex-col gap-5 text-d-text'>
-      {/* 区块一：账单还款提醒 */}
+      {/* 区块一：账单与固定支出通知 */}
       <div className='rounded-2xl border border-d-border bg-d-subtle/50 p-4'>
         <div className='mb-3 flex items-center gap-2 text-d-accent-light'>
           <BellIcon size={18} />
-          <h4 className='text-[15px] font-bold leading-5'>账单还款提醒</h4>
+          <h4 className='text-[15px] font-bold leading-5'>账单与固定支出通知</h4>
         </div>
 
-        <div className='flex flex-col gap-4'>
+        <div className='flex flex-col gap-3'>
+          {/* 6 项账单/固定支出/免息期独立开关 */}
+          <div className='divide-y divide-d-border/60'>
+            {billSwitchItems.map((item) => (
+              <div key={item.key} className='flex min-h-[52px] items-center justify-between gap-3 py-2.5'>
+                <div className='min-w-0 flex-1'>
+                  <p className='text-[14px] font-medium text-d-text'>{item.label}</p>
+                  <p className='text-[12px] text-d-muted'>{item.description}</p>
+                </div>
+                <Toggle
+                  checked={switches[item.key]}
+                  onChange={(nextVal) => handleToggleItemSwitch(item.key, nextVal)}
+                  disabled={disabled}
+                  ariaLabel={item.label}
+                />
+              </div>
+            ))}
+          </div>
+
           {/* 提醒节点多选 */}
-          <div>
+          <div className='border-t border-d-border/60 pt-3'>
             <label className='mb-2 block text-[13px] font-medium text-d-muted'>
               还款日前提醒节点（多选）：
             </label>
@@ -258,7 +305,7 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
         </div>
       </div>
 
-      {/* 区块二：权益机会提醒 */}
+      {/* 区块二：权益机会提醒（总开关 + 6 项分项开关） */}
       <div className='rounded-2xl border border-d-border bg-d-subtle/50 p-4'>
         <div className='mb-3 flex items-center justify-between'>
           <div className='flex items-center gap-2 text-d-gold'>
@@ -275,8 +322,26 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
 
         {(opp?.enabled ?? true) && (
           <div className='flex flex-col gap-4 border-t border-d-border/60 pt-3'>
+            {/* 6 项权益与优惠独立开关 */}
+            <div className='divide-y divide-d-border/60'>
+              {oppSwitchItems.map((item) => (
+                <div key={item.key} className='flex min-h-[52px] items-center justify-between gap-3 py-2.5'>
+                  <div className='min-w-0 flex-1'>
+                    <p className='text-[14px] font-medium text-d-text'>{item.label}</p>
+                    <p className='text-[12px] text-d-muted'>{item.description}</p>
+                  </div>
+                  <Toggle
+                    checked={switches[item.key]}
+                    onChange={(nextVal) => handleToggleItemSwitch(item.key, nextVal)}
+                    disabled={disabled}
+                    ariaLabel={item.label}
+                  />
+                </div>
+              ))}
+            </div>
+
             {/* 提醒时区下拉 */}
-            <div>
+            <div className='border-t border-d-border/60 pt-3'>
               <label htmlFor='opp-timezone-select' className='mb-1.5 block text-[13px] font-medium text-d-muted'>
                 提醒时区 (标准下拉)
               </label>
@@ -350,6 +415,61 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
                       type='button'
                       disabled={disabled}
                       onClick={() => updateOpp({ claim_days_before: toggleDayList(opp?.claim_days_before, d) })}
+                      className={
+                        'min-h-[44px] rounded-full px-4 text-[13px] font-semibold transition-colors disabled:opacity-50 ' +
+                        (active
+                          ? 'border border-d-gold-deep bg-d-gold-soft text-d-gold'
+                          : 'border border-d-border bg-d-bg text-d-muted active:bg-d-subtle')
+                      }
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* 优惠活动提醒节点 */}
+            <div>
+              <label className='mb-2 block text-[13px] font-medium text-d-muted'>优惠活动提醒节点：</label>
+              <div className='flex flex-wrap gap-2'>
+                {ACTIVITY_DAY_CHOICES.map((d) => {
+                  const active = (opp?.activity_days_before ?? DEFAULT_ACTIVITY_DAYS).includes(d)
+                  return (
+                    <button
+                      key={d}
+                      type='button'
+                      disabled={disabled}
+                      onClick={() =>
+                        updateOpp({ activity_days_before: toggleDayList(opp?.activity_days_before ?? DEFAULT_ACTIVITY_DAYS, d) })
+                      }
+                      className={
+                        'min-h-[44px] rounded-full px-4 text-[13px] font-semibold transition-colors disabled:opacity-50 ' +
+                        (active
+                          ? 'border border-d-gold-deep bg-d-gold-soft text-d-gold'
+                          : 'border border-d-border bg-d-bg text-d-muted active:bg-d-subtle')
+                      }
+                    >
+                      提前 {d} 天
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* 达标任务提醒节点 */}
+            <div>
+              <label className='mb-2 block text-[13px] font-medium text-d-muted'>达标任务提醒节点：</label>
+              <div className='flex flex-wrap gap-2'>
+                {TASK_DAY_CHOICES.map((d) => {
+                  const active = (opp?.task_days_before ?? DEFAULT_TASK_DAYS).includes(d)
+                  const label = d === 0 ? '截止当天' : `提前 ${d} 天`
+                  return (
+                    <button
+                      key={d}
+                      type='button'
+                      disabled={disabled}
+                      onClick={() => updateOpp({ task_days_before: toggleDayList(opp?.task_days_before ?? DEFAULT_TASK_DAYS, d) })}
                       className={
                         'min-h-[44px] rounded-full px-4 text-[13px] font-semibold transition-colors disabled:opacity-50 ' +
                         (active
