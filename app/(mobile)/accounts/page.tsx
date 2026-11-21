@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { buildAccountPools, type AccountPoolGroup } from '@/lib/account-pools'
@@ -17,7 +17,7 @@ import { useAuth } from '@/lib/auth'
 import { formatMoney } from '@/lib/dashboard-metrics'
 import { fetchRates, sumByCurrency, type FxRates } from '@/lib/fx'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
-import type { CardHolder, CreditAccount } from '@/lib/types'
+import type { CardHolder, CreditAccount, CreditCard } from '@/lib/types'
 import {
   formatCardTail,
   getEffectiveAnnualFee,
@@ -103,7 +103,9 @@ export default function AccountsPage() {
 
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [accountsDegraded, setAccountsDegraded] = useState(false)
   const [payablesDegraded, setPayablesDegraded] = useState(false)
+  const loadSeqRef = useRef(0)
   const [cardCreateOpen, setCardCreateOpen] = useState(false)
   const [mergeWizardOpen, setMergeWizardOpen] = useState(false)
   const [toast, setToast] = useState<{
@@ -127,35 +129,40 @@ export default function AccountsPage() {
 
   const loadData = useCallback(async () => {
     if (!user?.id) return
+    const seq = ++loadSeqRef.current
     setLoading(true)
     setLoadError(null)
     try {
-      const [summaryData, holderList, accountList, payableList] = await Promise.all([
+      const [summaryData, holderList, accountsResult, payablesResult] = await Promise.all([
         getCardsWithBillsSummary(user.id),
         getHolders(user.id),
-        getCreditAccounts(user.id).catch((err) => {
-          console.warn('[accounts] Failed to load credit accounts:', err)
-          return [] as CreditAccount[]
-        }),
+        getCreditAccounts(user.id)
+          .then((list) => ({ list, degraded: false }))
+          .catch((err) => {
+            console.warn('[accounts] Failed to load credit accounts:', err)
+            return { list: [] as CreditAccount[], degraded: true }
+          }),
         getRecurringPayables(user.id)
-          .then((list) => {
-            setPayablesDegraded(false)
-            return list
-          })
+          .then((list) => ({ list, degraded: false }))
           .catch((err) => {
             console.warn('[accounts] Failed to load recurring payables:', err)
-            setPayablesDegraded(true)
-            return [] as PayableWithStatus[]
+            return { list: [] as PayableWithStatus[], degraded: true }
           }),
       ])
+      if (seq !== loadSeqRef.current) return
       setCardsSummary(summaryData)
       setHolders(holderList)
-      setCreditAccounts(accountList)
-      setPayables(payableList)
+      setCreditAccounts(accountsResult.list)
+      setAccountsDegraded(accountsResult.degraded)
+      setPayables(payablesResult.list)
+      setPayablesDegraded(payablesResult.degraded)
     } catch (err) {
+      if (seq !== loadSeqRef.current) return
       setLoadError(err instanceof Error ? err.message : '加载账户数据失败')
     } finally {
-      setLoading(false)
+      if (seq === loadSeqRef.current) {
+        setLoading(false)
+      }
     }
   }, [user?.id])
 
@@ -168,6 +175,9 @@ export default function AccountsPage() {
 
   useEffect(() => {
     void loadData()
+    return () => {
+      loadSeqRef.current += 1
+    }
   }, [loadData])
 
   useEffect(() => {
@@ -254,8 +264,18 @@ export default function AccountsPage() {
       displayCurrency,
       fxRates
     )
+    const knownLimitUnpaidSum = sumByCurrency(
+      accountPools,
+      (pool) => (pool.poolLimit !== null ? { amount: pool.poolUsed, currency: pool.currency } : null),
+      displayCurrency,
+      fxRates
+    )
     const unconverted = Array.from(
-      new Set([...limitSum.unconverted_currencies, ...unpaidSum.unconverted_currencies])
+      new Set([
+        ...limitSum.unconverted_currencies,
+        ...unpaidSum.unconverted_currencies,
+        ...availableSum.unconverted_currencies,
+      ])
     ).sort()
     const knownLimitPoolCount = accountPools.filter((pool) => pool.poolLimit !== null).length
     const hasKnownLimit = knownLimitPoolCount > 0
@@ -263,6 +283,7 @@ export default function AccountsPage() {
     return {
       limitTotal: hasKnownLimit ? limitSum.total : null,
       unpaidTotal: unpaidSum.total,
+      knownLimitUnpaidTotal: knownLimitUnpaidSum.total,
       availableTotal: hasKnownLimit ? availableSum.total : null,
       unconverted,
       unknownLimitPoolCount: accountPools.length - knownLimitPoolCount,
@@ -439,6 +460,23 @@ export default function AccountsPage() {
                 </div>
               )}
 
+              {accountsDegraded && (
+                <Alert severity='warning'>
+                  <div className='flex items-center justify-between gap-2'>
+                    <span className='text-[12px] text-d-warn-ink'>
+                      账户信息加载失败，共享额度与合并账单判定可能不准确
+                    </span>
+                    <button
+                      type='button'
+                      onClick={() => void loadData()}
+                      className='min-h-[44px] shrink-0 rounded-lg border border-d-border px-3 text-[12px] font-semibold text-d-text'
+                    >
+                      重试
+                    </button>
+                  </div>
+                </Alert>
+              )}
+
               {/* 额度与账户总览卡 */}
               {filteredCreditCards.length > 0 && (
                 <CreditSummaryCard
@@ -447,6 +485,7 @@ export default function AccountsPage() {
                   displayCurrency={displayCurrency}
                   limitTotal={creditTotals.limitTotal}
                   unpaidTotal={creditTotals.unpaidTotal}
+                  knownLimitUnpaidTotal={creditTotals.knownLimitUnpaidTotal}
                   availableTotal={creditTotals.availableTotal}
                   unconverted={creditTotals.unconverted}
                   unknownLimitPoolCount={creditTotals.unknownLimitPoolCount}
@@ -548,12 +587,23 @@ export default function AccountsPage() {
   )
 }
 
+/** 卡片失效状态徽标：frozen -> 已冻结，cancelled -> 已注销 */
+function CardStatusPill({ status }: { status: CreditCard['status'] }) {
+  if (status === 'active') return null
+  return (
+    <PillBadge className='bg-d-danger-soft text-d-danger-ink'>
+      {status === 'frozen' ? '已冻结' : '已注销'}
+    </PillBadge>
+  )
+}
+
 function CreditSummaryCard({
   cardCount,
   poolCount,
   displayCurrency,
   limitTotal,
   unpaidTotal,
+  knownLimitUnpaidTotal,
   availableTotal,
   unconverted,
   unknownLimitPoolCount,
@@ -564,13 +614,17 @@ function CreditSummaryCard({
   displayCurrency: string
   limitTotal: number | null
   unpaidTotal: number
+  knownLimitUnpaidTotal: number
   availableTotal: number | null
   unconverted: string[]
   unknownLimitPoolCount: number
   blurClass: string
 }) {
+  // 已用占比分子/分母同口径限定于已知额度池，避免未设额度池的欠款把占比虚高钳到 100%
   const usagePct =
-    limitTotal && limitTotal > 0 ? Math.min(100, Math.round((unpaidTotal / limitTotal) * 100)) : 0
+    limitTotal && limitTotal > 0
+      ? Math.min(100, Math.round((knownLimitUnpaidTotal / limitTotal) * 100))
+      : 0
 
   return (
     <div className='rounded-2xl border border-d-border bg-d-surface p-4'>
@@ -617,7 +671,7 @@ function CreditSummaryCard({
 
       {unknownLimitPoolCount > 0 && (
         <p className='mt-2 text-[11px] text-d-muted'>
-          {unknownLimitPoolCount} 个账户暂未设置额度，总额度与可用合计暂未包含
+          {unknownLimitPoolCount} 个账户暂未设置额度，总额度、可用与已用占比暂未包含
         </p>
       )}
 
@@ -740,11 +794,7 @@ function AccountPoolCard({
                   {isPrimary && (
                     <PillBadge className='bg-d-accent/20 text-d-accent-light'>主卡</PillBadge>
                   )}
-                  {item.card.status !== 'active' && (
-                    <PillBadge className='bg-d-danger-soft text-d-danger-ink'>
-                      {item.card.status === 'frozen' ? '已冻结' : '已注销'}
-                    </PillBadge>
-                  )}
+                  <CardStatusPill status={item.card.status} />
                 </div>
                 <div className='mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-d-muted'>
                   <span>账单日 {billingDay}日</span>
@@ -812,11 +862,7 @@ function SingleCardRow({
           <div className='flex flex-wrap items-center gap-1.5'>
             <span className='text-[12px] font-medium text-d-muted'>{bankName}</span>
             {holderName && <PillBadge>{holderName}</PillBadge>}
-            {item.card.status !== 'active' && (
-              <PillBadge className='bg-d-danger-soft text-d-danger-ink'>
-                {item.card.status === 'frozen' ? '已冻结' : '已注销'}
-              </PillBadge>
-            )}
+            <CardStatusPill status={item.card.status} />
           </div>
           <p className='mt-0.5 truncate text-[15px] font-bold text-d-text'>
             {cardName}

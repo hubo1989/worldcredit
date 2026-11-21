@@ -18,8 +18,10 @@ export async function verifyPasswordLogin(
   password: string,
   request: Request,
 ): Promise<SessionUser | null | Response> {
+  // 与 /api/auth/register 保持同一邮箱修剪口径，防止带首尾空白登录失败
+  const normalizedEmail = email.trim();
   // 原子占位：放行的尝试已计入失败窗口，成功登录会清零。
-  const retryAfter = await passwordRateLimitRetryAfter(request, email);
+  const retryAfter = await passwordRateLimitRetryAfter(request, normalizedEmail);
   if (retryAfter !== null) {
     return Response.json(
       { error: "尝试次数过多，请稍后重试" },
@@ -31,14 +33,14 @@ export async function verifyPasswordLogin(
   }
   const row = await getDb()
     .prepare("SELECT id, email, password_hash, name, created_at FROM users WHERE email = ?")
-    .bind(email)
+    .bind(normalizedEmail)
     .first<PasswordUserRow>();
   const verified = await pbkdf2Verify(password, row?.password_hash ?? pbkdf2DummyHash());
   if (!row || !verified) {
     // 放行时已原子计入失败窗口，此处不再二次递增。
     return null;
   }
-  await clearPasswordFailures(request, email);
+  await clearPasswordFailures(request, normalizedEmail);
   return {
     id: row.id,
     email: row.email,

@@ -114,4 +114,17 @@ describe('account-pools', () => {
 
     expect(resolvePoolLimit(accNoShared, [active, frozenHigher], true)).toBe(20000)
   })
+
+  it('prefers positive shared_credit_limit even when quota_mode is independent (matches iOS QueryService)', () => {
+    const overrideAcc: CreditAccount = {
+      ...sharedAccount,
+      quota_mode: 'independent',
+      shared_credit_limit: 90000,
+    }
+    const active = makeCardSummary('c-a', 'active', 20000, 0, overrideAcc)
+    const frozen = makeCardSummary('c-f', 'frozen', 50000, 0, overrideAcc)
+
+    expect(resolvePoolLimit(overrideAcc, [active, frozen], false)).toBe(90000)
+    expect(resolvePoolLimit(overrideAcc, [frozen], false)).toBeNull()
+  })
 })

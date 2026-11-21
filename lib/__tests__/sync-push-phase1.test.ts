@@ -294,6 +294,49 @@ describe("Phase 1 /api/sync/push OFFLINE_SYNC_MUTATIONS expansion", () => {
     ]);
     expect(missingId).toMatchObject({ ok: false, permanent: true, code: "VALIDATION_FAILED" });
 
+    // Whitespace-padded UUID must be rejected strictly at push boundary
+    const [paddedUuid] = await push([
+      {
+        id: "mut-payable-padded-uuid",
+        name: "payables.createRecurringPayable",
+        args: [
+          {
+            id: " 44444444-4444-4444-8444-444444444444 ",
+            created_by: "u-member-a",
+            name: "带空格UUID支出",
+            category: "rent",
+            amount: 500,
+            currency: "CNY",
+            due_day: 10,
+          },
+        ],
+      },
+    ]);
+    expect(paddedUuid).toMatchObject({ ok: false, permanent: true, code: "VALIDATION_FAILED" });
+
+    // Uppercase iOS UUID().uuidString format is accepted and stored normalized in lowercase
+    const upperUuid = "33333333-3333-4333-8333-333333333333";
+    const [createdUpper] = await push([
+      {
+        id: "mut-payable-upper-uuid",
+        name: "payables.createRecurringPayable",
+        args: [
+          {
+            id: upperUuid.toUpperCase(),
+            created_by: "u-member-a",
+            name: "大写UUID支出",
+            category: "rent",
+            amount: 600,
+            currency: "CNY",
+            due_day: 12,
+            holder_id: "holder-a",
+          },
+        ],
+      },
+    ]);
+    expect(createdUpper.ok).toBe(true);
+    expect(createdUpper.data?.id).toBe(upperUuid);
+
     // Spoofed created_by must be overwritten by session.id; client-supplied UUID id is preserved
     const [created] = await push([
       {

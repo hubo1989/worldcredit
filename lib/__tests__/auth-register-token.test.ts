@@ -3,7 +3,6 @@ import { createOpportunityDb, type SqliteD1 } from "./helpers/sqlite-d1";
 import { setDb, setWorkerEnv } from "../db/client";
 import { verifySessionValue, SESSION_TTL_SECONDS, SESSION_COOKIE } from "../session";
 import { ADMIN_EMAILS } from "../admin-emails";
-import * as refreshTokensServer from "../refresh-tokens.server";
 import { POST as registerHandler } from "../../app/api/auth/register/route";
 import { POST as refreshHandler } from "../../app/api/auth/refresh/route";
 import { POST as pullHandler } from "../../app/api/sync/pull/route";
@@ -209,36 +208,60 @@ describe("POST /api/auth/register dual cookie and Bearer+refresh token flow", ()
     );
     expect(dupTrimmedRes.status).toBe(409);
 
-    // If issueRefreshToken throws, newly inserted user must be rolled back so retry succeeds cleanly
-    const spy = vi
-      .spyOn(refreshTokensServer, "issueRefreshToken")
-      .mockRejectedValueOnce(new Error("simulated refresh storage failure"));
+    // If createSessionValue fails before DB write, no orphan user row is inserted
+    const sessionSpy = vi
+      .spyOn(await import("../session"), "createSessionValue")
+      .mockRejectedValueOnce(new Error("simulated session sign failure"));
     try {
-      const failRes = await registerHandler(
+      const signFailRes = await registerHandler(
         registerReq({
-          email: "rollback-retry@example.test",
+          email: "sign-fail@example.test",
           password: "strong-password-123",
           issue_token: true,
         })
       );
-      expect(failRes.status).toBe(500);
-      expect(failRes.headers.get("Cache-Control")).toBe("no-store");
+      expect(signFailRes.status).toBe(500);
+      expect(signFailRes.headers.get("Cache-Control")).toBe("no-store");
       expect(
         db.raw
-          .prepare("SELECT COUNT(*) AS n FROM users WHERE email = 'rollback-retry@example.test'")
+          .prepare("SELECT COUNT(*) AS n FROM users WHERE email = 'sign-fail@example.test'")
           .get()
       ).toEqual({ n: 0 });
-
-      const retryRes = await registerHandler(
-        registerReq({
-          email: "rollback-retry@example.test",
-          password: "strong-password-123",
-          issue_token: true,
-        })
-      );
-      expect(retryRes.status).toBe(200);
     } finally {
-      spy.mockRestore();
+      sessionSpy.mockRestore();
     }
+
+    // If refresh token insertion fails inside db.batch, the user insert rolls back atomically so retry succeeds
+    db.exec(`
+      CREATE TRIGGER test_abort_refresh_insert
+      BEFORE INSERT ON session_refresh_tokens
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated refresh batch failure');
+      END;
+    `);
+    const failRes = await registerHandler(
+      registerReq({
+        email: "rollback-retry@example.test",
+        password: "strong-password-123",
+        issue_token: true,
+      })
+    );
+    expect(failRes.status).toBe(500);
+    expect(failRes.headers.get("Cache-Control")).toBe("no-store");
+    expect(
+      db.raw
+        .prepare("SELECT COUNT(*) AS n FROM users WHERE email = 'rollback-retry@example.test'")
+        .get()
+    ).toEqual({ n: 0 });
+
+    db.exec("DROP TRIGGER test_abort_refresh_insert;");
+    const retryRes = await registerHandler(
+      registerReq({
+        email: "rollback-retry@example.test",
+        password: "strong-password-123",
+        issue_token: true,
+      })
+    );
+    expect(retryRes.status).toBe(200);
   });
 });

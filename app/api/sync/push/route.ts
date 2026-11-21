@@ -3,7 +3,7 @@
 import { getDb } from "@/lib/db";
 import { readSession } from "@/lib/session";
 import { dispatchRpc } from "@/lib/api/rpc-dispatch";
-import { isValidIsoTimestamp, isValidUuid } from "@/lib/validation-patterns";
+import { isValidUuid, parseIsoTimestampMs } from "@/lib/validation-patterns";
 
 interface MutationItem {
   id: string;
@@ -53,7 +53,7 @@ function validateOfflineReplaySafety(mut: MutationItem): { error: string; code: 
       };
     }
   } else if (mut.name === "notifications.markAllNotificationsRead") {
-    if (isValidIsoTimestamp(mut.args[1]) === null) {
+    if (parseIsoTimestampMs(mut.args[1]) === null) {
       return {
         error: "离线全部标记已读必须提供合法的截止时间戳 (beforeIso)",
         code: "VALIDATION_FAILED",

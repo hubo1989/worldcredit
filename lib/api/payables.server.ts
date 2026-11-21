@@ -449,10 +449,13 @@ export async function createRecurringPayable(
   today: Date = new Date()
 ): Promise<PayableWithStatus> {
   const effectiveToday = today instanceof Date ? today : new Date()
+  if (typeof input.created_by !== 'string' || !input.created_by.trim()) {
+    throw new RpcDomainError('VALIDATION_FAILED', '缺少创建者标识')
+  }
   if (input.id !== undefined && !isValidUuid(input.id)) {
     throw new RpcDomainError('VALIDATION_FAILED', '无效的固定支出 ID 格式')
   }
-  const clientStableId = input.id !== undefined ? input.id.trim().toLowerCase() : null
+  const clientStableId = input.id !== undefined ? input.id.toLowerCase() : null
 
   if (!input.name?.trim()) throw new RpcDomainError('VALIDATION_FAILED', '请填写名称')
   if (!Number.isFinite(input.amount) || input.amount < 0) {

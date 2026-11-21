@@ -3,6 +3,7 @@ import { createOpportunityDb } from "./helpers/sqlite-d1";
 import { setDb } from "../db";
 import { createCard, deleteCard } from "../api/cards.server";
 import { mergeCardsIntoAccount, splitCardFromAccount, getCreditAccountDetail } from "../api/accounts.server";
+import { RpcDomainError } from "../api/errors";
 
 describe("Anchor Card Lifecycle Guard & Account Operations", () => {
   let db: ReturnType<typeof createOpportunityDb>;
@@ -242,5 +243,42 @@ describe("Anchor Card Lifecycle Guard & Account Operations", () => {
       account_id: cardTarget.account_id,
       card_id: cardTarget.id,
     });
+  });
+
+  it("mergeCardsIntoAccount translates batch constraint failures into RpcDomainError CONFLICT", async () => {
+    const cardTarget = await createCard({
+      holder_id: "h1",
+      card_product_id: "cp_cmb",
+      billing_day: 5,
+    });
+    const cardExtra = await createCard({
+      holder_id: "h1",
+      card_product_id: "cp_cmb",
+      billing_day: 5,
+    });
+    const indepAcc = await splitCardFromAccount(cardExtra.id);
+
+    await db.exec(`
+      CREATE TRIGGER test_block_account_delete
+      BEFORE DELETE ON credit_accounts
+      WHEN OLD.id = '${indepAcc.id}'
+      BEGIN
+        SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed');
+      END;
+    `);
+
+    await expect(
+      mergeCardsIntoAccount(cardTarget.account_id!, [cardExtra.id]),
+    ).rejects.toMatchObject({
+      name: RpcDomainError.name,
+      code: "CONFLICT",
+    });
+
+    // Trigger aborted batch cleanly: cardExtra stays on indepAcc without orphan state
+    const cardExtraRow = await db
+      .prepare("SELECT account_id FROM credit_cards WHERE id = ?")
+      .bind(cardExtra.id)
+      .first<{ account_id: string }>();
+    expect(cardExtraRow?.account_id).toBe(indepAcc.id);
   });
 });

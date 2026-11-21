@@ -4,7 +4,9 @@ import { passwordLoginFailure, verifyPasswordLogin } from "@/lib/password-login"
 
 export async function POST(request: Request) {
   try {
-    const { email, password } = await request.json();
+    const body = (await request.json()) as { email?: unknown; password?: unknown };
+    const email = typeof body?.email === "string" ? body.email.trim() : "";
+    const password = typeof body?.password === "string" ? body.password : "";
     if (!email || !password) {
       return Response.json({ error: "缺少邮箱或密码" }, { status: 400 });
     }

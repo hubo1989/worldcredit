@@ -3,7 +3,7 @@
 import { getDb } from '../db/client'
 import { ensureDailyNotificationsForUser } from '../notifications-engine.server'
 import type { NotificationCategory, UserNotificationItem } from '../types'
-import { isValidIsoTimestamp } from '../validation-patterns'
+import { parseIsoTimestampMs } from '../validation-patterns'
 import { RpcDomainError } from './errors'
 
 export interface GetNotificationsOptions {
@@ -160,7 +160,7 @@ export async function markAllNotificationsRead(
   let cutoffSql = ''
   const bindings: unknown[] = [nowIso, userId]
   if (beforeIso !== undefined) {
-    const parsedMs = isValidIsoTimestamp(beforeIso)
+    const parsedMs = parseIsoTimestampMs(beforeIso)
     if (parsedMs === null) {
       throw new RpcDomainError('VALIDATION_FAILED', '无效的通知已读截止时间戳')
     }

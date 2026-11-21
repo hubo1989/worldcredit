@@ -20,6 +20,8 @@ export interface AccountPoolGroup {
 /**
  * 计算账户池有效总额度：仅纳入 `status === 'active'` 的正常卡片，
  * 排除已冻结（frozen）和已注销（cancelled）卡片的失效额度。
+ * 与 iOS QueryService 对齐：存在活跃卡且 `shared_credit_limit > 0` 时无论 quota_mode 均优先采用；
+ * 未知额度返回 `null`（供 Web UI 展示“未设置”而非误显示 0）。
  */
 export function resolvePoolLimit(
   account: CreditAccount | null,
@@ -29,10 +31,11 @@ export function resolvePoolLimit(
   const activeCards = cards.filter((item) => item.card.status === 'active')
   if (activeCards.length === 0) return null
 
+  if (account?.shared_credit_limit != null && account.shared_credit_limit > 0) {
+    return Number(account.shared_credit_limit)
+  }
+
   if (isSharedQuota) {
-    if (account?.shared_credit_limit != null && account.shared_credit_limit > 0) {
-      return Number(account.shared_credit_limit)
-    }
     let maxLimit = 0
     for (const item of activeCards) {
       const eff = getEffectiveCreditLimit(item.card)

@@ -36,7 +36,8 @@ export async function POST(request: Request) {
     const grantType = body.grant_type || "password";
 
     if (grantType === "password") {
-      const { email, password } = body;
+      const email = typeof body.email === "string" ? body.email.trim() : "";
+      const password = typeof body.password === "string" ? body.password : "";
       if (!email || !password) {
         return Response.json(
           { error: "缺少邮箱或密码" },

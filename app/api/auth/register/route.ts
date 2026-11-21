@@ -7,7 +7,7 @@ import {
   type SessionUser,
 } from '@/lib/session'
 import { isAdminEmail } from '@/lib/admin-emails'
-import { issueRefreshToken } from '@/lib/refresh-tokens.server'
+import { prepareIssueRefreshToken } from '@/lib/refresh-tokens.server'
 
 const NO_STORE_HEADERS = { 'Cache-Control': 'no-store' }
 
@@ -51,19 +51,28 @@ export async function POST(request: Request) {
     const hash = await pbkdf2Hash(password)
     const id = uuid()
     const createdAt = new Date().toISOString()
+    const user: SessionUser = { id, email, name: name || null, role, created_at: createdAt }
+    // createSessionValue 仅依赖本地构建的 user，不涉及 DB：先签发再入库，
+    // 签名失败时直接走 500 分支且库中尚无用户行，避免孤儿账号重试恒 409
+    const token = await createSessionValue(user)
+    const insertUserStmt = db
+      .prepare(
+        'INSERT INTO users (id, email, password_hash, name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+      )
+      .bind(id, email, hash, name || null, role, createdAt)
+    const preparedRefresh = issueToken ? await prepareIssueRefreshToken(id) : null
     try {
-      await db
-        .prepare(
-          'INSERT INTO users (id, email, password_hash, name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-        )
-        .bind(id, email, hash, name || null, role, createdAt)
-        .run()
+      if (preparedRefresh) {
+        // 与 INSERT users 放入同一 db.batch（D1 隐式事务），任一失败整批回滚，消除孤儿账号窗口
+        await db.batch([insertUserStmt, preparedRefresh.statement])
+      } else {
+        await insertUserStmt.run()
+      }
     } catch (insertErr) {
       const msg = insertErr instanceof Error ? insertErr.message : String(insertErr)
-      if (
-        msg.includes('UNIQUE constraint failed: users.email') ||
-        (msg.includes('UNIQUE constraint failed') && !msg.includes('users.'))
-      ) {
+      // users.email 为内联 UNIQUE，D1 固定报 "UNIQUE constraint failed: users.email"；
+      // 其余 users 表（如 users.id）或 refresh token 约束冲突继续抛出走 500
+      if (msg.includes('UNIQUE constraint failed: users.email')) {
         return Response.json(
           { error: '该邮箱已注册' },
           { status: 409, headers: withHeaders() }
@@ -72,31 +81,15 @@ export async function POST(request: Request) {
       throw insertErr
     }
 
-    const user: SessionUser = { id, email, name: name || null, role, created_at: createdAt }
-    const token = await createSessionValue(user)
-    if (issueToken) {
+    if (preparedRefresh) {
       // App 端静默续期凭据：原文仅此一次下发（库内只存哈希），与 /api/auth/token 同构
-      // 签发失败时回滚刚插入的用户行，避免留下无凭据且重试即 409 冲突的孤儿账号
-      let refresh: Awaited<ReturnType<typeof issueRefreshToken>>
-      try {
-        refresh = await issueRefreshToken(id)
-      } catch (refreshErr) {
-        await db
-          .prepare('DELETE FROM users WHERE id = ?')
-          .bind(id)
-          .run()
-          .catch((rollbackErr) => {
-            console.error('[register] 回滚用户行失败，可能残留孤儿账号:', id, rollbackErr)
-          })
-        throw refreshErr
-      }
       return Response.json(
         {
           token,
           token_type: 'Bearer',
           expires_in: SESSION_TTL_SECONDS,
           user,
-          refresh_token: refresh.token,
+          refresh_token: preparedRefresh.token,
         },
         {
           headers: withHeaders({

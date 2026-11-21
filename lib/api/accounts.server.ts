@@ -317,8 +317,10 @@ export async function mergeCardsIntoAccount(
     });
   }
 
-  // 清除已迁空的源账户（与 cards.server.ts deleteCard 同构），避免保留 primary_card_id 跨账户悬空引用；
-  // 若窗口期内仍有并发账单未迁移，bills.account_id ON DELETE RESTRICT 将原子回滚整个 batch。
+  // 清除已迁空的源账户（与 cards.server.ts deleteCard 同构），避免保留 primary_card_id 跨账户悬空引用：
+  // - 窗口期内的并发账单由 bills.account_id ON DELETE RESTRICT 回滚整个 batch；
+  // - 注意 credit_cards.account_id 与 bill_import_drafts.matched_account_id 为 ON DELETE SET NULL，
+  //   竞态下新挂到源账户的卡片与既有导入草稿不会被回滚，而是被置空外键引用。
   for (const emptiedAccId of emptySourceAccountIds) {
     updates.push({
       sql: "DELETE FROM credit_accounts WHERE id = ?",
@@ -327,7 +329,15 @@ export async function mergeCardsIntoAccount(
   }
 
   const { error: batchError } = await batch(updates);
-  if (batchError) throw new Error(batchError.message);
+  if (batchError) {
+    if (/FOREIGN KEY|UNIQUE|constraint failed/i.test(batchError.message)) {
+      throw new RpcDomainError(
+        "CONFLICT",
+        `合并期间源账户数据发生并发变更，请刷新后重试：${batchError.message}`,
+      );
+    }
+    throw new Error(batchError.message);
+  }
   return { mergedCount: cardIds.length };
 }
 
