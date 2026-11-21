@@ -4,6 +4,7 @@
 // 免息期等所有口径（见 migrations/d1/0009 的说明）。
 
 import { query, queryOne, execute, uuid, now } from '../db'
+import { isValidUuid } from '../validation-patterns'
 import { payablePeriodOf, payableDueDate, nextPayablePeriodOf, diffInCalendarDays } from '../utils'
 import {
   CUSTOM_CATEGORY_SENTINEL,
@@ -443,17 +444,13 @@ export async function savePayableCustomCategory(
   return getPayableCustomCategories(userId)
 }
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
 export async function createRecurringPayable(
   input: CreateRecurringPayableInput,
   today: Date = new Date()
 ): Promise<PayableWithStatus> {
   const effectiveToday = today instanceof Date ? today : new Date()
-  if (input.id !== undefined) {
-    if (typeof input.id !== 'string' || !UUID_PATTERN.test(input.id.trim())) {
-      throw new RpcDomainError('VALIDATION_FAILED', '无效的固定支出 ID 格式')
-    }
+  if (input.id !== undefined && !isValidUuid(input.id)) {
+    throw new RpcDomainError('VALIDATION_FAILED', '无效的固定支出 ID 格式')
   }
   const clientStableId = input.id !== undefined ? input.id.trim().toLowerCase() : null
 

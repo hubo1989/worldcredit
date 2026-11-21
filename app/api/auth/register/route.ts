@@ -81,7 +81,13 @@ export async function POST(request: Request) {
       try {
         refresh = await issueRefreshToken(id)
       } catch (refreshErr) {
-        await db.prepare('DELETE FROM users WHERE id = ?').bind(id).run().catch(() => {})
+        await db
+          .prepare('DELETE FROM users WHERE id = ?')
+          .bind(id)
+          .run()
+          .catch((rollbackErr) => {
+            console.error('[register] 回滚用户行失败，可能残留孤儿账号:', id, rollbackErr)
+          })
         throw refreshErr
       }
       return Response.json(

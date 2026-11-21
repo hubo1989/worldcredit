@@ -116,7 +116,8 @@ public struct UserPreferenceRecord: Codable, FetchableRecord, TableRecord, Persi
             return try UserDisplayConfig.decode(fromJsonString: displayConfig)
         } catch {
             Self.logger.error("Failed to decode display_config JSON: \(error.localizedDescription, privacy: .public)")
-            return UserDisplayConfig()
+            // 配置 JSON 损坏时走隐私优先（fail-closed），避免敏感金额与卡号明文暴露
+            return UserDisplayConfig(privacyMode: true)
         }
     }
 

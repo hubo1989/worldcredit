@@ -207,4 +207,40 @@ describe("Anchor Card Lifecycle Guard & Account Operations", () => {
       .first<{ account_id: string; card_id: string }>();
     expect(bill).toEqual({ account_id: srcAccountId, card_id: cardSrcPrimary.id });
   });
+
+  it("mergeCardsIntoAccount removes emptied source account and migrates its bills to target anchor", async () => {
+    const cardTarget = await createCard({
+      holder_id: "h1",
+      card_product_id: "cp_cmb",
+      billing_day: 5,
+    });
+    const cardExtra = await createCard({
+      holder_id: "h1",
+      card_product_id: "cp_cmb",
+      billing_day: 5,
+    });
+    // 拆出为独立单卡源账户
+    const indepAcc = await splitCardFromAccount(cardExtra.id);
+
+    await db.exec(`
+      INSERT INTO bills (id, account_id, card_id, bill_month, due_date, bill_amount)
+      VALUES ('b_indep_1', '${indepAcc.id}', '${cardExtra.id}', '2026-08', '2026-08-25', 1500);
+    `);
+
+    const merged = await mergeCardsIntoAccount(cardTarget.account_id!, [cardExtra.id]);
+    expect(merged.mergedCount).toBe(1);
+
+    // 被清空的原独立账户应被删除，不留跨账户悬空 primary_card_id
+    const emptied = await getCreditAccountDetail(indepAcc.id);
+    expect(emptied).toBeNull();
+
+    // 卡片与历史账单迁移至目标账户并对齐主卡
+    const migratedBill = await db
+      .prepare("SELECT account_id, card_id FROM bills WHERE id = 'b_indep_1'")
+      .first<{ account_id: string; card_id: string }>();
+    expect(migratedBill).toEqual({
+      account_id: cardTarget.account_id,
+      card_id: cardTarget.id,
+    });
+  });
 });

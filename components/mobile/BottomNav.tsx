@@ -3,12 +3,17 @@
 import { usePathname, useRouter } from 'next/navigation'
 import { HomeIcon, BillsIcon, WalletIcon, BenefitIcon, MineIcon } from '@/components/icons/WcIcon'
 
-const navItems = [
+const navItems: Array<{
+  label: string
+  icon: React.ReactNode
+  path: string
+  matchPrefixes?: string[]
+}> = [
   // Phase 1 5-Tab 同构导航（首页 / 账单 / 账户 / 权益 / 我的）；图标统一来自 WcIcon 线性 SVG 库
   { label: '首页', icon: <HomeIcon />, path: '/dashboard' },
   { label: '账单', icon: <BillsIcon />, path: '/bills' },
-  { label: '账户', icon: <WalletIcon />, path: '/accounts' },
-  { label: '权益', icon: <BenefitIcon />, path: '/benefits' },
+  { label: '账户', icon: <WalletIcon />, path: '/accounts', matchPrefixes: ['/cards', '/holders'] },
+  { label: '权益', icon: <BenefitIcon />, path: '/benefits', matchPrefixes: ['/promos'] },
   { label: '我的', icon: <MineIcon />, path: '/settings' },
 ]
 
@@ -20,8 +25,7 @@ export function BottomNav() {
   const currentIndex = navItems.findIndex(item =>
     pathname === item.path ||
     (item.path !== '/' && pathname.startsWith(item.path)) ||
-    (item.path === '/accounts' && (pathname.startsWith('/cards') || pathname.startsWith('/holders'))) ||
-    (item.path === '/benefits' && pathname.startsWith('/promos'))
+    item.matchPrefixes?.some(prefix => pathname.startsWith(prefix))
   )
   const activeIdx = currentIndex === -1 ? 0 : currentIndex
 

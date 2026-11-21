@@ -510,5 +510,8 @@ struct Phase1DomainAndApiTests {
         let record = try UserPreferenceRecord(userId: "u-rt", displayConfig: config)
         let decoded = record.decodedDisplayConfig()
         #expect(decoded == config)
+
+        let corruptedRecord = UserPreferenceRecord(userId: "u-corrupt", displayConfig: "{invalid-json")
+        #expect(corruptedRecord.decodedDisplayConfig().privacyMode == true)
     }
 }

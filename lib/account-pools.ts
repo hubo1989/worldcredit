@@ -78,6 +78,7 @@ export function buildAccountPools(
     const isMergedStatement = account?.statement_mode === 'merged'
     const isSharedQuota = account?.quota_mode === 'shared'
     const poolLimit = resolvePoolLimit(account, groupCards, isSharedQuota)
+    // 失效卡从可用授信额度中剔除，但冻结/注销卡尚未结清的真实欠款仍计入待还总额（与 iOS QueryService 一致）
     const poolUsed = groupCards.reduce((sum, c) => sum + Number(c.unpaidAmount || 0), 0)
     const poolAvailable = poolLimit !== null ? Math.max(0, poolLimit - poolUsed) : null
 

@@ -3,6 +3,7 @@
 import { getDb } from '../db/client'
 import { ensureDailyNotificationsForUser } from '../notifications-engine.server'
 import type { NotificationCategory, UserNotificationItem } from '../types'
+import { isValidIsoTimestamp } from '../validation-patterns'
 import { RpcDomainError } from './errors'
 
 export interface GetNotificationsOptions {
@@ -151,9 +152,6 @@ export async function markNotificationRead(
   return { updated: changes > 0, unread_count }
 }
 
-const ISO_TIMESTAMP_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
-
 export async function markAllNotificationsRead(
   userId: string,
   beforeIso?: string
@@ -162,9 +160,8 @@ export async function markAllNotificationsRead(
   let cutoffSql = ''
   const bindings: unknown[] = [nowIso, userId]
   if (beforeIso !== undefined) {
-    const trimmed = typeof beforeIso === 'string' ? beforeIso.trim() : ''
-    const parsedMs = trimmed ? Date.parse(trimmed) : Number.NaN
-    if (!trimmed || !ISO_TIMESTAMP_PATTERN.test(trimmed) || !Number.isFinite(parsedMs)) {
+    const parsedMs = isValidIsoTimestamp(beforeIso)
+    if (parsedMs === null) {
       throw new RpcDomainError('VALIDATION_FAILED', '无效的通知已读截止时间戳')
     }
     cutoffSql = ' AND julianday(sent_at) <= julianday(?)'

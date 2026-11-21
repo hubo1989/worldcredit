@@ -229,6 +229,11 @@ export default function AccountsPage() {
     return counts
   }, [cardsSummary])
 
+  const mergeWizardCards = useMemo(
+    () => allCreditCards.map((c) => ({ ...c.card, account: c.account })),
+    [allCreditCards]
+  )
+
   const creditTotals = useMemo(() => {
     const limitSum = sumByCurrency(
       accountPools,
@@ -478,6 +483,7 @@ export default function AccountsPage() {
                       key={item.card.id}
                       item={item}
                       holderName={holderMap.get(item.holder_id)?.name}
+                      displayCurrency={displayCurrency}
                       showLast4={showLast4}
                       showAnnualFee={showAnnualFee}
                       blurClass={blurClass}
@@ -525,7 +531,7 @@ export default function AccountsPage() {
       <AccountMergeWizardModal
         open={mergeWizardOpen}
         onClose={() => setMergeWizardOpen(false)}
-        cards={allCreditCards.map((c) => ({ ...c.card, account: c.account }))}
+        cards={mergeWizardCards}
         onSuccess={() => {
           setToast({ open: true, message: '已合并为统一账单账户', severity: 'success' })
           void loadData()
@@ -773,12 +779,14 @@ function AccountPoolCard({
 function SingleCardRow({
   item,
   holderName,
+  displayCurrency,
   showLast4,
   showAnnualFee,
   blurClass,
 }: {
   item: CardWithBillsSummary
   holderName?: string
+  displayCurrency: string
   showLast4: boolean
   showAnnualFee: boolean
   blurClass: string
@@ -787,7 +795,7 @@ function SingleCardRow({
   const bankName = product?.bank_name || '银行卡'
   const cardName = getEffectiveCardName(item.card, product)
   const tail = showLast4 ? formatCardTail(item.card.card_number_last4) : ''
-  const currency = product?.currency || 'CNY'
+  const currency = product?.currency || displayCurrency
   const effLimit = getEffectiveCreditLimit(item.card)
   const limitManual = isCreditLimitManuallySet(item.card)
   const billingDay = getEffectiveBillingDay(item.card)
@@ -890,6 +898,8 @@ function LoansSection({
     return sumByCurrency(items, (x) => x, displayCurrency, fxRates)
   }, [loanCards, loanPayables, displayCurrency, fxRates])
 
+  const isLoansEmpty = loanCards.length === 0 && loanPayables.length === 0
+
   return (
     <div className='flex flex-col gap-3.5'>
       <Alert severity='info'>
@@ -946,17 +956,17 @@ function LoansSection({
         </div>
       )}
 
-      {loanCards.length === 0 && loanPayables.length === 0 ? (
-        payablesDegraded ? null : (
-          <div className='rounded-2xl border border-d-border bg-d-surface'>
-            <WcEmptyState
-              title='暂无贷款记录'
-              description='可在账单页添加贷款类固定支出，或等待 Phase 3 独立贷款合同上线后导入房贷/车贷计划'
-              icon={<BankIcon size={32} />}
-            />
-          </div>
-        )
-      ) : (
+      {isLoansEmpty && !payablesDegraded && (
+        <div className='rounded-2xl border border-d-border bg-d-surface'>
+          <WcEmptyState
+            title='暂无贷款记录'
+            description='可在账单页添加贷款类固定支出，或等待 Phase 3 独立贷款合同上线后导入房贷/车贷计划'
+            icon={<BankIcon size={32} />}
+          />
+        </div>
+      )}
+
+      {!isLoansEmpty && (
         <>
           {loanCards.length > 0 && (
             <div className='flex flex-col gap-2'>
@@ -966,7 +976,7 @@ function LoansSection({
               {loanCards.map((item) => {
                 const product = item.card.card_product
                 const cardName = getEffectiveCardName(item.card, product)
-                const currency = product?.currency || 'CNY'
+                const currency = product?.currency || displayCurrency
                 const holderName = holderMap.get(item.holder_id)?.name
                 const dueDay = item.card.loan_due_day ?? null
                 const effLimit = getEffectiveCreditLimit(item.card)
@@ -1025,6 +1035,8 @@ function LoansSection({
               </div>
               {loanPayables.map((p) => {
                 const holderName = p.holder_id ? holderMap.get(p.holder_id)?.name : undefined
+                const remaining =
+                  p.status === 'paid' ? 0 : Math.max(0, p.amount - p.paid_amount)
                 return (
                   <Link
                     key={p.id}
@@ -1043,8 +1055,13 @@ function LoansSection({
                     </div>
                     <div className='flex shrink-0 flex-col items-end gap-1'>
                       <span className={`num-tabular text-[14px] font-bold text-d-text ${blurClass}`}>
-                        {formatMoney(p.amount, p.currency)}
+                        {formatMoney(remaining, p.currency)}
                       </span>
+                      {p.paid_amount > 0 && (
+                        <span className={`num-tabular text-[11px] text-d-muted ${blurClass}`}>
+                          总额 {formatMoney(p.amount, p.currency)}
+                        </span>
+                      )}
                       <StatusBadge status={p.status} />
                     </div>
                   </Link>

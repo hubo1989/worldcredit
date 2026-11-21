@@ -3,6 +3,7 @@
 import { getDb } from "@/lib/db";
 import { readSession } from "@/lib/session";
 import { dispatchRpc } from "@/lib/api/rpc-dispatch";
+import { isValidIsoTimestamp, isValidUuid } from "@/lib/validation-patterns";
 
 interface MutationItem {
   id: string;
@@ -22,9 +23,6 @@ interface MutationResult {
 
 const MAX_MUTATIONS = 100;
 const MAX_ID_LENGTH = 256;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ISO_TIMESTAMP_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 /** Only offline mutations with row-level or key-level idempotency may use sync/push. */
 const OFFLINE_SYNC_MUTATIONS = new Set([
   "bills.recordPayment",
@@ -48,17 +46,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function validateOfflineReplaySafety(mut: MutationItem): { error: string; code: string } | null {
   if (mut.name === "payables.createRecurringPayable") {
     const payload = mut.args[0];
-    const stableId = isRecord(payload) && typeof payload.id === "string" ? payload.id.trim() : "";
-    if (!stableId || !UUID_PATTERN.test(stableId)) {
+    if (!isRecord(payload) || !isValidUuid(payload.id)) {
       return {
         error: "离线创建固定支出必须提供合法的客户端 UUID id",
         code: "VALIDATION_FAILED",
       };
     }
   } else if (mut.name === "notifications.markAllNotificationsRead") {
-    const beforeIso = typeof mut.args[1] === "string" ? mut.args[1].trim() : "";
-    const parsedMs = beforeIso ? Date.parse(beforeIso) : Number.NaN;
-    if (!beforeIso || !ISO_TIMESTAMP_PATTERN.test(beforeIso) || !Number.isFinite(parsedMs)) {
+    if (isValidIsoTimestamp(mut.args[1]) === null) {
       return {
         error: "离线全部标记已读必须提供合法的截止时间戳 (beforeIso)",
         code: "VALIDATION_FAILED",
