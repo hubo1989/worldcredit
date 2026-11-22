@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import OSLog
 
 public enum SyncError: LocalizedError {
     case pendingMutations
@@ -37,6 +38,8 @@ public final class SyncEngine: @unchecked Sendable {
     /// 被隔离的坏变更（解码失败/约束冲突等）落在这里，丢弃但留痕，便于排查。
     private static let isolatedChangesMetaKey = "sync_isolated_changes"
     private static let isolatedChangesCap = 50
+    private static let maxFKDeferAttempts = 5
+    private static let logger = Logger(subsystem: "com.chunfenshijie.worldcredit", category: "SyncEngine")
     private static let supportedTables: Set<String> = [
         "banks",
         "card_products",
@@ -140,20 +143,32 @@ public final class SyncEngine: @unchecked Sendable {
 
     public func sync() async throws {
         try requireActiveSession()
-        // 清空所有成功批次；没有进展时停止，保留退避或失败中的操作。
-        var pending = try await dbManager.dbWriter.read { try MutationOutbox.fetchCount($0) }
-        repeat {
-            try await push()
-            let remaining = try await dbManager.dbWriter.read { try MutationOutbox.fetchCount($0) }
-            if remaining == 0 { break }
-            guard remaining < pending else { throw SyncError.pendingMutations }
-            pending = remaining
-        } while true
-        try await pull()
+        let maxCycles = 3
+        for cycle in 1...maxCycles {
+            // 清空所有成功批次；没有进展时停止，保留退避或失败中的操作。
+            var pending = try await dbManager.dbWriter.read { try MutationOutbox.fetchCount($0) }
+            while pending > 0 {
+                try await push()
+                let remaining = try await dbManager.dbWriter.read { try MutationOutbox.fetchCount($0) }
+                if remaining == 0 { break }
+                guard remaining < pending else { throw SyncError.pendingMutations }
+                pending = remaining
+            }
+            do {
+                try await pull()
+                return
+            } catch SyncError.pendingMutations {
+                Self.logger.info("Pull aborted by concurrent local mutation; retrying push-then-pull (cycle=\(cycle, privacy: .public))")
+                if cycle == maxCycles {
+                    throw SyncError.pendingMutations
+                }
+            }
+        }
     }
 
     public func pull() async throws {
         var hasMore = true
+        var fkDeferAttempts: [SyncReconcileTarget: Int] = [:]
         while hasMore {
             let (cursor, targets) = try await dbManager.dbWriter.read { db in
                 try self.requireEmptyOutbox(in: db)
@@ -173,22 +188,36 @@ public final class SyncEngine: @unchecked Sendable {
 
             // 网络返回后及事务写前再次检查，取消不会写入服务端结果。
             try requireActiveSession()
-            try requireActiveSession()
-            let stillNeedsRecovery = try await dbManager.dbWriter.write { db in
+            let currentFKAttempts = fkDeferAttempts
+            let (stillNeedsRecovery, deferred) = try await dbManager.dbWriter.write { db -> (Bool, [SyncReconcileTarget]) in
                 // 同步检查不能跨 async 边界；写入前失效会回滚整个事务。
                 guard self.sessionLock.withLock({ self.sessionIsActive }) else {
                     throw SyncError.sessionExpired
                 }
                 // An edit may have been queued while the network request was in flight.
                 try self.requireEmptyOutbox(in: db)
-                // 按条隔离：单条 applyChange 失败不中断整批。整批单事务下任一条
-                // 解码失败/外键约束抛错都会回滚全部并卡住 sync_cursor，同变更被
-                // 永久重放、同步永久死锁。这里隔离坏行（记录后继续），保证游标
-                // 总能前进；全部成功或部分隔离都提交事务并保存 cursor。
+                let existingTargets = try self.reconcileTargets(in: db)
+                let mayReceiveMorePages = response.hasMore || existingTargets.count > targets.count
+
+                // 按条 Savepoint 隔离 + 跨页 FK 延迟恢复 + 自然唯一键冲突自愈：
+                // 1) 同页先跑一遍；若命中 FK/UNIQUE 约束，延后至本页末尾再试（处理同页双向引用或同页换绑）。
+                // 2) 仍命中 UNIQUE 约束时按自然唯一键清理陈旧本地行并写入服务端权威行。
+                // 3) 若后续还有分页且未达重试上限，将跨页 FK 缺父级的条目写入 sync_reconcile_targets 延后恢复，避免误隔离。
+                // 4) 其他错误或确认为真坏行时记录到 sync_isolated_changes，保证游标持续前进。
+                var retryInPage: [PullChangeItem] = []
                 var isolated: [[String: String]] = []
+                var deferredFKTargets: [SyncReconcileTarget] = []
+
                 for change in Self.orderedChangesForApply(response.changes) {
                     do {
-                        try self.applyChange(change, in: db)
+                        try db.inSavepoint {
+                            try self.applyChange(change, in: db)
+                            return .commit
+                        }
+                    } catch let dbError as DatabaseError where
+                        dbError.extendedResultCode == .SQLITE_CONSTRAINT_FOREIGNKEY ||
+                        dbError.extendedResultCode == .SQLITE_CONSTRAINT_UNIQUE {
+                        retryInPage.append(change)
                     } catch {
                         isolated.append([
                             "tbl": change.tbl,
@@ -197,16 +226,67 @@ public final class SyncEngine: @unchecked Sendable {
                         ])
                     }
                 }
+
+                for change in retryInPage {
+                    do {
+                        try db.inSavepoint {
+                            try self.applyChange(change, in: db)
+                            return .commit
+                        }
+                    } catch let dbError as DatabaseError where dbError.extendedResultCode == .SQLITE_CONSTRAINT_UNIQUE {
+                        do {
+                            try db.inSavepoint {
+                                try self.applyUpsertResolvingUniqueConflict(change, in: db)
+                                return .commit
+                            }
+                        } catch {
+                            isolated.append([
+                                "tbl": change.tbl,
+                                "row_id": change.rowId,
+                                "error": error.localizedDescription,
+                            ])
+                        }
+                    } catch let dbError as DatabaseError where dbError.extendedResultCode == .SQLITE_CONSTRAINT_FOREIGNKEY {
+                        let target = SyncReconcileTarget(tbl: change.tbl, rowId: change.rowId)
+                        if mayReceiveMorePages, (currentFKAttempts[target] ?? 0) < Self.maxFKDeferAttempts {
+                            if !deferredFKTargets.contains(target) {
+                                deferredFKTargets.append(target)
+                            }
+                        } else {
+                            isolated.append([
+                                "tbl": change.tbl,
+                                "row_id": change.rowId,
+                                "error": dbError.localizedDescription,
+                            ])
+                        }
+                    } catch {
+                        isolated.append([
+                            "tbl": change.tbl,
+                            "row_id": change.rowId,
+                            "error": error.localizedDescription,
+                        ])
+                    }
+                }
+
                 if !isolated.isEmpty {
                     try self.appendIsolatedChanges(isolated, in: db)
                 }
-                let remaining = try self.reconcileTargets(in: db).filter { !acknowledged.contains($0) }
-                if !targets.isEmpty { try self.saveReconcileTargets(remaining, in: db) }
+                var remaining = existingTargets.filter { !acknowledged.contains($0) }
+                for target in deferredFKTargets where !remaining.contains(target) {
+                    remaining.append(target)
+                }
+                if !targets.isEmpty || !deferredFKTargets.isEmpty {
+                    try self.saveReconcileTargets(remaining, in: db)
+                }
                 try SyncMeta(key: "sync_cursor", value: String(response.cursor)).save(db)
                 try SyncMeta(key: "last_synced_at", value: response.serverTime).save(db)
-                return !remaining.isEmpty
+                Self.logger.info("Pull applied: cursor=\(cursor, privacy: .public)->\(response.cursor, privacy: .public) changes=\(response.changes.count, privacy: .public) deferred=\(deferredFKTargets.count, privacy: .public) isolated=\(isolated.count, privacy: .public)")
+                return (!remaining.isEmpty, deferredFKTargets)
             }
 
+            for target in deferred {
+                fkDeferAttempts[target, default: 0] += 1
+            }
             hasMore = response.hasMore || stillNeedsRecovery
         }
     }
@@ -374,6 +454,55 @@ public final class SyncEngine: @unchecked Sendable {
         case "payable_custom_categories":
             try decoder.decode(PayableCustomCategoryRecord.self, from: jsonData).save(db)
         default: break
+        }
+    }
+
+    /// 解决自然唯一约束冲突（如本地旧主键占位）：删掉冲突的旧行后重新写入服务端权威记录。
+    private func applyUpsertResolvingUniqueConflict(_ change: PullChangeItem, in db: Database) throws {
+        guard change.op == "upsert", let rowDict = change.row else {
+            throw SyncError.invalidChange(table: change.tbl, rowID: change.rowId)
+        }
+        let jsonData = try JSONEncoder().encode(rowDict)
+        let decoder = JSONDecoder()
+
+        switch change.tbl {
+        case "bills":
+            let record = try decoder.decode(Bill.self, from: jsonData)
+            try db.execute(
+                sql: "DELETE FROM bills WHERE card_id = ? AND bill_month = ? AND id != ?",
+                arguments: [record.cardId, record.billMonth, record.id]
+            )
+            try record.save(db)
+        case "payments":
+            let record = try decoder.decode(Payment.self, from: jsonData)
+            try db.execute(
+                sql: "DELETE FROM payments WHERE idempotency_key = ? AND id != ?",
+                arguments: [record.idempotencyKey, record.id]
+            )
+            try record.save(db)
+        case "bill_card_subtotals":
+            let record = try decoder.decode(BillCardSubtotal.self, from: jsonData)
+            try db.execute(
+                sql: "DELETE FROM bill_card_subtotals WHERE bill_id = ? AND card_tail = ? AND id != ?",
+                arguments: [record.billId, record.cardTail, record.id]
+            )
+            try record.save(db)
+        case "recurring_payable_payments":
+            let record = try decoder.decode(RecurringPayablePaymentRecord.self, from: jsonData)
+            try db.execute(
+                sql: "DELETE FROM recurring_payable_payments WHERE payable_id = ? AND period = ? AND id != ?",
+                arguments: [record.payableId, record.period, record.id]
+            )
+            try record.save(db)
+        case "payable_custom_categories":
+            let record = try decoder.decode(PayableCustomCategoryRecord.self, from: jsonData)
+            try db.execute(
+                sql: "DELETE FROM payable_custom_categories WHERE user_id = ? AND normalized_name = ? AND id != ?",
+                arguments: [record.userId, record.normalizedName, record.id]
+            )
+            try record.save(db)
+        default:
+            try applyChange(change, in: db)
         }
     }
 

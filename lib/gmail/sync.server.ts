@@ -47,6 +47,9 @@ export interface SyncUserGmailOptions {
   maxMessages?: number;
 }
 
+/** 单次定时任务每个用户最多处理的未同步邮件数，避免触及 Worker 单次调用 subrequests 上限。 */
+export const DEFAULT_CRON_GMAIL_MAX_MESSAGES = 8;
+
 /** 预筛查询：宁可多拉几封让 AI 用 email_kind 门禁过滤，也不要漏账单。 */
 const DEFAULT_QUERY =
   'newer_than:30d (账单 OR 对账单 OR 月结单 OR statement OR "payment due" OR "e-statement")';
@@ -134,26 +137,21 @@ export async function syncUserGmail(
   summary.scanned = refs.length;
 
   // 分批闸门：每封邮件都要过一遍 LLM 解析（实测 5–15s/封），一次性处理
-  // 几十封会跑几分钟，超过 Cloudflare ~100s 代理超时——客户端先收到 524
-  // 报「同步失败」，worker 却还在后台推进（2026-10-28 首次回填实测 9 分钟）。
-  // 所以手动同步必须分轮：每轮 maxMessages 封，客户端看 remaining 续拉。
+  // 几十封会跑几分钟，超过 Cloudflare ~100s 代理超时或单次调用 subrequests 上限——
+  // 客户端先收到 524/子请求超限报「同步失败」。所以手动和定时同步都按配额分批推进。
+  const seenRows = await query<{ gmail_message_id: string }>(
+    "SELECT gmail_message_id FROM gmail_sync_messages WHERE user_id = ? AND status != 'failed'",
+    [userId],
+  );
+  if (seenRows.error) throw new Error(seenRows.error.message);
+  const seenSet = new Set((seenRows.data ?? []).map((r) => r.gmail_message_id));
+  const unseenRefs = refs.filter((ref) => !seenSet.has(ref.id));
+
   const maxMessages = opts?.maxMessages;
-  let alreadySeen = 0;
   let processed = 0;
 
-  for (const ref of refs) {
-    // failed 不算「已处理」：子请求超限这类瞬态错误不该永久挡住重试，
-    // 只有 bill_written/draft_parked/skipped 才走去重跳过。
-    const seen = await queryOne(
-      "SELECT gmail_message_id FROM gmail_sync_messages WHERE gmail_message_id = ? AND status != 'failed'",
-      [ref.id],
-    );
-    if (seen.data) {
-      alreadySeen++;
-      continue;
-    }
-    // continue 而不是 break：把剩余量数完，remaining 才准
-    if (maxMessages !== undefined && processed >= maxMessages) continue;
+  for (const ref of unseenRefs) {
+    if (maxMessages !== undefined && processed >= maxMessages) break;
 
     try {
       const raw = await getRawMessage(tokens.accessToken, ref.id, clientOpts);
@@ -209,15 +207,22 @@ export async function syncUserGmail(
       summary.failed++;
       const msg = err instanceof Error ? err.message : String(err);
       summary.errors.push(`${ref.id}: ${msg}`);
-      await execute(
-        "INSERT INTO gmail_sync_messages (gmail_message_id, user_id, status, error_msg) VALUES (?,?, 'failed', ?) ON CONFLICT(gmail_message_id) DO UPDATE SET status = 'failed', error_msg = excluded.error_msg",
-        [ref.id, userId, msg],
-      );
+      try {
+        await execute(
+          "INSERT INTO gmail_sync_messages (gmail_message_id, user_id, status, error_msg) VALUES (?,?, 'failed', ?) ON CONFLICT(gmail_message_id) DO UPDATE SET status = 'failed', error_msg = excluded.error_msg",
+          [ref.id, userId, msg],
+        );
+      } catch (persistErr) {
+        console.warn(`[gmail/sync] failed persisting error for ${ref.id}:`, persistErr);
+      }
       processed++;
+      if (msg.includes("Too many subrequests")) {
+        break;
+      }
     }
   }
 
-  summary.remaining = refs.length - alreadySeen - processed;
+  summary.remaining = Math.max(0, unseenRefs.length - processed);
 
   const summaryText = `扫描 ${summary.scanned}｜落账单 ${summary.written}｜草稿 ${summary.drafted}｜跳过 ${summary.skipped}｜失败 ${summary.failed}`;
   await execute(
@@ -306,15 +311,18 @@ async function routeParsedMessage(params: {
   };
 }
 
-/** cron 用：同步全部 active 连接，单用户失败不影响其他用户。 */
-export async function syncAllGmailConnections(): Promise<{ users: number; failures: number }> {
+/** cron 用：同步全部 active 连接，单用户失败不影响其他用户；单轮按安全上限分批拉取避免子请求超限。 */
+export async function syncAllGmailConnections(opts?: {
+  maxMessagesPerUser?: number;
+}): Promise<{ users: number; failures: number }> {
   const rows = await query<{ user_id: string }>(
     "SELECT user_id FROM gmail_connections WHERE status = 'active'",
   );
+  const maxMessages = opts?.maxMessagesPerUser ?? DEFAULT_CRON_GMAIL_MAX_MESSAGES;
   let failures = 0;
   for (const row of rows.data ?? []) {
     try {
-      await syncUserGmail(row.user_id);
+      await syncUserGmail(row.user_id, { maxMessages });
     } catch (err) {
       failures++;
       const msg = err instanceof Error ? err.message : String(err);

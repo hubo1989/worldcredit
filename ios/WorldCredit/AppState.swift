@@ -1,6 +1,8 @@
 import Foundation
 import SwiftUI
 import Observation
+import UserNotifications
+import OSLog
 import WorldCreditCore
 
 @MainActor
@@ -505,6 +507,7 @@ public final class AppState {
             else { user = try await apiClient.fetchSessionUser() }
             guard dashboardRequestID == requestID, isLoggedIn, apiClient.token == credential else { return }
             currentUser = user
+            await persistSyncOwner(user.id)
             let snapshot = await dashboardRemote.fetch(userId: user.id)
             guard dashboardRequestID == requestID, isLoggedIn, apiClient.token == credential,
                   currentUser?.id == user.id else { return }
@@ -867,26 +870,61 @@ public final class AppState {
         syncEngine = SyncEngine(dbManager: dbManager, apiClient: apiClient)
     }
 
+    private enum SilentRefreshOutcome {
+        case refreshed
+        case expired
+        case transientFailure(Error)
+    }
+
+    private nonisolated static let syncOwnerMetaKey = "sync_owner_user_id"
+    private nonisolated static let syncLogger = Logger(subsystem: "com.chunfenshijie.worldcredit", category: "AppState.Sync")
+
+    private static func isUnauthorizedError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == "ApiClient" && nsError.code == 401
+    }
+
+    private func loadSyncOwner() async -> String? {
+        try? await dbManager.dbWriter.read { db in
+            try SyncMeta.fetchOne(db, key: Self.syncOwnerMetaKey)?.value
+        }
+    }
+
+    private func persistSyncOwner(_ userId: String) async {
+        guard !userId.isEmpty else { return }
+        try? await dbManager.dbWriter.write { db in
+            try SyncMeta(key: Self.syncOwnerMetaKey, value: userId).save(db)
+        }
+    }
+
     /// access token 过期（401）时的处理：先尝试静默续期（refresh token 一次性轮换），
-    /// 成功则重放原操作；refresh token 也失效才落地到登录页。
-    /// 返回 true = 已续期可重试，false = 已切回登录态。
-    private func trySilentRefresh() async -> Bool {
+    /// 成功则重放原操作；仅当服务端明确拒认（401）或本地无 refresh token 时落地到登录页，
+    /// 弱网/超时/5xx 等瞬态异常保留登录态与本地数据。
+    private func trySilentRefresh(failedToken: String? = nil) async -> SilentRefreshOutcome {
         guard apiClient.refreshToken != nil else {
             handleSessionExpired()
-            return false
+            return .expired
         }
         do {
-            let user = try await apiClient.refreshSession()
+            let user = try await apiClient.refreshSession(failedToken: failedToken)
             currentUser = user
             isLoggedIn = true
-            return true
+            await persistSyncOwner(user.id)
+            return .refreshed
         } catch {
-            handleSessionExpired()
-            return false
+            if Self.isUnauthorizedError(error) {
+                handleSessionExpired()
+                return .expired
+            }
+            return .transientFailure(error)
         }
     }
 
     public func refreshPayables() async {
+        await refreshPayables(allowRefreshRetry: true)
+    }
+
+    private func refreshPayables(allowRefreshRetry: Bool) async {
         // 演示模式（--demo-mode）与 UI 测试都不拉在线固定支出：
         // 演示下 fetchSessionUser 必然失败，会污染特意清空的干净演示状态
         guard isLoggedIn, !UITestConfiguration.isEnabled,
@@ -907,6 +945,7 @@ public final class AppState {
             guard sessionEpoch == epoch, apiClient.token == token else { return }
             currentUser = user
             fallbackUserId = user.id
+            await persistSyncOwner(user.id)
 
             let items = try await payablesService.fetchPayables(userId: user.id)
             guard sessionEpoch == epoch, apiClient.token == token else { return }
@@ -945,10 +984,19 @@ public final class AppState {
             return
         } catch {
             guard sessionEpoch == epoch, apiClient.token == token else { return }
-            // 401 = access token 过期：先静默续期，成功则重拉；续期失败回登录页
-            if let nsError = error as NSError?, nsError.code == 401 {
-                if await trySilentRefresh() {
-                    await refreshPayables()
+            // 401 = access token 过期：先静默续期，成功则重拉（单次）；续期明确失效回登录页，瞬态异常保留会话并提示降级
+            if Self.isUnauthorizedError(error) {
+                guard allowRefreshRetry else {
+                    handleSessionExpired()
+                    return
+                }
+                switch await trySilentRefresh(failedToken: token) {
+                case .refreshed:
+                    await refreshPayables(allowRefreshRetry: false)
+                case .expired:
+                    break
+                case .transientFailure(let refreshError):
+                    self.payablesError = refreshError.localizedDescription
                 }
                 return
             }
@@ -1152,13 +1200,27 @@ public final class AppState {
     // MARK: - Notifications & Reminder Preferences
 
     private func rescheduleLocalNotifications() async throws {
-        try await notificationScheduler.rescheduleAll(
-            payables: payables,
-            preferences: reminderPreferences
-        )
+        do {
+            try await notificationScheduler.rescheduleAll(
+                payables: payables,
+                preferences: reminderPreferences
+            )
+        } catch {
+            let nsError = error as NSError
+            if nsError.domain == UNErrorDomain &&
+                nsError.code == UNError.Code.notificationsNotAllowed.rawValue {
+                Self.syncLogger.info("Skipped local notification reschedule: notifications not allowed")
+                return
+            }
+            throw error
+        }
     }
 
     public func refreshUnreadNotificationCount() async {
+        await refreshUnreadNotificationCount(allowRefreshRetry: true)
+    }
+
+    private func refreshUnreadNotificationCount(allowRefreshRetry: Bool) async {
         guard isLoggedIn, !UITestConfiguration.isEnabled,
               !CommandLine.arguments.contains("--demo-mode"),
               apiClient.token != nil else { return }
@@ -1174,13 +1236,23 @@ public final class AppState {
             return
         } catch {
             guard isLoggedIn, sessionEpoch == epoch, apiClient.token == credential else { return }
-            if let nsError = error as NSError?, nsError.code == 401, await trySilentRefresh() {
-                await refreshUnreadNotificationCount()
+            if Self.isUnauthorizedError(error) {
+                guard allowRefreshRetry else {
+                    handleSessionExpired()
+                    return
+                }
+                if case .refreshed = await trySilentRefresh(failedToken: credential) {
+                    await refreshUnreadNotificationCount(allowRefreshRetry: false)
+                }
             }
         }
     }
 
     public func loadNotifications(filter: String = "all", syncToday: Bool = true) async {
+        await loadNotifications(filter: filter, syncToday: syncToday, allowRefreshRetry: true)
+    }
+
+    private func loadNotifications(filter: String, syncToday: Bool, allowRefreshRetry: Bool) async {
         guard isLoggedIn, !UITestConfiguration.isEnabled,
               !CommandLine.arguments.contains("--demo-mode"),
               apiClient.token != nil else { return }
@@ -1215,8 +1287,19 @@ public final class AppState {
             return
         } catch {
             guard isLoggedIn, sessionEpoch == epoch, apiClient.token == credential else { return }
-            if let nsError = error as NSError?, nsError.code == 401, await trySilentRefresh() {
-                await loadNotifications(filter: filter, syncToday: syncToday)
+            if Self.isUnauthorizedError(error) {
+                guard allowRefreshRetry else {
+                    handleSessionExpired()
+                    return
+                }
+                switch await trySilentRefresh(failedToken: credential) {
+                case .refreshed:
+                    await loadNotifications(filter: filter, syncToday: syncToday, allowRefreshRetry: false)
+                case .expired:
+                    break
+                case .transientFailure(let refreshError):
+                    notificationsError = refreshError.localizedDescription
+                }
                 return
             }
             notificationsError = error.localizedDescription
@@ -1325,11 +1408,19 @@ public final class AppState {
     private func performWithSilentRefresh<T>(
         _ operation: @escaping () async throws -> T
     ) async throws -> T {
+        let attemptToken = apiClient.token
         do {
             return try await operation()
         } catch {
-            if let nsError = error as NSError?, nsError.code == 401, await trySilentRefresh() {
-                return try await operation()
+            if Self.isUnauthorizedError(error) {
+                switch await trySilentRefresh(failedToken: attemptToken) {
+                case .refreshed:
+                    return try await operation()
+                case .expired:
+                    throw error
+                case .transientFailure(let refreshError):
+                    throw refreshError
+                }
             }
             throw error
         }
@@ -1434,6 +1525,10 @@ public final class AppState {
     }
 
     public func loadReminderPreferences(silent: Bool = false) async {
+        await loadReminderPreferences(silent: silent, allowRefreshRetry: true)
+    }
+
+    private func loadReminderPreferences(silent: Bool, allowRefreshRetry: Bool) async {
         guard isLoggedIn, !UITestConfiguration.isEnabled,
               !CommandLine.arguments.contains("--demo-mode"),
               apiClient.token != nil else { return }
@@ -1458,8 +1553,21 @@ public final class AppState {
             return
         } catch {
             guard isLoggedIn, sessionEpoch == epoch, apiClient.token == credential else { return }
-            if let nsError = error as NSError?, nsError.code == 401, await trySilentRefresh() {
-                await loadReminderPreferences(silent: silent)
+            if Self.isUnauthorizedError(error) {
+                guard allowRefreshRetry else {
+                    handleSessionExpired()
+                    return
+                }
+                switch await trySilentRefresh(failedToken: credential) {
+                case .refreshed:
+                    await loadReminderPreferences(silent: silent, allowRefreshRetry: false)
+                case .expired:
+                    break
+                case .transientFailure(let refreshError):
+                    if !silent {
+                        reminderPreferencesError = refreshError.localizedDescription
+                    }
+                }
                 return
             }
             if !silent {
@@ -1565,29 +1673,51 @@ public final class AppState {
         isGmailSyncing = true
         defer { isGmailSyncing = false }
         let epoch = sessionEpoch
-        for round in 1...maxRounds {
+        var didRefreshInRun = false
+        var didSyncAnyRound = false
+        var round = 1
+        while round <= maxRounds {
+            let attemptToken = apiClient.token
             do {
                 let result = try await apiClient.gmailSync(maxMessages: 6)
                 guard sessionEpoch == epoch, isLoggedIn else { return }
                 // 成功后清空历史错误：否则一次失败的「Gmail 同步异常」会永久滞留设置页
                 lastSyncError = nil
+                didSyncAnyRound = true
                 guard let remaining = result.remaining, remaining > 0, round < maxRounds else { break }
+                round += 1
             } catch is CancellationError {
                 return // 取消不是故障：不落盘错误也不触发重载
             } catch let urlError as URLError where urlError.code == .cancelled {
                 return
             } catch {
                 guard sessionEpoch == epoch, isLoggedIn else { return }
-                // 401 = access token 过期：静默续期；失败回登录页
-                if let nsError = error as NSError?, nsError.code == 401 {
-                    _ = await trySilentRefresh()
+                // 401 = access token 过期：整次至多静默续期并原地重试当前轮 1 次
+                if Self.isUnauthorizedError(error) {
+                    if !didRefreshInRun {
+                        didRefreshInRun = true
+                        switch await trySilentRefresh(failedToken: attemptToken) {
+                        case .refreshed:
+                            continue
+                        case .expired:
+                            break
+                        case .transientFailure(let refreshError):
+                            lastSyncError = "Gmail 账单同步失败：\(refreshError.localizedDescription)"
+                        }
+                    } else {
+                        handleSessionExpired()
+                    }
                     break
                 }
                 lastSyncError = "Gmail 账单同步失败：\(error.localizedDescription)"
                 break
             }
         }
-        await reloadData()
+        if didSyncAnyRound, sessionEpoch == epoch, isLoggedIn {
+            await sync()
+        } else {
+            await reloadData()
+        }
     }
 
     @discardableResult
@@ -1603,47 +1733,95 @@ public final class AppState {
                     if sessionEpoch == epoch { isSyncing = false }
                 }
                 do {
-                    try await syncEngine.sync()
+                    let attemptToken = apiClient.token
+                    do {
+                        try await syncEngine.sync()
+                    } catch {
+                        guard sessionEpoch == epoch else { return }
+                        if Self.isUnauthorizedError(error) {
+                            switch await trySilentRefresh(failedToken: attemptToken) {
+                            case .refreshed:
+                                guard isLoggedIn, sessionEpoch == epoch else { return }
+                                do {
+                                    try await syncEngine.sync()
+                                } catch {
+                                    if Self.isUnauthorizedError(error) {
+                                        handleSessionExpired()
+                                    }
+                                    throw error
+                                }
+                            case .expired:
+                                throw error
+                            case .transientFailure(let refreshError):
+                                throw refreshError
+                            }
+                        } else {
+                            throw error
+                        }
+                    }
                     guard isLoggedIn, sessionEpoch == epoch else { return }
-                    try await rescheduleLocalNotifications()
+                    if let userId = currentUser?.id, !userId.isEmpty {
+                        await persistSyncOwner(userId)
+                    }
                     guard await reloadData() else {
                         throw NSError(domain: "WorldCredit.Sync", code: 1,
                                       userInfo: [NSLocalizedDescriptionKey: "同步后刷新本地数据失败"])
                     }
+                    do {
+                        try await rescheduleLocalNotifications()
+                    } catch {
+                        Self.syncLogger.error("Post-sync notification reschedule failed: \(error.localizedDescription, privacy: .public)")
+                    }
                 } catch {
                     guard sessionEpoch == epoch else { return }
-                    // 401 = access token 过期：静默续期后重跑本次 sync；失败回登录页
-                    if let nsError = error as NSError?, nsError.code == 401 {
-                        if await trySilentRefresh() {
-                            _ = await sync()
-                        }
-                        throw error
+                    if isLoggedIn {
+                        lastSyncError = error.localizedDescription
+                        await reloadData()
                     }
-                    lastSyncError = error.localizedDescription
-                    await reloadData()
                     throw error
                 }
             }
-            return sessionEpoch == epoch
+            return sessionEpoch == epoch && isLoggedIn
         } catch {
             return false
         }
+    }
+
+    /// 登录后按身份决定是否清库：同账号过期重登保留本地离线待提交队列，换号或无归属标记则 fail-closed 清空。
+    private func prepareLocalDatabaseForLogin(user: SessionUser, forceClear: Bool = false) async throws {
+        try? await accountTransitionTask?.value
+        if let syncedTask = syncCoordinator.cancelInFlight() {
+            do { try await syncedTask.value } catch {}
+        }
+
+        syncEngine.invalidateSession()
+        let savedOwner = forceClear ? nil : await loadSyncOwner()
+        if forceClear || savedOwner == nil || savedOwner != user.id {
+            Self.clearLegacyPayablesCaches()
+            accountTransitionTask = Task {
+                do { try await dbManager.clearUserData() } catch {
+                    throw LoginError.cleanupFailed(reason: error.localizedDescription)
+                }
+            }
+            do {
+                try await accountTransitionTask?.value
+                accountTransitionTask = nil
+            } catch {
+                accountTransitionTask = nil
+                apiClient.token = nil
+                throw error
+            }
+        }
+        syncEngine = SyncEngine(dbManager: dbManager, apiClient: apiClient)
+        await persistSyncOwner(user.id)
     }
 
     /// 用 Google Sign-In 取到的 ID token 完成登录，状态迁移与密码登录一致。
     /// GoogleSignIn SDK 的交互留在 LoginView，此处不引入该依赖。
     public func loginWithGoogle(idToken: String) async throws {
         advanceSession()
-        Self.clearLegacyPayablesCaches()
-        accountTransitionTask = Task {
-            do { try await dbManager.clearUserData() } catch {
-                throw LoginError.cleanupFailed(reason: error.localizedDescription)
-            }
-        }
-        try await accountTransitionTask?.value
-        accountTransitionTask = nil
-
         let user = try await apiClient.loginWithGoogle(idToken: idToken)
+        try await prepareLocalDatabaseForLogin(user: user)
         self.currentUser = user
         self.isLoggedIn = true
         await sync()
@@ -1780,33 +1958,16 @@ public final class AppState {
     @discardableResult
     public func login(email: String, password: String) async throws -> UserSession {
         advanceSession()
-        Self.clearLegacyPayablesCaches()
-        accountTransitionTask = Task {
-            do { try await dbManager.clearUserData() } catch {
-                throw LoginError.cleanupFailed(reason: error.localizedDescription)
-            }
-        }
-        try await accountTransitionTask?.value
-        accountTransitionTask = nil
-
         let user = try await apiClient.loginWithPassword(email: email, password: password)
+        try await prepareLocalDatabaseForLogin(user: user)
         self.currentUser = user
         self.isLoggedIn = true
-        let syncResult = try await sync()
+        let syncResult = await sync()
         return UserSession(user: user, syncSuccess: syncResult)
     }
 
     public func register(email: String, password: String, name: String) async throws {
         advanceSession()
-        Self.clearLegacyPayablesCaches()
-        accountTransitionTask = Task {
-            do { try await dbManager.clearUserData() } catch {
-                throw LoginError.cleanupFailed(reason: error.localizedDescription)
-            }
-        }
-        try await accountTransitionTask?.value
-        accountTransitionTask = nil
-
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let tokenResponse = try await apiClient.register(
@@ -1814,6 +1975,7 @@ public final class AppState {
             password: password,
             name: trimmedName.isEmpty ? nil : trimmedName
         )
+        try await prepareLocalDatabaseForLogin(user: tokenResponse.user, forceClear: true)
         self.currentUser = tokenResponse.user
         self.isLoggedIn = true
         await sync()

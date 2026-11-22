@@ -138,4 +138,83 @@ struct SyncRetryTests {
         #expect(pending?.retryCount == 11)
         #expect(pending?.lastError == "temporarily unavailable")
     }
+
+    @Test("pull 和 push 遇到瞬态网络超时/断连/503 自动退避重试并成功")
+    func transientTransportAnd503RetriesSucceed() async throws {
+        actor AttemptCounter {
+            var pullCalls = 0
+            var pushCalls = 0
+            func nextPull() -> Int { pullCalls += 1; return pullCalls }
+            func nextPush() -> Int { pushCalls += 1; return pushCalls }
+        }
+        let counter = AttemptCounter()
+        let session = MockNetworkSession { request in
+            if request.url?.path == "/api/sync/push" {
+                let n = await counter.nextPush()
+                if n == 1 { throw URLError(.timedOut) }
+                if n == 2 {
+                    return (Data(#"{"error":"upstream 503"}"#.utf8),
+                            HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: nil)!)
+                }
+                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+                let muts = body["mutations"] as! [[String: Any]]
+                let results = muts.map { ["id": $0["id"]!, "ok": true] }
+                return (try JSONSerialization.data(withJSONObject: ["results": results]),
+                        HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+            let n = await counter.nextPull()
+            if n == 1 { throw URLError(.networkConnectionLost) }
+            if n == 2 {
+                return (Data(#"{"error":"gateway timeout"}"#.utf8),
+                        HTTPURLResponse(url: request.url!, statusCode: 504, httpVersion: nil, headerFields: nil)!)
+            }
+            return (Data(#"{"cursor":1,"has_more":false,"changes":[],"server_time":"2026-10-23T00:00:00Z"}"#.utf8),
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+
+        let client = ApiClient(
+            baseURL: URL(string: "https://test.local")!,
+            session: session,
+            token: "session",
+            useKeychain: false,
+            retryBaseDelayNanoseconds: 0
+        )
+        let pushRes = try await client.push(clientId: "cid", mutations: [MutationPayload(id: "m1", name: "cards.updateCard", args: [])])
+        #expect(pushRes.first?.ok == true)
+        #expect(await counter.pushCalls == 3)
+
+        let pullRes = try await client.pull(cursor: 0)
+        #expect(pullRes.cursor == 1)
+        #expect(await counter.pullCalls == 3)
+    }
+
+    @Test("pull 和 push 遇到 400/401 立即失败不重试且保留服务端错误信息", arguments: [400, 401])
+    func nonRetryableHttpFastFails(status: Int) async throws {
+        actor AttemptCounter {
+            var count = 0
+            func inc() { count += 1 }
+        }
+        let counter = AttemptCounter()
+        let session = MockNetworkSession { request in
+            await counter.inc()
+            let json = #"{"error":"请求拒绝-\#(status)"}"#
+            return (Data(json.utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+        }
+        let client = ApiClient(
+            baseURL: URL(string: "https://test.local")!,
+            session: session,
+            token: "session",
+            useKeychain: false,
+            retryBaseDelayNanoseconds: 0
+        )
+        do {
+            _ = try await client.pull(cursor: 0)
+            Issue.record("Expected HTTP error")
+        } catch {
+            let nsErr = error as NSError
+            #expect(nsErr.code == status)
+            #expect(nsErr.localizedDescription == "请求拒绝-\(status)")
+        }
+        #expect(await counter.count == 1)
+    }
 }

@@ -13,7 +13,12 @@ import { join } from "node:path";
 import { setDb, setWorkerEnv } from "../db/client";
 import { createOpportunityDb, type SqliteD1 } from "./helpers/sqlite-d1";
 import { encryptToken } from "../gmail/token-crypto";
-import { syncUserGmail, syncAllGmailConnections, __setGmailSyncDeps } from "../gmail/sync.server";
+import {
+  syncUserGmail,
+  syncAllGmailConnections,
+  DEFAULT_CRON_GMAIL_MAX_MESSAGES,
+  __setGmailSyncDeps,
+} from "../gmail/sync.server";
 
 let db: SqliteD1;
 
@@ -341,5 +346,72 @@ describe("syncAllGmailConnections", () => {
     expect(src).toMatch(/import \{ syncAllGmailConnections \}/);
     const billsBranch = src.split('route === "bills"')[1]?.split("return;")[0] ?? "";
     expect(billsBranch).toContain("syncAllGmailConnections");
+  });
+
+  it("syncAllGmailConnections 默认按配额上限分批，且命中子请求上限立即早停不级联写错", async () => {
+    await seedHolderAndProduct();
+    const refs = Array.from({ length: DEFAULT_CRON_GMAIL_MAX_MESSAGES + 4 }, (_, i) => ({
+      id: `cron-msg-${i + 1}`,
+      threadId: `cron-t-${i + 1}`,
+    }));
+    const fetchedIds: string[] = [];
+    const customFetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/token")) {
+        return new Response(JSON.stringify({ access_token: "at", expires_in: 3600 }));
+      }
+      if (url.includes("/messages?")) {
+        return new Response(JSON.stringify({ messages: refs }));
+      }
+      const idMatch = url.match(/\/messages\/([^?]+)/);
+      if (idMatch) fetchedIds.push(idMatch[1]);
+      return new Response(JSON.stringify({ raw: toRawB64(RAW_EML), id: idMatch?.[1] ?? "x" }));
+    });
+    __setGmailSyncDeps({
+      parse: async () => ({ ...parseOk }),
+      fetchImpl: customFetch as unknown as typeof fetch,
+      sessionSecret: SECRET,
+      bucket: null,
+    });
+
+    const cronRes = await syncAllGmailConnections();
+    expect(cronRes).toEqual({ users: 1, failures: 0 });
+    expect(fetchedIds).toHaveLength(DEFAULT_CRON_GMAIL_MAX_MESSAGES);
+
+    // 命中 Too many subrequests 时立即早停 break，不把未跑到的剩余邮件全部标成 failed
+    let callIdx = 0;
+    const subreqFetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/token")) {
+        return new Response(JSON.stringify({ access_token: "at", expires_in: 3600 }));
+      }
+      if (url.includes("/messages?")) {
+        return new Response(
+          JSON.stringify({
+            messages: [{ id: "sub-1" }, { id: "sub-2" }, { id: "sub-3" }],
+          }),
+        );
+      }
+      callIdx += 1;
+      if (callIdx === 2) {
+        throw new Error("Too many subrequests by single Worker invocation.");
+      }
+      return new Response(JSON.stringify({ raw: toRawB64(RAW_EML), id: `sub-${callIdx}` }));
+    });
+    __setGmailSyncDeps({
+      parse: async () => ({ ...parseOk }),
+      fetchImpl: subreqFetch as unknown as typeof fetch,
+      sessionSecret: SECRET,
+      bucket: null,
+    });
+
+    const summary = await syncUserGmail("u1");
+    expect(summary.written).toBe(1);
+    expect(summary.failed).toBe(1);
+    expect(summary.remaining).toBe(1);
+    const failedRows = await db
+      .prepare("SELECT gmail_message_id FROM gmail_sync_messages WHERE status = 'failed'")
+      .all<{ gmail_message_id: string }>();
+    expect(failedRows.results.map((r) => r.gmail_message_id)).toEqual(["sub-2"]);
   });
 });

@@ -1,6 +1,9 @@
 import Foundation
 import Security
 import OSLog
+#if canImport(CoreFoundation)
+import CoreFoundation
+#endif
 
 public struct SessionUser: Codable, Sendable {
     public var id: String
@@ -222,34 +225,61 @@ public final class ApiClient: @unchecked Sendable {
     private var keychainFailure: KeychainFailure?
     private var hasExplicitToken = false
     private static let logger = Logger(subsystem: "com.chunfenshijie.worldcredit", category: "Keychain")
+    private static let syncLogger = Logger(subsystem: "com.chunfenshijie.worldcredit", category: "Sync")
 
     /// Most recent persistence failure. Contains only an operation and OSStatus, never credentials.
     public var lastKeychainFailure: KeychainFailure? { stateLock.withLock { keychainFailure } }
     public let baseURL: URL
     public let session: NetworkSession
     private var inMemoryToken: String?
+    private var inMemoryUser: SessionUser?
     private let useKeychain: Bool
+    private let retryBaseDelayNanoseconds: UInt64
     private let keychain: any TokenKeychain
 
-    public convenience init(baseURL: URL, session: NetworkSession = URLSession.shared, token: String? = nil, useKeychain: Bool = true) {
-        self.init(baseURL: baseURL, session: session, token: token, useKeychain: useKeychain, keychain: SystemTokenKeychain())
+    public convenience init(
+        baseURL: URL,
+        session: NetworkSession = URLSession.shared,
+        token: String? = nil,
+        useKeychain: Bool = true,
+        retryBaseDelayNanoseconds: UInt64 = 300_000_000
+    ) {
+        self.init(
+            baseURL: baseURL,
+            session: session,
+            token: token,
+            useKeychain: useKeychain,
+            retryBaseDelayNanoseconds: retryBaseDelayNanoseconds,
+            keychain: SystemTokenKeychain()
+        )
     }
 
-    init(baseURL: URL, session: NetworkSession = URLSession.shared, token: String? = nil,
-         useKeychain: Bool = true, keychain: any TokenKeychain) {
+    init(
+        baseURL: URL,
+        session: NetworkSession = URLSession.shared,
+        token: String? = nil,
+        useKeychain: Bool = true,
+        retryBaseDelayNanoseconds: UInt64 = 300_000_000,
+        keychain: any TokenKeychain
+    ) {
         self.baseURL = baseURL
         self.session = session
         self.inMemoryToken = token
         self.useKeychain = useKeychain
+        self.retryBaseDelayNanoseconds = retryBaseDelayNanoseconds
         self.keychain = keychain
+    }
+
+    private func currentTokenLocked() -> String? {
+        // Explicit nil is a logout tombstone, even if Keychain deletion failed.
+        if hasExplicitToken || inMemoryToken != nil { return inMemoryToken }
+        return useKeychain ? readKeychainToken() : nil
     }
 
     public var token: String? {
         get {
             stateLock.withLock {
-                // Explicit nil is a logout tombstone, even if Keychain deletion failed.
-                if hasExplicitToken || inMemoryToken != nil { return inMemoryToken }
-                return useKeychain ? readKeychainToken() : nil
+                currentTokenLocked()
             }
         }
         set {
@@ -257,9 +287,10 @@ public final class ApiClient: @unchecked Sendable {
                 hasExplicitToken = true
                 inMemoryToken = newValue
                 if newValue == nil {
-                    // 登出：内存态直接丢弃 refresh 凭据（两种模式一致），
+                    // 登出：内存态直接丢弃 refresh 凭据与用户缓存（两种模式一致），
                     // Keychain 条目仅在启用时额外清理
                     inMemoryRefreshToken = nil
+                    inMemoryUser = nil
                 }
                 guard useKeychain else { return }
                 if let newValue {
@@ -328,6 +359,7 @@ public final class ApiClient: @unchecked Sendable {
             if let refresh = tokenRes.refreshToken {
                 storeRefreshToken(refresh)
             }
+            stateLock.withLock { inMemoryUser = tokenRes.user }
             return tokenRes
         }
 
@@ -360,6 +392,7 @@ public final class ApiClient: @unchecked Sendable {
         if let refresh = tokenRes.refreshToken {
             storeRefreshToken(refresh)
         }
+        stateLock.withLock { inMemoryUser = tokenRes.user }
         return tokenRes
     }
 
@@ -381,6 +414,7 @@ public final class ApiClient: @unchecked Sendable {
         let url = baseURL.appendingPathComponent("api/sync/pull")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
+        req.timeoutInterval = 30
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         var body: [String: Any] = ["cursor": cursor, "limit": limit]
@@ -389,12 +423,18 @@ public final class ApiClient: @unchecked Sendable {
         }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await session.data(for: req)
-        guard let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 else {
-            throw NSError(domain: "ApiClient", code: (response as? HTTPURLResponse)?.statusCode ?? 500, userInfo: [NSLocalizedDescriptionKey: "拉取失败"])
+        let data = try await performIdempotentSyncRequest(req, operation: "pull")
+        do {
+            return try JSONDecoder().decode(PullResponse.self, from: data)
+        } catch {
+            Self.syncLogger.error("Sync pull decode failed (cursor=\(cursor, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+            throw error
         }
+    }
 
-        return try JSONDecoder().decode(PullResponse.self, from: data)
+    private struct PushRequestBody: Encodable {
+        let client_id: String
+        let mutations: [MutationPayload]
     }
 
     public func push(clientId: String, mutations: [MutationPayload]) async throws -> [MutationPushResult] {
@@ -404,28 +444,83 @@ public final class ApiClient: @unchecked Sendable {
         let url = baseURL.appendingPathComponent("api/sync/push")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
+        req.timeoutInterval = 30
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.httpBody = try JSONEncoder().encode(PushRequestBody(client_id: clientId, mutations: mutations))
 
-        let bodyObj: [String: Any] = [
-            "client_id": clientId,
-            "mutations": mutations.map { mut in
-                [
-                    "id": mut.id,
-                    "name": mut.name,
-                    "args": mut.args.map { $0.value },
-                ]
-            },
-        ]
-        req.httpBody = try JSONSerialization.data(withJSONObject: bodyObj)
-
-        let (data, response) = try await session.data(for: req)
-        guard let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 else {
-            throw NSError(domain: "ApiClient", code: (response as? HTTPURLResponse)?.statusCode ?? 500, userInfo: [NSLocalizedDescriptionKey: "提交失败"])
+        let data = try await performIdempotentSyncRequest(req, operation: "push")
+        do {
+            let pushRes = try JSONDecoder().decode(PushResponse.self, from: data)
+            return pushRes.results
+        } catch {
+            Self.syncLogger.error("Sync push decode failed (count=\(mutations.count, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+            throw error
         }
+    }
 
-        let pushRes = try JSONDecoder().decode(PushResponse.self, from: data)
-        return pushRes.results
+    private func performIdempotentSyncRequest(
+        _ request: URLRequest,
+        operation: String,
+        maxAttempts: Int = 3
+    ) async throws -> Data {
+        let transientHTTPStatuses: Set<Int> = [502, 503, 504]
+        let transientURLErrorCodes: Set<URLError.Code> = [
+            .timedOut,
+            .networkConnectionLost,
+            .cannotConnectToHost,
+            .cannotFindHost,
+            .dnsLookupFailed,
+        ]
+        let fallbackMessage = operation == "push" ? "提交失败" : "拉取失败"
+
+        var attempt = 0
+        while true {
+            attempt += 1
+            try Task.checkCancellation()
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let httpRes = response as? HTTPURLResponse else {
+                    throw URLError(.badServerResponse)
+                }
+                if httpRes.statusCode == 200 {
+                    return data
+                }
+                let envelope = try? JSONDecoder().decode(RPCErrorEnvelope.self, from: data)
+                let serverMsg = envelope?.error?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let message = (serverMsg?.isEmpty == false) ? serverMsg! : "\(fallbackMessage) (\(httpRes.statusCode))"
+                Self.syncLogger.error("Sync \(operation, privacy: .public) HTTP error: status=\(httpRes.statusCode, privacy: .public) attempt=\(attempt, privacy: .public)")
+
+                if transientHTTPStatuses.contains(httpRes.statusCode), attempt < maxAttempts {
+                    try await sleepBeforeRetry(attempt: attempt)
+                    continue
+                }
+                throw NSError(
+                    domain: "ApiClient",
+                    code: httpRes.statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: message]
+                )
+            } catch let urlError as URLError {
+                if urlError.code == .cancelled {
+                    throw urlError
+                }
+                Self.syncLogger.error("Sync \(operation, privacy: .public) network error: code=\(urlError.code.rawValue, privacy: .public) attempt=\(attempt, privacy: .public)")
+                if transientURLErrorCodes.contains(urlError.code), attempt < maxAttempts {
+                    try await sleepBeforeRetry(attempt: attempt)
+                    continue
+                }
+                throw urlError
+            }
+        }
+    }
+
+    private func sleepBeforeRetry(attempt: Int) async throws {
+        try Task.checkCancellation()
+        guard retryBaseDelayNanoseconds > 0 else { return }
+        let factor = UInt64(1 << min(attempt - 1, 4))
+        let base = retryBaseDelayNanoseconds * factor
+        let jitter = UInt64.random(in: 0...(base / 4))
+        try await Task.sleep(nanoseconds: base + jitter)
     }
 
     // MARK: - Authenticated reads and generic RPC
@@ -439,6 +534,7 @@ public final class ApiClient: @unchecked Sendable {
         guard let user = try JSONDecoder().decode(Envelope.self, from: data).user else {
             throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
         }
+        stateLock.withLock { inMemoryUser = user }
         return user
     }
 
@@ -781,8 +877,7 @@ public final class ApiClient: @unchecked Sendable {
 
     private func encodeToAnyCodable<T: Encodable>(_ value: T) throws -> AnyCodable {
         let data = try JSONEncoder().encode(value)
-        let object = try JSONSerialization.jsonObject(with: data)
-        return AnyCodable(object)
+        return try JSONDecoder().decode(AnyCodable.self, from: data)
     }
 
     private func authenticatedRequest(path: String, method: String, timeoutInterval: TimeInterval = 20) throws -> URLRequest {
@@ -1021,47 +1116,90 @@ public final class ApiClient: @unchecked Sendable {
     private var refreshTask: Task<SessionUser, Error>?
     private var inMemoryRefreshToken: String?
 
-    public func refreshSession() async throws -> SessionUser {
-        let existing: Task<SessionUser, Error>? = refreshStateLock.withLock { refreshTask }
-        if let existing {
-            return try await existing.value
-        }
-        let task = Task<SessionUser, Error> { [self] in
-            defer { refreshStateLock.withLock { refreshTask = nil } }
-            guard let current = refreshToken else {
-                throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
+    public func refreshSession(failedToken: String? = nil) async throws -> SessionUser {
+        if let failedToken {
+            let cached: SessionUser? = stateLock.withLock {
+                guard let active = currentTokenLocked(), !active.isEmpty, active != failedToken else {
+                    return nil
+                }
+                return inMemoryUser
             }
-            let url = baseURL.appendingPathComponent("api/auth/refresh")
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.timeoutInterval = 20
-            req.httpBody = try JSONSerialization.data(withJSONObject: ["refresh_token": current])
+            if let cached {
+                return cached
+            }
+        }
+        enum RefreshJoin {
+            case existing(Task<SessionUser, Error>)
+            case created(Task<SessionUser, Error>)
+        }
+        let join: RefreshJoin = refreshStateLock.withLock {
+            if let existing = refreshTask {
+                return .existing(existing)
+            }
+            let task = Task<SessionUser, Error> { [self] in
+                defer { refreshStateLock.withLock { refreshTask = nil } }
+                if let failedToken {
+                    let cached: SessionUser? = stateLock.withLock {
+                        guard let active = currentTokenLocked(), !active.isEmpty, active != failedToken else {
+                            return nil
+                        }
+                        return inMemoryUser
+                    }
+                    if let cached {
+                        return cached
+                    }
+                }
+                guard let current = refreshToken else {
+                    throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
+                }
+                let url = baseURL.appendingPathComponent("api/auth/refresh")
+                var req = URLRequest(url: url)
+                req.httpMethod = "POST"
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                req.timeoutInterval = 20
+                req.httpBody = try JSONSerialization.data(withJSONObject: ["refresh_token": current])
 
-            let (data, response) = try await session.data(for: req)
-            guard let httpRes = response as? HTTPURLResponse else {
-                throw URLError(.badServerResponse)
+                let (data, response) = try await session.data(for: req)
+                guard let httpRes = response as? HTTPURLResponse else {
+                    throw URLError(.badServerResponse)
+                }
+                if httpRes.statusCode == 200 {
+                    let tokenRes = try JSONDecoder().decode(TokenResponse.self, from: data)
+                    self.token = tokenRes.token
+                    if let newRefresh = tokenRes.refreshToken {
+                        storeRefreshToken(newRefresh)
+                    }
+                    stateLock.withLock { inMemoryUser = tokenRes.user }
+                    Self.syncLogger.info("Session refreshed silently")
+                    return tokenRes.user
+                }
+                let envelope = try? JSONDecoder().decode(RPCErrorEnvelope.self, from: data)
+                if httpRes.statusCode == 400 || httpRes.statusCode == 401 || httpRes.statusCode == 403 {
+                    // 明确凭据无效/过期/被吊销：清理两套凭据，抛 401 由调用方回登录页
+                    Self.syncLogger.error("Session refresh rejected with status \(httpRes.statusCode, privacy: .public)")
+                    storeRefreshToken(nil)
+                    self.token = nil
+                    throw NSError(
+                        domain: "ApiClient",
+                        code: 401,
+                        userInfo: [NSLocalizedDescriptionKey: envelope?.error ?? "登录已过期"]
+                    )
+                }
+                // 429 / 5xx 等瞬态异常不得清空有效凭据，保留待后续重试
+                Self.syncLogger.error("Session refresh transient failure status \(httpRes.statusCode, privacy: .public)")
+                throw NSError(
+                    domain: "ApiClient",
+                    code: httpRes.statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: envelope?.error ?? "刷新会话失败 (\(httpRes.statusCode))"]
+                )
             }
-            guard httpRes.statusCode == 200 else {
-                // refresh token 失效：彻底登出（清两套凭据），抛 401 由调用方回登录页
-                storeRefreshToken(nil)
-                self.token = nil
-                throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "登录已过期"])
-            }
-            let tokenRes = try JSONDecoder().decode(TokenResponse.self, from: data)
-            self.token = tokenRes.token
-            if let newRefresh = tokenRes.refreshToken {
-                storeRefreshToken(newRefresh)
-            }
-            return tokenRes.user
-        }
-        let stored: Task<SessionUser, Error>? = refreshStateLock.withLock {
-            if let existing = refreshTask { return existing }
             refreshTask = task
-            return nil
+            return .created(task)
         }
-        if let stored { return try await stored.value }
-        return try await task.value
+        switch join {
+        case .existing(let task), .created(let task):
+            return try await task.value
+        }
     }
 
     /// Called only while stateLock is held. Preserve failures until a later successful persistence operation.
@@ -1113,20 +1251,49 @@ public struct AnyCodable: Codable, @unchecked Sendable {
         switch value {
         case is NSNull:
             try container.encodeNil()
-        case let bool as Bool:
+        case let nested as AnyCodable:
+            try nested.encode(to: encoder)
+        case let bool as Bool where type(of: value) == Bool.self:
             try container.encode(bool)
-        case let int as Int:
+        case let int as Int where type(of: value) == Int.self:
             try container.encode(int)
-        case let double as Double:
+        case let int64 as Int64 where type(of: value) == Int64.self:
+            try container.encode(int64)
+        case let double as Double where type(of: value) == Double.self:
             try container.encode(double)
-        case let string as String:
-            try container.encode(string)
-        case let array as [Any]:
-            try container.encode(array.map { AnyCodable($0) })
-        case let dict as [String: Any]:
-            try container.encode(dict.mapValues { AnyCodable($0) })
         default:
-            throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: container.codingPath, debugDescription: "AnyCodable value cannot be encoded"))
+            #if canImport(CoreFoundation)
+            if let number = value as? NSNumber {
+                if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                    try container.encode(number.boolValue)
+                    return
+                }
+                if CFNumberIsFloatType(number) {
+                    try container.encode(number.doubleValue)
+                    return
+                }
+                try container.encode(number.int64Value)
+                return
+            }
+            #endif
+            switch value {
+            case let bool as Bool:
+                try container.encode(bool)
+            case let int as Int:
+                try container.encode(int)
+            case let int64 as Int64:
+                try container.encode(int64)
+            case let double as Double:
+                try container.encode(double)
+            case let string as String:
+                try container.encode(string)
+            case let array as [Any]:
+                try container.encode(array.map { AnyCodable($0) })
+            case let dict as [String: Any]:
+                try container.encode(dict.mapValues { AnyCodable($0) })
+            default:
+                throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: container.codingPath, debugDescription: "AnyCodable value cannot be encoded"))
+            }
         }
     }
 }

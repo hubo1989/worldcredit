@@ -112,11 +112,14 @@ export async function revokeRefreshToken(token: string): Promise<void> {
   if (!token) return;
   const hash = await hashToken(token);
   const db = getDb();
+  // 先写入墓碑（趁行还在能查出 user_id），再删除在用 token；顺序反了 SELECT 恒为空。
   await db.batch([
-    db.prepare("DELETE FROM session_refresh_tokens WHERE token_hash = ?").bind(hash),
     db
-      .prepare("INSERT OR REPLACE INTO session_refresh_tombstones (token_hash, user_id, revoked_at) SELECT ?, user_id, ? FROM session_refresh_tokens WHERE token_hash = ?")
+      .prepare(
+        "INSERT OR REPLACE INTO session_refresh_tombstones (token_hash, user_id, revoked_at) SELECT ?, user_id, ? FROM session_refresh_tokens WHERE token_hash = ?",
+      )
       .bind(hash, new Date().toISOString(), hash),
+    db.prepare("DELETE FROM session_refresh_tokens WHERE token_hash = ?").bind(hash),
   ]);
 }
 

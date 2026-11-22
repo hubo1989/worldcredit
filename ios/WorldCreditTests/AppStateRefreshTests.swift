@@ -327,4 +327,216 @@ final class AppStateRefreshTests: XCTestCase {
         XCTAssertEqual(counts.3, 0)
         XCTAssertEqual(counts.4, 0)
     }
+
+    private actor SyncTestNetwork: NetworkSession {
+        var activeUserId = "old-user"
+        var validAccessToken = "token-1"
+        var refreshMode: String = "ok" // ok | fail503 | timeout | fail401
+        var pushCalls = 0
+        var pushedMutationNames: [String] = []
+        var failLogin = false
+
+        func setValidAccessToken(_ token: String) { validAccessToken = token }
+        func setRefreshMode(_ mode: String) { refreshMode = mode }
+        func setFailLogin(_ flag: Bool) { failLogin = flag }
+        func setActiveUser(_ userId: String, token: String) {
+            activeUserId = userId
+            validAccessToken = token
+        }
+
+        func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+            let url = try XCTUnwrap(request.url)
+            let path = url.path
+            func resp(_ status: Int, _ json: String) -> (Data, URLResponse) {
+                (Data(json.utf8), HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)!)
+            }
+
+            if path == "/api/auth/token" {
+                if failLogin {
+                    return resp(401, #"{"error":"邮箱或密码错误"}"#)
+                }
+                return resp(200, #"{"token":"\#(validAccessToken)","token_type":"Bearer","expires_in":604800,"user":{"id":"\#(activeUserId)","email":"\#(activeUserId)@example.test","name":"User","role":"member","created_at":"2026-01-01T00:00:00Z"},"refresh_token":"refresh-1"}"#)
+            }
+
+            if path == "/api/auth/refresh" {
+                switch refreshMode {
+                case "fail503":
+                    return resp(503, #"{"error":"服务暂时不可用"}"#)
+                case "timeout":
+                    throw URLError(.timedOut)
+                case "fail401":
+                    return resp(401, #"{"error":"refresh token 无效或已过期"}"#)
+                default:
+                    validAccessToken = "token-2"
+                    return resp(200, #"{"token":"token-2","token_type":"Bearer","expires_in":604800,"user":{"id":"\#(activeUserId)","email":"\#(activeUserId)@example.test","name":"User","role":"member","created_at":"2026-01-01T00:00:00Z"},"refresh_token":"refresh-2"}"#)
+                }
+            }
+
+            guard request.value(forHTTPHeaderField: "Authorization") == "Bearer \(validAccessToken)" else {
+                return resp(401, #"{"error":"未登录"}"#)
+            }
+
+            if path == "/api/sync/push" {
+                pushCalls += 1
+                let body = (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]) ?? [:]
+                let mutations = (body["mutations"] as? [[String: Any]]) ?? []
+                for m in mutations {
+                    if let name = m["name"] as? String { pushedMutationNames.append(name) }
+                }
+                let results = mutations.map { ["id": $0["id"] ?? "", "ok": true] }
+                let data = try JSONSerialization.data(withJSONObject: ["results": results])
+                return (data, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+
+            if path == "/api/sync/pull" {
+                return resp(200, #"{"cursor":10,"has_more":false,"changes":[],"server_time":"2026-11-21T00:00:00Z"}"#)
+            }
+
+            return resp(404, #"{"error":"not found"}"#)
+        }
+    }
+
+    func testSync401SilentRefreshRetriesInPlaceWithoutDeadlock() async throws {
+        let db = try DatabaseManager.inMemory()
+        let network = SyncTestNetwork()
+        let client = ApiClient(
+            baseURL: URL(string: "https://unit-tests.invalid")!,
+            session: network,
+            useKeychain: false,
+            retryBaseDelayNanoseconds: 0
+        )
+        let state = AppState(
+            dbManager: db,
+            apiClient: client,
+            sendWatchSnapshot: { _ in },
+            clearUserData: { try await db.clearUserData() }
+        )
+        _ = try await state.login(email: "old-user@example.test", password: "pw")
+        XCTAssertEqual(state.apiClient.token, "token-1")
+
+        // 服务端使旧 token-1 失效，要求静默续期换取 token-2
+        await network.setValidAccessToken("server-rotated-secret")
+        let synced = await state.sync()
+        XCTAssertTrue(synced)
+        XCTAssertTrue(state.isLoggedIn)
+        XCTAssertFalse(state.isSyncing)
+        XCTAssertNil(state.lastSyncError)
+        XCTAssertEqual(state.apiClient.token, "token-2")
+        XCTAssertEqual(state.apiClient.refreshToken, "refresh-2")
+    }
+
+    func testSync401TransientRefreshFailurePreservesSession() async throws {
+        let db = try DatabaseManager.inMemory()
+        let network = SyncTestNetwork()
+        let client = ApiClient(
+            baseURL: URL(string: "https://unit-tests.invalid")!,
+            session: network,
+            useKeychain: false,
+            retryBaseDelayNanoseconds: 0
+        )
+        let state = AppState(
+            dbManager: db,
+            apiClient: client,
+            sendWatchSnapshot: { _ in },
+            clearUserData: { try await db.clearUserData() }
+        )
+        _ = try await state.login(email: "old-user@example.test", password: "pw")
+
+        // 访问受保护端点返回 401，但 /api/auth/refresh 遇到 503 瞬态故障
+        await network.setValidAccessToken("server-needs-refresh")
+        await network.setRefreshMode("fail503")
+        let firstAttempt = await state.sync()
+        XCTAssertFalse(firstAttempt)
+        XCTAssertTrue(state.isLoggedIn, "瞬态刷新失败不得把用户踢回登录页")
+        XCTAssertFalse(state.isSyncing)
+        XCTAssertNotNil(state.lastSyncError)
+        XCTAssertEqual(state.apiClient.token, "token-1")
+        XCTAssertEqual(state.apiClient.refreshToken, "refresh-1")
+
+        // 弱网超时同样不得清空会话
+        await network.setRefreshMode("timeout")
+        let timeoutAttempt = await state.sync()
+        XCTAssertFalse(timeoutAttempt)
+        XCTAssertTrue(state.isLoggedIn)
+        XCTAssertEqual(state.apiClient.refreshToken, "refresh-1")
+
+        // 恢复网络后再次 sync 成功续期并清错
+        await network.setRefreshMode("ok")
+        let recovered = await state.sync()
+        XCTAssertTrue(recovered)
+        XCTAssertTrue(state.isLoggedIn)
+        XCTAssertNil(state.lastSyncError)
+        XCTAssertEqual(state.apiClient.token, "token-2")
+    }
+
+    func testReLoginSameUserPreservesOfflineOutboxWhileDifferentUserClearsDatabase() async throws {
+        let db = try DatabaseManager.inMemory()
+        let network = SyncTestNetwork()
+        let client = ApiClient(
+            baseURL: URL(string: "https://unit-tests.invalid")!,
+            session: network,
+            token: "expired-no-refresh",
+            useKeychain: false,
+            retryBaseDelayNanoseconds: 0
+        )
+        try await db.dbWriter.write { db in
+            try db.execute(sql: """
+                INSERT INTO banks (id, name) VALUES ('bank', '测试银行');
+                INSERT INTO card_products (id, bank_id, bank_name, card_name, currency, payment_due_type, payment_due_value)
+                VALUES ('product', 'bank', '测试银行', '测试卡', 'CNY', 'fixed', 25);
+                INSERT INTO card_holders (id, created_by, managed_by, name, created_at)
+                VALUES ('holder', 'old-user', 'old-user', '测试持卡人', '2026-01-01');
+                INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day, credit_limit)
+                VALUES ('card', 'holder', 'product', 10, 10000);
+                INSERT INTO bills (id, card_id, bill_month, bill_amount, due_date, status)
+                VALUES ('bill', 'card', '2026-10', 100, '2026-10-30', 'unpaid');
+                INSERT INTO sync_meta (key, value) VALUES ('sync_owner_user_id', 'old-user');
+                """)
+        }
+        let state = AppState(
+            dbManager: db,
+            apiClient: client,
+            sendWatchSnapshot: { _ in },
+            clearUserData: { try await db.clearUserData() }
+        )
+        state.isLoggedIn = true
+        state.currentUser = SessionUser(id: "old-user", email: "old-user@example.test")
+
+        // 离线登记一笔还款，然后触发 401 会话过期（无 refresh_token -> 回登录页）
+        try await state.paymentService.recordPayment(billId: "bill", amount: 50)
+        await state.refreshPayables()
+        XCTAssertFalse(state.isLoggedIn)
+
+        // 密码错误时不得清空本地离线队列
+        await network.setFailLogin(true)
+        do {
+            _ = try await state.login(email: "old-user@example.test", password: "wrong")
+            XCTFail("Expected login error")
+        } catch {}
+        let pendingAfterFailedLogin = try await db.dbWriter.read { try MutationOutbox.fetchCount($0) }
+        XCTAssertEqual(pendingAfterFailedLogin, 1)
+
+        // 同账号重新登录：保留离线 outbox 并自动推送到服务端
+        await network.setFailLogin(false)
+        let sessionA = try await state.login(email: "old-user@example.test", password: "pw")
+        XCTAssertTrue(sessionA.syncSuccess)
+        XCTAssertNil(state.lastSyncError)
+        let pendingAfterSameUserLogin = try await db.dbWriter.read { try MutationOutbox.fetchCount($0) }
+        XCTAssertEqual(pendingAfterSameUserLogin, 0)
+        let pushedNames = await network.pushedMutationNames
+        XCTAssertEqual(pushedNames, ["bills.recordPayment"])
+
+        // 切换不同账号登录：必须先清空前账号本地库，防止跨账号数据泄漏
+        try await state.paymentService.recordPayment(billId: "bill", amount: 20)
+        await network.setActiveUser("other-user", token: "other-token")
+        let sessionB = try await state.login(email: "other-user@example.test", password: "pw")
+        XCTAssertTrue(sessionB.syncSuccess)
+        XCTAssertNil(state.lastSyncError)
+        let remainingBills = try await db.dbWriter.read { try Bill.fetchCount($0) }
+        let remainingOutbox = try await db.dbWriter.read { try MutationOutbox.fetchCount($0) }
+        let ownerMeta = try await db.dbWriter.read { try SyncMeta.fetchOne($0, key: "sync_owner_user_id")?.value }
+        XCTAssertEqual(remainingBills, 0)
+        XCTAssertEqual(remainingOutbox, 0)
+        XCTAssertEqual(ownerMeta, "other-user")
+    }
 }

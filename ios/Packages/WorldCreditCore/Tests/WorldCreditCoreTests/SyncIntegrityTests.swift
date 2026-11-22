@@ -711,4 +711,204 @@ struct SyncIntegrityTests {
             #expect(targets.allSatisfy { !$0.rowId.isEmpty && $0.tbl != "notification_history" })
         }
     }
+
+    @Test("AnyCodable preserves 0/1 numeric types instead of Darwin Bool bridging and createBill sends numeric zero")
+    func anyCodablePreservesNumericZeroAndOne() async throws {
+        let jsonData = Data(#"{"zero":0,"one":1,"flag":true,"falseFlag":false,"floatZero":0.0}"#.utf8)
+        let nsDict = try #require(JSONSerialization.jsonObject(with: jsonData) as? [String: Any])
+        let encoded = try JSONEncoder().encode(AnyCodable(nsDict))
+        let encodedText = String(decoding: encoded, as: UTF8.self)
+        #expect(encodedText.contains(#""zero":0"#))
+        #expect(encodedText.contains(#""one":1"#))
+        #expect(encodedText.contains(#""flag":true"#))
+        #expect(encodedText.contains(#""falseFlag":false"#))
+
+        let session = MockNetworkSession { request in
+            let bodyText = String(decoding: request.httpBody ?? Data(), as: UTF8.self)
+            #expect(bodyText.contains(#""bill_amount":0"#))
+            #expect(bodyText.contains(#""min_payment":0"#))
+            #expect(!bodyText.contains(#""bill_amount":false"#))
+            let billJson = #"{"data":{"id":"bill-zero","card_id":"c1","bill_month":"2026-11","bill_amount":0,"min_payment":0,"due_date":"2026-11-25","status":"unpaid","created_at":"2026-11-01T00:00:00Z"}}"#
+            return (Data(billJson.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let client = ApiClient(baseURL: URL(string: "https://sync.example.test")!, session: session, token: "t", useKeychain: false)
+        let bill = try await client.createBill(cardId: "c1", billMonth: "2026-11", dueDate: "2026-11-25", billAmount: 0, minPayment: 0)
+        #expect(bill.billAmount == 0)
+    }
+
+    @Test("Cross-page FK dependencies defer via sync_reconcile_targets and survive restart without isolating rows")
+    func crossPageForeignKeyDefersAndRecovers() async throws {
+        let manager = try DatabaseManager.inMemory()
+        try await manager.dbWriter.write { db in
+            try db.execute(sql: """
+                INSERT INTO banks (id,name) VALUES ('b1','招商银行');
+                INSERT INTO card_products (id,bank_id,bank_name,card_name,payment_due_type,payment_due_value)
+                VALUES ('p1','b1','招商银行','经典白','after_billing',20);
+                INSERT INTO card_holders (id,created_by,managed_by,name) VALUES ('h1','u1','u1','持卡人');
+                """)
+        }
+
+        // Page 1: has_more=true，仅返回子表 bills（其父卡 c-late 在第 2 页）
+        var billChange = try fixtureChange(table: "bills")
+        billChange["row_id"] = "bill-late"
+        var billRow = try #require(billChange["row"] as? [String: Any])
+        billRow["id"] = "bill-late"
+        billRow["card_id"] = "c-late"
+        billRow["bill_month"] = "2026-11"
+        billChange["row"] = billRow
+
+        let page1 = try JSONSerialization.data(withJSONObject: [
+            "cursor": 500,
+            "has_more": true,
+            "changes": [billChange],
+            "server_time": "2026-11-21T00:00:00Z",
+        ])
+
+        // 模拟第 1 页落盘后在拉第 2 页时断网崩溃重启
+        let firstEngine = engine(manager) { request in
+            let body = try #require(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
+            if (body["cursor"] as? Int) == 0 { return page1 }
+            throw URLError(.notConnectedToInternet)
+        }
+        await #expect(throws: URLError.self) { try await firstEngine.pull() }
+
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "500")
+            #expect(try SyncMeta.fetchOne(db, key: "sync_isolated_changes") == nil)
+            let targetsRaw = try SyncMeta.fetchOne(db, key: "sync_reconcile_targets")?.value ?? ""
+            #expect(targetsRaw.contains("bill-late"))
+        }
+
+        // 第 2 次启动：服务端第 2 页携带 c-late，同时响应 reconcile 返回 bill-late
+        var cardChange = try fixtureChange(table: "credit_cards")
+        cardChange["row_id"] = "c-late"
+        var cardRow = try #require(cardChange["row"] as? [String: Any])
+        cardRow["id"] = "c-late"
+        cardRow["holder_id"] = "h1"
+        cardRow["card_product_id"] = "p1"
+        cardChange["row"] = cardRow
+
+        let page2 = try JSONSerialization.data(withJSONObject: [
+            "cursor": 510,
+            "has_more": false,
+            "changes": [billChange, cardChange],
+            "server_time": "2026-11-21T00:01:00Z",
+        ])
+
+        let secondEngine = engine(manager) { request in
+            let body = try #require(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
+            let reconcile = body["reconcile"] as? [[String: String]] ?? []
+            #expect(reconcile.contains(["tbl": "bills", "row_id": "bill-late"]))
+            return page2
+        }
+        try await secondEngine.pull()
+
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            #expect(try CreditCard.fetchOne(db, id: "c-late") != nil)
+            #expect(try Bill.fetchOne(db, id: "bill-late")?.cardId == "c-late")
+            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "510")
+            #expect(try SyncMeta.fetchOne(db, key: "sync_isolated_changes") == nil)
+            #expect(try SyncMeta.fetchOne(db, key: "sync_reconcile_targets")?.value == "[]")
+        }
+
+        // True orphan FK on the final page (has_more=false) must be isolated without looping
+        var orphanBill = billChange
+        orphanBill["row_id"] = "bill-true-orphan"
+        var orphanRow = billRow
+        orphanRow["id"] = "bill-true-orphan"
+        orphanRow["card_id"] = "nonexistent-card"
+        orphanBill["row"] = orphanRow
+        let orphanPage = try responseData(changes: [orphanBill], cursor: 511)
+        try await engine(manager) { _ in orphanPage }.pull()
+
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            #expect(try Bill.fetchOne(db, id: "bill-true-orphan") == nil)
+            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "511")
+            let isolated = try SyncMeta.fetchOne(db, key: "sync_isolated_changes")?.value ?? ""
+            #expect(isolated.contains("bill-true-orphan"))
+            #expect(try SyncMeta.fetchOne(db, key: "sync_reconcile_targets")?.value == "[]")
+        }
+    }
+
+    @Test("Natural unique key conflict and Payment defensive decoding recover cleanly")
+    func uniqueConflictAndPaymentDefensiveDecode() async throws {
+        let manager = try database()
+        // 本地占用 (cardID, '2026-11') 的旧账单 id
+        try await manager.dbWriter.write { db in
+            try Bill(
+                id: "stale-local-bill",
+                cardId: cardID,
+                billMonth: "2026-11",
+                billAmount: 500,
+                dueDate: "2026-11-25"
+            ).insert(db)
+        }
+        var billChange = try fixtureChange(table: "bills")
+        billChange["row_id"] = "server-authoritative-bill"
+        var billRow = try #require(billChange["row"] as? [String: Any])
+        billRow["id"] = "server-authoritative-bill"
+        billRow["card_id"] = cardID
+        billRow["bill_month"] = "2026-11"
+        billRow["bill_amount"] = 1888.0
+        billChange["row"] = billRow
+
+        // 缺少 idempotency_key 和 created_at 的 payment 行也应防御性解码成功
+        let paymentChange: [String: Any] = [
+            "tbl": "payments",
+            "row_id": "pay-missing-optional",
+            "op": "upsert",
+            "row": [
+                "id": "pay-missing-optional",
+                "bill_id": "server-authoritative-bill",
+                "amount": 888.0,
+                "paid_at": "2026-11-10",
+            ],
+        ]
+
+        let data = try responseData(changes: [billChange, paymentChange], cursor: 20)
+        try await engine(manager) { _ in data }.pull()
+
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            #expect(try Bill.fetchOne(db, id: "stale-local-bill") == nil)
+            let bill = try Bill.fetchOne(db, id: "server-authoritative-bill")
+            #expect(bill?.billAmount == 1888.0)
+            let payment = try Payment.fetchOne(db, id: "pay-missing-optional")
+            #expect(payment?.idempotencyKey == "pay-missing-optional")
+            #expect(try SyncMeta.fetchOne(db, key: "sync_isolated_changes") == nil)
+            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "20")
+        }
+    }
+
+    @Test("SyncEngine.sync drains concurrent local mutation queued mid-pull instead of failing")
+    func syncDrainsConcurrentEditDuringPull() async throws {
+        let manager = try database()
+        actor Flag {
+            var didEdit = false
+            func markEdited() -> Bool {
+                if didEdit { return false }
+                didEdit = true
+                return true
+            }
+        }
+        let flag = Flag()
+        let syncEngine = engine(manager) { request in
+            if request.url?.path == "/api/sync/push" {
+                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+                let muts = body["mutations"] as! [[String: Any]]
+                let results = muts.map { ["id": $0["id"]!, "ok": true] }
+                return try JSONSerialization.data(withJSONObject: ["results": results])
+            }
+            if await flag.markEdited() {
+                // 首次 pull 返回前模拟用户在本地修改卡片额度
+                try await self.edit("card", in: manager)
+            }
+            return try self.responseData(changes: [], cursor: 8)
+        }
+
+        try await syncEngine.sync()
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            #expect(try MutationOutbox.fetchCount(db) == 0)
+            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "8")
+        }
+    }
 }

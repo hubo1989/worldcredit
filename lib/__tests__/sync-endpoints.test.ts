@@ -324,4 +324,102 @@ describe("End-to-end /api/sync/pull & /api/sync/push", () => {
     const payChange = pullData2.changes.find((c) => c.tbl === "payments");
     expect(payChange?.row?.id).toBe("pay_from_ios");
   });
+
+  it("reclaims a stale NULL lock row atomically and isolates unexpected per-mutation errors", async () => {
+    // 1. 插入超过 5 分钟未完成的陈旧锁（模拟前一次 Worker 崩溃遗留），格式为 SQLite datetime('now')
+    db.exec(`
+      INSERT INTO sync_mutations (user_id, client_id, mutation_id, result, processed_at)
+      VALUES ('u_sync_test', 'ios_stale_client', 'stale_mut_1', NULL, datetime('now', '-10 minutes'));
+    `);
+
+    const staleReq = () =>
+      new Request("https://app.all-bill.com/api/sync/push", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          client_id: "ios_stale_client",
+          mutations: [
+            {
+              id: "stale_mut_1",
+              name: "bills.setBillAmountOverride",
+              args: ["bill_1", 1234],
+            },
+          ],
+        }),
+      });
+
+    // 两个并发重放请求同时到来：原子 CAS 确保恰好一个回收成功并执行，不报“未知错误”
+    const [r1, r2] = await Promise.all([pushHandler(staleReq()), pushHandler(staleReq())]);
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    const b1 = (await r1.json()) as { results: Array<{ ok: boolean; error?: string }> };
+    const b2 = (await r2.json()) as { results: Array<{ ok: boolean; error?: string }> };
+    expect(b1.results[0].ok).toBe(true);
+    expect(b2.results[0].ok).toBe(true);
+    expect(
+      db.raw.prepare("SELECT bill_amount_override FROM bills WHERE id = 'bill_1'").get(),
+    ).toEqual({ bill_amount_override: 1234 });
+
+    // 2. 批内第 2 条写回 receipt 抛异常时：第 1 条已成功的结果保留返回，第 2 条隔离为可重试错误并释放锁
+    const originalPrepare = db.prepare.bind(db);
+    let receiptUpdates = 0;
+    db.prepare = (sql: string) => {
+      const stmt = originalPrepare(sql);
+      if (sql.startsWith("UPDATE sync_mutations SET result = ?")) {
+        const origBind = stmt.bind.bind(stmt);
+        stmt.bind = (...values: unknown[]) => {
+          const bound = origBind(...values);
+          const origRun = bound.run.bind(bound);
+          bound.run = async () => {
+            receiptUpdates += 1;
+            if (receiptUpdates === 2) {
+              throw new Error("D1 receipt update transient error");
+            }
+            return origRun();
+          };
+          return bound;
+        };
+      }
+      return stmt;
+    };
+
+    try {
+      const batchRes = await pushHandler(
+        new Request("https://app.all-bill.com/api/sync/push", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            client_id: "ios_stale_client",
+            mutations: [
+              { id: "batch_ok_1", name: "bills.setBillAmountOverride", args: ["bill_1", 1500] },
+              { id: "batch_fail_2", name: "bills.setBillAmountOverride", args: ["bill_1", 1600] },
+            ],
+          }),
+        }),
+      );
+      expect(batchRes.status).toBe(200);
+      const batchBody = (await batchRes.json()) as {
+        results: Array<{ id: string; ok: boolean; permanent?: boolean; error?: string }>;
+      };
+      expect(batchBody.results).toEqual([
+        expect.objectContaining({ id: "batch_ok_1", ok: true }),
+        expect.objectContaining({
+          id: "batch_fail_2",
+          ok: false,
+          permanent: false,
+          error: "服务暂时不可用，请稍后重试",
+        }),
+      ]);
+      // 失败条目未留下 result IS NULL 的死锁行
+      expect(
+        db.raw
+          .prepare(
+            "SELECT COUNT(*) AS n FROM sync_mutations WHERE mutation_id = 'batch_fail_2' AND result IS NULL",
+          )
+          .get(),
+      ).toEqual({ n: 0 });
+    } finally {
+      db.prepare = originalPrepare;
+    }
+  });
 });

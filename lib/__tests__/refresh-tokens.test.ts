@@ -5,6 +5,7 @@ import { POST as refreshEndpoint } from "../../app/api/auth/refresh/route";
 import {
   issueRefreshToken,
   rotateRefreshToken,
+  revokeRefreshToken,
   revokeAllRefreshTokens,
 } from "../refresh-tokens.server";
 
@@ -94,5 +95,22 @@ describe("refresh token rotation", () => {
     await revokeAllRefreshTokens("u-refresh");
     const res = await refreshEndpoint(refreshRequest(issued.token));
     expect(res.status).toBe(401);
+  });
+
+  it("revokeRefreshToken records tombstone before deleting so replaying revoked token triggers theft protection", async () => {
+    const revoked = await issueRefreshToken("u-refresh");
+    const otherDevice = await issueRefreshToken("u-refresh");
+
+    await revokeRefreshToken(revoked.token);
+    expect(
+      db.raw.prepare("SELECT COUNT(*) AS n FROM session_refresh_tombstones WHERE user_id = 'u-refresh'").get(),
+    ).toEqual({ n: 1 });
+
+    // 重放已登出吊销的 token 会命中墓碑并全量吊销该用户其余设备 token
+    const replay = await rotateRefreshToken(revoked.token);
+    expect(replay).toEqual({ ok: false, reason: "replayed" });
+
+    const otherResult = await rotateRefreshToken(otherDevice.token);
+    expect(otherResult.ok).toBe(false);
   });
 });

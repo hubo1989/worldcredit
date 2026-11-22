@@ -43,6 +43,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** 解析 SQLite `datetime('now')`（无时区后缀的 UTC 字符串）或 ISO 时间戳为秒级 Epoch。 */
+function parseSqliteUtcEpochSeconds(raw: string | null | undefined): number {
+  if (!raw) return 0;
+  const trimmed = raw.trim();
+  if (!trimmed) return 0;
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(trimmed)
+    ? `${trimmed.replace(" ", "T")}Z`
+    : trimmed;
+  const ms = Date.parse(normalized);
+  return Number.isFinite(ms) ? ms / 1000 : 0;
+}
+
 function validateOfflineReplaySafety(mut: MutationItem): { error: string; code: string } | null {
   if (mut.name === "payables.createRecurringPayable") {
     const payload = mut.args[0];
@@ -175,24 +187,40 @@ export async function POST(request: Request) {
 
       // Still pending (NULL result) or row concurrently deleted: check staleness.
       // A missing row reads as epoch 0 — always stale — so the reclaim path re-inserts it.
-      const processedAt = new Date(check?.processed_at ?? "1970-01-01T00:00:00Z").getTime() / 1000;
+      const processedAt = parseSqliteUtcEpochSeconds(check?.processed_at);
       if (processedAt < staleThreshold) {
-        // Stale lock: reclaim ownership and proceed
+        // Stale lock (or concurrently deleted row): reclaim ownership atomically.
         try {
-          await db
-            .prepare(
-              "UPDATE sync_mutations SET result = NULL WHERE user_id = ? AND client_id = ? AND mutation_id = ?",
-            )
-            .bind(session.id, clientId, mut.id)
-            .run();
-          // Verify we successfully reclaimed
-          const verifyClaim = await db
-            .prepare(
-              "INSERT INTO sync_mutations (user_id, client_id, mutation_id, result) VALUES (?, ?, ?, NULL) ON CONFLICT(user_id, client_id, mutation_id) DO NOTHING",
-            )
-            .bind(session.id, clientId, mut.id)
-            .run();
-          if (verifyClaim.meta?.changes === 1) claimSuccess = true;
+          if (check) {
+            const reclaim = await db
+              .prepare(
+                "UPDATE sync_mutations SET processed_at = datetime('now') WHERE user_id = ? AND client_id = ? AND mutation_id = ? AND result IS NULL AND processed_at = ?",
+              )
+              .bind(session.id, clientId, mut.id, check.processed_at)
+              .run();
+            if ((reclaim.meta?.changes ?? 0) === 1) {
+              claimSuccess = true;
+            }
+          } else {
+            const reinsert = await db
+              .prepare(
+                "INSERT INTO sync_mutations (user_id, client_id, mutation_id, result) VALUES (?, ?, ?, NULL) ON CONFLICT(user_id, client_id, mutation_id) DO NOTHING",
+              )
+              .bind(session.id, clientId, mut.id)
+              .run();
+            if ((reinsert.meta?.changes ?? 0) === 1) {
+              claimSuccess = true;
+            }
+          }
+          if (!claimSuccess) {
+            results.push({
+              id: mut.id,
+              ok: false,
+              error: "同步操作正在处理中，请稍后重试",
+              permanent: false,
+            });
+            continue;
+          }
         } catch {
           // Cleanup failed -> refuse to avoid corruption
           results.push({
@@ -278,13 +306,23 @@ export async function POST(request: Request) {
         }
         return failureResult;
       } catch (err) {
-        await db
-          .prepare(
-            "DELETE FROM sync_mutations WHERE user_id = ? AND client_id = ? AND mutation_id = ? AND result IS NULL",
-          )
-          .bind(session.id, clientId, mut.id)
-          .run();
-        throw err;
+        console.error(`[sync/push] mutation=${mut.name} id=${mut.id} unexpected error:`, err);
+        try {
+          await db
+            .prepare(
+              "DELETE FROM sync_mutations WHERE user_id = ? AND client_id = ? AND mutation_id = ? AND result IS NULL",
+            )
+            .bind(session.id, clientId, mut.id)
+            .run();
+        } catch (cleanupErr) {
+          console.error(`[sync/push] failed to release lock for id=${mut.id}:`, cleanupErr);
+        }
+        return {
+          id: mut.id,
+          ok: false,
+          error: "服务暂时不可用，请稍后重试",
+          permanent: false,
+        };
       } finally {
         inFlightByMutation.delete(key);
       }

@@ -223,6 +223,9 @@ struct GmailSyncSection: View {
                 guard let remaining = result.remaining, remaining > 0, round < 30 else { break }
             }
             await reloadStatusAfterMutation()
+            if total.written > 0 || total.drafted > 0 {
+                await appState.sync()
+            }
             alertMessage = "同步完成：\(total.summaryText)"
         } catch {
             alertMessage = "同步失败：\(error.localizedDescription)"
