@@ -6,7 +6,9 @@ import Testing
 private enum ProtectionFailure: Error, Equatable { case denied }
 
 private final class ProtectionFileManager: FileManager, @unchecked Sendable {
-    enum FailurePoint { case directoryCreation, directory, database, wal, shm, verification, missingProtection, readback }
+    enum FailurePoint {
+        case directoryCreation, directory, database, wal, shm, verification, missingProtection, readback, directoryAndShmUnprotected
+    }
     let failurePoint: FailurePoint
     init(_ failurePoint: FailurePoint) { self.failurePoint = failurePoint; super.init() }
 
@@ -21,6 +23,7 @@ private final class ProtectionFileManager: FileManager, @unchecked Sendable {
         case .database: path.hasSuffix(".sqlite")
         case .wal: path.hasSuffix("-wal")
         case .shm: path.hasSuffix("-shm")
+        case .directoryAndShmUnprotected: path.hasSuffix("protected") || path.hasSuffix("-shm")
         default: false
         }
         if fail { throw ProtectionFailure.denied }
@@ -33,6 +36,9 @@ private final class ProtectionFileManager: FileManager, @unchecked Sendable {
         attributes[.protectionKey] = FileProtectionType.completeUntilFirstUserAuthentication
         if failurePoint == .verification { attributes[.protectionKey] = FileProtectionType.none }
         if failurePoint == .missingProtection { attributes.removeValue(forKey: .protectionKey) }
+        if failurePoint == .directoryAndShmUnprotected && (path.hasSuffix("protected") || path.hasSuffix("-shm")) {
+            attributes[.protectionKey] = FileProtectionType.none
+        }
         return attributes
     }
 }
@@ -48,8 +54,8 @@ struct DatabaseProtectionRegressionTests {
         #endif
     }
 
-    @Test("Directory creation and each protection failure propagate", arguments: [
-        ProtectionFileManager.FailurePoint.directoryCreation, .directory, .database, .wal, .shm, .readback
+    @Test("Directory creation and data-file protection failures propagate", arguments: [
+        ProtectionFileManager.FailurePoint.directoryCreation, .database, .wal, .readback
     ], [true, false])
     fileprivate func failures(point: ProtectionFileManager.FailurePoint, requiresReadback: Bool) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -125,5 +131,50 @@ struct DatabaseProtectionRegressionTests {
                 #expect(attributes[.protectionKey] as? FileProtectionType == .completeUntilFirstUserAuthentication)
             }
         }
+    }
+
+    @Test("Device policy tolerates unprotected directory or shm sidecar when sqlite and wal are protected")
+    func directoryAndShmBestEffortOnDevice() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("protected/store.sqlite")
+        let fm = ProtectionFileManager(.directoryAndShmUnprotected)
+        let manager = try DatabaseManager.file(at: url, fileManager: fm, requiresProtectionReadback: true)
+        try manager.dbWriter.write { db in
+            try db.execute(sql: "INSERT INTO sync_meta (key, value) VALUES ('device_ok', 'yes')")
+        }
+        let value = try manager.dbWriter.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM sync_meta WHERE key = 'device_ok'")
+        }
+        #expect(value == "yes")
+    }
+
+    @Test("Legacy root database location migrates cleanly into Database subdirectory with data intact")
+    func migratesLegacyDatabaseLocation() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let legacyURL = root.appendingPathComponent("worldcredit.sqlite")
+        let newURL = root.appendingPathComponent("Database/worldcredit.sqlite")
+        do {
+            let legacyManager = try DatabaseManager.file(at: legacyURL, fileManager: fm, requiresProtectionReadback: false)
+            try legacyManager.dbWriter.write { db in
+                try db.execute(sql: "INSERT INTO sync_meta (key, value) VALUES ('legacy_key', 'preserved')")
+            }
+        }
+        #expect(fm.fileExists(atPath: legacyURL.path))
+
+        let resolved = DatabaseManager.migrateLegacyDatabaseLocationIfNeeded(from: legacyURL, to: newURL, fileManager: fm)
+        #expect(resolved == newURL)
+        #expect(!fm.fileExists(atPath: legacyURL.path))
+        #expect(fm.fileExists(atPath: newURL.path))
+
+        let migratedManager = try DatabaseManager.file(at: resolved, fileManager: fm, requiresProtectionReadback: false)
+        let value = try migratedManager.dbWriter.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM sync_meta WHERE key = 'legacy_key'")
+        }
+        #expect(value == "preserved")
     }
 }

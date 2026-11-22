@@ -638,6 +638,138 @@ struct SyncIntegrityTests {
         }
     }
 
+    @Test("v2 migration succeeds in WAL pool even with pre-existing orphan FK row and pre-added columns")
+    func v1ToV2MigrationToleratesOrphanForeignKeysAndDuplicateColumns() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let dbURL = root.appendingPathComponent("legacy-dirty-v1.sqlite")
+
+        do {
+            var v1Config = Configuration()
+            v1Config.foreignKeysEnabled = true
+            let pool = try DatabasePool(path: dbURL.path, configuration: v1Config)
+            var v1Migrator = DatabaseMigrator()
+            v1Migrator.registerMigration("v1_initial_schema") { db in
+                try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS banks (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    short_name TEXT,
+                    logo_url TEXT,
+                    tel TEXT,
+                    quota_mode TEXT,
+                    statement_mode TEXT
+                );
+                CREATE TABLE IF NOT EXISTS card_products (
+                    id TEXT PRIMARY KEY,
+                    bank_id TEXT REFERENCES banks(id) ON DELETE SET NULL,
+                    bank_name TEXT NOT NULL DEFAULT '',
+                    card_name TEXT NOT NULL,
+                    card_type TEXT NOT NULL DEFAULT 'credit',
+                    currency TEXT NOT NULL DEFAULT 'CNY',
+                    payment_due_type TEXT NOT NULL,
+                    payment_due_value INTEGER NOT NULL,
+                    annual_fee REAL,
+                    card_art_url TEXT
+                );
+                CREATE TABLE IF NOT EXISTS card_holders (
+                    id TEXT PRIMARY KEY,
+                    created_by TEXT NOT NULL,
+                    managed_by TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    phone TEXT,
+                    email TEXT,
+                    aliases TEXT,
+                    avatar_color TEXT DEFAULT '#1976d2',
+                    auth_user_id TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE IF NOT EXISTS credit_cards (
+                    id TEXT PRIMARY KEY,
+                    holder_id TEXT NOT NULL REFERENCES card_holders(id) ON DELETE CASCADE,
+                    card_product_id TEXT NOT NULL REFERENCES card_products(id) ON DELETE RESTRICT,
+                    card_number_last4 TEXT,
+                    credit_limit REAL NOT NULL DEFAULT 0,
+                    billing_day INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    card_type TEXT NOT NULL DEFAULT 'credit',
+                    loan_due_day INTEGER,
+                    override_billing_day INTEGER,
+                    override_due_type TEXT,
+                    override_due_value INTEGER,
+                    name_override TEXT,
+                    annual_fee_override REAL,
+                    account_mode_override TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE IF NOT EXISTS bills (
+                    id TEXT PRIMARY KEY,
+                    card_id TEXT NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
+                    bill_month TEXT NOT NULL,
+                    statement_start TEXT,
+                    statement_end TEXT,
+                    statement_date TEXT,
+                    bill_amount REAL NOT NULL DEFAULT 0,
+                    min_payment REAL DEFAULT 0,
+                    due_date TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'unpaid',
+                    bill_amount_override REAL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(card_id, bill_month)
+                );
+                CREATE TABLE IF NOT EXISTS payments (
+                    id TEXT PRIMARY KEY,
+                    bill_id TEXT NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
+                    amount REAL NOT NULL,
+                    paid_at TEXT NOT NULL DEFAULT (date('now')),
+                    channel TEXT DEFAULT '手动还款',
+                    note TEXT,
+                    idempotency_key TEXT UNIQUE NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE IF NOT EXISTS sync_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS mutation_outbox (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    args_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT
+                );
+                """)
+            }
+            try v1Migrator.migrate(pool)
+            try pool.writeWithoutTransaction { db in
+                // 模拟历史库中残留孤儿外键与部分已存在字段的场景
+                try db.execute(sql: """
+                    PRAGMA foreign_keys = OFF;
+                    INSERT INTO bills (id, card_id, bill_month, due_date, bill_amount, status)
+                    VALUES ('orphan-bill', 'missing-card', '2026-08', '2026-08-25', 100, 'unpaid');
+                    PRAGMA foreign_keys = ON;
+                    ALTER TABLE credit_cards ADD COLUMN account_id TEXT;
+                    INSERT INTO sync_meta (key, value) VALUES ('sync_cursor', '99');
+                """)
+            }
+        }
+
+        let upgraded = try DatabaseManager.file(at: dbURL, fileManager: .default, requiresProtectionReadback: false)
+        try upgraded.dbWriter.read { db in
+            #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "0")
+            let orphan = try Bill.fetchOne(db, id: "orphan-bill")
+            #expect(orphan?.billMonth == "2026-08")
+            let tables = try String.fetchAll(db, sql: """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'grdb_migrations'
+            """)
+            #expect(tables.contains("credit_accounts"))
+            #expect(tables.contains("recurring_payables"))
+        }
+    }
+
     @Test("clearUserData wipes every single business and sync table reflected from sqlite_master")
     func sqliteMasterFullWipeAssertion() async throws {
         let manager = try DatabaseManager.inMemory()

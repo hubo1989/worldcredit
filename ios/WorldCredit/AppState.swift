@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import SwiftUI
 import Observation
 import WorldCreditCore
@@ -6,6 +7,7 @@ import WorldCreditCore
 @MainActor
 @Observable
 public final class AppState {
+    private static let dbLogger = Logger(subsystem: "com.chunfenshijie.worldcredit", category: "Database")
     public let dbManager: DatabaseManager
     /// 仅测试构造器注入 mock 会替换实例；生产路径构造后不变。
     @ObservationIgnored public private(set) var apiClient: ApiClient
@@ -204,8 +206,9 @@ public final class AppState {
             do {
                 db = try DatabaseManager.defaultDatabase()
             } catch {
+                Self.dbLogger.error("本地数据库打开失败: \(String(describing: error), privacy: .public)")
                 db = Self.fallbackInMemoryDatabase(originalError: error)
-                dbInitWarning = "本地数据库打开失败，已启用临时内存库：本次数据不会持久化"
+                dbInitWarning = "本地数据库打开失败（\(Self.conciseDatabaseError(error))），已启用临时内存库：本次数据不会持久化"
             }
         }
         #else
@@ -216,8 +219,9 @@ public final class AppState {
                 db = try DatabaseManager.defaultDatabase()
             } catch {
                 // 盘库失败退到内存库（可恢复：数据不持久化但功能可用）
+                Self.dbLogger.error("本地数据库打开失败: \(String(describing: error), privacy: .public)")
                 db = Self.fallbackInMemoryDatabase(originalError: error)
-                dbInitWarning = "本地数据库打开失败，已启用临时内存库：本次数据不会持久化"
+                dbInitWarning = "本地数据库打开失败（\(Self.conciseDatabaseError(error))），已启用临时内存库：本次数据不会持久化"
             }
         }
         #endif
@@ -298,6 +302,14 @@ public final class AppState {
         } catch {
             fatalError("本地数据库与内存兜底库均创建失败（不可恢复）：disk=\(originalError), memory=\(error)")
         }
+    }
+
+    private static func conciseDatabaseError(_ error: Error) -> String {
+        let compact = String(describing: error)
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if compact.count <= 120 { return compact }
+        return String(compact.prefix(117)) + "..."
     }
 
     public func lock() {

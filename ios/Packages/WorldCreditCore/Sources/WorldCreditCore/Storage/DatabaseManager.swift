@@ -32,24 +32,40 @@ public final class DatabaseManager: @unchecked Sendable {
 
     static func file(at url: URL, fileManager: FileManager,
                      requiresProtectionReadback: Bool = DatabaseManager.requiresProtectionReadback) throws -> DatabaseManager {
-        // Protect the directory before SQLite can create database or sidecar files.
+        // 创建存储子目录并尽力设置目录保护属性；真机 App Group 容器或目录本身可能无法回读 protectionKey，
+        // 不得因目录属性回读失败而拒绝打开本地库，真正承载用户数据的 .sqlite 与 -wal 仍严格校验。
         let dir = url.deletingLastPathComponent()
         try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        try protectFile(at: dir.path, fileManager: fileManager, requiresReadback: requiresProtectionReadback)
-        let paths = [url.path, url.path + "-wal", url.path + "-shm"]
+        applyBestEffortProtection(at: dir.path, fileManager: fileManager)
+
+        let protectedDataPaths = [url.path, url.path + "-wal"]
+        let shmPath = url.path + "-shm"
         // Existing files may have been created with weaker protection.
-        for path in paths where fileManager.fileExists(atPath: path) {
+        for path in protectedDataPaths where fileManager.fileExists(atPath: path) {
             try protectFile(at: path, fileManager: fileManager, requiresReadback: requiresProtectionReadback)
+        }
+        if fileManager.fileExists(atPath: shmPath) {
+            applyBestEffortProtection(at: shmPath, fileManager: fileManager)
         }
 
         var config = Configuration()
         config.foreignKeysEnabled = true
         let pool = try DatabasePool(path: url.path, configuration: config)
         let manager = try DatabaseManager(dbWriter: pool)
-        for path in paths where fileManager.fileExists(atPath: path) {
+        for path in protectedDataPaths where fileManager.fileExists(atPath: path) {
             try protectFile(at: path, fileManager: fileManager, requiresReadback: requiresProtectionReadback)
         }
+        if fileManager.fileExists(atPath: shmPath) {
+            applyBestEffortProtection(at: shmPath, fileManager: fileManager)
+        }
         return manager
+    }
+
+    private static func applyBestEffortProtection(at path: String, fileManager: FileManager) {
+        try? fileManager.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: path
+        )
     }
 
     private static func protectFile(at path: String, fileManager: FileManager, requiresReadback: Bool) throws {
@@ -63,6 +79,43 @@ public final class DatabaseManager: @unchecked Sendable {
         }
     }
 
+    static func migrateLegacyDatabaseLocationIfNeeded(
+        from legacyURL: URL,
+        to newURL: URL,
+        fileManager: FileManager = .default
+    ) -> URL {
+        if fileManager.fileExists(atPath: newURL.path) {
+            return newURL
+        }
+        guard fileManager.fileExists(atPath: legacyURL.path) else {
+            return newURL
+        }
+        let newDir = newURL.deletingLastPathComponent()
+        do {
+            try fileManager.createDirectory(at: newDir, withIntermediateDirectories: true)
+            try fileManager.moveItem(atPath: legacyURL.path, toPath: newURL.path)
+            let legacyWal = legacyURL.path + "-wal"
+            let newWal = newURL.path + "-wal"
+            if fileManager.fileExists(atPath: legacyWal) {
+                do {
+                    try fileManager.moveItem(atPath: legacyWal, toPath: newWal)
+                } catch {
+                    // 绝不拆分主库与 WAL：回滚主库并返回旧路径，避免丢失未写入主库的事务
+                    try? fileManager.moveItem(atPath: newURL.path, toPath: legacyURL.path)
+                    return legacyURL
+                }
+            }
+            let legacyShm = legacyURL.path + "-shm"
+            let newShm = newURL.path + "-shm"
+            if fileManager.fileExists(atPath: legacyShm) {
+                try? fileManager.moveItem(atPath: legacyShm, toPath: newShm)
+            }
+            return newURL
+        } catch {
+            return legacyURL
+        }
+    }
+
     public static func defaultDatabase() throws -> DatabaseManager {
         let fileManager = FileManager.default
         let folder: URL
@@ -71,8 +124,15 @@ public final class DatabaseManager: @unchecked Sendable {
         } else {
             folder = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         }
-        let fileURL = folder.appendingPathComponent("worldcredit.sqlite")
-        return try DatabaseManager.file(at: fileURL)
+        let legacyURL = folder.appendingPathComponent("worldcredit.sqlite")
+        let targetURL = migrateLegacyDatabaseLocationIfNeeded(
+            from: legacyURL,
+            to: folder
+                .appendingPathComponent("Database", isDirectory: true)
+                .appendingPathComponent("worldcredit.sqlite"),
+            fileManager: fileManager
+        )
+        return try DatabaseManager.file(at: targetURL, fileManager: fileManager)
     }
 
     /// Clears account-scoped rows, queued mutations and sync state on logout.
@@ -111,6 +171,19 @@ public final class DatabaseManager: @unchecked Sendable {
                 DELETE FROM sync_meta;
                 """)
         }
+    }
+
+    private static func addColumnIfMissing(
+        _ db: Database,
+        table: String,
+        column: String,
+        definition: String
+    ) throws {
+        let existing = try db.columns(in: table).map(\.name)
+        guard !existing.contains(where: { $0.caseInsensitiveCompare(column) == .orderedSame }) else {
+            return
+        }
+        try db.execute(sql: "ALTER TABLE \(table) ADD COLUMN \(column) \(definition)")
     }
 
     private var migrator: DatabaseMigrator {
@@ -219,41 +292,44 @@ public final class DatabaseManager: @unchecked Sendable {
             """)
         }
 
-        migrator.registerMigration("v2_syncable_parity") { db in
+        migrator.registerMigration("v2_syncable_parity", foreignKeyChecks: .immediate) { db in
+            // 1. 幂等补齐 v1 已有业务表缺失字段，避免部分升级过的库报 duplicate column name；
+            // 采用 .immediate 仅检验本次迁移写操作自身约束，不被历史存量孤儿外键阻断整库升级。
+            try DatabaseManager.addColumnIfMissing(db, table: "banks", column: "full_name", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "banks", column: "country", definition: "TEXT NOT NULL DEFAULT 'CN'")
+            try DatabaseManager.addColumnIfMissing(db, table: "banks", column: "customer_service_phone", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "banks", column: "website_url", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "banks", column: "is_active", definition: "INTEGER NOT NULL DEFAULT 1")
+            try DatabaseManager.addColumnIfMissing(db, table: "banks", column: "created_at", definition: "TEXT")
+
+            try DatabaseManager.addColumnIfMissing(db, table: "card_products", column: "country", definition: "TEXT NOT NULL DEFAULT 'CN'")
+            try DatabaseManager.addColumnIfMissing(db, table: "card_products", column: "card_image_id", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "card_products", column: "description_md", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "card_products", column: "apply_url", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "card_products", column: "rewards_summary", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "card_products", column: "annual_fee_waiver", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "card_products", column: "is_active", definition: "INTEGER NOT NULL DEFAULT 1")
+            try DatabaseManager.addColumnIfMissing(db, table: "card_products", column: "created_at", definition: "TEXT")
+
+            try DatabaseManager.addColumnIfMissing(db, table: "credit_cards", column: "account_id", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "credit_cards", column: "credit_limit_override", definition: "REAL")
+            try DatabaseManager.addColumnIfMissing(db, table: "credit_cards", column: "issued_on", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "credit_cards", column: "activated_on", definition: "TEXT")
+
+            try DatabaseManager.addColumnIfMissing(db, table: "bills", column: "account_id", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "bills", column: "min_payment_override", definition: "REAL")
+            try DatabaseManager.addColumnIfMissing(db, table: "bills", column: "due_date_override", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "bills", column: "statement_date_override", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "bills", column: "statement_start_override", definition: "TEXT")
+            try DatabaseManager.addColumnIfMissing(db, table: "bills", column: "statement_end_override", definition: "TEXT")
+
             try db.execute(sql: """
-            -- 1. Extend existing v1 tables to parity with D1 schema
-            ALTER TABLE banks ADD COLUMN full_name TEXT;
-            ALTER TABLE banks ADD COLUMN country TEXT NOT NULL DEFAULT 'CN';
-            ALTER TABLE banks ADD COLUMN customer_service_phone TEXT;
-            ALTER TABLE banks ADD COLUMN website_url TEXT;
-            ALTER TABLE banks ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;
-            ALTER TABLE banks ADD COLUMN created_at TEXT;
             UPDATE banks SET customer_service_phone = tel
                 WHERE customer_service_phone IS NULL AND tel IS NOT NULL;
-
-            ALTER TABLE card_products ADD COLUMN country TEXT NOT NULL DEFAULT 'CN';
-            ALTER TABLE card_products ADD COLUMN card_image_id TEXT;
-            ALTER TABLE card_products ADD COLUMN description_md TEXT;
-            ALTER TABLE card_products ADD COLUMN apply_url TEXT;
-            ALTER TABLE card_products ADD COLUMN rewards_summary TEXT;
-            ALTER TABLE card_products ADD COLUMN annual_fee_waiver TEXT;
-            ALTER TABLE card_products ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;
-            ALTER TABLE card_products ADD COLUMN created_at TEXT;
             UPDATE card_products SET card_image_id = card_art_url
                 WHERE card_image_id IS NULL AND card_art_url IS NOT NULL;
 
-            ALTER TABLE credit_cards ADD COLUMN account_id TEXT;
-            ALTER TABLE credit_cards ADD COLUMN credit_limit_override REAL;
-            ALTER TABLE credit_cards ADD COLUMN issued_on TEXT;
-            ALTER TABLE credit_cards ADD COLUMN activated_on TEXT;
             CREATE INDEX IF NOT EXISTS idx_credit_cards_account ON credit_cards(account_id);
-
-            ALTER TABLE bills ADD COLUMN account_id TEXT;
-            ALTER TABLE bills ADD COLUMN min_payment_override REAL;
-            ALTER TABLE bills ADD COLUMN due_date_override TEXT;
-            ALTER TABLE bills ADD COLUMN statement_date_override TEXT;
-            ALTER TABLE bills ADD COLUMN statement_start_override TEXT;
-            ALTER TABLE bills ADD COLUMN statement_end_override TEXT;
             CREATE INDEX IF NOT EXISTS idx_bills_account ON bills(account_id);
 
             -- 2. Create the remaining 9 SYNCABLE_TABLES
