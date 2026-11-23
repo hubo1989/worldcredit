@@ -6,7 +6,7 @@
 //   - *_amount 字段仍是 number，但现在是「折算后的合计」，不再是把不同币种直接相加
 //   - *_by_currency 是完整的分币种真数（汇率拿不到时 UI 靠它展示明细）
 //   - fx_* 字段说明这次折算是否完整；不完整的合计必须由 UI 显式标注
-import { query } from '../db'
+import { query, queryByChunks } from '../db'
 import {
   fetchRates,
   sumByCurrency,
@@ -151,15 +151,13 @@ async function getFilteredBills(filters: AnalyticsFilters): Promise<BillRow[]> {
     conditions.push('b.bill_month <= ?')
     params.push(filters.to_month)
   }
-  const cardPlaceholders = cardIds.map(() => '?').join(',')
   const where = conditions.length > 0
     ? ` AND ${conditions.join(' AND ')}`
     : ''
-  const fullWhere = `WHERE b.card_id IN (${cardPlaceholders})${where}`
 
-  const { data, error } = await query<BillRow>(
+  const { data, error } = await queryByChunks<BillRow>(cardIds, (chunk, placeholders) => ({
     // 手填金额优先：统计口径必须与账单页一致，否则同一笔钱在两页显示不同
-    `SELECT b.id, b.card_id, b.bill_month,
+    sql: `SELECT b.id, b.card_id, b.bill_month,
             COALESCE(b.bill_amount_override, b.bill_amount) AS bill_amount,
             b.status, b.due_date,
             cc.holder_id, cp.bank_name, cp.card_name, cp.currency, cc.credit_limit,
@@ -167,19 +165,21 @@ async function getFilteredBills(filters: AnalyticsFilters): Promise<BillRow[]> {
      FROM bills b
      JOIN credit_cards cc ON b.card_id = cc.id
      LEFT JOIN card_products cp ON cc.card_product_id = cp.id
-     ${fullWhere}`,
-    [...cardIds, ...params]
-  )
+     WHERE b.card_id IN (${placeholders})${where}`,
+    params: [...chunk, ...params],
+  }))
   if (error) throw new Error(error.message)
   return data || []
 }
 
 async function getPaymentsForBillIds(billIds: string[]) {
   if (billIds.length === 0) return []
-  const placeholders = billIds.map(() => '?').join(',')
-  const { data, error } = await query<{ bill_id: string; amount: number; paid_at: string }>(
-    `SELECT bill_id, amount, paid_at FROM payments WHERE bill_id IN (${placeholders})`,
-    billIds
+  const { data, error } = await queryByChunks<{ bill_id: string; amount: number; paid_at: string }>(
+    billIds,
+    (chunk, placeholders) => ({
+      sql: `SELECT bill_id, amount, paid_at FROM payments WHERE bill_id IN (${placeholders})`,
+      params: chunk,
+    })
   )
   if (error) throw new Error(error.message)
   return data || []
@@ -248,8 +248,7 @@ export async function getAnalyticsSummary(filters: AnalyticsFilters): Promise<An
   const cardIds = await getFilteredCardIds(filters)
   let creditLimit = emptySum(displayCurrency)
   if (cardIds.length > 0) {
-    const placeholders = cardIds.map(() => '?').join(',')
-    const { data: cards, error } = await query<{
+    const { data: cards, error } = await queryByChunks<{
       id: string
       holder_id: string
       credit_limit: number
@@ -260,8 +259,8 @@ export async function getAnalyticsSummary(filters: AnalyticsFilters): Promise<An
       account_quota_mode: string | null
       shared_credit_limit: number | null
       bank_quota_mode: string | null
-    }>(
-      `SELECT cc.id, cc.holder_id, cc.credit_limit, cc.account_id,
+    }>(cardIds, (chunk, placeholders) => ({
+      sql: `SELECT cc.id, cc.holder_id, cc.credit_limit, cc.account_id,
               cp.currency, cp.bank_id, cp.bank_name,
               ca.quota_mode AS account_quota_mode, ca.shared_credit_limit,
               b.quota_mode AS bank_quota_mode
@@ -270,8 +269,8 @@ export async function getAnalyticsSummary(filters: AnalyticsFilters): Promise<An
        LEFT JOIN banks b ON cp.bank_id = b.id
        LEFT JOIN credit_accounts ca ON cc.account_id = ca.id
        WHERE cc.id IN (${placeholders}) AND cc.status = 'active'`,
-      cardIds
-    )
+      params: chunk,
+    }))
     if (error) throw new Error(error.message)
 
     // 两级聚合：独立账户/卡逐卡累加，共享额度池同一 (holder_id, bank, currency) 每池仅计 1 次
@@ -522,13 +521,15 @@ export async function getPromoUsageAnalytics(filters: AnalyticsFilters): Promise
   const cardIds = await getFilteredCardIds(filters)
   if (cardIds.length === 0) return []
 
-  const placeholders = cardIds.map(() => '?').join(',')
-  const { data: usages, error } = await query<{ title: string | null }>(
-    `SELECT p.title
+  const { data: usages, error } = await queryByChunks<{ title: string | null }>(
+    cardIds,
+    (chunk, placeholders) => ({
+      sql: `SELECT p.title
      FROM promo_usages pu
      JOIN promos p ON pu.promo_id = p.id
      WHERE pu.card_id IN (${placeholders})`,
-    cardIds
+      params: chunk,
+    })
   )
   if (error) throw new Error(error.message)
 

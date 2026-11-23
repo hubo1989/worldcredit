@@ -1,4 +1,4 @@
-import { query, queryOne, execute, batch, uuid, now, today } from "../db";
+import { query, queryByChunks, queryOne, execute, batch, uuid, now, today } from "../db";
 import type { Bill, Payment, CreditCard, CardProduct, BillCardSubtotal, CreditAccount, CardHolder } from "../types";
 import {
   getDueDate,
@@ -284,21 +284,27 @@ export async function getBillDashboardItems(
 
   const billIds = rawBills.map((b) => b.id);
 
-  // Batch fetch payments, attachments, and card subtotals
+  // Batch fetch payments, attachments, and card subtotals (chunked for D1 100-bind limit)
   const [paymentsRes, attachmentsRes, subtotalsRes] = await Promise.all([
-    query<Payment & { bill_id: string }>(
-      `SELECT id, bill_id, amount, paid_at, channel, note FROM payments WHERE bill_id IN (${billIds.map(() => "?").join(",")})`,
+    queryByChunks<Payment & { bill_id: string }>(billIds, (chunk, placeholders) => ({
+      sql: `SELECT id, bill_id, amount, paid_at, channel, note FROM payments WHERE bill_id IN (${placeholders})`,
+      params: chunk,
+    })),
+    queryByChunks<{ id: string; record_id: string; file_name: string }>(
       billIds,
+      (chunk, placeholders) => ({
+        sql: `SELECT id, record_id, file_name FROM record_attachments WHERE record_type = 'bill' AND record_id IN (${placeholders})`,
+        params: chunk,
+      }),
     ),
-    query<{ id: string; record_id: string; file_name: string }>(
-      `SELECT id, record_id, file_name FROM record_attachments WHERE record_type = 'bill' AND record_id IN (${billIds.map(() => "?").join(",")})`,
-      billIds,
-    ),
-    query<BillCardSubtotal>(
-      `SELECT * FROM bill_card_subtotals WHERE bill_id IN (${billIds.map(() => "?").join(",")})`,
-      billIds,
-    ),
+    queryByChunks<BillCardSubtotal>(billIds, (chunk, placeholders) => ({
+      sql: `SELECT * FROM bill_card_subtotals WHERE bill_id IN (${placeholders})`,
+      params: chunk,
+    })),
   ]);
+  if (paymentsRes.error) throw new Error(paymentsRes.error.message);
+  if (attachmentsRes.error) throw new Error(attachmentsRes.error.message);
+  if (subtotalsRes.error) throw new Error(subtotalsRes.error.message);
 
   const paymentsByBill: Record<string, NonNullable<typeof paymentsRes.data>> = {};
   for (const p of paymentsRes.data || []) {
@@ -422,10 +428,14 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
   const accountIds = Array.from(new Set(cards.map((c) => c.account_id).filter(Boolean))) as string[];
   let accountMap: Record<string, CreditAccount> = {};
   if (accountIds.length > 0) {
-    const { data: accounts } = await query<CreditAccount>(
-      `SELECT * FROM credit_accounts WHERE id IN (${accountIds.map(() => "?").join(",")})`,
+    const { data: accounts, error: accountsError } = await queryByChunks<CreditAccount>(
       accountIds,
+      (chunk, placeholders) => ({
+        sql: `SELECT * FROM credit_accounts WHERE id IN (${placeholders})`,
+        params: chunk,
+      }),
     );
+    if (accountsError) throw new Error(accountsError.message);
     if (accounts) {
       accountMap = accounts.reduce((acc, a) => ({ ...acc, [a.id]: a }), {});
     }
@@ -445,12 +455,16 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
   if (productIds.length > 0) {
     // 联查 banks 带出银行维度的额度/账单模式，用户侧按银行分组时要区分
     // 共享额度（额度是一个池不叠加）与合并账单（同银行多卡合一张账单）
-    const { data: products } = await query<CardProduct>(
-      `SELECT cp.*, b.quota_mode AS bank_quota_mode, b.statement_mode AS bank_statement_mode
-       FROM card_products cp LEFT JOIN banks b ON b.id = cp.bank_id
-       WHERE cp.id IN (${productIds.map(() => "?").join(",")})`,
+    const { data: products, error: productsError } = await queryByChunks<CardProduct>(
       productIds,
+      (chunk, placeholders) => ({
+        sql: `SELECT cp.*, b.quota_mode AS bank_quota_mode, b.statement_mode AS bank_statement_mode
+       FROM card_products cp LEFT JOIN banks b ON b.id = cp.bank_id
+       WHERE cp.id IN (${placeholders})`,
+        params: chunk,
+      }),
     );
+    if (productsError) throw new Error(productsError.message);
     if (products) {
       productMap = products.reduce((acc, p) => ({ ...acc, [p.id]: p }), {});
     }
@@ -1123,10 +1137,14 @@ export async function getBillsByHolder(holderId: string): Promise<BillWithCard[]
   );
   const tailsByAccountId: Record<string, string[]> = {};
   if (mergedAccountIds.length > 0) {
-    const { data: memberCards } = await query<{ account_id: string; card_number_last4: string | null }>(
-      `SELECT account_id, card_number_last4 FROM credit_cards WHERE account_id IN (${mergedAccountIds.map(() => "?").join(",")})`,
-      mergedAccountIds,
-    );
+    const { data: memberCards, error: memberCardsError } = await queryByChunks<{
+      account_id: string;
+      card_number_last4: string | null;
+    }>(mergedAccountIds, (chunk, placeholders) => ({
+      sql: `SELECT account_id, card_number_last4 FROM credit_cards WHERE account_id IN (${placeholders})`,
+      params: chunk,
+    }));
+    if (memberCardsError) throw new Error(memberCardsError.message);
     for (const mc of memberCards || []) {
       if (mc.card_number_last4) {
         if (!tailsByAccountId[mc.account_id]) tailsByAccountId[mc.account_id] = [];
@@ -1189,6 +1207,20 @@ export async function createPayment(
   return created.data;
 }
 
+/** 把 D1 还款防超还触发器错误映射为可读的 409 冲突错误。 */
+function throwPaymentBatchError(
+  errorMessage: string,
+  conflictMessages: { settled: string; exceeds: string },
+): never {
+  if (errorMessage.includes("PAYMENT_ALREADY_SETTLED")) {
+    throw new RpcDomainError("CONFLICT", conflictMessages.settled);
+  }
+  if (errorMessage.includes("PAYMENT_EXCEEDS_REMAINING")) {
+    throw new RpcDomainError("CONFLICT", conflictMessages.exceeds);
+  }
+  throw new Error(errorMessage);
+}
+
 /**
  * 一键结清。
  *
@@ -1233,7 +1265,12 @@ export async function markBillAsPaid(
       params: [covered ? "paid" : "partial", billId],
     },
   ]);
-  if (error) throw new Error(error.message);
+  if (error) {
+    throwPaymentBatchError(error.message, {
+      settled: "该账单已结清，无需重复还款",
+      exceeds: "还款金额超过当前剩余应还，请刷新后重试",
+    });
+  }
 }
 
 export interface RecordPaymentInput {
@@ -1436,7 +1473,12 @@ export async function markAllOverdueBillsAsPaid(
   }
 
   const { error } = await batch(statements);
-  if (error) throw new Error(error.message);
+  if (error) {
+    throwPaymentBatchError(error.message, {
+      settled: "存在已结清的逾期账单，请刷新页面后重试",
+      exceeds: "存在逾期账单余额已变动或已还清，请刷新页面后重试",
+    });
+  }
 
   return { count: overdueBills.length, totalAmount };
 }

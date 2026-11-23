@@ -17,6 +17,9 @@ export const SQLITE_D1_MIGRATIONS_DIR = join(__dirname, "../../../migrations/d1"
 type BindParam = null | number | string;
 
 function toBindParams(params: unknown[]): BindParam[] {
+  if (params.length > 100) {
+    throw new Error(`D1_ERROR: too many SQL variables (bound ${params.length}, max 100)`);
+  }
   return params.map((p) => {
     if (p === null || typeof p === "number" || typeof p === "string") return p;
     // D1 rejects booleans/undefined/objects at bind time; mirror that so the
