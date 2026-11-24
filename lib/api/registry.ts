@@ -17,6 +17,7 @@ import * as attachmentsServer from './attachments.server'
 import * as banksServer from './banks.server'
 import * as benefitsServer from './benefits.server'
 import * as billDraftsServer from './billDrafts.server'
+import * as billItemsServer from './billItems.server'
 import * as billsServer from './bills.server'
 import * as cardsServer from './cards.server'
 import * as dashboardServer from './dashboard.server'
@@ -209,6 +210,16 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     syncGmailNow: { impl: gmailServer.syncGmailNow, bindUser: 0 },
     disconnectGmail: { impl: gmailServer.disconnectGmail, bindUser: 0 },
   },
+  billItems: {
+    getBillItems: { impl: billItemsServer.getBillItems, memberGuard: guardBill(0) },
+    createBillItem: { impl: billItemsServer.createBillItem, bindField: { arg: 0, field: 'user_id' }, memberGuard: guardObjField(0, 'bill_id', assertBillAccess) },
+    updateBillItem: { impl: billItemsServer.updateBillItem, bindField: { arg: 1, field: 'user_id' }, memberGuard: (args, ctx) => billItemsServer.assertBillItemAccess(args[0], ctx) },
+    deleteBillItem: { impl: billItemsServer.deleteBillItem, memberGuard: (args, ctx) => billItemsServer.assertBillItemAccess(args[0], ctx) },
+    batchImportBillItems: { impl: billItemsServer.batchImportBillItems, bindField: { arg: 0, field: 'user_id' }, memberGuard: guardObjField(0, 'bill_id', assertBillAccess) },
+    clearBillItems: { impl: billItemsServer.clearBillItems, memberGuard: guardBill(0) },
+    getMerchantCategoryRules: { impl: billItemsServer.getMerchantCategoryRules, bindUser: 0 },
+  },
+
   bills: {
     getBillDashboardItems: { impl: billsServer.getBillDashboardItems, bindUser: 1 },
     getCardsWithBillsSummary: { impl: billsServer.getCardsWithBillsSummary, bindUser: 0 },
