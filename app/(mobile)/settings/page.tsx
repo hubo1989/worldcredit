@@ -10,7 +10,10 @@ import { useTheme, type ThemeMode } from '@/lib/hooks/useTheme'
 import { DisplayPreferencesCard } from '@/components/settings/DisplayPreferencesCard'
 import { ReminderPreferencesCard } from '@/components/settings/ReminderPreferencesCard'
 import { GmailConnectPanel } from '@/components/mobile/GmailConnectPanel'
+import { StatementPasswordVaultPanel } from '@/components/mobile/StatementPasswordVaultPanel'
+import { getGmailConnections } from '@/components/mobile/omnibusApi'
 import { getGmailConnection, type GmailConnectionStatus } from '@/lib/api/gmail'
+import { getBillImportDrafts } from '@/lib/api/billDrafts'
 import { getUnreadNotificationCount } from '@/lib/api/notifications'
 import { countEnabledNotificationItems } from '@/lib/notifications.shared'
 import {
@@ -21,6 +24,7 @@ import {
   BellIcon,
   SettingsIcon,
   ChevronRightIcon,
+  LockIcon,
 } from '@/components/icons/WcIcon'
 
 const DOMAIN = '20160325.xyz'
@@ -93,9 +97,12 @@ export default function SettingsPage() {
   } = useUserPreferences()
 
   const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null)
+  const [gmailCount, setGmailCount] = useState<number>(0)
   const [gmailLoading, setGmailLoading] = useState(true)
   const [gmailError, setGmailError] = useState(false)
+  const [draftCount, setDraftCount] = useState<number>(0)
   const [showGmailSheet, setShowGmailSheet] = useState(false)
+  const [showPasswordVaultSheet, setShowPasswordVaultSheet] = useState(false)
   const [showReminderSheet, setShowReminderSheet] = useState(false)
   const [showDisplaySheet, setShowDisplaySheet] = useState(false)
   const [showLogoutDialog, setShowLogoutDialog] = useState(false)
@@ -112,10 +119,31 @@ export default function SettingsPage() {
     setGmailLoading(true)
     setGmailError(false)
     try {
-      const res = await getGmailConnection()
-      setGmailStatus(res)
+      const [drafts, multi] = await Promise.all([
+        getBillImportDrafts().catch(() => []),
+        getGmailConnections().catch(() => null),
+      ])
+      setDraftCount(drafts.length)
+      if (multi) {
+        const activeCount = multi.filter(c => c.status === 'active').length
+        const errItem = multi.find(c => c.last_error)
+        setGmailCount(multi.length)
+        setGmailStatus({
+          connected: activeCount > 0,
+          email: multi[0]?.email ?? null,
+          status: activeCount > 0 ? 'active' : multi[0]?.status ?? null,
+          last_sync_at: multi[0]?.last_sync_at ?? null,
+          last_sync_summary: multi[0]?.last_sync_summary ?? null,
+          last_error: errItem?.last_error ?? null,
+        })
+      } else {
+        const res = await getGmailConnection()
+        setGmailCount(res.connected ? 1 : 0)
+        setGmailStatus(res)
+      }
     } catch {
       setGmailError(true)
+      setGmailCount(0)
       setGmailStatus(null)
     } finally {
       setGmailLoading(false)
@@ -201,7 +229,10 @@ export default function SettingsPage() {
   const themeLabel = THEME_LABELS[theme] ?? '💻 跟随系统'
 
   // 计算偏好摘要胶囊文案（映射表/函数化，去嵌套三元；完整展示已选节点）
-  const gmailSummary = formatGmailSummary(gmailStatus, gmailLoading, gmailError)
+  const gmailSummary =
+    gmailCount > 1
+      ? `已连 ${gmailCount} 邮箱`
+      : formatGmailSummary(gmailStatus, gmailLoading, gmailError)
   const billDays = reminderConfig?.remind_days_before ?? [3, 1, 0]
   const switchCounts = countEnabledNotificationItems(reminderConfig)
   const billDaysLabel = billDays.length > 0 ? `提前${billDays.join('/')}天` : '未设提醒'
@@ -339,7 +370,7 @@ export default function SettingsPage() {
               <SettingsMenuRow
                 icon={<ImportIcon size={20} />}
                 title='邮箱账单导入'
-                subtitle='Gmail 直连拉取与专属 .eml 补录'
+                subtitle='多 Gmail 直连聚合与 .eml 补录'
                 onClick={() => setShowGmailSheet(true)}
                 badge={
                   gmailLoading ? (
@@ -384,6 +415,19 @@ export default function SettingsPage() {
                       {gmailSummary}
                     </span>
                   )
+                }
+              />
+
+              {/* 月结单密码本 */}
+              <SettingsMenuRow
+                icon={<LockIcon size={20} />}
+                title='月结单密码本'
+                subtitle='加密 PDF 自动解密规则与密码提示'
+                onClick={() => setShowPasswordVaultSheet(true)}
+                badge={
+                  <span className='mr-0.5 shrink-0 rounded-full border border-d-gold-deep/40 bg-d-gold-soft px-2.5 py-0.5 text-[11px] font-semibold text-d-gold'>
+                    AES-GCM
+                  </span>
                 }
               />
 
@@ -441,17 +485,28 @@ export default function SettingsPage() {
           {/* Gmail 直连面板 */}
           <GmailConnectPanel />
 
-          {/* 查看流水入口 */}
+          {/* 前往统一账单草稿箱入口 */}
+          <button
+            type='button'
+            onClick={() => {
+              setShowGmailSheet(false)
+              router.push('/bills?drafts=1')
+            }}
+            className='flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-d-accent/40 bg-d-surface px-4 text-[13px] font-semibold text-d-accent-light transition-colors active:bg-d-subtle'
+          >
+            <ImportIcon size={16} />
+            前往账单草稿箱{draftCount > 0 ? `（${draftCount} 条待办）` : ''} →
+          </button>
+
           <button
             type='button'
             onClick={() => {
               setShowGmailSheet(false)
               router.push('/gmail-ledger')
             }}
-            className='flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-d-border bg-d-surface px-4 text-[13px] font-semibold text-d-accent-light transition-colors active:bg-d-subtle'
+            className='text-center text-[12px] font-medium text-d-muted underline underline-offset-2'
           >
-            <ImportIcon size={16} />
-            查看邮箱账单明细流水 →
+            查看历史邮箱账单只读存档
           </button>
 
           {/* 专属 .eml 补录卡片 */}
@@ -480,6 +535,17 @@ export default function SettingsPage() {
               </div>
             )}
           </div>
+        </div>
+      </BottomSheet>
+
+      {/* BottomSheet 1b: 月结单密码本 */}
+      <BottomSheet
+        open={showPasswordVaultSheet}
+        title='月结单密码本'
+        onClose={() => setShowPasswordVaultSheet(false)}
+      >
+        <div className='pb-6'>
+          <StatementPasswordVaultPanel />
         </div>
       </BottomSheet>
 

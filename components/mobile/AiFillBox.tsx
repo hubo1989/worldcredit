@@ -2,20 +2,17 @@
 
 import { useState } from 'react'
 import { TextArea } from '@/components/obsidian/fields'
-import { Alert } from '@/components/obsidian/feedback'
+import { Alert, Spinner } from '@/components/obsidian/feedback'
 import { AiSparkleIcon } from '@/components/icons/WcIcon'
-import { Spinner } from '@/components/obsidian/feedback'
 import { aiComplete } from '@/lib/api/ai'
 
 /**
  * AI 智能填充盒（§5.3）。
  * 内嵌于表单顶部：虚线金框 + 文本框 + 智能填充按钮。
- * 解析成功 → onFill(data)；失败 → 正则本地兜底；都失败 → 显示错误。
+ * bill 模式优先委托服务端智能解析 RPC（aiComplete -> email-core），
+ * 仅在服务端未配置 AI Key 时回退本地正则粗提并展示明确告警。
  *
- * 数据策略：AI 仅预填，父表单收到后视为 manual 来源。
- *
- * 安全：LLM 调用走服务端 aiComplete（RPC `ai/aiComplete`）。浏览器不再读取
- * system_settings，也不再持有 AI API Key——密钥只存在于 Worker 内存里。
+ * 安全：LLM 调用走服务端 aiComplete（RPC `ai/aiComplete`）。浏览器不持有 AI Key。
  */
 interface Props {
   /** 解析成功后回调，父表单预填字段并标记 AI 来源 */
@@ -29,22 +26,25 @@ const PLACEHOLDER: Record<Props['mode'], string> = {
   card: '粘贴卡面 / 官网信息，例如：招商银行 Young 卡，年费 300 元，账单日每月 15 日，尾号 2201',
 }
 
-/** 本地正则兜底解析（无 AI key 时使用） */
+/** 无 AI Key 离线粗提兜底（强制提示核对） */
 function localExtract(text: string, mode: Props['mode']): Record<string, unknown> {
   const data: Record<string, unknown> = {}
-  const amounts = [...text.matchAll(/(\d[\d,]*\.?\d*)\s*[元¥]|¥\s*(\d[\d,]*\.?\d*)/g)]
+  const amounts = [...text.matchAll(/(\d[\d,]*\.?\d*)\s*[元¥]|(?:US\$|HK\$|\$|¥)\s*(\d[\d,]*\.?\d*)/gi)]
     .map(m => (m[1] || m[2]).replace(/,/g, ''))
     .map(Number)
-    .filter(n => !isNaN(n) && n > 0)
+    .filter(n => !isNaN(n) && n >= 0)
   if (amounts.length > 0) {
     data.bill_amount = amounts[0]
     if (amounts.length > 1) data.min_payment = amounts[amounts.length - 1]
   }
+  if (/USD|美元|US\$/i.test(text)) data.currency = 'USD'
+  else if (/HKD|港币|HK\$/i.test(text)) data.currency = 'HKD'
+
   const dateMatch = text.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/)
   if (dateMatch) {
     const now = new Date()
-    const month = parseInt(dateMatch[1])
-    const day = parseInt(dateMatch[2])
+    const month = parseInt(dateMatch[1], 10)
+    const day = parseInt(dateMatch[2], 10)
     let year = now.getFullYear()
     if (month < now.getMonth() + 1) year += 1
     const mm = String(month).padStart(2, '0')
@@ -64,6 +64,7 @@ export function AiFillBox({ onFill, mode }: Props) {
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [fallbackWarning, setFallbackWarning] = useState<string | null>(null)
 
   const handleFill = async () => {
     if (!text.trim()) {
@@ -71,16 +72,15 @@ export function AiFillBox({ onFill, mode }: Props) {
       return
     }
     setError(null)
+    setFallbackWarning(null)
     setLoading(true)
 
-    // 规范要求 1s loading 视觉，与 AI 实际耗时取较大者
     const minDelay = new Promise<void>(res => setTimeout(res, 1000))
 
     let result: Record<string, unknown> | null = null
     let usedFallback = false
 
     try {
-      // 服务端解析：密钥不出服务端。失败（含未配置 Key）时回落到本地正则。
       const parsed = await aiComplete({
         type: mode === 'bill' ? 'bill_text' : 'card_text',
         data: { text },
@@ -110,6 +110,9 @@ export function AiFillBox({ onFill, mode }: Props) {
       setError('未能识别有效字段，请补充更完整的文本或手动填写')
       return
     }
+    if (usedFallback) {
+      setFallbackWarning('当前为本地规则粗提（未启用服务端 AI 解析），请仔细核对金额、币种和到期日')
+    }
     onFill({ ...cleaned, _aiSource: usedFallback ? 'regex' : 'ai' })
   }
 
@@ -136,9 +139,8 @@ export function AiFillBox({ onFill, mode }: Props) {
           </button>
         </div>
 
-        {error && (
-          <Alert severity='warning'>{error}</Alert>
-        )}
+        {fallbackWarning && <Alert severity='warning'>{fallbackWarning}</Alert>}
+        {error && <Alert severity='warning'>{error}</Alert>}
       </div>
     </div>
   )

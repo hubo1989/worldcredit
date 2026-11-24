@@ -4,12 +4,11 @@ import Foundation
 
 /// 原生首页 → 尚未原生实现的 Web 业务入口。
 ///
-/// Phase 1 原生化移除了 `.promos`、`.createBill`、`.createCard`，仅保留 3 个受限入口。
+/// 方向 1 移除了 `.gmailLedger`（已全面原生化为 DraftsInboxView），仅保留方向 2 权益入口。
 /// 纯值类型，不依赖 WebKit / SwiftUI，便于路由约束单测。
 public enum DashboardWebDestination: String, CaseIterable, Identifiable, Sendable {
     case benefits
     case benefitCalendar
-    case gmailLedger
 
     public var id: String { rawValue }
 
@@ -18,7 +17,6 @@ public enum DashboardWebDestination: String, CaseIterable, Identifiable, Sendabl
         switch self {
         case .benefits: return "权益"
         case .benefitCalendar: return "权益日历"
-        case .gmailLedger: return "邮箱账单"
         }
     }
 
@@ -27,7 +25,6 @@ public enum DashboardWebDestination: String, CaseIterable, Identifiable, Sendabl
         switch self {
         case .benefits: return "/benefits"
         case .benefitCalendar: return "/benefits/calendar"
-        case .gmailLedger: return "/gmail-ledger"
         }
     }
 
@@ -87,7 +84,7 @@ public enum DashboardWebRoutePolicy: Sendable {
             return .reject
         }
 
-        // 3) 目标站：精确 host + https + 443 + 受限 path（仅保留 /benefits, /benefits/calendar, /gmail-ledger）。
+        // 3) 目标站：精确 host + https + 443 + 受限 path（仅保留 /benefits, /benefits/calendar）。
         if host == allowedHost {
             guard scheme == "https" else { return .reject }
             if let port = url.port, port != 443 { return .reject }

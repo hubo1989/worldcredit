@@ -38,6 +38,8 @@ struct BillsView: View {
     @State private var adjustingItem: BillDisplayItem?
     @State private var editingBillItem: BillDisplayItem?
     @State private var creatingBill: Bool = false
+    @State private var showingSmartImport: Bool = false
+    @State private var deepLinkedDraftItem: DeepLinkedDraftItem?
     @State private var editingPayable: PayableItem?
     @State private var creatingPayable = false
     @State private var payingPayable: PayableItem?
@@ -158,6 +160,19 @@ struct BillsView: View {
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                         .padding(.bottom, 6)
+                        .sheet(isPresented: $showingSmartImport) {
+                            BillSmartImportSheet()
+                        }
+                        .sheet(item: $deepLinkedDraftItem) { item in
+                            NavigationStack {
+                                DraftConfirmView(draftId: item.id)
+                                    .toolbar {
+                                        ToolbarItem(placement: .cancellationAction) {
+                                            Button("关闭") { deepLinkedDraftItem = nil }
+                                        }
+                                    }
+                            }
+                        }
 
                     if appState.billsSortMode == .nearestDue {
                         heroSummary
@@ -170,6 +185,8 @@ struct BillsView: View {
                         .padding(.bottom, 10)
 
                     overdueBanner
+
+                    draftsBanner
 
                     ScrollView {
                         LazyVStack(spacing: 14) {
@@ -216,6 +233,7 @@ struct BillsView: View {
                         await appState.sync()
                         await appState.refreshPayables()
                         await appState.refreshDashboardRemote()
+                        await appState.refreshBillDrafts(silent: true)
                     }
                 }
 
@@ -249,9 +267,15 @@ struct BillsView: View {
             .navigationDestination(for: CardDetailRoute.self) { route in
                 CardDetailView(cardId: route.cardId)
             }
+            .navigationDestination(for: DraftsInboxRoute.self) { _ in
+                DraftsInboxView()
+            }
             .sheet(isPresented: $creatingBill) {
                 BillCreateSheetView()
             }
+            .onAppear { consumeDraftRoutes() }
+            .onChange(of: appState.pendingOpenDraftsInbox) { _, _ in consumeDraftRoutes() }
+            .onChange(of: appState.pendingDraftIdToConfirm) { _, _ in consumeDraftRoutes() }
             .sheet(item: $editingBillItem) { item in
                 BillEditSheetView(item: item)
             }
@@ -340,6 +364,27 @@ struct BillsView: View {
             Spacer()
 
             if appState.billsSortMode == .nearestDue {
+                Button(action: {
+                    hapticImpactTrigger += 1
+                    showingSmartImport = true
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.viewfinder")
+                            .font(.footnote.weight(.semibold))
+                        Text("智能导入")
+                            .font(.footnote.weight(.medium))
+                    }
+                    .foregroundStyle(WCColors.primaryAccent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(WCColors.surface, in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(WCColors.border, lineWidth: 1)
+                    )
+                }
+                .accessibilityIdentifier("bills.smartImport")
+
                 Button(action: {
                     hapticImpactTrigger += 1
                     creatingBill = true
@@ -530,6 +575,53 @@ struct BillsView: View {
             get: { appState.billsSortMode },
             set: { appState.billsSortMode = $0 }
         ))
+    }
+
+    // MARK: - Drafts Banner
+    @ViewBuilder
+    private var draftsBanner: some View {
+        if !appState.billDrafts.isEmpty && appState.billsSortMode == .nearestDue {
+            Button {
+                navigationPath.append(DraftsInboxRoute())
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "tray.full.fill")
+                        .foregroundStyle(WCColors.primaryAccent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("待确认账单草稿 (\(appState.billDrafts.count))")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(WCColors.textPrimary)
+                        Text("点击核对归属卡片并一键确认入账")
+                            .font(.caption2)
+                            .foregroundStyle(WCColors.textSecondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold())
+                        .foregroundStyle(WCColors.textSecondary)
+                }
+                .padding(12)
+                .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(WCColors.primaryAccent.opacity(0.4), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 6)
+            .accessibilityIdentifier("bills.draftsBanner")
+        }
+    }
+
+    private func consumeDraftRoutes() {
+        if let draftId = appState.pendingDraftIdToConfirm {
+            appState.pendingDraftIdToConfirm = nil
+            deepLinkedDraftItem = DeepLinkedDraftItem(id: draftId)
+        } else if appState.pendingOpenDraftsInbox {
+            appState.pendingOpenDraftsInbox = false
+            navigationPath.append(DraftsInboxRoute())
+        }
     }
 
     // MARK: - Overdue Banner
@@ -1690,4 +1782,10 @@ private struct BillSwipeCardContainer<Content: View>: View {
         }
         .sensoryFeedback(.impact(weight: .light), trigger: thresholdTick)
     }
+}
+
+private struct DraftsInboxRoute: Hashable {}
+
+private struct DeepLinkedDraftItem: Identifiable {
+    let id: String
 }

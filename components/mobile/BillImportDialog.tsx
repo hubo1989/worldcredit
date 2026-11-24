@@ -1,26 +1,46 @@
 // components/mobile/BillImportDialog.tsx
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Modal } from '@/components/obsidian/overlays'
-import { Button } from '@/components/obsidian/controls'
+import { useState, useEffect, useMemo } from 'react'
+import { Modal, ConfirmDialog } from '@/components/obsidian/overlays'
+import { Button, CheckRow } from '@/components/obsidian/controls'
 import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
 import {
-  ChevronLeftIcon, ChevronRightIcon, CheckIcon, TrashIcon,
-  UploadIcon, AlertIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CheckIcon,
+  UploadIcon,
+  AlertIcon,
+  LockIcon,
+  TrashIcon,
+  FileIcon,
 } from '@/components/icons/WcIcon'
-import { recognizeBillFromText, validateBillDraft, generateWarnings, type BillDraftPayload, type BillDraftItem } from '@/lib/billRecognizer'
-import { createBillImportDraft, confirmBillImportDraft, discardBillImportDraft } from '@/lib/api/billDrafts'
+import { confirmBillImportDraft, discardBillImportDraft, updateBillImportDraft } from '@/lib/api/billDrafts'
+import { uploadRecordAttachment } from '@/lib/api/attachments'
+import { normalizeCurrencyOrDefault } from '@/lib/fx'
 import type { CreditCard } from '@/lib/types'
+import {
+  importAndParseBill,
+  unlockEncryptedDraft,
+  retryParseDraft,
+  confirmBillImportDraftWithOptions,
+  createClientUuid,
+  extractDuplicateBillDetails,
+  formatAttributionLabel,
+  formatDraftAmount,
+  getDraftCurrencySymbol,
+  suggestBankPasswordHint,
+  type BillImportDraftOmnibus,
+  type BillDraftPayload,
+  type DuplicateBillDetails,
+} from './omnibusApi'
 
-interface CardOption {
+export interface CardOption {
   id: string
   label: string
-  card: CreditCard
+  card: CreditCard & { card_product?: { bank_name?: string; currency?: string } }
 }
-
-const steps = ['选择卡片', '选择来源', '输入内容', '确认草稿', '完成']
 
 type SourceType = 'text' | 'image' | 'pdf'
 
@@ -30,13 +50,20 @@ interface Props {
   onImportSuccess: () => void
   cards: CardOption[]
   userId: string
+  initialSourceType?: SourceType
 }
 
-/** 横向步骤条（替代 MUI Stepper）：完成步打勾，当前步高亮。 */
+const MAX_TEXT_LENGTH = 50_000
+const MAX_SINGLE_FILE_BYTES = 10 * 1024 * 1024
+const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
+const MAX_IMAGE_COUNT = 3
+
+const STEP_LABELS = ['提交来源', '预览核对', '完成入账']
+
 function StepBar({ activeStep }: { activeStep: number }) {
   return (
     <ol className='flex items-center justify-between gap-1 px-1 pt-1' aria-label='导入步骤'>
-      {steps.map((label, i) => {
+      {STEP_LABELS.map((label, i) => {
         const done = i < activeStep
         const active = i === activeStep
         return (
@@ -69,110 +96,383 @@ function StepBar({ activeStep }: { activeStep: number }) {
   )
 }
 
-export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId }: Props) {
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`
+}
+
+function isAcceptedImage(file: File): boolean {
+  const mime = (file.type || '').toLowerCase()
+  const name = file.name.toLowerCase()
+  return (
+    mime === 'image/png' ||
+    mime === 'image/jpeg' ||
+    mime === 'image/webp' ||
+    mime === 'image/heic' ||
+    mime === 'image/heif' ||
+    /\.(png|jpe?g|webp|heic|heif)$/.test(name)
+  )
+}
+
+function isAcceptedPdf(file: File): boolean {
+  const mime = (file.type || '').toLowerCase()
+  const name = file.name.toLowerCase()
+  return mime === 'application/pdf' || name.endsWith('.pdf')
+}
+
+function confidenceBadge(confidence: number | null): { label: string; cls: string } {
+  const score = confidence ?? 0
+  if (score >= 0.85) {
+    return {
+      label: `高 ${(score * 100).toFixed(0)}%`,
+      cls: 'border-d-success-ink/40 bg-d-success-soft text-d-success-ink',
+    }
+  }
+  if (score >= 0.5) {
+    return {
+      label: `中 ${(score * 100).toFixed(0)}%`,
+      cls: 'border-d-warn-ink/40 bg-d-gold-soft text-d-warn-ink',
+    }
+  }
+  return {
+    label: `低 ${(score * 100).toFixed(0)}%`,
+    cls: 'border-d-danger/40 bg-d-danger-soft text-d-danger-ink',
+  }
+}
+
+export function BillImportDialog({
+  open,
+  onClose,
+  onImportSuccess,
+  cards,
+  userId,
+  initialSourceType = 'text',
+}: Props) {
   const [activeStep, setActiveStep] = useState(0)
-  const [cardId, setCardId] = useState('')
-  const [sourceType, setSourceType] = useState<SourceType>('text')
+  const [selectedCardId, setSelectedCardId] = useState('')
+  const [sourceType, setSourceType] = useState<SourceType>(initialSourceType)
   const [inputText, setInputText] = useState('')
-  const [draft, setDraft] = useState<BillDraftPayload | null>(null)
-  const [draftId, setDraftId] = useState<string | null>(null)
-  const [confidence, setConfidence] = useState(0)
-  const [warnings, setWarnings] = useState<string[]>([])
+  const [imageFiles, setImageFiles] = useState<File[]>([])
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
+  const [showAdvancedPdfPw, setShowAdvancedPdfPw] = useState(false)
+  const [pdfPassword, setPdfPassword] = useState('')
+  const [savePasswordToVault, setSavePasswordToVault] = useState(true)
+  const [passwordLabel, setPasswordLabel] = useState('')
+  const [passwordHint, setPasswordHint] = useState('')
+
+  const [drafts, setDrafts] = useState<BillImportDraftOmnibus[]>([])
+  const [activeDraftIdx, setActiveDraftIdx] = useState(0)
+  const [unlockPassword, setUnlockPassword] = useState('')
+  const [unlockSaveToVault, setUnlockSaveToVault] = useState(true)
+  const [unlockLabel, setUnlockLabel] = useState('')
+  const [unlockHint, setUnlockHint] = useState('')
+
+  const [nonBillMessage, setNonBillMessage] = useState<string | null>(null)
+  const [duplicateConflict, setDuplicateConflict] = useState<DuplicateBillDetails | null>(null)
+  const [hasEditedCurrentDraft, setHasEditedCurrentDraft] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState(false)
+  const [infoNotice, setInfoNotice] = useState('')
+  const [confirmedCount, setConfirmedCount] = useState(0)
 
-  // Reset state when dialog opens/closes
   useEffect(() => {
-    if (open) {
-      setActiveStep(0)
-      setCardId(cards[0]?.id || '')
-      setSourceType('text')
-      setInputText('')
-      setDraft(null)
-      setDraftId(null)
-      setConfidence(0)
-      setWarnings([])
-      setError('')
-      setSuccess(false)
-    }
-  }, [open, cards])
-
-  const handleNext = async () => {
+    if (!open) return
+    setActiveStep(0)
+    setSelectedCardId('')
+    setSourceType(initialSourceType)
+    setInputText('')
+    setImageFiles([])
+    setPdfFile(null)
+    setShowAdvancedPdfPw(false)
+    setPdfPassword('')
+    setSavePasswordToVault(true)
+    setPasswordLabel('')
+    setPasswordHint('')
+    setDrafts([])
+    setActiveDraftIdx(0)
+    setUnlockPassword('')
+    setUnlockSaveToVault(true)
+    setUnlockLabel('')
+    setUnlockHint('')
+    setNonBillMessage(null)
+    setDuplicateConflict(null)
+    setHasEditedCurrentDraft(false)
+    setLoading(false)
     setError('')
+    setInfoNotice('')
+    setConfirmedCount(0)
+  }, [open, initialSourceType])
 
-    if (activeStep === 2) {
-      // Process input and generate draft
-      await processInput()
-    } else if (activeStep === 3) {
-      // Save draft and move to confirm step
-      await saveDraft()
-    } else if (activeStep < steps.length - 1) {
-      setActiveStep(prev => prev + 1)
+  const currentDraft = drafts[activeDraftIdx] ?? null
+
+  const activeCurrency = useMemo(() => {
+    const matchedCard = cards.find(c => c.id === currentDraft?.card_id)
+    return normalizeCurrencyOrDefault(
+      currentDraft?.parsed_payload?.currency ?? matchedCard?.card.card_product?.currency,
+      'CNY'
+    )
+  }, [cards, currentDraft])
+
+  const currencySym = getDraftCurrencySymbol(activeCurrency)
+
+  const handleClose = () => {
+    if (confirmedCount > 0 || drafts.length > 0) {
+      onImportSuccess()
     }
+    onClose()
   }
 
-  const handleBack = () => {
-    if (activeStep > 0) {
-      setActiveStep(prev => prev - 1)
+  const handleImagePick = (fileList: FileList | null) => {
+    setError('')
+    setNonBillMessage(null)
+    if (!fileList || fileList.length === 0) return
+    const next = [...imageFiles]
+    for (const f of Array.from(fileList)) {
+      if (!isAcceptedImage(f)) {
+        setError(`不支持的图片格式：${f.name}（仅支持 PNG / JPEG / WebP / HEIC）`)
+        return
+      }
+      if (f.size > MAX_SINGLE_FILE_BYTES) {
+        setError(`图片「${f.name}」超过 10MB 上限`)
+        return
+      }
+      if (next.length >= MAX_IMAGE_COUNT) {
+        setError(`单次最多上传 ${MAX_IMAGE_COUNT} 张账单截图`)
+        return
+      }
+      next.push(f)
     }
+    const totalBytes = next.reduce((sum, f) => sum + f.size, 0)
+    if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {
+      setError('单次上传图片合计不能超过 20MB')
+      return
+    }
+    setImageFiles(next)
   }
 
-  const processInput = async () => {
-    if (sourceType === 'text' && !inputText.trim()) {
-      setError('请输入账单文本内容')
+  const handlePdfPick = (fileList: FileList | null) => {
+    setError('')
+    setNonBillMessage(null)
+    if (!fileList || fileList.length === 0) return
+    const file = fileList[0]
+    if (!isAcceptedPdf(file)) {
+      setError('请选择 .pdf 格式的月结单文件')
       return
     }
-
-    if (sourceType !== 'text') {
-      setError('图片和 PDF 导入功能即将推出，请使用文本导入')
+    if (file.size > MAX_SINGLE_FILE_BYTES) {
+      setError('单个 PDF 文件不能超过 10MB')
       return
+    }
+    setPdfFile(file)
+  }
+
+  const runImportAndParse = async (forceSaveNonBill = false) => {
+    setError('')
+    setInfoNotice('')
+    setNonBillMessage(null)
+
+    if (sourceType === 'text') {
+      const trimmed = inputText.trim()
+      if (!trimmed) {
+        setError('请输入账单文本内容')
+        return
+      }
+      if (trimmed.length > MAX_TEXT_LENGTH) {
+        setError('账单文本不能超过 50,000 字符')
+        return
+      }
+    } else if (sourceType === 'image') {
+      if (imageFiles.length === 0) {
+        setError('请至少选择 1 张账单截图')
+        return
+      }
+    } else if (sourceType === 'pdf') {
+      if (!pdfFile) {
+        setError('请选择需要导入的 PDF 月结单')
+        return
+      }
     }
 
     setLoading(true)
-
     try {
-      // Recognize bill from text
-      const recognized = recognizeBillFromText(inputText)
-      recognized.card_id = cardId
+      const preDraftId = createClientUuid()
+      const clientRequestId = createClientUuid()
+      let attachmentIds: string[] | undefined
 
-      // Validate and calculate confidence
-      const validation = validateBillDraft(recognized)
-      const draftWarnings = generateWarnings(recognized)
-
-      setDraft(recognized)
-      setConfidence(validation.confidence)
-      setWarnings(draftWarnings)
-
-      if (validation.valid || validation.warnings.length > 0) {
-        setActiveStep(3)
-      } else {
-        setError(validation.errors.join('; '))
+      if (sourceType === 'image') {
+        const uploaded = await Promise.all(
+          imageFiles.map(file => uploadRecordAttachment('draft', preDraftId, file, userId))
+        )
+        attachmentIds = uploaded.map(a => a.id)
+      } else if (sourceType === 'pdf' && pdfFile) {
+        const uploaded = await uploadRecordAttachment('draft', preDraftId, pdfFile, userId)
+        attachmentIds = [uploaded.id]
       }
+
+      const res = await importAndParseBill({
+        source_type: sourceType,
+        raw_text: sourceType === 'text' ? inputText.trim() : undefined,
+        attachment_ids: attachmentIds,
+        card_id: selectedCardId || null,
+        pdf_password: sourceType === 'pdf' && pdfPassword ? pdfPassword : undefined,
+        save_password_to_vault:
+          sourceType === 'pdf' && pdfPassword ? savePasswordToVault : undefined,
+        password_label: passwordLabel.trim() || undefined,
+        password_hint: passwordHint.trim() || undefined,
+        force_save_non_bill: forceSaveNonBill || undefined,
+        client_request_id: clientRequestId,
+      })
+
+      if (res.outcome === 'non_bill_warning') {
+        setNonBillMessage(res.message || '识别内容疑似非信用卡账单或自动扣款通知，请确认是否继续保存为草稿')
+        return
+      }
+
+      if (res.outcome === 'duplicate_file') {
+        setInfoNotice(res.message || '该文件已存在一份待确认草稿，已为你定位到既有草稿')
+      }
+
+      setDrafts(res.drafts)
+      setActiveDraftIdx(0)
+      setHasEditedCurrentDraft(false)
+      setActiveStep(1)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '解析失败')
+      setError(err instanceof Error ? err.message : '导入解析失败，请重试')
     } finally {
       setLoading(false)
     }
   }
 
-  const saveDraft = async () => {
-    if (!draft) return
-
+  const handleUnlockCurrentDraft = async () => {
+    if (!currentDraft) return
+    if (!unlockPassword) {
+      setError('请输入 PDF 解密密码')
+      return
+    }
+    setError('')
     setLoading(true)
-
     try {
-      const savedDraft = await createBillImportDraft({
-        created_by: userId,
-        card_id: cardId,
-        source_type: sourceType,
-        raw_text: inputText,
-        parsed_payload: draft,
-        confidence,
+      const res = await unlockEncryptedDraft(currentDraft.id, {
+        password: unlockPassword,
+        save_to_vault: unlockSaveToVault,
+        vault_label:
+          unlockLabel.trim() ||
+          `${currentDraft.parsed_payload.bank_name || '月结单'}密码`,
+        vault_holder_id: currentDraft.holder_id ?? null,
+        vault_bank_keyword: currentDraft.parsed_payload.bank_name ?? null,
+        vault_hint: unlockHint.trim() || null,
       })
+      setDrafts(res.drafts)
+      setActiveDraftIdx(0)
+      setUnlockPassword('')
+      setHasEditedCurrentDraft(false)
+      if (res.vault_rule_saved) {
+        setInfoNotice('PDF 已解密并保存到家庭月结单密码本')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '密码错误或解密失败')
+    } finally {
+      setLoading(false)
+    }
+  }
 
-      setDraftId(savedDraft.id)
-      setActiveStep(4)
+  const handleRetryParse = async (manualMode = false) => {
+    if (!currentDraft) return
+    setError('')
+    setLoading(true)
+    try {
+      const updated = await retryParseDraft(currentDraft.id, manualMode ? { manual_mode: true } : undefined)
+      setDrafts(prev => prev.map((d, i) => (i === activeDraftIdx ? updated : d)))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '操作失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const updateCurrentDraft = (
+    updater: (prev: BillImportDraftOmnibus) => BillImportDraftOmnibus
+  ) => {
+    setHasEditedCurrentDraft(true)
+    setDrafts(prev => prev.map((d, i) => (i === activeDraftIdx ? updater(d) : d)))
+  }
+
+  const updateCurrentPayload = <K extends keyof BillDraftPayload>(
+    key: K,
+    value: BillDraftPayload[K]
+  ) => {
+    updateCurrentDraft(d => ({
+      ...d,
+      parsed_payload: { ...d.parsed_payload, [key]: value },
+    }))
+  }
+
+  const persistCurrentDraftEditsIfNeeded = async () => {
+    if (!currentDraft || !hasEditedCurrentDraft) return
+    await updateBillImportDraft(currentDraft.id, {
+      card_id: currentDraft.card_id ?? undefined,
+      parsed_payload: currentDraft.parsed_payload as Record<string, unknown>,
+    })
+    setHasEditedCurrentDraft(false)
+  }
+
+  const canConfirmCurrentDraft = useMemo(() => {
+    if (!currentDraft) return false
+    if (currentDraft.parse_status && currentDraft.parse_status !== 'ready') return false
+    if (!currentDraft.card_id) return false
+    const p = currentDraft.parsed_payload
+    if (p.bill_amount == null || !Number.isFinite(Number(p.bill_amount)) || Number(p.bill_amount) < 0) {
+      return false
+    }
+    if (!p.bill_month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(p.bill_month)) return false
+    if (Number(p.bill_amount) > 0 && !p.due_date) return false
+    return true
+  }, [currentDraft])
+
+  const handleConfirmCurrentDraft = async (forceMerge = false) => {
+    if (!currentDraft) return
+    setError('')
+    setLoading(true)
+    try {
+      await persistCurrentDraftEditsIfNeeded()
+      if (forceMerge) {
+        await confirmBillImportDraftWithOptions(currentDraft.id, {
+          conflict_resolution: 'merge_update',
+        })
+      } else {
+        await confirmBillImportDraft(currentDraft.id)
+      }
+      setDuplicateConflict(null)
+      setConfirmedCount(c => c + 1)
+
+      if (drafts.length > 1) {
+        const remaining = drafts.filter((_, idx) => idx !== activeDraftIdx)
+        setDrafts(remaining)
+        setActiveDraftIdx(0)
+        setHasEditedCurrentDraft(false)
+        setInfoNotice(`已入账 1 份账单，还剩 ${remaining.length} 份待核对`)
+      } else {
+        setActiveStep(2)
+      }
+    } catch (err) {
+      const dup = extractDuplicateBillDetails(err)
+      if (dup) {
+        setDuplicateConflict(dup)
+      } else {
+        setError(err instanceof Error ? err.message : '确认入账失败')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSaveToDraftBox = async () => {
+    setError('')
+    setLoading(true)
+    try {
+      await persistCurrentDraftEditsIfNeeded()
+      onImportSuccess()
+      onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存草稿失败')
     } finally {
@@ -180,356 +480,641 @@ export function BillImportDialog({ open, onClose, onImportSuccess, cards, userId
     }
   }
 
-  const handleConfirmImport = async () => {
-    if (!draftId) return
-
+  const handleDiscardCurrentDraft = async () => {
+    if (!currentDraft) return
+    setError('')
     setLoading(true)
-
     try {
-      await confirmBillImportDraft(draftId)
-      setSuccess(true)
+      await discardBillImportDraft(currentDraft.id)
+      setDuplicateConflict(null)
+      if (drafts.length > 1) {
+        const remaining = drafts.filter((_, idx) => idx !== activeDraftIdx)
+        setDrafts(remaining)
+        setActiveDraftIdx(0)
+      } else {
+        onImportSuccess()
+        onClose()
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '导入失败')
+      setError(err instanceof Error ? err.message : '丢弃草稿失败')
     } finally {
       setLoading(false)
     }
   }
 
-  const handleDiscard = async () => {
-    if (!draftId) return
-
-    setLoading(true)
-
-    try {
-      await discardBillImportDraft(draftId)
-      handleClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '删除草稿失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleClose = () => {
-    if (success) {
-      onImportSuccess()
-    }
-    onClose()
-  }
-
-  const updateDraftField = <K extends keyof BillDraftPayload>(key: K, value: BillDraftPayload[K]) => {
-    if (draft) {
-      setDraft({ ...draft, [key]: value })
-    }
-  }
-
-  const updateDraftItem = <K extends keyof BillDraftItem>(index: number, key: K, value: BillDraftItem[K]) => {
-    if (draft?.items) {
-      const newItems = [...draft.items]
-      newItems[index] = { ...newItems[index], [key]: value }
-      setDraft({ ...draft, items: newItems })
-    }
-  }
-
-  const removeDraftItem = (index: number) => {
-    if (draft?.items) {
-      setDraft({ ...draft, items: draft.items.filter((_, i) => i !== index) })
-    }
-  }
-
-  const getConfidenceTone = () => {
-    if (confidence >= 0.8) return 'border-d-success-ink/40 bg-d-success-soft text-d-success-ink'
-    if (confidence >= 0.5) return 'border-d-warn-ink/40 bg-d-gold-soft text-d-warn-ink'
-    return 'border-d-danger/40 bg-d-danger-soft text-d-danger-ink'
-  }
-
-  const getConfidenceLabel = () => {
-    if (confidence >= 0.8) return '高'
-    if (confidence >= 0.5) return '中'
-    return '低'
-  }
-
-  // Step 1: Select card
-  const renderStep1 = () => (
-    <div className='pt-2'>
+  const renderStep0 = () => (
+    <div className='flex flex-col gap-3.5 pt-2'>
       <SelectField
-        label='选择信用卡'
-        required
-        value={cardId}
-        onChange={e => setCardId(e.target.value)}
-        options={cards.map(c => ({ value: c.id, label: c.label }))}
-      />
-    </div>
-  )
-
-  // Step 2: Select source type
-  const renderStep2 = () => (
-    <div className='pt-2'>
-      <SelectField
-        label='导入来源'
-        value={sourceType}
-        onChange={e => setSourceType(e.target.value as SourceType)}
+        label='预选信用卡（选填，不选则由 AI 自动匹配）'
+        value={selectedCardId}
+        onChange={e => setSelectedCardId(e.target.value)}
         options={[
-          { value: 'text', label: '粘贴文本 (推荐)' },
-          { value: 'image', label: '上传图片 (即将推出)', disabled: true },
-          { value: 'pdf', label: '上传 PDF (即将推出)', disabled: true },
+          { value: '', label: '自动识别并匹配信用卡（推荐）' },
+          ...cards.map(c => ({ value: c.id, label: c.label })),
         ]}
       />
 
-      {sourceType === 'text' && (
-        <div className='mt-4'>
-          <Alert severity='info'>
-            支持粘贴银行短信或邮件内容，系统将自动识别账单信息
-          </Alert>
+      {/* 来源分段切换 */}
+      <div>
+        <p className='mb-1.5 text-[13px] font-semibold leading-5 text-d-muted'>导入方式</p>
+        <div className='grid grid-cols-3 gap-1.5 rounded-xl border border-d-border bg-d-bg p-1'>
+          {([
+            ['text', '粘贴文本'],
+            ['image', '上传截图'],
+            ['pdf', '上传 PDF'],
+          ] as Array<[SourceType, string]>).map(([val, label]) => {
+            const active = sourceType === val
+            return (
+              <button
+                key={val}
+                type='button'
+                onClick={() => {
+                  setSourceType(val)
+                  setError('')
+                  setNonBillMessage(null)
+                }}
+                className={
+                  'min-h-[40px] rounded-lg px-2 text-[13px] font-semibold transition-colors ' +
+                  (active ? 'bg-d-accent text-white' : 'text-d-muted hover:text-d-text')
+                }
+              >
+                {label}
+              </button>
+            )
+          })}
         </div>
-      )}
-    </div>
-  )
+      </div>
 
-  // Step 3: Input content
-  const renderStep3 = () => (
-    <div className='pt-2'>
-      {sourceType === 'text' ? (
+      {sourceType === 'text' && (
         <TextArea
-          label='粘贴账单内容'
-          rows={12}
-          placeholder={'例如：\n招商银行：您账户1234的03月账单金额¥1234.56，最低还款额¥123.45，到期还款日03月25日。\n交易明细：\n03月01日 星巴克咖啡 38.00\n03月03日 地铁出行 12.00'}
+          label='账单短信 / 邮件内容'
+          rows={7}
+          maxLength={MAX_TEXT_LENGTH}
+          placeholder={'粘贴银行短信或邮件正文，例如：\n招商银行：您账户1234的03月账单金额¥1234.56，最低还款额¥123.45，到期还款日03月25日。'}
           value={inputText}
           onChange={e => setInputText(e.target.value)}
-          style={{ fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: 13 }}
+          helperText={`支持中/港/美多币种账单文本，最多 ${MAX_TEXT_LENGTH.toLocaleString()} 字`}
         />
-      ) : (
-        <div className='rounded-2xl border-2 border-dashed border-d-border p-10 text-center'>
-          <div className='mb-2 flex justify-center text-d-text'>
-            <UploadIcon size={48} />
-          </div>
-          <p className='text-[14px] leading-5 text-d-muted'>文件上传功能即将推出</p>
-        </div>
       )}
-    </div>
-  )
 
-  // Step 4: Preview and edit draft
-  const renderStep4 = () => {
-    if (!draft) return null
-
-    const itemsTotal = (draft.items || []).reduce((sum, item) => sum + (item.amount || 0), 0)
-
-    return (
-      <div className='pt-2'>
-        {/* Confidence indicator */}
-        <div className='mb-4 flex items-center gap-2'>
-          <p className='text-[14px] font-semibold leading-5 text-d-text'>识别置信度:</p>
-          <span
-            className={'inline-flex h-6 items-center rounded-full border px-2.5 text-[12px] font-semibold leading-none ' + getConfidenceTone()}
-          >
-            {getConfidenceLabel()}
-          </span>
-          <p className='text-[13px] leading-5 text-d-muted'>
-            ({(confidence * 100).toFixed(0)}%)
-          </p>
-        </div>
-
-        {/* Warnings */}
-        {warnings.length > 0 && (
-          <div className='mb-4'>
-            <Alert severity='warning'>
-              <div className='flex flex-col gap-1'>
-                {warnings.map((warn, i) => (
-                  <p key={i} className='flex items-start gap-1.5'>
-                    <AlertIcon size={14} className='mt-0.5 shrink-0' />
-                    <span>{warn}</span>
-                  </p>
-                ))}
-              </div>
-            </Alert>
-          </div>
-        )}
-
-        {/* Bill fields */}
-        <div className='flex flex-col gap-4'>
-          <TextField
-            label='账单月份'
-            type='month'
-            value={draft.bill_month || ''}
-            onChange={e => updateDraftField('bill_month', e.target.value)}
-          />
-          <div className='flex gap-3'>
-            <div className='min-w-0 flex-1'>
-              <TextField
-                label='账单金额'
-                type='number'
-                value={draft.bill_amount || ''}
-                onChange={e => updateDraftField('bill_amount', Number(e.target.value))}
-                step={0.01}
-              />
-            </div>
-            <div className='min-w-0 flex-1'>
-              <TextField
-                label='最低还款额'
-                type='number'
-                value={draft.min_payment || ''}
-                onChange={e => updateDraftField('min_payment', Number(e.target.value))}
-                step={0.01}
-              />
-            </div>
-          </div>
-          <TextField
-            label='还款截止日'
-            type='date'
-            value={draft.due_date || ''}
-            onChange={e => updateDraftField('due_date', e.target.value)}
-          />
-        </div>
-
-        {/* Items */}
-        <div className='my-4 h-px bg-d-border' />
-        <p className='mb-2 text-[17px] font-semibold leading-6 text-d-text'>
-          交易明细 (合计: ¥{itemsTotal.toFixed(2)})
-        </p>
-
-        {draft.items && draft.items.length > 0 ? (
-          <div className='flex flex-col gap-3'>
-            {draft.items.map((item, index) => (
-              <div key={index} className='rounded-2xl border border-d-border bg-d-surface p-3'>
-                <div className='mb-2 flex items-center justify-between'>
-                  <p className='text-[13px] leading-4 text-d-muted'>
-                    #{index + 1}
-                  </p>
+      {sourceType === 'image' && (
+        <div className='flex flex-col gap-2.5'>
+          <label className='flex min-h-[112px] cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-d-border bg-d-bg/60 p-4 text-center transition-colors hover:border-d-accent'>
+            <UploadIcon size={28} className='text-d-accent-light' />
+            <span className='text-[14px] font-semibold text-d-text'>
+              点击选择账单截图（最多 3 张）
+            </span>
+            <span className='text-[12px] text-d-muted'>
+              支持 PNG / JPEG / WebP / HEIC，单张 ≤ 10MB，合计 ≤ 20MB
+            </span>
+            <input
+              type='file'
+              aria-label='选择账单截图'
+              accept='image/png,image/jpeg,image/webp,image/heic,.png,.jpg,.jpeg,.webp,.heic'
+              multiple
+              className='sr-only'
+              onChange={e => {
+                handleImagePick(e.target.files)
+                e.target.value = ''
+              }}
+            />
+          </label>
+          {imageFiles.length > 0 && (
+            <div className='flex flex-col gap-1.5'>
+              {imageFiles.map((file, idx) => (
+                <div
+                  key={`${file.name}-${idx}`}
+                  className='flex items-center justify-between rounded-xl border border-d-border bg-d-surface px-3 py-2'
+                >
+                  <div className='min-w-0 flex-1'>
+                    <p className='truncate text-[13px] font-medium text-d-text'>{file.name}</p>
+                    <p className='text-[11px] text-d-muted'>{formatFileSize(file.size)}</p>
+                  </div>
                   <button
                     type='button'
-                    onClick={() => removeDraftItem(index)}
-                    aria-label='删除明细'
-                    className='rounded-full p-1.5 text-d-muted transition-colors hover:text-d-danger'
+                    aria-label={`移除 ${file.name}`}
+                    onClick={() => setImageFiles(prev => prev.filter((_, i) => i !== idx))}
+                    className='flex h-9 w-9 items-center justify-center rounded-lg text-d-muted hover:text-d-danger-ink'
                   >
                     <TrashIcon size={16} />
                   </button>
                 </div>
-                <div className='mb-2'>
-                  <TextField
-                    label='商户说明'
-                    value={item.description}
-                    onChange={e => updateDraftItem(index, 'description', e.target.value)}
-                  />
-                </div>
-                <div className='flex gap-3'>
-                  <div className='min-w-0 flex-1'>
-                    <TextField
-                      label='金额'
-                      type='number'
-                      value={item.amount}
-                      onChange={e => updateDraftItem(index, 'amount', Number(e.target.value))}
-                      step={0.01}
-                    />
-                  </div>
-                  <div className='min-w-0 flex-1'>
-                    <TextField
-                      label='分类'
-                      value={item.category || ''}
-                      onChange={e => updateDraftItem(index, 'category', e.target.value)}
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {sourceType === 'pdf' && (
+        <div className='flex flex-col gap-3'>
+          <label className='flex min-h-[112px] cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-d-border bg-d-bg/60 p-4 text-center transition-colors hover:border-d-accent'>
+            <FileIcon size={28} className='text-d-accent-light' />
+            <span className='text-[14px] font-semibold text-d-text'>
+              {pdfFile ? pdfFile.name : '点击选择 PDF 月结单'}
+            </span>
+            <span className='text-[12px] text-d-muted'>
+              {pdfFile
+                ? `${formatFileSize(pdfFile.size)} · 支持明文或加密月结单`
+                : '支持加密 PDF（自动尝试密码本）· 单个文件 ≤ 10MB'}
+            </span>
+            <input
+              type='file'
+              aria-label='选择 PDF 月结单'
+              accept='application/pdf,.pdf'
+              className='sr-only'
+              onChange={e => {
+                handlePdfPick(e.target.files)
+                e.target.value = ''
+              }}
+            />
+          </label>
+
+          <button
+            type='button'
+            onClick={() => setShowAdvancedPdfPw(v => !v)}
+            className='flex min-h-[36px] items-center justify-between rounded-xl border border-d-border bg-d-subtle/60 px-3 text-[12px] font-semibold text-d-muted'
+          >
+            <span className='flex items-center gap-1.5'>
+              <LockIcon size={14} />
+              如已知加密密码可提前填写（选填）
+            </span>
+            <span>{showAdvancedPdfPw ? '收起' : '展开'}</span>
+          </button>
+
+          {showAdvancedPdfPw && (
+            <div className='flex flex-col gap-2.5 rounded-xl border border-d-border bg-d-bg/40 p-3'>
+              <TextField
+                label='PDF 打开密码（选填）'
+                type='password'
+                placeholder='若不填，将先尝试家庭密码本自动解密'
+                value={pdfPassword}
+                onChange={e => setPdfPassword(e.target.value)}
+              />
+              {pdfPassword && (
+                <>
+                  <CheckRow checked={savePasswordToVault} onChange={setSavePasswordToVault}>
+                    同时保存到家庭月结单密码本（AES-GCM 加密存储）
+                  </CheckRow>
+                  {savePasswordToVault && (
+                    <div className='grid grid-cols-2 gap-2'>
+                      <TextField
+                        label='规则名称（选填）'
+                        placeholder='如：本人建行身份证'
+                        value={passwordLabel}
+                        onChange={e => setPasswordLabel(e.target.value)}
+                      />
+                      <TextField
+                        label='密码提示（选填）'
+                        placeholder='如：身份证后6位'
+                        value={passwordHint}
+                        onChange={e => setPasswordHint(e.target.value)}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {nonBillMessage && (
+        <Alert severity='warning'>
+          <div className='flex flex-col gap-2'>
+            <p className='text-[13px]'>{nonBillMessage}</p>
+            <div className='flex gap-2'>
+              <Button
+                size='sm'
+                variant='secondary'
+                onClick={() => setNonBillMessage(null)}
+                disabled={loading}
+              >
+                重新选择
+              </Button>
+              <Button
+                size='sm'
+                onClick={() => void runImportAndParse(true)}
+                loading={loading}
+              >
+                仍转为草稿手动填写
+              </Button>
+            </div>
           </div>
-        ) : (
-          <Alert severity='info'>未识别到交易明细，可手动添加</Alert>
+        </Alert>
+      )}
+    </div>
+  )
+
+  const renderStep1 = () => {
+    if (!currentDraft) return null
+    const p = currentDraft.parsed_payload
+    const parseStatus = currentDraft.parse_status ?? 'ready'
+    const badge = confidenceBadge(currentDraft.confidence)
+    const attributionText = formatAttributionLabel(currentDraft.attribution_source)
+    const suggestedHint =
+      currentDraft.password_hint ||
+      suggestBankPasswordHint(`${p.bank_name || ''} ${pdfFile?.name || ''}`)
+
+    if (parseStatus === 'needs_password') {
+      return (
+        <div className='flex flex-col gap-3.5 pt-2'>
+          <Alert severity='warning'>
+            <div className='flex flex-col gap-1'>
+              <p className='font-semibold'>该 PDF 月结单受密码保护，原件已安全留存</p>
+              {suggestedHint && <p className='text-[12px]'>提示：{suggestedHint}</p>}
+            </div>
+          </Alert>
+          <TextField
+            label='请输入 PDF 解密密码'
+            type='password'
+            placeholder='输入密码后原地解密并解析'
+            value={unlockPassword}
+            onChange={e => setUnlockPassword(e.target.value)}
+          />
+          <CheckRow checked={unlockSaveToVault} onChange={setUnlockSaveToVault}>
+            保存到月结单密码本（下次同银行自动解密）
+          </CheckRow>
+          {unlockSaveToVault && (
+            <div className='grid grid-cols-2 gap-2'>
+              <TextField
+                label='规则名称（选填）'
+                placeholder='如：招行月结单'
+                value={unlockLabel}
+                onChange={e => setUnlockLabel(e.target.value)}
+              />
+              <TextField
+                label='密码提示词（选填）'
+                placeholder='如：身份证后6位'
+                value={unlockHint}
+                onChange={e => setUnlockHint(e.target.value)}
+              />
+            </div>
+          )}
+          <Button onClick={() => void handleUnlockCurrentDraft()} loading={loading}>
+            解锁并解析
+          </Button>
+        </div>
+      )
+    }
+
+    if (parseStatus === 'parse_failed') {
+      return (
+        <div className='flex flex-col gap-3.5 pt-2'>
+          <Alert severity='error'>
+            {currentDraft.error_message || '智能解析失败或超时，原件已保留'}
+          </Alert>
+          <div className='flex gap-2'>
+            <Button variant='secondary' onClick={() => void handleRetryParse(false)} loading={loading}>
+              重试解析
+            </Button>
+            <Button onClick={() => void handleRetryParse(true)} loading={loading}>
+              转为手动填写
+            </Button>
+          </div>
+        </div>
+      )
+    }
+
+    const candidateIds = new Set(p.candidate_card_ids || [])
+    const orderedCards =
+      candidateIds.size > 0
+        ? [
+            ...cards.filter(c => candidateIds.has(c.id)),
+            ...cards.filter(c => !candidateIds.has(c.id)),
+          ]
+        : cards
+
+    return (
+      <div className='flex flex-col gap-3.5 pt-2'>
+        {drafts.length > 1 && (
+          <div className='rounded-xl border border-d-accent/30 bg-d-subtle p-3'>
+            <p className='text-[12px] font-semibold text-d-accent-light'>
+              该多币种月结单已拆分为 {drafts.length} 份独立账单草稿，请分别核对入账：
+            </p>
+            <div className='mt-2 flex flex-wrap gap-1.5'>
+              {drafts.map((d, idx) => (
+                <button
+                  key={d.id}
+                  type='button'
+                  onClick={() => {
+                    setActiveDraftIdx(idx)
+                    setHasEditedCurrentDraft(false)
+                  }}
+                  className={
+                    'rounded-full px-3 py-1 text-[12px] font-semibold ' +
+                    (idx === activeDraftIdx
+                      ? 'bg-d-accent text-white'
+                      : 'border border-d-border bg-d-surface text-d-muted')
+                  }
+                >
+                  {d.parsed_payload.currency || 'CNY'} ·{' '}
+                  {formatDraftAmount(d.parsed_payload.bill_amount, d.parsed_payload.currency)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className='flex flex-wrap items-center gap-2'>
+          <span className='text-[13px] font-semibold text-d-text'>识别置信度</span>
+          <span
+            className={`inline-flex h-6 items-center rounded-full border px-2.5 text-[11px] font-semibold ${badge.cls}`}
+          >
+            {badge.label}
+          </span>
+          {attributionText && (
+            <span className='rounded-full border border-d-border bg-d-subtle px-2.5 py-0.5 text-[11px] text-d-muted'>
+              归属：{attributionText}
+            </span>
+          )}
+          <span className='rounded-full border border-d-border bg-d-subtle px-2.5 py-0.5 text-[11px] text-d-muted'>
+            币种：{activeCurrency}
+          </span>
+        </div>
+
+        {(p.warnings?.length ?? 0) > 0 && (
+          <Alert severity='warning'>
+            <div className='flex flex-col gap-1'>
+              {p.warnings?.map((warn, i) => (
+                <p key={i} className='flex items-start gap-1.5 text-[12px]'>
+                  <AlertIcon size={14} className='mt-0.5 shrink-0' />
+                  <span>{warn}</span>
+                </p>
+              ))}
+            </div>
+          </Alert>
+        )}
+
+        <SelectField
+          label='归属信用卡'
+          required
+          value={currentDraft.card_id ?? ''}
+          onChange={e => updateCurrentDraft(d => ({ ...d, card_id: e.target.value || null }))}
+          placeholder='请选择信用卡'
+          options={orderedCards.map(c => ({
+            value: c.id,
+            label: candidateIds.has(c.id) ? `★ 候选 · ${c.label}` : c.label,
+          }))}
+          helperText={
+            !currentDraft.card_id
+              ? `识别到 ${p.bank_name || '银行'} ${p.card_last4 ? `尾号 ${p.card_last4}` : ''}，请选择对应信用卡后入账`
+              : undefined
+          }
+        />
+
+        <div className='grid grid-cols-2 gap-3'>
+          <TextField
+            label='账单月份'
+            required
+            type='month'
+            value={p.bill_month || ''}
+            onChange={e => updateCurrentPayload('bill_month', e.target.value)}
+          />
+          <SelectField
+            label='账单币种'
+            value={activeCurrency}
+            onChange={e => updateCurrentPayload('currency', e.target.value)}
+            options={[
+              { value: 'CNY', label: '人民币 CNY (¥)' },
+              { value: 'USD', label: '美元 USD (US$)' },
+              { value: 'HKD', label: '港币 HKD (HK$)' },
+              { value: 'JPY', label: '日元 JPY (¥)' },
+              { value: 'EUR', label: '欧元 EUR (€)' },
+              { value: 'GBP', label: '英镑 GBP (£)' },
+            ]}
+          />
+        </div>
+
+        <div className='grid grid-cols-2 gap-3'>
+          <TextField
+            label='本期应还金额'
+            required
+            type='number'
+            min={0}
+            step={0.01}
+            startAdornment={<span className='text-[13px] font-semibold'>{currencySym}</span>}
+            value={p.bill_amount ?? ''}
+            onChange={e =>
+              updateCurrentPayload(
+                'bill_amount',
+                e.target.value === '' ? null : Number(e.target.value)
+              )
+            }
+          />
+          <TextField
+            label='最低还款额'
+            type='number'
+            min={0}
+            step={0.01}
+            startAdornment={<span className='text-[13px] font-semibold'>{currencySym}</span>}
+            value={p.min_payment ?? ''}
+            onChange={e =>
+              updateCurrentPayload(
+                'min_payment',
+                e.target.value === '' ? null : Number(e.target.value)
+              )
+            }
+          />
+        </div>
+
+        <div className='grid grid-cols-2 gap-3'>
+          <TextField
+            label='出账日（选填）'
+            type='date'
+            value={p.statement_date || ''}
+            onChange={e => updateCurrentPayload('statement_date', e.target.value || undefined)}
+          />
+          <TextField
+            label='还款截止日'
+            required={Number(p.bill_amount ?? 0) > 0}
+            type='date'
+            value={p.due_date || ''}
+            onChange={e => updateCurrentPayload('due_date', e.target.value || null)}
+          />
+        </div>
+
+        {(p.card_subtotals?.length ?? 0) > 0 && (
+          <div className='rounded-xl border border-d-border bg-d-bg/60 p-3'>
+            <p className='mb-1.5 text-[12px] font-semibold text-d-muted'>合并账户分卡小计</p>
+            <div className='flex flex-col gap-1'>
+              {p.card_subtotals?.map((sub, i) => (
+                <div key={i} className='flex items-center justify-between text-[12px]'>
+                  <span className='text-d-text'>
+                    {sub.card_name || '卡'} · 尾号 {sub.card_last4}
+                  </span>
+                  <span className='num-tabular font-semibold text-d-text'>
+                    {formatDraftAmount(sub.amount, sub.currency || activeCurrency)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(p.items?.length ?? 0) > 0 && (
+          <div className='rounded-xl border border-d-border bg-d-bg/60 p-3'>
+            <p className='mb-1.5 text-[12px] font-semibold text-d-muted'>
+              识别交易明细 ({p.items?.length} 笔)
+            </p>
+            <div className='max-h-32 space-y-1 overflow-y-auto'>
+              {p.items?.slice(0, 20).map((item, i) => (
+                <div key={i} className='flex items-center justify-between gap-2 text-[12px]'>
+                  <span className='min-w-0 flex-1 truncate text-d-text'>
+                    {item.transaction_date ? `${item.transaction_date} · ` : ''}
+                    {item.description}
+                  </span>
+                  <span className='num-tabular shrink-0 font-semibold text-d-text'>
+                    {formatDraftAmount(item.amount, activeCurrency)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </div>
     )
   }
 
-  // Step 5: Complete
-  const renderStep5 = () => (
-    <div className='pt-2 text-center'>
-      {success ? (
-        <>
-          <div className='mb-4 flex justify-center text-d-success-ink'>
-            <CheckIcon size={64} />
-          </div>
-          <p className='mb-1 text-[22px] font-semibold leading-7 text-d-text'>导入成功</p>
-          <p className='text-[14px] leading-5 text-d-muted'>
-            账单已创建完成
-          </p>
-        </>
-      ) : (
-        <>
-          <p className='mb-1 text-[22px] font-semibold leading-7 text-d-text'>确认导入</p>
-          <p className='mb-4 text-[14px] leading-5 text-d-muted'>
-            草稿已保存，确认后将创建正式账单
-          </p>
-          <div className='flex justify-center gap-2'>
-            <Button
-              variant='danger'
-              onClick={handleDiscard}
-              disabled={loading}
-            >
-              放弃
-            </Button>
-            <Button
-              onClick={handleConfirmImport}
-              loading={loading}
-            >
-              确认导入
-            </Button>
-          </div>
-        </>
-      )}
+  const renderStep2 = () => (
+    <div className='pt-4 text-center'>
+      <div className='mb-3 flex justify-center text-d-success-ink'>
+        <CheckIcon size={56} />
+      </div>
+      <p className='mb-1 text-[20px] font-bold text-d-text'>确认入账成功</p>
+      <p className='text-[13px] text-d-muted'>
+        已完成 {confirmedCount} 笔账单入账并保留原件溯源
+      </p>
     </div>
   )
 
-  const isNextDisabled = () => {
-    if (loading) return true
-    if (activeStep === 0 && !cardId) return true
-    if (activeStep === 2 && sourceType === 'text' && !inputText.trim()) return true
-    return false
-  }
-
   return (
-    <Modal
-      open={open}
-      onClose={handleClose}
-      maxWidth='md'
-      title='智能导入账单'
-      footer={
-        activeStep < 4 ? (
+    <>
+      <Modal
+        open={open}
+        onClose={handleClose}
+        maxWidth='md'
+        dismissible={!loading}
+        title='智能导入账单'
+        footer={
+          activeStep === 0 ? (
+            <>
+              <Button variant='ghost' onClick={handleClose} disabled={loading}>
+                取消
+              </Button>
+              <Button onClick={() => void runImportAndParse(false)} loading={loading}>
+                {loading ? '上传并解析中…' : <>开始解析 <ChevronRightIcon size={16} /></>}
+              </Button>
+            </>
+          ) : activeStep === 1 ? (
+            <>
+              <Button
+                variant='ghost'
+                onClick={() => {
+                  setError('')
+                  setActiveStep(0)
+                }}
+                disabled={loading}
+              >
+                <ChevronLeftIcon size={16} /> 重新导入
+              </Button>
+              <Button variant='secondary' onClick={() => void handleSaveToDraftBox()} disabled={loading}>
+                暂存草稿箱
+              </Button>
+              <Button
+                onClick={() => void handleConfirmCurrentDraft(false)}
+                disabled={!canConfirmCurrentDraft || loading}
+                loading={loading}
+              >
+                确认入账
+              </Button>
+            </>
+          ) : (
+            <Button onClick={handleClose}>完成</Button>
+          )
+        }
+      >
+        <StepBar activeStep={activeStep} />
+
+        {infoNotice && (
+          <div className='mt-3'>
+            <Alert severity='info'>{infoNotice}</Alert>
+          </div>
+        )}
+
+        {error && (
+          <div className='mt-3'>
+            <Alert severity='error'>{error}</Alert>
+          </div>
+        )}
+
+        <div className='mt-2'>
+          {activeStep === 0 && renderStep0()}
+          {activeStep === 1 && renderStep1()}
+          {activeStep === 2 && renderStep2()}
+        </div>
+      </Modal>
+
+      <ConfirmDialog
+        open={duplicateConflict !== null}
+        title='检测到同卡同月重复账单'
+        onClose={() => !loading && setDuplicateConflict(null)}
+        actions={
           <>
             <Button
               variant='ghost'
-              onClick={handleBack}
-              disabled={activeStep === 0 || loading}
+              size='sm'
+              disabled={loading}
+              onClick={() => void handleDiscardCurrentDraft()}
             >
-              <ChevronLeftIcon size={16} /> 上一步
+              丢弃草稿
             </Button>
             <Button
-              onClick={handleNext}
-              disabled={isNextDisabled()}
+              size='sm'
               loading={loading}
+              onClick={() => void handleConfirmCurrentDraft(true)}
             >
-              {loading ? '处理中...' : activeStep === 3 ? '保存草稿' : <>下一步 <ChevronRightIcon size={16} /></>}
+              合并更新原账单
             </Button>
           </>
-        ) : success ? (
-          <Button onClick={handleClose}>完成</Button>
-        ) : undefined
-      }
-    >
-      <StepBar activeStep={activeStep} />
-
-      {error && (
-        <div className='mt-4'>
-          <Alert severity='error'>{error}</Alert>
-        </div>
-      )}
-
-      <div className='mt-2'>
-        {activeStep === 0 && renderStep1()}
-        {activeStep === 1 && renderStep2()}
-        {activeStep === 2 && renderStep3()}
-        {activeStep === 3 && renderStep4()}
-        {activeStep === 4 && renderStep5()}
-      </div>
-    </Modal>
+        }
+      >
+        {duplicateConflict && (
+          <div className='flex flex-col gap-2 text-[13px]'>
+            <p className='text-d-muted'>
+              该卡在 {duplicateConflict.existing_bill.bill_month} 已存在正式账单，请核对后选择处理方式：
+            </p>
+            <div className='grid grid-cols-2 gap-2 rounded-xl border border-d-border bg-d-bg p-3'>
+              <div>
+                <p className='text-[11px] text-d-muted'>现有账单</p>
+                <p className='mt-0.5 font-bold text-d-text'>
+                  {formatDraftAmount(
+                    duplicateConflict.existing_bill.bill_amount,
+                    duplicateConflict.draft_bill.currency
+                  )}
+                </p>
+                <p className='text-[11px] text-d-muted'>
+                  状态：{duplicateConflict.existing_bill.status}
+                  {duplicateConflict.existing_bill.paid_amount
+                    ? ` · 已还 ${formatDraftAmount(duplicateConflict.existing_bill.paid_amount, duplicateConflict.draft_bill.currency)}`
+                    : ''}
+                </p>
+              </div>
+              <div>
+                <p className='text-[11px] text-d-muted'>新导入草稿</p>
+                <p className='mt-0.5 font-bold text-d-accent-light'>
+                  {formatDraftAmount(
+                    duplicateConflict.draft_bill.bill_amount,
+                    duplicateConflict.draft_bill.currency
+                  )}
+                </p>
+                <p className='text-[11px] text-d-muted'>
+                  到期：{duplicateConflict.draft_bill.due_date || '—'}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </ConfirmDialog>
+    </>
   )
 }

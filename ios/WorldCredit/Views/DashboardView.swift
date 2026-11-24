@@ -11,6 +11,7 @@ struct DashboardView: View {
     @State private var showPushNotificationsCenter = false
     @State private var showingCreateBillSheet = false
     @State private var showingCreateCardSheet = false
+    @State private var showingDraftsInbox = false
 
     private let futureOptions = [7, 14, 30]
 
@@ -76,6 +77,16 @@ struct DashboardView: View {
             }
             .sheet(isPresented: $showingCreateCardSheet) {
                 CardCreateSheetView()
+            }
+            .sheet(isPresented: $showingDraftsInbox) {
+                NavigationStack {
+                    DraftsInboxView()
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("关闭") { showingDraftsInbox = false }
+                            }
+                        }
+                }
             }
             .confirmationDialog(
                 "一键结清 \(metrics.overdueBills.count) 笔逾期账单？",
@@ -637,9 +648,12 @@ struct DashboardView: View {
                 HapticManager.impactLight()
                 appState.openWebDestination(.benefits)
             }
-            quickAction("邮箱账单", systemImage: "envelope") {
+            quickAction(
+                appState.billDrafts.isEmpty ? "账单草稿" : "账单草稿 (\(appState.billDrafts.count))",
+                systemImage: "tray.full"
+            ) {
                 HapticManager.impactLight()
-                appState.openWebDestination(.gmailLedger)
+                showingDraftsInbox = true
             }
         }
     }

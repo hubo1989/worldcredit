@@ -150,6 +150,11 @@ public final class AppState {
     public var notificationsError: String?
     public var pendingOpenNotifications: Bool = false
     public var pendingWebDestination: DashboardWebDestination?
+    public var billDrafts: [BillImportDraftDTO] = []
+    public var isLoadingBillDrafts: Bool = false
+    public var billDraftsError: String?
+    public var pendingOpenDraftsInbox: Bool = false
+    public var pendingDraftIdToConfirm: String?
     public var reminderPreferences: UserReminderPreferences = UserReminderPreferences()
     public var isSavingReminderPreferences: Bool = false
     public var reminderPreferencesError: String?
@@ -332,6 +337,8 @@ public final class AppState {
                 guard self.refreshState.isCurrent(epoch, isLoggedIn: self.isLoggedIn) else { return false }
                 await self.refreshUnreadNotificationCount()
                 guard self.refreshState.isCurrent(epoch, isLoggedIn: self.isLoggedIn) else { return false }
+                await self.refreshBillDrafts(silent: true)
+                guard self.refreshState.isCurrent(epoch, isLoggedIn: self.isLoggedIn) else { return false }
                 await self.loadReminderPreferences(silent: true)
                 return true
             },
@@ -453,6 +460,19 @@ public final class AppState {
                 self.pendingSyncCount = meta.1
                 self.isolatedSyncChanges = meta.2
             }
+
+            // 同步写入 Share Extension 轻量化脱敏卡片缓存
+            let shareCards = cList.map { item in
+                ShareCardLite(
+                    id: item.id,
+                    bankName: item.bankName,
+                    cardName: item.displayName,
+                    last4: item.last4,
+                    currency: item.product?.currency ?? "CNY",
+                    holderName: item.holderName
+                )
+            }
+            ShareExtensionCacheStore.writeCards(shareCards)
 
             // 生成并更新 Apple Watch 快照（复用本次已查数据，避免重复查询）
             if let snapshot = try? await watchSnapshots.buildSnapshot(
@@ -845,6 +865,12 @@ public final class AppState {
         notificationsError = nil
         pendingOpenNotifications = false
         pendingWebDestination = nil
+        billDrafts = []
+        isLoadingBillDrafts = false
+        billDraftsError = nil
+        pendingOpenDraftsInbox = false
+        pendingDraftIdToConfirm = nil
+        ShareExtensionCacheStore.clear()
         currentNotificationFilter = "all"
         reminderPreferences = UserReminderPreferences()
         lastConfirmedReminderPreferences = nil
@@ -1287,10 +1313,26 @@ public final class AppState {
             pendingWebDestination = nil
             selectedTab = 0
             pendingOpenNotifications = true
+        } else if path == "/bills/drafts" || path == "/gmail-ledger" {
+            pendingWebDestination = nil
+            pendingOpenNotifications = false
+            selectedTab = 1
+            pendingDraftIdToConfirm = nil
+            pendingOpenDraftsInbox = true
         } else if path == "/bills" || path.hasPrefix("/bills/") {
             pendingWebDestination = nil
             pendingOpenNotifications = false
             selectedTab = 1
+            if let components = URLComponents(string: trimmed),
+               let draftId = components.queryItems?.first(where: { $0.name == "draftId" })?.value,
+               !draftId.isEmpty {
+                pendingOpenDraftsInbox = false
+                pendingDraftIdToConfirm = draftId
+            } else if let components = URLComponents(string: trimmed),
+                      components.queryItems?.first(where: { $0.name == "drafts" })?.value == "1" {
+                pendingDraftIdToConfirm = nil
+                pendingOpenDraftsInbox = true
+            }
         } else if path == "/cards" || path.hasPrefix("/cards/") || path == "/accounts" || path.hasPrefix("/accounts/") {
             pendingWebDestination = nil
             pendingOpenNotifications = false
@@ -1311,14 +1353,30 @@ public final class AppState {
             pendingWebDestination = nil
             pendingOpenNotifications = false
             selectedTab = 3
-        } else if path == "/gmail-ledger" {
-            pendingOpenNotifications = false
-            selectedTab = 0
-            pendingWebDestination = .gmailLedger
         } else {
             pendingWebDestination = nil
             selectedTab = 0
             pendingOpenNotifications = true
+        }
+    }
+
+    /// 处理外部 URL Scheme（`worldcredit://drafts/<id>` / `worldcredit://drafts`）。
+    public func handleIncomingURL(_ url: URL) {
+        guard isLoggedIn,
+              url.scheme?.lowercased() == "worldcredit" else { return }
+        let host = url.host?.lowercased() ?? ""
+        let pathSegments = url.pathComponents.filter { $0 != "/" }
+        if host == "drafts" {
+            pendingWebDestination = nil
+            pendingOpenNotifications = false
+            selectedTab = 1
+            if let draftId = pathSegments.first, !draftId.isEmpty {
+                pendingOpenDraftsInbox = false
+                pendingDraftIdToConfirm = draftId
+            } else {
+                pendingDraftIdToConfirm = nil
+                pendingOpenDraftsInbox = true
+            }
         }
     }
 
@@ -1718,6 +1776,12 @@ public final class AppState {
         notificationsError = nil
         pendingOpenNotifications = false
         pendingWebDestination = nil
+        billDrafts = []
+        isLoadingBillDrafts = false
+        billDraftsError = nil
+        pendingOpenDraftsInbox = false
+        pendingDraftIdToConfirm = nil
+        ShareExtensionCacheStore.clear()
         currentNotificationFilter = "all"
         reminderPreferences = UserReminderPreferences()
         lastConfirmedReminderPreferences = nil
@@ -2145,6 +2209,208 @@ public final class AppState {
                 )
                 try record.save(db)
             }
+        }
+    }
+
+    // MARK: - Omnibus Bill Drafts & Password Vault
+
+    public func refreshBillDrafts(silent: Bool = true) async {
+        guard isLoggedIn, !UITestConfiguration.isEnabled,
+              !CommandLine.arguments.contains("--demo-mode"),
+              apiClient.token != nil else { return }
+        let epoch = sessionEpoch
+        isLoadingBillDrafts = true
+        defer { if sessionEpoch == epoch { isLoadingBillDrafts = false } }
+        do {
+            let list = try await performWithSilentRefresh {
+                try await self.apiClient.fetchBillImportDrafts()
+            }
+            guard isLoggedIn, sessionEpoch == epoch else { return }
+            billDrafts = list
+            billDraftsError = nil
+        } catch is CancellationError {
+            return
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            return
+        } catch {
+            guard isLoggedIn, sessionEpoch == epoch else { return }
+            if !silent {
+                billDraftsError = error.localizedDescription
+            }
+        }
+    }
+
+    public func fetchBillDraft(id: String) async throws -> BillImportDraftDTO {
+        try await performWithSilentRefresh {
+            try await self.apiClient.fetchBillImportDraft(id: id)
+        }
+    }
+
+    public func uploadDraftAttachment(
+        recordId: String,
+        fileData: Data,
+        fileName: String,
+        mimeType: String
+    ) async throws -> UploadedAttachmentDTO {
+        try await performWithSilentRefresh {
+            try await self.apiClient.uploadDraftAttachment(
+                recordId: recordId,
+                fileData: fileData,
+                fileName: fileName,
+                mimeType: mimeType
+            )
+        }
+    }
+
+    public func fetchAttachmentData(attachmentId: String) async throws -> (Data, String?) {
+        try await performWithSilentRefresh {
+            try await self.apiClient.fetchAttachmentData(attachmentId: attachmentId)
+        }
+    }
+
+    public func importAndParseBill(_ input: ImportAndParseBillRequest) async throws -> ImportAndParseBillResponse {
+        let res = try await performWithSilentRefresh {
+            try await self.apiClient.importAndParseBill(input)
+        }
+        await refreshBillDrafts(silent: true)
+        return res
+    }
+
+    public func unlockEncryptedDraft(
+        draftId: String,
+        password: String,
+        saveToVault: Bool,
+        label: String?,
+        holderId: String?,
+        bankKeyword: String?,
+        hint: String?
+    ) async throws -> [BillImportDraftDTO] {
+        let res = try await performWithSilentRefresh {
+            try await self.apiClient.unlockEncryptedDraft(
+                draftId: draftId,
+                input: UnlockDraftRequest(
+                    password: password,
+                    saveToVault: saveToVault,
+                    vaultLabel: label,
+                    vaultHolderId: holderId,
+                    vaultBankKeyword: bankKeyword,
+                    vaultHint: hint
+                )
+            )
+        }
+        await refreshBillDrafts(silent: true)
+        return res.drafts
+    }
+
+    public func retryParseDraft(draftId: String, manualMode: Bool) async throws -> BillImportDraftDTO {
+        let updated = try await performWithSilentRefresh {
+            try await self.apiClient.retryParseDraft(draftId: draftId, manualMode: manualMode)
+        }
+        await refreshBillDrafts(silent: true)
+        return updated
+    }
+
+    public func updateBillDraft(
+        draftId: String,
+        cardId: String?,
+        clearCardId: Bool,
+        holderId: String?,
+        payload: BillDraftPayloadDTO?
+    ) async throws -> BillImportDraftDTO {
+        let updated = try await performWithSilentRefresh {
+            try await self.apiClient.updateBillImportDraft(
+                draftId: draftId,
+                cardId: cardId,
+                clearCardId: clearCardId,
+                holderId: holderId,
+                parsedPayload: payload
+            )
+        }
+        await refreshBillDrafts(silent: true)
+        return updated
+    }
+
+    @discardableResult
+    public func confirmBillDraft(draftId: String, conflictResolution: String? = nil) async throws -> Bill {
+        let bill = try await performWithSilentRefresh {
+            try await self.apiClient.confirmBillImportDraft(
+                draftId: draftId,
+                conflictResolution: conflictResolution
+            )
+        }
+        billDrafts.removeAll { $0.id == draftId }
+        await refreshBillDrafts(silent: true)
+        await sync()
+        return bill
+    }
+
+    public func discardBillDraft(draftId: String) async throws {
+        try await performWithSilentRefresh {
+            try await self.apiClient.discardBillImportDraft(draftId: draftId)
+        }
+        billDrafts.removeAll { $0.id == draftId }
+        await refreshBillDrafts(silent: true)
+    }
+
+    public func batchDiscardBillDrafts(draftIds: [String]) async throws -> Int {
+        let count = try await performWithSilentRefresh {
+            try await self.apiClient.batchDiscardBillDrafts(draftIds: draftIds)
+        }
+        let removed = Set(draftIds)
+        billDrafts.removeAll { removed.contains($0.id) }
+        await refreshBillDrafts(silent: true)
+        return count
+    }
+
+    public func listPasswordRules() async throws -> [StatementPasswordRuleDTO] {
+        try await performWithSilentRefresh {
+            try await self.apiClient.listPasswordRules()
+        }
+    }
+
+    public func createPasswordRule(
+        label: String,
+        password: String,
+        holderId: String?,
+        bankKeyword: String?,
+        hint: String?
+    ) async throws -> StatementPasswordRuleDTO {
+        try await performWithSilentRefresh {
+            try await self.apiClient.createPasswordRule(
+                label: label,
+                password: password,
+                holderId: holderId,
+                bankKeyword: bankKeyword,
+                hint: hint
+            )
+        }
+    }
+
+    public func updatePasswordRule(
+        ruleId: String,
+        label: String?,
+        password: String?,
+        holderId: String?,
+        clearHolderId: Bool,
+        bankKeyword: String?,
+        hint: String?
+    ) async throws -> StatementPasswordRuleDTO {
+        try await performWithSilentRefresh {
+            try await self.apiClient.updatePasswordRule(
+                ruleId: ruleId,
+                label: label,
+                password: password,
+                holderId: holderId,
+                clearHolderId: clearHolderId,
+                bankKeyword: bankKeyword,
+                hint: hint
+            )
+        }
+    }
+
+    public func deletePasswordRule(ruleId: String) async throws {
+        try await performWithSilentRefresh {
+            try await self.apiClient.deletePasswordRule(ruleId: ruleId)
         }
     }
 

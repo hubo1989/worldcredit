@@ -8,18 +8,17 @@ import Testing
 struct DashboardWebDestinationTests {
     // MARK: - 入口枚举
 
-    @Test("保留的三个入口 URL 与产品约定的受限枚举完全一致")
+    @Test("保留的两个权益入口 URL 与产品约定的受限枚举完全一致")
     func destinationURLsMatchAllowlist() {
         #expect(DashboardWebDestination.benefits.url().absoluteString == "https://app.all-bill.com/benefits")
         #expect(DashboardWebDestination.benefitCalendar.url().absoluteString == "https://app.all-bill.com/benefits/calendar")
-        #expect(DashboardWebDestination.gmailLedger.url().absoluteString == "https://app.all-bill.com/gmail-ledger")
     }
 
-    @Test("Identifiable 与 .sheet(item:) 契约：仅保留 3 个入口且 id 稳定互不相同")
+    @Test("Identifiable 与 .sheet(item:) 契约：仅保留 2 个入口且 id 稳定互不相同")
     func identifiableContract() {
         let ids = DashboardWebDestination.allCases.map(\.id)
-        #expect(ids.count == 3)
-        #expect(Set(ids).count == 3)
+        #expect(ids.count == 2)
+        #expect(Set(ids).count == 2)
         for item in DashboardWebDestination.allCases {
             #expect(item.id == item.rawValue)
         }
@@ -29,7 +28,6 @@ struct DashboardWebDestinationTests {
     func titlesMatchWebCopy() {
         #expect(DashboardWebDestination.benefits.title == "权益")
         #expect(DashboardWebDestination.benefitCalendar.title == "权益日历")
-        #expect(DashboardWebDestination.gmailLedger.title == "邮箱账单")
     }
 
     @Test("保留入口均不带 native_action 参数")
@@ -51,7 +49,7 @@ struct DashboardWebDestinationTests {
 
     // MARK: - 导航决策：允许
 
-    @Test("三个保留入口 URL 均允许在受限 WebView 内加载")
+    @Test("保留入口 URL 均允许在受限 WebView 内加载")
     func entryURLsLoadInWebView() {
         for item in DashboardWebDestination.allCases {
             #expect(DashboardWebRoutePolicy.decision(for: item.url()) == .loadInWebView)
@@ -67,7 +65,6 @@ struct DashboardWebDestinationTests {
             "https://app.all-bill.com:443/benefits",
             "https://app.all-bill.com/benefits?tab=all&q=x",
             "https://app.all-bill.com/benefits/calendar",
-            "https://app.all-bill.com/gmail-ledger",
         ]
         for text in allowed {
             let url = try! #require(URL(string: text))
@@ -118,10 +115,11 @@ struct DashboardWebDestinationTests {
         }
     }
 
-    @Test("目标站非枚举 path 拒绝（含已原生化的 /promos、/dashboard?native_action= 及路径穿越）")
+    @Test("目标站非枚举 path 拒绝（含已原生化的 /gmail-ledger、/promos、/dashboard?native_action= 及路径穿越）")
     func rejectsUnknownTopLevelPaths() {
         let texts = [
             "https://app.all-bill.com/",
+            "https://app.all-bill.com/gmail-ledger",
             "https://app.all-bill.com/promos",
             "https://app.all-bill.com/promos/",
             "https://app.all-bill.com/dashboard",

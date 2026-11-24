@@ -136,11 +136,30 @@ struct SettingsView: View {
                             .accessibilityIdentifier("settings.copyForwardEmail")
                         }
 
-                        Button {
-                            appState.openWebDestination(.gmailLedger)
+                        NavigationLink {
+                            DraftsInboxView()
                         } label: {
-                            Label("查看邮箱账单流水", systemImage: "envelope.open")
+                            HStack {
+                                Label("账单草稿箱", systemImage: "tray.full")
+                                Spacer()
+                                if !appState.billDrafts.isEmpty {
+                                    Text("\(appState.billDrafts.count)")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 2)
+                                        .background(WCColors.primaryAccent, in: Capsule())
+                                }
+                            }
                         }
+                        .accessibilityIdentifier("settings.draftsInbox")
+
+                        NavigationLink {
+                            StatementPasswordVaultView()
+                        } label: {
+                            Label("月结单密码本", systemImage: "key.fill")
+                        }
+                        .accessibilityIdentifier("settings.passwordVault")
                     } else {
                         LabeledContent("专属账单转发邮箱", value: "登录后生成")
                     }
