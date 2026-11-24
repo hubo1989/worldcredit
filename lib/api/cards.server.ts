@@ -1,4 +1,5 @@
 import { query, queryOne, execute, batch, uuid, now } from '../db'
+import { hasColumns } from '../db/schema-capabilities'
 import type { CardProduct, CreditCard, CardHolder, Bill, Benefit, BenefitUsage, CardDueDateResolution } from '@/lib/types'
 import { normalizeAliases } from '../utils'
 import { legacyBenefitPeriodStart } from './benefits.server'
@@ -56,6 +57,20 @@ interface CardJoinRow {
   p_annual_fee_waiver: string | null
   p_is_active: number | null
   p_created_at: string | null
+  // 0043 结构化规则列（迁移未合入时查询不会带出这些键）
+  p_ftf_rate?: number | null
+  p_fx_free_currencies_json?: string | null
+  p_reward_rules_json?: string | null
+  p_annual_fee_cycle_type?: string | null
+  p_annual_fee_waiver_rules_json?: string | null
+  p_rules_updated_at?: string | null
+  // 0044 持卡年费追踪列
+  annual_fee_cycle_type?: string | null
+  next_annual_fee_date?: string | null
+  annual_fee_status?: string | null
+  waiver_progress_json?: string | null
+  actual_fee_paid?: number | null
+  manual_reward_value?: number | null
 }
 
 function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
@@ -78,6 +93,12 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
     annual_fee_override: row.annual_fee_override != null ? row.annual_fee_override : undefined,
     issued_on: row.issued_on ?? null,
     activated_on: row.activated_on ?? null,
+    annual_fee_cycle_type: (row.annual_fee_cycle_type ?? null) as CreditCard['annual_fee_cycle_type'],
+    next_annual_fee_date: row.next_annual_fee_date ?? null,
+    annual_fee_status: (row.annual_fee_status ?? null) as CreditCard['annual_fee_status'],
+    waiver_progress_json: row.waiver_progress_json ?? null,
+    actual_fee_paid: row.actual_fee_paid ?? null,
+    manual_reward_value: row.manual_reward_value ?? null,
     created_at: row.created_at,
   }
   if (row.p_id) {
@@ -92,6 +113,12 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
       payment_due_value: row.p_payment_due_value || 20,
       annual_fee: row.p_annual_fee || 0,
       annual_fee_waiver: row.p_annual_fee_waiver || undefined,
+      ftf_rate: row.p_ftf_rate ?? null,
+      fx_free_currencies_json: row.p_fx_free_currencies_json ?? null,
+      reward_rules_json: row.p_reward_rules_json ?? null,
+      annual_fee_cycle_type: (row.p_annual_fee_cycle_type ?? null) as CardProduct['annual_fee_cycle_type'],
+      annual_fee_waiver_rules_json: row.p_annual_fee_waiver_rules_json ?? null,
+      rules_updated_at: row.p_rules_updated_at ?? null,
       is_active: row.p_is_active === 1,
       created_at: row.p_created_at || row.created_at,
     }
@@ -101,7 +128,7 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
   return card
 }
 
-const CARD_SELECT = `cc.id, cc.holder_id, cc.account_id, cc.card_product_id, cc.card_number_last4, cc.credit_limit, cc.credit_limit_override,
+const CARD_SELECT_BASE = `cc.id, cc.holder_id, cc.account_id, cc.card_product_id, cc.card_number_last4, cc.credit_limit, cc.credit_limit_override,
   cc.billing_day, cc.status, cc.card_type, cc.loan_due_day, cc.override_billing_day,
   cc.override_due_type, cc.override_due_value, cc.name_override, cc.annual_fee_override, cc.created_at,
   cc.issued_on, cc.activated_on,
@@ -110,6 +137,57 @@ const CARD_SELECT = `cc.id, cc.holder_id, cc.account_id, cc.card_product_id, cc.
   cp.payment_due_value AS p_payment_due_value, cp.annual_fee AS p_annual_fee,
   cp.annual_fee_waiver AS p_annual_fee_waiver, cp.is_active AS p_is_active, cp.created_at AS p_created_at
 FROM credit_cards cc LEFT JOIN card_products cp ON cc.card_product_id = cp.id`
+
+/** 0043 卡产品结构化规则列 */
+const PRODUCT_RULE_COLUMNS = [
+  'ftf_rate',
+  'fx_free_currencies_json',
+  'reward_rules_json',
+  'annual_fee_cycle_type',
+  'annual_fee_waiver_rules_json',
+  'rules_updated_at',
+] as const
+
+/** 0044 持卡年费/免年费进度列 */
+const CARD_ANNUAL_FEE_COLUMNS = [
+  'annual_fee_cycle_type',
+  'next_annual_fee_date',
+  'annual_fee_status',
+  'waiver_progress_json',
+  'actual_fee_paid',
+  'manual_reward_value',
+] as const
+
+/**
+ * 组装带结构化规则的 SELECT。
+ *
+ * 0043/0044 由 HUB-176 交付；合入前（或旧库上）新列不存在，此时只查旧列，
+ * 保证 HUB-177 分支可独立自测，也让 `cards.getCardDetail` 在迁移前后都不 500。
+ */
+async function cardSelectSql(): Promise<string> {
+  const [productReady, cardReady] = await Promise.all([
+    hasColumns('card_products', PRODUCT_RULE_COLUMNS),
+    hasColumns('credit_cards', CARD_ANNUAL_FEE_COLUMNS),
+  ])
+  const cardExtra = cardReady
+    ? `, cc.annual_fee_cycle_type, cc.next_annual_fee_date, cc.annual_fee_status,
+  cc.waiver_progress_json, cc.actual_fee_paid, cc.manual_reward_value`
+    : ''
+  const productExtra = productReady
+    ? `, cp.ftf_rate AS p_ftf_rate, cp.fx_free_currencies_json AS p_fx_free_currencies_json,
+  cp.reward_rules_json AS p_reward_rules_json, cp.annual_fee_cycle_type AS p_annual_fee_cycle_type,
+  cp.annual_fee_waiver_rules_json AS p_annual_fee_waiver_rules_json,
+  cp.rules_updated_at AS p_rules_updated_at`
+    : ''
+  const base = CARD_SELECT_BASE.replace(
+    'cc.issued_on, cc.activated_on,',
+    `cc.issued_on, cc.activated_on${cardExtra},`
+  )
+  return base.replace(
+    'cp.annual_fee_waiver AS p_annual_fee_waiver, cp.is_active AS p_is_active, cp.created_at AS p_created_at',
+    `cp.annual_fee_waiver AS p_annual_fee_waiver, cp.is_active AS p_is_active, cp.created_at AS p_created_at${productExtra}`
+  )
+}
 
 export async function getCardProducts(): Promise<CardProduct[]> {
   const { data, error } = await query<Record<string, unknown>>(
@@ -145,7 +223,7 @@ export async function getCardsBasicByHolders(
 /** All cards joined with their product, for bill entry forms. */
 export async function getAllCardsWithProduct(): Promise<CreditCardWithProduct[]> {
   const { data, error } = await query<CardJoinRow>(
-    `SELECT ${CARD_SELECT} ORDER BY cc.created_at DESC`
+    `SELECT ${await cardSelectSql()} ORDER BY cc.created_at DESC`
   )
   if (error) throw new Error(error.message)
   return (data || []).map(joinRowToCard)
@@ -294,7 +372,7 @@ export async function getCardDetail(
 
 export async function getCardsByHolder(holderId: string): Promise<CreditCardWithProduct[]> {
   const { data, error } = await query<CardJoinRow>(
-    `SELECT ${CARD_SELECT} WHERE cc.holder_id = ? ORDER BY cc.created_at DESC`,
+    `SELECT ${await cardSelectSql()} WHERE cc.holder_id = ? ORDER BY cc.created_at DESC`,
     [holderId]
   )
   if (error) throw new Error(error.message)
@@ -321,6 +399,12 @@ export type CreateCardInput = {
   account_mode_override?: CreditCard['account_mode_override']
   issued_on?: string | null
   activated_on?: string | null
+  annual_fee_cycle_type?: CreditCard['annual_fee_cycle_type']
+  next_annual_fee_date?: string | null
+  annual_fee_status?: CreditCard['annual_fee_status']
+  waiver_progress_json?: string | null
+  actual_fee_paid?: number | null
+  manual_reward_value?: number | null
 }
 
 export async function ensureDefaultCardProductForBank(bankId: string): Promise<CardProduct | null> {
@@ -491,6 +575,30 @@ export async function createCard(card: CreateCardInput): Promise<CreditCardWithP
   )
   if (error) throw new Error(error.message)
 
+  // 0044 年费/免年费进度列：仅在迁移已合入（列存在）时写入，旧库保持原样
+  if (await hasColumns('credit_cards', CARD_ANNUAL_FEE_COLUMNS)) {
+    const feeFields: string[] = []
+    const feeParams: unknown[] = []
+    const feeMap: Record<string, unknown> = {
+      annual_fee_cycle_type: card.annual_fee_cycle_type,
+      next_annual_fee_date: card.next_annual_fee_date,
+      annual_fee_status: card.annual_fee_status,
+      waiver_progress_json: card.waiver_progress_json,
+      actual_fee_paid: card.actual_fee_paid,
+      manual_reward_value: card.manual_reward_value,
+    }
+    for (const [key, value] of Object.entries(feeMap)) {
+      if (value !== undefined) {
+        feeFields.push(`${key} = ?`)
+        feeParams.push(value)
+      }
+    }
+    if (feeFields.length > 0) {
+      feeParams.push(id)
+      await execute(`UPDATE credit_cards SET ${feeFields.join(', ')} WHERE id = ?`, feeParams)
+    }
+  }
+
   // 确保账户有 primary_card_id 锚点卡
   if (accountId) {
     await execute(
@@ -506,7 +614,7 @@ export async function createCard(card: CreateCardInput): Promise<CreditCardWithP
 
 async function getCardById(id: string): Promise<CreditCardWithProduct | null> {
   const { data, error } = await queryOne<CardJoinRow>(
-    `SELECT ${CARD_SELECT} WHERE cc.id = ?`, [id]
+    `SELECT ${await cardSelectSql()} WHERE cc.id = ?`, [id]
   )
   if (error || !data) return null
   return joinRowToCard(data)
@@ -684,6 +792,15 @@ export async function updateCard(
     account_mode_override: patch.account_mode_override,
     issued_on: patch.issued_on,
     activated_on: patch.activated_on,
+  }
+  // 0044 年费/免年费进度列（迁移未合入时忽略，避免 UPDATE 打到不存在的列）
+  if (await hasColumns('credit_cards', CARD_ANNUAL_FEE_COLUMNS)) {
+    fieldMap.annual_fee_cycle_type = patch.annual_fee_cycle_type
+    fieldMap.next_annual_fee_date = patch.next_annual_fee_date
+    fieldMap.annual_fee_status = patch.annual_fee_status
+    fieldMap.waiver_progress_json = patch.waiver_progress_json
+    fieldMap.actual_fee_paid = patch.actual_fee_paid
+    fieldMap.manual_reward_value = patch.manual_reward_value
   }
   for (const [key, value] of Object.entries(fieldMap)) {
     if (value !== undefined) {
