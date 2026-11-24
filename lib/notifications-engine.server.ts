@@ -17,6 +17,7 @@ import {
   type NotificationMetadata,
   type NotificationPayableMetadataItem,
 } from './notifications.shared'
+import { isValidIanaTimeZone } from './opportunities/dates'
 import type { CardProduct, NotificationCategory, UserReminderConfig } from './types'
 import { getLocalTodayString, nextPayablePeriodOf, payableDueDate, payablePeriodOf } from './utils'
 
@@ -35,6 +36,7 @@ export interface UserNotificationContext {
   reminderConfig: UserReminderConfig
   remindDaysBefore: number[]
   timeZone: string
+  effectivePushHour: number
   quietHoursStart?: string
   quietHoursEnd?: string
 }
@@ -131,9 +133,30 @@ function formatPayableDueDateStr(dueDay: number, period: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+interface LegacyNotificationPrefs {
+  bill_due_enabled: number
+  overdue_enabled: number
+  due_days_before: number
+  notify_time: string
+}
+
 export interface PrefetchedUserNotificationPrefs {
   reminderConfigRaw: string | null
-  legacyRow: { bill_due_enabled: number; overdue_enabled: number; due_days_before: number } | null
+  legacyRow: LegacyNotificationPrefs | null
+}
+
+function parseReminderTime(value: unknown): number | null {
+  const match = typeof value === 'string' && /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value.trim())
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null
+}
+
+export function resolveEffectivePushHour(localTime: unknown, quietStart?: string, quietEnd?: string): number {
+  const target = parseReminderTime(localTime) ?? 9 * 60
+  const start = parseReminderTime(quietStart)
+  const end = parseReminderTime(quietEnd)
+  const deferred = start !== null && end !== null && start !== end &&
+    (start < end ? target >= start && target < end : target >= start || target < end)
+  return Math.floor((deferred ? end : target) / 60)
 }
 
 export async function loadUserNotificationContext(
@@ -152,9 +175,9 @@ export async function loadUserNotificationContext(
           .bind(userId)
           .first<{ reminder_config: string }>(),
         db
-          .prepare('SELECT bill_due_enabled, overdue_enabled, due_days_before FROM notification_preferences WHERE user_id = ?')
+          .prepare('SELECT bill_due_enabled, overdue_enabled, due_days_before, notify_time FROM notification_preferences WHERE user_id = ?')
           .bind(userId)
-          .first<{ bill_due_enabled: number; overdue_enabled: number; due_days_before: number }>(),
+          .first<LegacyNotificationPrefs>(),
       ])
 
   if (prefRow?.reminder_config) {
@@ -184,7 +207,14 @@ export async function loadUserNotificationContext(
         reminderConfigRaw: prefRow.reminder_config,
         reminderConfig: mergedConfig,
         remindDaysBefore,
-        timeZone: parsed.opportunities?.time_zone || 'Asia/Shanghai',
+        timeZone: isValidIanaTimeZone(parsed.opportunities?.time_zone)
+          ? parsed.opportunities.time_zone : 'Asia/Shanghai',
+        effectivePushHour: resolveEffectivePushHour(
+          parseReminderTime(parsed.opportunities?.local_time) !== null
+            ? parsed.opportunities?.local_time : legacyRow?.notify_time,
+          mergedConfig.quiet_hours_start,
+          mergedConfig.quiet_hours_end,
+        ),
         quietHoursStart: mergedConfig.quiet_hours_start,
         quietHoursEnd: mergedConfig.quiet_hours_end,
       }
@@ -217,6 +247,7 @@ export async function loadUserNotificationContext(
       reminderConfig: fallbackConfig,
       remindDaysBefore,
       timeZone: 'Asia/Shanghai',
+      effectivePushHour: resolveEffectivePushHour(legacyRow.notify_time, '22:00', '08:00'),
       quietHoursStart: '22:00',
       quietHoursEnd: '08:00',
     }
@@ -235,6 +266,7 @@ export async function loadUserNotificationContext(
     reminderConfig: defaultConfig,
     remindDaysBefore: [3, 1, 0],
     timeZone: 'Asia/Shanghai',
+    effectivePushHour: 9,
     quietHoursStart: '22:00',
     quietHoursEnd: '08:00',
   }
@@ -248,9 +280,9 @@ export async function buildDailyNotificationCandidates(
   db: D1Database,
   userId: string,
   todayStr?: string,
-  options?: { now?: Date; prefetched?: PrefetchedUserNotificationPrefs }
+  options?: { now?: Date; prefetched?: PrefetchedUserNotificationPrefs; context?: UserNotificationContext }
 ): Promise<{ context: UserNotificationContext; candidates: DailyNotificationCandidate[] }> {
-  const context = await loadUserNotificationContext(db, userId, options?.prefetched)
+  const context = options?.context ?? await loadUserNotificationContext(db, userId, options?.prefetched)
   const effectiveToday = todayStr ?? getLocalTodayString(context.timeZone, options?.now)
   const switches = resolveNotificationSwitches(context.reminderConfig)
   const advanceDays = new Set(context.remindDaysBefore.filter(d => Number.isInteger(d) && d > 0))

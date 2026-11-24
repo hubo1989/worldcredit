@@ -121,10 +121,11 @@ afterEach(() => {
 })
 
 describe('routeOpportunityCron', () => {
-  it('*/15 只权益；0 9 只账单；未知表达式不处理', () => {
+  it('*/15 只扫权益；每小时和旧版定时表达式均路由账单', () => {
     expect(routeOpportunityCron('*/15 * * * *')).toBe('opportunities')
     expect(routeOpportunityCron('0 9 * * *')).toBe('bills')
-    expect(routeOpportunityCron('0 * * * *')).toBeNull()
+    expect(routeOpportunityCron('0 * * * *')).toBe('bills')
+    expect(routeOpportunityCron('5 * * * *')).toBeNull()
   })
 })
 
@@ -146,13 +147,13 @@ describe('scanOpportunityNotifications', () => {
   })
 
   it('payload 带稳定 wc-op tag 与站内白名单 URL', async () => {
-    await seedExpiringWorld()
+    const { account } = await seedExpiringWorld()
     await addSubscription(f.users.adminA, 'https://push.example/a')
     const { sender, calls } = stubSender()
     await scanOpportunityNotifications({ db: db as unknown as D1Database, now: CLOCK, sender })
     const payload = calls[0].payload
     expect(payload.tag.startsWith('wc-op:')).toBe(true)
-    expect(payload.url).toBe('/benefits')
+    expect(payload.url).toBe(`/benefits?account_id=${account.id}`)
     // tag 与 delivery_key 对应
     const job = jobs()[0]
     expect(payload.tag).toBe(`wc-op:${job.delivery_key}`)
@@ -241,7 +242,6 @@ describe('scanOpportunityNotifications', () => {
       clock = new Date(clock.getTime() + 15 * 60_000)
     }
     const job = jobs()[0]
-    expect(['failed', 'pending']).toContain(job.status)
-    if (job.attempt_count >= 4) expect(job.status).toBe('failed')
+    expect(job).toMatchObject({ status: 'failed', attempt_count: 4 })
   })
 })

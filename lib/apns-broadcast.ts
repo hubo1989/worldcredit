@@ -5,6 +5,14 @@ import {
   type SendPushOptions,
 } from "./apns-client";
 
+export interface ApnsBroadcastResult {
+  total: number;
+  sent: number;
+  failed: number;
+  failedResults: ApnsResponse[];
+  outcomes: Array<ApnsResponse & { token: string }>;
+}
+
 /** Parameterized for both Workers; never reads a global database binding. */
 export async function broadcastApnsToUser(
   db: D1Database,
@@ -12,7 +20,7 @@ export async function broadcastApnsToUser(
   options: SendPushOptions,
   config: ApnsConfig,
   prefetchedTokens?: string[],
-): Promise<{ total: number; sent: number; failed: number; failedResults: ApnsResponse[] }> {
+): Promise<ApnsBroadcastResult> {
   const tokens =
     prefetchedTokens ??
     (
@@ -36,20 +44,21 @@ export async function broadcastApnsToUser(
           console.warn("[apns] Failed to prune invalid device token:", err);
         }
       }
-      return result;
+      return { token, result };
     }),
   );
-  const failedResults = outcomes.filter((result) => !result.success);
+  const failedResults = outcomes.map(({ result }) => result).filter((result) => !result.success);
   return {
     total: outcomes.length,
     sent: outcomes.length - failedResults.length,
     failed: failedResults.length,
     failedResults,
+    outcomes: outcomes.map(({ token, result }) => ({ ...result, token })),
   };
 }
 
-export function broadcastSilentSync(db: D1Database, userId: string, config: ApnsConfig) {
-  return broadcastApnsToUser(
+export async function broadcastSilentSync(db: D1Database, userId: string, config: ApnsConfig) {
+  const { total, sent, failed, failedResults } = await broadcastApnsToUser(
     db,
     userId,
     {
@@ -58,4 +67,5 @@ export function broadcastSilentSync(db: D1Database, userId: string, config: Apns
     },
     config,
   );
+  return { total, sent, failed, failedResults };
 }

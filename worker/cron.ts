@@ -7,8 +7,10 @@ import { isWebPushChannelEnabled } from "../lib/notifications.shared";
 import {
   buildDailyNotificationCandidates,
   isUserInQuietHours,
+  loadUserNotificationContext,
   type PrefetchedUserNotificationPrefs,
 } from "../lib/notifications-engine.server";
+import { localDateInZone } from "../lib/opportunities/dates";
 
 interface CronEnv {
   DB: D1Database;
@@ -31,7 +33,6 @@ export function isUserWebPushEnabled(reminderConfigRaw?: string | null): boolean
 }
 
 interface ExistingHistoryRow {
-  id: string;
   notification_key: string;
   read_at: string | null;
   deleted_at: string | null;
@@ -50,7 +51,7 @@ async function loadExistingHistoryByKey(
     const placeholders = chunk.map(() => "?").join(",");
     const rows = await db
       .prepare(
-        `SELECT id, notification_key, read_at, deleted_at, push_sent_at
+        `SELECT notification_key, read_at, deleted_at, push_sent_at
          FROM notification_history
          WHERE user_id = ? AND notification_key IN (${placeholders})`,
       )
@@ -61,6 +62,11 @@ async function loadExistingHistoryByKey(
     }
   }
   return byKey;
+}
+
+export function shouldSyncGmail(event: Pick<ScheduledEvent, "cron" | "scheduledTime">): boolean {
+  return (event.cron === "0 9 * * *" || event.cron === "0 * * * *") &&
+    new Date(event.scheduledTime).getUTCHours() === 9;
 }
 
 export async function handleScheduled(
@@ -103,14 +109,14 @@ export async function handleScheduled(
       .prepare("SELECT id, user_id, endpoint, p256dh, auth FROM push_subscriptions")
       .all<{ id: string; user_id: string; endpoint: string; p256dh: string; auth: string }>(),
     db
-      .prepare("SELECT id, user_id, token FROM device_tokens WHERE platform = 'ios'")
-      .all<{ id: string; user_id: string; token: string }>(),
+      .prepare("SELECT user_id, token FROM device_tokens WHERE platform = 'ios'")
+      .all<{ user_id: string; token: string }>(),
     db
       .prepare("SELECT user_id, reminder_config FROM user_preferences")
       .all<{ user_id: string; reminder_config: string | null }>(),
     db
-      .prepare("SELECT user_id, bill_due_enabled, overdue_enabled, due_days_before FROM notification_preferences")
-      .all<{ user_id: string; bill_due_enabled: number; overdue_enabled: number; due_days_before: number }>(),
+      .prepare("SELECT user_id, bill_due_enabled, overdue_enabled, due_days_before, notify_time FROM notification_preferences")
+      .all<{ user_id: string } & NonNullable<PrefetchedUserNotificationPrefs["legacyRow"]>>(),
   ]);
   const subscriptions = subs.results || [];
   const iosDevices = iosTokens.results || [];
@@ -119,7 +125,7 @@ export async function handleScheduled(
   );
   const legacyByUser = new Map<
     string,
-    { bill_due_enabled: number; overdue_enabled: number; due_days_before: number }
+    NonNullable<PrefetchedUserNotificationPrefs["legacyRow"]>
   >((legacyRows.results || []).map((row) => [row.user_id, row]));
 
   // 3. Process each user
@@ -135,10 +141,14 @@ export async function handleScheduled(
         legacyRow: legacyByUser.get(userId) ?? null,
       };
 
-      const { context, candidates } = await buildDailyNotificationCandidates(db, userId, undefined, {
-        now: nowDate,
-        prefetched,
-      });
+      const context = await loadUserNotificationContext(db, userId, prefetched);
+      const localHour = Number(new Intl.DateTimeFormat("en-GB", {
+        timeZone: context.timeZone, hour: "2-digit", hourCycle: "h23",
+      }).format(nowDate));
+      if (localHour < context.effectivePushHour) continue;
+
+      const localDate = localDateInZone(nowDate, context.timeZone);
+      const { candidates } = await buildDailyNotificationCandidates(db, userId, localDate, { context });
       if (!candidates.length) continue;
 
       const inQuiet = isUserInQuietHours(context, nowDate);
@@ -164,37 +174,42 @@ export async function handleScheduled(
           continue;
         }
 
-        if (!canSendWebPush && !canSendApns) {
-          if (!existing) {
-            const insertRes = await db
-              .prepare(
-                `INSERT OR IGNORE INTO notification_history
-                   (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status, push_sent_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'skipped', NULL)`,
-              )
-              .bind(
-                crypto.randomUUID(),
-                userId,
-                candidate.notification_key,
-                candidate.category,
-                candidate.title,
-                candidate.body,
-                candidate.target_url,
-                candidate.metadata_json,
-                nowIso,
-              )
-              .run();
-            if (Number(insertRes.meta?.changes ?? 0) > 0) inboxCount++;
-          }
-          continue;
+        if (!existing) {
+          const result = await db
+            .prepare(
+              `INSERT OR IGNORE INTO notification_history
+                 (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'skipped')`,
+            )
+            .bind(
+              crypto.randomUUID(), userId, candidate.notification_key, candidate.category,
+              candidate.title, candidate.body, candidate.target_url, candidate.metadata_json, nowIso,
+            )
+            .run();
+          if (Number(result.meta?.changes ?? 0) > 0) inboxCount++;
         }
+        if (!canSendWebPush && !canSendApns) continue;
+
+        // Claim before calling either provider so overlapping scans share one sender.
+        const leaseStarted = Date.now();
+        const leaseUntil = new Date(leaseStarted + 5 * 60_000).toISOString();
+        const claim = await db
+          .prepare(
+            `UPDATE notification_history SET push_lease_until = ?
+             WHERE user_id = ? AND notification_key = ?
+               AND push_sent_at IS NULL AND read_at IS NULL AND deleted_at IS NULL
+               AND (push_lease_until IS NULL OR push_lease_until <= ?)`,
+          )
+          .bind(leaseUntil, userId, candidate.notification_key, new Date(leaseStarted).toISOString())
+          .run();
+        if (Number(claim.meta?.changes ?? 0) === 0) continue;
 
         let deliveredAny = false;
         const errors: string[] = [];
 
         if (canSendWebPush) {
           try {
-            const { sent, staleIds } = await sendPushToSubscriptions(
+            const { sent, staleIds, failed } = await sendPushToSubscriptions(
               env,
               userSubs,
               candidate.title,
@@ -202,6 +217,7 @@ export async function handleScheduled(
               candidate.target_url,
             );
             if (sent > 0) deliveredAny = true;
+            if (failed > 0) errors.push(`Web Push failed for ${failed}/${userSubs.length} subscriptions`);
             for (const id of staleIds) {
               await db.prepare("DELETE FROM push_subscriptions WHERE id = ?").bind(id).run();
             }
@@ -255,41 +271,20 @@ export async function handleScheduled(
         const finalError = errors.length > 0 ? errors.join("; ") : null;
         const pushSentAt = deliveredAny ? nowIso : null;
 
-        const upsertRes = await db
+        await db
           .prepare(
-            `INSERT INTO notification_history
-               (id, user_id, notification_key, category, title, body, target_url, metadata_json, sent_at, status, push_sent_at, error)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(user_id, notification_key) DO UPDATE SET
-               title = excluded.title,
-               body = excluded.body,
-               target_url = excluded.target_url,
-               metadata_json = excluded.metadata_json,
-               status = excluded.status,
-               push_sent_at = COALESCE(notification_history.push_sent_at, excluded.push_sent_at),
-               error = excluded.error
-             WHERE notification_history.deleted_at IS NULL
-               AND notification_history.read_at IS NULL
-               AND notification_history.push_sent_at IS NULL`,
+            `UPDATE notification_history
+             SET title = ?, body = ?, target_url = ?, metadata_json = ?,
+                 status = ?, push_sent_at = COALESCE(push_sent_at, ?), error = ?, push_lease_until = NULL
+             WHERE user_id = ? AND notification_key = ? AND push_lease_until = ?`,
           )
           .bind(
-            crypto.randomUUID(),
-            userId,
-            candidate.notification_key,
-            candidate.category,
-            candidate.title,
-            candidate.body,
-            candidate.target_url,
-            candidate.metadata_json,
-            nowIso,
-            finalStatus,
-            pushSentAt,
-            finalError,
+            candidate.title, candidate.body, candidate.target_url, candidate.metadata_json,
+            finalStatus, pushSentAt, finalError, userId, candidate.notification_key, leaseUntil,
           )
           .run();
 
         if (deliveredAny) sentCount++;
-        else if (Number(upsertRes.meta?.changes ?? 0) > 0) inboxCount++;
       }
     } catch (err) {
       console.error(`[cron] Failed processing user ${userId}:`, err);
@@ -326,7 +321,7 @@ async function sendPushToSubscriptions(
   title: string,
   body: string,
   targetUrl = "/bills",
-): Promise<{ sent: number; staleIds: string[] }> {
+): Promise<{ sent: number; staleIds: string[]; failed: number }> {
   const publicKey = env.VAPID_PUBLIC_KEY;
   const privateKey = env.VAPID_PRIVATE_KEY;
   if (!publicKey || !privateKey) {
@@ -340,13 +335,14 @@ async function sendPushToSubscriptions(
 
   const payload = JSON.stringify({ title, body, url: targetUrl });
   let sent = 0;
+  let failed = 0;
   const staleIds: string[] = [];
   for (const sub of subs) {
     try {
       await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
         payload,
-        { TTL: 86400 },
+        { TTL: 86400, timeout: 10_000 },
       );
       sent++;
     } catch (err) {
@@ -354,9 +350,9 @@ async function sendPushToSubscriptions(
       if (status === 404 || status === 410) {
         staleIds.push(sub.id);
       } else {
-        throw err;
+        failed++;
       }
     }
   }
-  return { sent, staleIds };
+  return { sent, staleIds, failed };
 }
