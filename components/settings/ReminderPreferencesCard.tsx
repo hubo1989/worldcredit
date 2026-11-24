@@ -16,6 +16,8 @@ import {
   isWebPushChannelEnabled,
   resolveEffectiveChannels,
   formatTimezoneOptionLabel,
+  TIMEZONE_PRESETS,
+  isTimeInQuietHours,
 } from './shared'
 
 interface ReminderPreferencesCardProps {
@@ -34,14 +36,6 @@ const BILL_DAY_CHOICES = [
 const OPPORTUNITY_DAY_CHOICES = [0, 1, 3, 7, 15]
 const ACTIVITY_DAY_CHOICES = [1, 3, 7, 15]
 const TASK_DAY_CHOICES = [0, 1, 3, 7]
-
-const TIMEZONE_DEFINITIONS = [
-  { value: 'Asia/Shanghai', name: '中国标准时间' },
-  { value: 'America/New_York', name: '美东时间' },
-  { value: 'Europe/London', name: '格林威治时间' },
-  { value: 'Asia/Tokyo', name: '日本标准时间' },
-  { value: 'Asia/Hong_Kong', name: '香港时间' },
-]
 
 function toggleDayList(list: number[] | undefined, day: number): number[] {
   const current = list ?? []
@@ -87,7 +81,7 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
     if (!isWebPushEnabled) {
       setTestNotice({
         open: true,
-        message: 'Web Push 浏览器通道已关闭，请先开启通道后再测试。',
+        message: '站外推送通道已关闭，请先开启通道后再测试。',
         severity: 'info',
       })
       return
@@ -179,15 +173,36 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
   // 存量时区合并：基于 Intl.DateTimeFormat 动态生成夏令时与当前偏移
   const timezoneChoices = (() => {
     const currentTz = opp?.time_zone
-    const base = TIMEZONE_DEFINITIONS.map((def) => ({
+    const base = TIMEZONE_PRESETS.map((def) => ({
       value: def.value,
       label: formatTimezoneOptionLabel(def.value, def.name),
     }))
     if (currentTz && !base.some((opt) => opt.value === currentTz)) {
-      return [...base, { value: currentTz, label: `${currentTz} (当前设置)` }]
+      return [
+        { value: currentTz, label: `${currentTz} (当前设置)` },
+        ...base,
+      ]
     }
     return base
   })()
+
+  const activeTimeZone = opp?.time_zone ?? 'Asia/Shanghai'
+  const activeLocalTime = opp?.local_time ?? '09:00'
+  const activeQuietStart = config.quiet_hours_start || '22:00'
+  const activeQuietEnd = config.quiet_hours_end || '08:00'
+  const localTimeHour = activeLocalTime.split(':')[0] || '09'
+  const isPostponedByQuietHours = isTimeInQuietHours(activeLocalTime, activeQuietStart, activeQuietEnd)
+
+  const handleUseDeviceTimeZone = () => {
+    try {
+      const detected = Intl.DateTimeFormat().resolvedOptions().timeZone
+      if (detected) {
+        updateOpp({ time_zone: detected })
+      }
+    } catch {
+      // ignore unsupported environments
+    }
+  }
 
   return (
     <div className='flex flex-col gap-5 text-d-text'>
@@ -245,17 +260,17 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
             </div>
           </div>
 
-          {/* Web Push 通道 */}
+          {/* 站外推送总通道 */}
           <div className='flex min-h-[48px] items-center justify-between border-t border-d-border/60 pt-3'>
             <div>
-              <p className='text-[14px] font-medium text-d-text'>Web Push 浏览器通道</p>
-              <p className='text-[12px] text-d-muted'>通过系统通知中心直达设备</p>
+              <p className='text-[14px] font-medium text-d-text'>站外推送通知（Web Push / iOS APNs）</p>
+              <p className='text-[12px] text-d-muted'>关闭后所有账单与权益仅写站内通知中心，不下发系统推送</p>
             </div>
             <Toggle
               checked={isWebPushEnabled}
               onChange={handleToggleWebPush}
               disabled={disabled}
-              ariaLabel='Web Push 浏览器通道'
+              ariaLabel='站外推送通知（Web Push / iOS APNs）'
             />
           </div>
 
@@ -305,6 +320,70 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
         </div>
       </div>
 
+      {/* 独立顶层区块：提醒时区与推送时间（同时驱动每日账单 Cron 与权益定时提醒） */}
+      <div className='rounded-2xl border border-d-border bg-d-subtle/50 p-4'>
+        <div className='mb-3 flex items-center justify-between gap-2'>
+          <div className='flex items-center gap-2 text-d-accent-light'>
+            <ClockIcon size={18} />
+            <h4 className='text-[15px] font-bold leading-5'>提醒时区与推送时间</h4>
+          </div>
+          <button
+            type='button'
+            disabled={disabled}
+            onClick={handleUseDeviceTimeZone}
+            className='min-h-[36px] rounded-full border border-d-border bg-d-bg px-3 text-[12px] font-semibold text-d-accent-light transition-colors active:bg-d-subtle disabled:opacity-50'
+          >
+            使用当前设备时区
+          </button>
+        </div>
+
+        <div className='flex flex-col gap-3'>
+          <div>
+            <label htmlFor='opp-timezone-select' className='mb-1.5 block text-[13px] font-medium text-d-muted'>
+              提醒时区
+            </label>
+            <select
+              id='opp-timezone-select'
+              value={activeTimeZone}
+              disabled={disabled}
+              onChange={(e) => updateOpp({ time_zone: e.target.value })}
+              className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
+            >
+              {timezoneChoices.map((opt) => (
+                <option key={opt.value} value={opt.value} className='bg-d-surface text-d-text'>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor='opp-localtime-input' className='mb-1.5 block text-[13px] font-medium text-d-muted'>
+              每日提醒推送时间
+            </label>
+            <input
+              id='opp-localtime-input'
+              type='time'
+              value={activeLocalTime}
+              disabled={disabled}
+              onChange={(e) => updateOpp({ local_time: e.target.value })}
+              className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
+            />
+            <p className='mt-1.5 text-[12px] leading-4 text-d-muted'>
+              每日账单汇总与逾期提醒将在您所选时区的该整点小时窗口内（如 {localTimeHour}:00–{localTimeHour}:59）推送；权益/抢兑节点提醒按 15 分钟精度在所选时刻前后送达。
+            </p>
+            {isPostponedByQuietHours && (
+              <p
+                role='status'
+                className='mt-2 rounded-xl border border-d-gold-deep/50 bg-d-gold-soft px-3 py-2 text-[12px] font-medium leading-4 text-d-warn-ink'
+              >
+                该时刻位于免打扰时段（{activeQuietStart}–{activeQuietEnd}）内，推送将顺延至免打扰结束（{activeQuietEnd}）后发出。
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* 区块二：权益机会提醒（总开关 + 6 项分项开关） */}
       <div className='rounded-2xl border border-d-border bg-d-subtle/50 p-4'>
         <div className='mb-3 flex items-center justify-between'>
@@ -338,41 +417,6 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
                   />
                 </div>
               ))}
-            </div>
-
-            {/* 提醒时区下拉 */}
-            <div className='border-t border-d-border/60 pt-3'>
-              <label htmlFor='opp-timezone-select' className='mb-1.5 block text-[13px] font-medium text-d-muted'>
-                提醒时区 (标准下拉)
-              </label>
-              <select
-                id='opp-timezone-select'
-                value={opp?.time_zone ?? 'Asia/Shanghai'}
-                disabled={disabled}
-                onChange={(e) => updateOpp({ time_zone: e.target.value })}
-                className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
-              >
-                {timezoneChoices.map((opt) => (
-                  <option key={opt.value} value={opt.value} className='bg-d-surface text-d-text'>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* 每日提醒推送时间 */}
-            <div>
-              <label htmlFor='opp-localtime-input' className='mb-1.5 block text-[13px] font-medium text-d-muted'>
-                每日提醒推送时间
-              </label>
-              <input
-                id='opp-localtime-input'
-                type='time'
-                value={opp?.local_time ?? '09:00'}
-                disabled={disabled}
-                onChange={(e) => updateOpp({ local_time: e.target.value })}
-                className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
-              />
             </div>
 
             {/* 到期提醒节点 */}

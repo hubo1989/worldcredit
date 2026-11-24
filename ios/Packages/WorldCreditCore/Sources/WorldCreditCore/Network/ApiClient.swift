@@ -95,11 +95,12 @@ public struct MutationPushResult: Codable, Sendable {
     public var id: String
     public var ok: Bool
     public var error: String?
+    public var code: String?
     public var permanent: Bool?
     public var alreadyProcessed: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, ok, error, permanent
+        case id, ok, error, code, permanent
         case alreadyProcessed = "already_processed"
     }
 }

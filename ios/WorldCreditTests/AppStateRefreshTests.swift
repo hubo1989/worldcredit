@@ -210,11 +210,27 @@ final class AppStateRefreshTests: XCTestCase {
 
         state.handleNotificationRoute("/benefits")
         XCTAssertEqual(state.selectedTab, 3)
+        XCTAssertEqual(state.pendingBenefitsRoute, .ledger(accountId: nil))
+        XCTAssertNil(state.pendingWebDestination)
+
+        state.handleNotificationRoute("/benefits/acc-9")
+        XCTAssertEqual(state.selectedTab, 3)
+        XCTAssertEqual(state.pendingBenefitsRoute, .ledger(accountId: "acc-9"))
         XCTAssertNil(state.pendingWebDestination)
 
         state.handleNotificationRoute("/benefits/calendar")
         XCTAssertEqual(state.selectedTab, 3)
-        XCTAssertEqual(state.pendingWebDestination, .benefitCalendar)
+        XCTAssertEqual(state.pendingBenefitsRoute, .calendar)
+        XCTAssertNil(state.pendingWebDestination)
+
+        state.handleNotificationRoute("/benefits/tasks")
+        XCTAssertEqual(state.selectedTab, 3)
+        XCTAssertEqual(state.pendingBenefitsRoute, .tasks)
+        XCTAssertNil(state.pendingWebDestination)
+
+        state.handleNotificationRoute("/gmail-ledger")
+        XCTAssertEqual(state.selectedTab, 0)
+        XCTAssertEqual(state.pendingWebDestination, .gmailLedger)
 
         state.handleNotificationRoute("/settings")
         XCTAssertEqual(state.selectedTab, 4)
