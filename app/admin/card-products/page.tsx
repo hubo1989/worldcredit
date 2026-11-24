@@ -3,13 +3,12 @@
 import { useState, useEffect } from 'react'
 import { Button, Toggle } from '@/components/obsidian/controls'
 import { TextField, TextArea, SelectField } from '@/components/obsidian/fields'
-import { Modal, Toast } from '@/components/obsidian/overlays'
-import { Spinner } from '@/components/obsidian/feedback'
+import { Modal, ConfirmDialog, Toast } from '@/components/obsidian/overlays'
+import { Spinner, Alert } from '@/components/obsidian/feedback'
 import { AdminPagination, AdminCheckbox } from '@/components/admin/AdminShell'
 import { PlusIcon, SearchIcon, NoteIcon, TrashIcon, SyncIcon } from '@/components/icons/WcIcon'
 import {
   getAdminCardProducts,
-  createCardProduct,
   updateCardProduct,
   deleteCardProduct,
   getAdminBanks
@@ -17,19 +16,30 @@ import {
 import { CardProduct, Bank } from '@/lib/types'
 import { COUNTRIES } from '@/lib/constants'
 import AiCompleteButton from '@/components/admin/AiCompleteButton'
+import { CardProductRulesEditor } from '@/components/admin/CardProductRulesEditor'
+import { computeProductRuleCompleteness } from '@/lib/recommendations-ui/helpers'
+import {
+  createAdminCardProductWithRules,
+  updateAdminCardProductWithRules,
+} from '@/lib/recommendations-ui/rpc'
+import type { CardProductWithRules } from '@/lib/recommendations-ui/types'
 import { aiComplete } from '@/lib/api/ai'
 
 export default function CardProductsPage() {
   const [loading, setLoading] = useState(true)
-  const [products, setProducts] = useState<(CardProduct & { is_active: boolean })[]>([])
+  const [products, setProducts] = useState<(CardProductWithRules & { is_active: boolean })[]>([])
   const [search, setSearch] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [currentProduct, setCurrentProduct] = useState<Partial<CardProduct & { is_active: boolean }> | null>(null)
+  const [currentProduct, setCurrentProduct] = useState<Partial<CardProductWithRules & { is_active: boolean }> | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [fetchError, setFetchError] = useState<string | null>(null)
   const [banks, setBanks] = useState<Bank[]>([])
   const [filterBank, setFilterBank] = useState<string>('all')
   const [filterCountry, setFilterCountry] = useState<string>('all')
+  const [filterRuleStatus, setFilterRuleStatus] = useState<'all' | 'missing' | 'partial' | 'complete'>('all')
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [batchDeleteConfirmOpen, setBatchDeleteConfirmOpen] = useState(false)
+  const [modalError, setModalError] = useState<string | null>(null)
   // 批量选择：选中的卡产品 id
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [notice, setNotice] = useState<string | null>(null)
@@ -63,17 +73,28 @@ export default function CardProductsPage() {
     setPage(0)
   }, [search, filterBank, filterCountry])
 
+  useEffect(() => {
+    setPage(0)
+  }, [filterRuleStatus])
+
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.bank_name.toLowerCase().includes(search.toLowerCase()) ||
       p.card_name.toLowerCase().includes(search.toLowerCase())
     const matchesBank = filterBank === 'all' || p.bank_id === filterBank || p.bank_name === filterBank
     const matchesCountry = filterCountry === 'all' || p.country === filterCountry
-    return matchesSearch && matchesBank && matchesCountry
+    const ruleState = computeProductRuleCompleteness(p)
+    const matchesRule =
+      filterRuleStatus === 'all' ||
+      (filterRuleStatus === 'missing' && ruleState !== 'complete') ||
+      (filterRuleStatus === 'partial' && ruleState === 'partial') ||
+      (filterRuleStatus === 'complete' && ruleState === 'complete')
+    return matchesSearch && matchesBank && matchesCountry && matchesRule
   })
 
   const paginatedProducts = filteredProducts.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
 
-  const handleOpenDialog = (product?: CardProduct & { is_active: boolean }) => {
+  const handleOpenDialog = (product?: CardProductWithRules & { is_active: boolean }) => {
+    setModalError(null)
     if (product) {
       setCurrentProduct(product)
     } else {
@@ -89,7 +110,7 @@ export default function CardProductsPage() {
     setDialogOpen(true)
   }
 
-  const handleToggleStatus = async (product: CardProduct & { is_active: boolean }) => {
+  const handleToggleStatus = async (product: CardProductWithRules & { is_active: boolean }) => {
     try {
       await updateCardProduct(product.id, { is_active: !product.is_active })
       setProducts(products.map(p => p.id === product.id ? { ...p, is_active: !product.is_active } : p))
@@ -98,13 +119,21 @@ export default function CardProductsPage() {
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除这个卡产品吗？此操作不可撤销且会影响关联的用户信用卡。')) return
+  const handleDelete = (id: string) => {
+    setDeleteConfirmId(id)
+  }
+
+  const confirmDeleteSingle = async () => {
+    if (!deleteConfirmId) return
+    const targetId = deleteConfirmId
     try {
-      await deleteCardProduct(id)
-      setProducts(products.filter(p => p.id !== id))
+      await deleteCardProduct(targetId)
+      setProducts(products.filter(p => p.id !== targetId))
+      setDeleteConfirmId(null)
+      setNotice('已删除卡产品')
     } catch (error) {
       console.error('Failed to delete product:', error)
+      setSaveError(error instanceof Error ? error.message : '删除失败')
     }
   }
 
@@ -197,29 +226,45 @@ export default function CardProductsPage() {
     }
   }
   const handleBatchDelete = () => {
-    if (!confirm(`确定删除选中的 ${selectedIds.length} 个卡产品？此操作不可撤销且会影响关联的用户信用卡。`)) return
-    return runBatch(selectedIds, '删除', id => deleteCardProduct(id))
+    setBatchDeleteConfirmOpen(true)
+  }
+
+  const confirmBatchDelete = async () => {
+    setBatchDeleteConfirmOpen(false)
+    await runBatch(selectedIds, '删除', id => deleteCardProduct(id))
   }
 
   const handleSubmit = async () => {
     if (!currentProduct?.bank_name || !currentProduct?.card_name) {
-      alert('请填写必填项（银行名称、卡片名称）')
+      setModalError('请填写必填项（银行名称、卡片名称）')
+      return
+    }
+    if (
+      currentProduct.ftf_rate !== null &&
+      currentProduct.ftf_rate !== undefined &&
+      (!Number.isFinite(currentProduct.ftf_rate) ||
+        currentProduct.ftf_rate < 0 ||
+        currentProduct.ftf_rate > 10)
+    ) {
+      setModalError('FTF 费率必须在 0% 到 10% 之间')
       return
     }
 
+    setModalError(null)
     setSubmitting(true)
     try {
       if (currentProduct.id) {
-        const updated = await updateCardProduct(currentProduct.id, currentProduct)
+        const updated = await updateAdminCardProductWithRules(currentProduct.id, currentProduct)
         setProducts(products.map(p => p.id === currentProduct.id ? { ...p, ...updated } : p))
       } else {
-        const created = await createCardProduct(currentProduct) as unknown as CardProduct & { is_active: boolean }
+        const created = await createAdminCardProductWithRules(currentProduct) as unknown as CardProductWithRules & { is_active: boolean }
         setProducts([created, ...products])
       }
       setDialogOpen(false)
+      setNotice('已保存卡产品及结构化规则')
     } catch (error) {
       console.error('Failed to save product:', error)
-      alert('保存失败，请重试')
+      setModalError(error instanceof Error ? error.message : '保存失败，请重试')
     } finally {
       setSubmitting(false)
     }
@@ -240,7 +285,7 @@ export default function CardProductsPage() {
 
       {/* 过滤器 */}
       <div className='mb-6 rounded-2xl border border-d-border bg-d-surface p-4'>
-        <div className='grid grid-cols-1 items-center gap-4 md:grid-cols-2 lg:grid-cols-4'>
+        <div className='grid grid-cols-1 items-center gap-4 md:grid-cols-2 lg:grid-cols-5'>
           <TextField
             placeholder="搜索银行或卡片名称..."
             value={search}
@@ -263,6 +308,19 @@ export default function CardProductsPage() {
             options={[
               { value: 'all', label: '全部国家' },
               ...COUNTRIES.map(c => ({ value: c.code, label: c.label })),
+            ]}
+          />
+          <SelectField
+            label="规则配置状态"
+            value={filterRuleStatus}
+            onChange={(e) =>
+              setFilterRuleStatus(e.target.value as 'all' | 'missing' | 'partial' | 'complete')
+            }
+            options={[
+              { value: 'all', label: '全部规则状态' },
+              { value: 'missing', label: '仅看缺失规则' },
+              { value: 'partial', label: '部分缺失' },
+              { value: 'complete', label: '已配回报+FTF' },
             ]}
           />
           <div className='flex items-center justify-end gap-3'>
@@ -330,6 +388,7 @@ export default function CardProductsPage() {
                 <th>卡片名称</th>
                 <th>年费</th>
                 <th>还款宽限</th>
+                <th>规则状态</th>
                 <th>状态</th>
                 <th className='text-right'>操作</th>
               </tr>
@@ -337,18 +396,20 @@ export default function CardProductsPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className='px-3 py-10 text-center'>
+                  <td colSpan={8} className='px-3 py-10 text-center'>
                     <Spinner size={24} />
                   </td>
                 </tr>
               ) : filteredProducts.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className='px-3 py-10 text-center text-d-muted'>
+                  <td colSpan={8} className='px-3 py-10 text-center text-d-muted'>
                     {fetchError ? `加载失败: ${fetchError}` : '未检索到卡产品数据'}
                   </td>
                 </tr>
               ) : (
-                paginatedProducts.map((product) => (
+                paginatedProducts.map((product) => {
+                  const ruleCompleteness = computeProductRuleCompleteness(product)
+                  return (
                   <tr key={product.id} className='border-t border-d-border/60 transition-colors hover:bg-d-subtle/40'>
                     <td className='px-3 py-2'>
                       <AdminCheckbox
@@ -366,6 +427,24 @@ export default function CardProductsPage() {
                     </td>
                     <td className='px-3 py-2 text-d-muted'>
                       {product.payment_due_type === 'after_billing' ? `账单日后 ${product.payment_due_value} 天` : `每月固定 ${product.payment_due_value} 日`}
+                    </td>
+                    <td className='px-3 py-2'>
+                      <span
+                        className={
+                          'rounded-md px-2 py-1 text-[11px] font-semibold ' +
+                          (ruleCompleteness === 'complete'
+                            ? 'bg-d-success-soft text-d-success-ink'
+                            : ruleCompleteness === 'partial'
+                              ? 'bg-d-subtle text-d-warn-ink'
+                              : 'bg-d-subtle text-d-muted')
+                        }
+                      >
+                        {ruleCompleteness === 'complete'
+                          ? '已配回报+FTF'
+                          : ruleCompleteness === 'partial'
+                            ? '部分缺失'
+                            : '待配置'}
+                      </span>
                     </td>
                     <td className='px-3 py-2'>
                       <div className='flex items-center gap-2'>
@@ -405,7 +484,8 @@ export default function CardProductsPage() {
                       </button>
                     </td>
                   </tr>
-                ))
+                  )
+                })
               )}
             </tbody>
           </table>
@@ -449,6 +529,7 @@ export default function CardProductsPage() {
           />
         </div>
         <div className='flex flex-col gap-4'>
+          {modalError && <Alert severity='error'>{modalError}</Alert>}
           <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
             <SelectField
               label="银行名称"
@@ -538,8 +619,46 @@ export default function CardProductsPage() {
               onChange={(e) => setCurrentProduct({ ...currentProduct, payment_due_value: Number(e.target.value) })}
             />
           </div>
+          {currentProduct && (
+            <CardProductRulesEditor
+              product={currentProduct}
+              onChange={(next) => setCurrentProduct(next)}
+            />
+          )}
         </div>
       </Modal>
+
+      <ConfirmDialog
+        open={deleteConfirmId !== null}
+        title='确定删除该卡产品？'
+        onClose={() => setDeleteConfirmId(null)}
+        actions={
+          <>
+            <Button variant='ghost' onClick={() => setDeleteConfirmId(null)}>取消</Button>
+            <Button variant='danger' onClick={confirmDeleteSingle}>确认删除</Button>
+          </>
+        }
+      >
+        <p className='text-[13px] text-d-muted'>
+          此操作不可撤销且会影响关联的用户信用卡。
+        </p>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={batchDeleteConfirmOpen}
+        title={`确定删除选中的 ${selectedIds.length} 个卡产品？`}
+        onClose={() => setBatchDeleteConfirmOpen(false)}
+        actions={
+          <>
+            <Button variant='ghost' onClick={() => setBatchDeleteConfirmOpen(false)}>取消</Button>
+            <Button variant='danger' onClick={confirmBatchDelete}>确认删除</Button>
+          </>
+        }
+      >
+        <p className='text-[13px] text-d-muted'>
+          此操作不可撤销且会影响关联的用户信用卡。
+        </p>
+      </ConfirmDialog>
 
       {/* 批量结果反馈：部分成功必须说清楚，不能静默 */}
       <Toast

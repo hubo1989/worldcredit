@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   getBillDashboardItems,
@@ -463,6 +464,22 @@ export default function DashboardPage() {
         onChanged={() => void loadData({ silent: true })}
         initialAction={quickInitialAction}
       />
+
+      {/* 轻量智能选卡与年费 ROI 快捷胶囊入口 */}
+      <div className="obsidian-dashboard fixed bottom-[72px] left-1/2 z-[900] flex -translate-x-1/2 items-center gap-2 rounded-full border border-d-border bg-d-surface/95 px-2.5 py-1.5 shadow-lg backdrop-blur">
+        <Link
+          href="/recommend"
+          className="flex min-h-[36px] items-center whitespace-nowrap rounded-full bg-d-accent px-3.5 text-[12px] font-semibold text-white"
+        >
+          消费前选卡
+        </Link>
+        <Link
+          href="/cards/roi"
+          className="flex min-h-[36px] items-center whitespace-nowrap rounded-full border border-d-border bg-d-subtle px-3.5 text-[12px] font-semibold text-d-gold"
+        >
+          年费 ROI
+        </Link>
+      </div>
     </>
   );
 }

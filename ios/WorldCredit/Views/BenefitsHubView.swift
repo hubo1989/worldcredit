@@ -26,6 +26,7 @@ struct BenefitsHubView: View {
 
     @State private var selectedSegment: Segment = .promos
     @State private var hapticImpactTrigger: Int = 0
+    @State private var showingRecommendationSheet: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -56,6 +57,21 @@ struct BenefitsHubView: View {
             .background(WCColors.canvas.ignoresSafeArea())
             .navigationTitle("权益")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        HapticManager.impactLight()
+                        showingRecommendationSheet = true
+                    } label: {
+                        Label("选卡助手", systemImage: "wand.and.stars")
+                            .font(.subheadline.bold())
+                    }
+                    .accessibilityIdentifier("benefits.recommend")
+                }
+            }
+            .sheet(isPresented: $showingRecommendationSheet) {
+                CardRecommendationSheetView()
+            }
             .sensoryFeedback(.selection, trigger: selectedSegment)
             .sensoryFeedback(.impact(weight: .medium), trigger: hapticImpactTrigger)
         }

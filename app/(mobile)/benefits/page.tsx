@@ -154,6 +154,12 @@ ${preview.candidates.map((c) => `· ${c.name}`).join('\n')}
         </div>
         <div className='flex shrink-0 gap-2'>
           <a
+            href='/recommend'
+            className='flex h-11 items-center gap-1.5 whitespace-nowrap rounded-full border border-d-gold/50 bg-d-gold-soft px-3.5 text-[12px] font-semibold text-d-gold'
+          >
+            消费前选卡
+          </a>
+          <a
             href='/benefits/calendar'
             className='flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full border border-d-border px-3.5 text-[12px] font-semibold text-d-muted'
           >

@@ -3,10 +3,12 @@ import WorldCreditCore
 
 struct CardDetailRoute: Hashable {
     let cardId: String
+    var initialSection: String? = nil
 }
 
 struct CardDetailView: View {
     let cardId: String
+    var initialSection: String? = nil
 
     @Environment(AppState.self) private var appState
     @State private var detail: LoadedCardDetail?
@@ -18,9 +20,15 @@ struct CardDetailView: View {
     @State private var showingSplitConfirm: Bool = false
     @State private var isSplitting: Bool = false
     @State private var actionError: String?
+    @State private var roiDetail: CardAnnualFeeRoiDetail?
+    @State private var isLoadingRoi: Bool = false
+    @State private var roiPeriodMode: String = "current_cycle"
+    @State private var showingManualRewardAlert: Bool = false
+    @State private var manualRewardInputText: String = ""
 
-    init(cardId: String) {
+    init(cardId: String, initialSection: String? = nil) {
         self.cardId = cardId
+        self.initialSection = initialSection
     }
 
     private struct LoadedCardDetail {
@@ -62,15 +70,23 @@ struct CardDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: cardId) {
             await loadDetails()
+            await loadRoi()
+        }
+        .onChange(of: roiPeriodMode) { _, _ in
+            Task { await loadRoi() }
         }
         .onChange(of: appState.isSyncing) { _, isSyncing in
             if !isSyncing {
-                Task { await loadDetails() }
+                Task {
+                    await loadDetails()
+                    await loadRoi()
+                }
             }
         }
         .refreshable {
             await appState.sync()
             await loadDetails()
+            await loadRoi()
         }
         .sheet(isPresented: $showingDefinitionSheet) {
             if let detail {
@@ -119,6 +135,16 @@ struct CardDetailView: View {
         } message: {
             Text("拆出后，该卡将独立核算账单与额度池；原账户下剩余卡片不受影响。")
         }
+        .alert("补录本周期返现 / 积分变现", isPresented: $showingManualRewardAlert) {
+            TextField("金额", text: $manualRewardInputText)
+                .keyboardType(.decimalPad)
+            Button("保存") {
+                saveManualReward()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("填写未通过优惠活动台账核销的返现或积分兑换价值。")
+        }
     }
 
     @ViewBuilder
@@ -132,7 +158,8 @@ struct CardDetailView: View {
         let displayUnpaid = d.accountGroup?.unpaidAmount ?? cardUnpaid
         let displayAvailable = displayLimit > 0 ? max(0.0, displayLimit - displayUnpaid) : 0.0
 
-        List {
+        ScrollViewReader { scrollProxy in
+            List {
             if let actionError {
                 Section {
                     Text(actionError)
@@ -297,6 +324,12 @@ struct CardDetailView: View {
                 }
             }
 
+            // 年费周期与免年费进度
+            if d.card.cardType != "loan" {
+                annualFeeSection(d, currency: currency)
+                annualFeeRoiSection(d, currency: currency)
+            }
+
             // 所属信用账户管理
             Section("所属信用账户管理") {
                 if let account = d.account {
@@ -391,6 +424,16 @@ struct CardDetailView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .onAppear {
+            if initialSection == "roi" {
+                DispatchQueue.main.async {
+                    withAnimation {
+                        scrollProxy.scrollTo("roi-section", anchor: .top)
+                    }
+                }
+            }
+        }
+        }
     }
 
     private func cardHeroView(_ d: LoadedCardDetail, currency: String) -> some View {
@@ -611,6 +654,207 @@ struct CardDetailView: View {
                 HapticManager.error()
             }
             isSplitting = false
+        }
+    }
+
+    @ViewBuilder
+    private func annualFeeSection(_ d: LoadedCardDetail, currency: String) -> some View {
+        let df: DateFormatter = {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.timeZone = BillingDateCalculator.businessCalendar.timeZone
+            f.dateFormat = "yyyy-MM-dd"
+            return f
+        }()
+        let todayStr = df.string(from: Date())
+        let state = CardRecommendationEngine.resolveAnnualFeeCycleState(card: d.card, product: d.product, todayStr: todayStr)
+        let waiverRule = CardRecommendationEngine.parseWaiverRules(d.product?.annualFeeWaiverRulesJson)
+        let progress = CardRecommendationEngine.parseWaiverProgress(d.card.waiverProgressJson)
+
+        Section("年费周期与免年费进度") {
+            LabeledContent("有效年费") {
+                Text(state.nominalFee > 0 ? DashboardMoney.format(state.nominalFee, currency: currency) : "免年费")
+                    .bold()
+                    .blur(radius: appState.dashboardPrivacy ? 5 : 0)
+            }
+
+            LabeledContent("年费周期", value: annualFeeCycleLabel(state.cycleType))
+
+            LabeledContent("下次扣费日") {
+                if let due = state.nextDueDate {
+                    HStack(spacing: 6) {
+                        Text(due)
+                        if let days = state.daysUntilDue {
+                            Text(days >= 0 ? "剩 \(days) 天" : "已过 \(-days) 天")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(days <= 30 && days >= 0 ? WCColors.dangerSoft : WCColors.subtle, in: Capsule())
+                                .foregroundStyle(days <= 30 && days >= 0 ? WCColors.dangerInk : WCColors.textSecondary)
+                        }
+                    }
+                } else {
+                    Text("未知")
+                        .foregroundStyle(WCColors.warningInk)
+                }
+            }
+
+            if state.nominalFee > 0 && state.cycleType != "none" && state.nextDueDate == nil {
+                Text("年费到期日未知，请点击下方「账户与账单规则」补充发卡日或下次扣费日以开启前 30 天提醒。")
+                    .font(.caption)
+                    .foregroundStyle(WCColors.warningInk)
+            }
+
+            if let waiverRule {
+                if let targetAmt = waiverRule.targetAmount, targetAmt > 0 {
+                    let currAmt = progress?.amount ?? 0
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("免年费消费额")
+                            Spacer()
+                            Text("\(DashboardMoney.format(currAmt, currency: waiverRule.targetCurrency ?? currency)) / \(DashboardMoney.format(targetAmt, currency: waiverRule.targetCurrency ?? currency))")
+                                .font(.caption.bold())
+                        }
+                        ProgressView(value: min(1.0, currAmt / targetAmt))
+                    }
+                }
+                if let targetCnt = waiverRule.targetCount, targetCnt > 0 {
+                    let currCnt = progress?.count ?? 0
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("免年费消费笔数")
+                            Spacer()
+                            Text("\(currCnt) / \(targetCnt) 笔")
+                                .font(.caption.bold())
+                        }
+                        ProgressView(value: min(1.0, Double(currCnt) / Double(targetCnt)))
+                    }
+                }
+            } else if let text = d.product?.annualFeeWaiver, !text.isEmpty {
+                Text("免年费政策：\(text)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if state.nominalFee > 0 && state.status != "waived" {
+                Button("标记本周期已免年费") {
+                    Task {
+                        var input = CardUpdateInput()
+                        input.annualFeeStatus = "waived"
+                        input.actualFeePaid = 0
+                        _ = try? await appState.updateCard(cardId: cardId, input: input)
+                        await loadDetails()
+                        await loadRoi()
+                    }
+                }
+                .accessibilityIdentifier("card.annualFee.markWaived")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func annualFeeRoiSection(_ d: LoadedCardDetail, currency: String) -> some View {
+        Section("年度年费 ROI 复盘") {
+            Picker("统计窗口", selection: $roiPeriodMode) {
+                Text("本年费周期").tag("current_cycle")
+                Text("近 12 个月").tag("last_12m")
+            }
+            .pickerStyle(.segmented)
+            .id("roi-section")
+
+            if isLoadingRoi && roiDetail == nil {
+                ProgressView("加载年费 ROI…")
+            } else if let roi = roiDetail {
+                HStack {
+                    Text(roi.decisionTag.label)
+                        .font(.caption.bold())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(WCColors.subtle, in: Capsule())
+                        .foregroundStyle(roi.netValue >= 0 ? WCColors.successInk : WCColors.dangerInk)
+                    Spacer()
+                    Text(DashboardMoney.format(roi.netValue, currency: roi.cardCurrency))
+                        .font(.headline)
+                        .foregroundStyle(roi.netValue >= 0 ? WCColors.successInk : WCColors.dangerInk)
+                }
+
+                LabeledContent("年费成本", value: DashboardMoney.format(roi.annualFeeCost, currency: roi.cardCurrency))
+                LabeledContent("权益估值", value: DashboardMoney.format(roi.redeemedBenefitsValue, currency: roi.cardCurrency))
+                LabeledContent("优惠与返现", value: DashboardMoney.format(roi.promoAndRewardValue, currency: roi.cardCurrency))
+                LabeledContent("净 ROI") {
+                    if let roiPct = roi.roiPct {
+                        Text(String(format: "%+.1f%%", roiPct))
+                    } else {
+                        Text(roi.costBasis == "waived" ? "已免年费" : "免年费")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if roi.unvaluedBenefitCount > 0 {
+                    Text("另有 \(roi.unvaluedBenefitCount) 次已核销权益未设估值，可前往 Web 端补填单次估值。")
+                        .font(.caption)
+                        .foregroundStyle(WCColors.warningInk)
+                }
+            } else {
+                let nominalFee = max(0.0, d.card.annualFeeOverride ?? d.product?.annualFee ?? 0.0)
+                let feeCost = d.card.annualFeeStatus == "waived" ? 0.0 : (d.card.actualFeePaid ?? nominalFee)
+                let manualVal = d.card.manualRewardValue ?? 0.0
+                LabeledContent("本地估算年费成本", value: DashboardMoney.format(feeCost, currency: currency))
+                LabeledContent("已补录返现/变现", value: DashboardMoney.format(manualVal, currency: currency))
+                Text("联网后可同步完整权益核销估值与优惠返现汇总。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button("补录本周期返现 / 积分变现") {
+                manualRewardInputText = d.card.manualRewardValue.map { String(format: "%.2f", $0) } ?? ""
+                showingManualRewardAlert = true
+            }
+
+            NavigationLink {
+                AnnualFeeRoiListView()
+            } label: {
+                Label("查看全家年费 ROI 看板", systemImage: "chart.bar.xaxis")
+            }
+        }
+    }
+
+    private func annualFeeCycleLabel(_ raw: String?) -> String {
+        switch raw {
+        case "none": return "终身免年费"
+        case "anniversary_issued": return "发卡周年日"
+        case "anniversary_activated": return "激活周年日"
+        case "calendar_year": return "固定公历日"
+        case "custom_date": return "自定义扣费日"
+        default: return "未配置"
+        }
+    }
+
+    private func loadRoi() async {
+        guard appState.isLoggedIn, !UITestConfiguration.isEnabled, !CommandLine.arguments.contains("--demo-mode") else {
+            return
+        }
+        isLoadingRoi = true
+        defer { isLoadingRoi = false }
+        roiDetail = try? await appState.recommendationsService.getCardAnnualFeeRoi(
+            cardId: cardId,
+            periodMode: roiPeriodMode
+        )
+    }
+
+    private func saveManualReward() {
+        let trimmed = manualRewardInputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let val = trimmed.isEmpty ? 0.0 : (Double(trimmed) ?? -1.0)
+        guard val >= 0 else {
+            actionError = "返现/变现金额必须为非负数"
+            return
+        }
+        Task {
+            var input = CardUpdateInput()
+            input.manualRewardValue = val
+            _ = try? await appState.updateCard(cardId: cardId, input: input)
+            await loadDetails()
+            await loadRoi()
         }
     }
 }
@@ -836,6 +1080,10 @@ private struct CardRulesEditSheet: View {
     @State private var issuedDate: Date
     @State private var hasActivatedOn: Bool
     @State private var activatedDate: Date
+    @State private var annualFeeCycleType: String
+    @State private var hasNextAnnualFeeDate: Bool
+    @State private var nextAnnualFeeDate: Date
+    @State private var annualFeeStatus: String
     @State private var status: String
     @State private var isSubmitting: Bool = false
     @State private var errorMessage: String?
@@ -874,6 +1122,12 @@ private struct CardRulesEditSheet: View {
         let parsedActivated = card.activatedOn.flatMap { Self.dateFormatter.date(from: $0) }
         _hasActivatedOn = State(initialValue: parsedActivated != nil)
         _activatedDate = State(initialValue: parsedActivated ?? Date())
+
+        _annualFeeCycleType = State(initialValue: card.annualFeeCycleType ?? product?.annualFeeCycleType ?? "")
+        let parsedNextFee = card.nextAnnualFeeDate.flatMap { Self.dateFormatter.date(from: $0) }
+        _hasNextAnnualFeeDate = State(initialValue: parsedNextFee != nil)
+        _nextAnnualFeeDate = State(initialValue: parsedNextFee ?? Date())
+        _annualFeeStatus = State(initialValue: card.annualFeeStatus ?? "")
 
         _status = State(initialValue: card.status)
     }
@@ -957,6 +1211,28 @@ private struct CardRulesEditSheet: View {
                     Toggle("记录激活日期", isOn: $hasActivatedOn)
                     if hasActivatedOn {
                         DatePicker("激活日期", selection: $activatedDate, displayedComponents: .date)
+                    }
+
+                    Picker("年费周期类型", selection: $annualFeeCycleType) {
+                        Text("沿用卡产品默认").tag("")
+                        Text("终身免年费").tag("none")
+                        Text("发卡周年日").tag("anniversary_issued")
+                        Text("激活周年日").tag("anniversary_activated")
+                        Text("固定公历日").tag("calendar_year")
+                        Text("手动指定扣费日").tag("custom_date")
+                    }
+
+                    Toggle("指定下次年费扣费日", isOn: $hasNextAnnualFeeDate)
+                    if hasNextAnnualFeeDate {
+                        DatePicker("下次年费扣费日", selection: $nextAnnualFeeDate, displayedComponents: .date)
+                    }
+
+                    Picker("本周期年费状态", selection: $annualFeeStatus) {
+                        Text("自动推导").tag("")
+                        Text("无年费").tag("not_applicable")
+                        Text("考核累积中").tag("in_progress")
+                        Text("已免除 / 已达标").tag("waived")
+                        Text("已扣年费").tag("paid")
                     }
 
                     Picker("卡片状态", selection: $status) {
@@ -1049,6 +1325,24 @@ private struct CardRulesEditSheet: View {
             input.activatedOn = Self.dateFormatter.string(from: activatedDate)
         } else if card.activatedOn != nil {
             input.clearActivatedOn = true
+        }
+
+        if !annualFeeCycleType.isEmpty {
+            input.annualFeeCycleType = annualFeeCycleType
+        } else if card.annualFeeCycleType != nil {
+            input.clearAnnualFeeCycleType = true
+        }
+
+        if hasNextAnnualFeeDate {
+            input.nextAnnualFeeDate = Self.dateFormatter.string(from: nextAnnualFeeDate)
+        } else if card.nextAnnualFeeDate != nil {
+            input.clearNextAnnualFeeDate = true
+        }
+
+        if !annualFeeStatus.isEmpty {
+            input.annualFeeStatus = annualFeeStatus
+        } else if card.annualFeeStatus != nil {
+            input.clearAnnualFeeStatus = true
         }
 
         let finalInput = input

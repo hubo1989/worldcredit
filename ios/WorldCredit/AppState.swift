@@ -84,6 +84,7 @@ public final class AppState {
     @ObservationIgnored private lazy var dashboardRemote = DashboardRemoteService(apiClient: apiClient)
     @ObservationIgnored private lazy var payablesService = PayablesRemoteService(apiClient: apiClient)
     @ObservationIgnored private lazy var notificationsRemote = NotificationsRemoteService(apiClient: apiClient)
+    @ObservationIgnored public private(set) lazy var recommendationsService = RecommendationsRemoteService(apiClient: apiClient)
 
     public var summary: DashboardSummary?
     public var bills: [BillDisplayItem] = []
@@ -150,6 +151,8 @@ public final class AppState {
     public var notificationsError: String?
     public var pendingOpenNotifications: Bool = false
     public var pendingWebDestination: DashboardWebDestination?
+    public var pendingDeepLinkCardId: String?
+    public var pendingDeepLinkCardSection: String?
     public var reminderPreferences: UserReminderPreferences = UserReminderPreferences()
     public var isSavingReminderPreferences: Bool = false
     public var reminderPreferencesError: String?
@@ -1294,6 +1297,20 @@ public final class AppState {
         } else if path == "/cards" || path.hasPrefix("/cards/") || path == "/accounts" || path.hasPrefix("/accounts/") {
             pendingWebDestination = nil
             pendingOpenNotifications = false
+            let queryItems = URLComponents(string: trimmed)?.queryItems
+            let section = queryItems?.first(where: { $0.name == "section" })?.value
+            if path == "/cards/roi" {
+                pendingDeepLinkCardId = nil
+                pendingDeepLinkCardSection = "roi_board"
+            } else if path.hasPrefix("/cards/") {
+                let cardId = String(path.dropFirst("/cards/".count))
+                    .split(separator: "/").first.map(String.init) ?? ""
+                pendingDeepLinkCardId = cardId.isEmpty ? nil : cardId
+                pendingDeepLinkCardSection = section
+            } else {
+                pendingDeepLinkCardId = nil
+                pendingDeepLinkCardSection = nil
+            }
             selectedTab = 2
         } else if path == "/settings" {
             pendingWebDestination = nil
@@ -2468,5 +2485,46 @@ public final class AppState {
         } catch {
             print("Failed to load demo data: \(error)")
         }
+    }
+
+    public func recommendCardsOffline(input: PurchaseRecommendationInput) -> RecommendationEngineOutput {
+        let groupByAccountId = Dictionary(uniqueKeysWithValues: creditAccountGroups.map { ($0.account.id, $0) })
+        let scopedCards = cards.filter { item in
+            guard let targetHolder = input.holderId, !targetHolder.isEmpty, targetHolder != "all" else {
+                return true
+            }
+            return item.card.holderId == targetHolder
+        }
+        let snapshots: [OfflineCardSnapshot] = scopedCards.map { item in
+            let account = item.card.accountId.flatMap { groupByAccountId[$0]?.account }
+            let poolUnpaid = item.card.accountId.flatMap { groupByAccountId[$0]?.unpaidAmount } ?? item.remainingAmount
+            return OfflineCardSnapshot(
+                card: item.card,
+                product: item.product,
+                holderName: item.holderName,
+                account: account,
+                cardUnpaidTotal: item.remainingAmount,
+                poolUnpaidTotal: poolUnpaid
+            )
+        }
+        return CardRecommendationEngine.rankCardsForPurchase(
+            snapshots: snapshots,
+            input: input,
+            rates: dashboardRates
+        )
+    }
+
+    public func recommendCards(input: PurchaseRecommendationInput) async -> (output: RecommendationEngineOutput, isOfflineFallback: Bool) {
+        if isLoggedIn, !UITestConfiguration.isEnabled, !CommandLine.arguments.contains("--demo-mode") {
+            do {
+                let remote = try await performWithSilentRefresh { [recommendationsService] in
+                    try await recommendationsService.getCardRecommendations(input: input)
+                }
+                return (remote, false)
+            } catch {
+                // 离线或后端接口未就绪时自动降级到本地纯规则评分引擎
+            }
+        }
+        return (recommendCardsOffline(input: input), true)
     }
 }
