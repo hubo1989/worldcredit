@@ -8,13 +8,12 @@
  * 直发路径本轮不动，附件路径单独走这里。
  */
 
-import type { BillParseResult, HolderScopedBill, NestedBillMessage, RawAttachment } from './types'
+import type { AttributionResolution, AttributionSource, BillParseResult, NestedBillMessage, ParsedStatementItem, RawAttachment } from './types'
 import { evaluateParsedBillDueDate, extractValidCreditLimit, isExactDueDate } from './due-date'
-import { isCmbStatement, parseCmbStatement } from './cmb'
 import {
   extractNameFromBody,
   isEmlAttachment,
-  resolveHolder,
+  matchHolderNames,
   type HolderRecord,
 } from './holders'
 import { decodeMimeHeaderValue, extractHeaderDisplayName, parseRawMessage } from './mime'
@@ -23,6 +22,7 @@ interface HolderRow {
   id: string
   name: string
   aliases: unknown
+  email: string | null
 }
 
 /**
@@ -51,18 +51,20 @@ export interface HolderScope {
 }
 
 /**
- * 读取该用户（created_by = userId）名下的持卡人。
- * 与旧逻辑一致：只认 created_by，避免把别人家的持卡人算进来。
+ * 管理员可识别自己创建的持卡人，成员只可识别绑定到本账号的持卡人。
  */
 export async function loadHolderScope(db: D1Database, userId: string): Promise<HolderScope> {
   const rows = await db.prepare(
-    'SELECT id, name, aliases FROM card_holders WHERE created_by = ? ORDER BY created_at ASC, id ASC'
-  ).bind(userId).all<HolderRow>()
+     `SELECT id, name, aliases, email FROM card_holders WHERE auth_user_id = ?
+      OR (created_by = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND role = 'admin'))
+      ORDER BY created_at ASC, id ASC`
+  ).bind(userId, userId, userId).all<HolderRow>()
 
   const holders: HolderRecord[] = (rows.results || []).map(row => ({
     id: row.id,
     name: row.name ?? '',
     aliases: normalizeAliases(row.aliases),
+    email: row.email,
   }))
 
   return { holders, defaultHolderId: holders[0]?.id ?? null, userId }
@@ -400,6 +402,7 @@ export interface UpsertBillOptions {
    * false 表示这人只是被回落成了默认持卡人，不能凭此覆盖他那个月的既有账单。
    */
   trusted: boolean
+  protectExisting?: boolean
 }
 
 export interface UpsertBillOutcome {
@@ -466,7 +469,9 @@ export async function upsertBillForCard(
       if (cardInfo.account_id) {
         accountId = cardInfo.account_id
         const accInfo = await db.prepare(
-          'SELECT id, statement_mode, primary_card_id FROM credit_accounts WHERE id = ?'
+          `SELECT a.id, a.statement_mode,
+             CASE WHEN c.holder_id = a.holder_id AND c.account_id = a.id THEN c.id END AS primary_card_id
+           FROM credit_accounts a LEFT JOIN credit_cards c ON c.id = a.primary_card_id WHERE a.id = ?`
         ).bind(accountId).first<{ id: string; statement_mode: string; primary_card_id: string | null }>()
         if (accInfo?.statement_mode === 'merged' && accInfo.primary_card_id) {
           anchorCardId = accInfo.primary_card_id
@@ -474,47 +479,82 @@ export async function upsertBillForCard(
       }
     }
   } catch {
-    // 兼容桩环境
+    if (options.protectExisting) throw new Error('无法核验账单账户')
   }
 
   // 唯一性判定：若有 accountId 则优先查 (account_id, bill_month)，否则查 (card_id, bill_month)
-  let existing: { id: string; status: string | null } | null = null
-  if (accountId) {
-    try {
-      existing = await db.prepare(
-        'SELECT id, status FROM bills WHERE account_id = ? AND bill_month = ?'
-      ).bind(accountId, billMonth).first<{ id: string; status: string | null }>()
-    } catch {
-      existing = null
+  async function findExisting() {
+    if (accountId) {
+      try {
+        const match = await db.prepare(
+          'SELECT id, status FROM bills WHERE account_id = ? AND bill_month = ?'
+        ).bind(accountId, billMonth).first<{ id: string; status: string | null }>()
+        if (match) return match
+      } catch (error) {
+        if (options.protectExisting) throw error
+      }
     }
-  }
-  if (!existing) {
-    existing = await db.prepare(
+    return db.prepare(
       'SELECT id, status FROM bills WHERE card_id = ? AND bill_month = ?'
     ).bind(anchorCardId, billMonth).first<{ id: string; status: string | null }>()
+  }
+
+  let existing = await findExisting()
+  let insertedId: string | null = null
+  if (!existing && options.protectExisting) {
+    const id = crypto.randomUUID()
+    const insert = await db.prepare(
+      `INSERT INTO bills (id, account_id, card_id, bill_month, bill_amount, min_payment, due_date, statement_date, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`
+    ).bind(id, accountId, anchorCardId, billMonth, amount, minPayment, dueDate, statementDate, initialStatus).run()
+    if (insert.meta.changes) {
+      insertedId = id
+    } else {
+      // A separate delivery can post the same account/month after the first read.
+      existing = await findExisting()
+      if (!existing) throw new Error('账单写入冲突，请重试')
+    }
   }
 
   let billId: string
   let action: 'inserted' | 'updated' | 'preserved'
 
-  if (existing) {
-    if (!options.trusted) {
-      return {
-        billId: existing.id,
-        action: 'preserved',
-        reason: `该卡 ${billMonth} 账单已存在，但收件人无法确认归属（已回落默认持卡人），保留原值`,
+  if (insertedId) {
+    billId = insertedId
+    action = 'inserted'
+  } else if (existing) {
+    if (options.protectExisting) {
+      const guarded = await db.prepare(
+        `UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?,
+           account_id = COALESCE(account_id, ?)
+         WHERE id = ? AND (account_id IS NULL OR account_id = ?)
+           AND (bill_amount_override IS NULL OR abs(bill_amount_override - ?) <= 0.01000001)
+           AND (status != 'paid' OR abs(bill_amount - ?) <= 0.01000001)`
+      ).bind(amount, minPayment, dueDate, statementDate, accountId, existing.id, accountId, amount, amount).run()
+      if (!guarded.meta.changes) {
+        return { billId: existing.id, action: 'preserved', reason: '金额与已还清账单或人工调整金额冲突，请核对' }
       }
-    }
-    billId = existing.id
-    action = 'updated'
-    try {
-      await db.prepare(
-        'UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?, status = ?, account_id = COALESCE(account_id, ?) WHERE id = ?'
-      ).bind(amount, minPayment, dueDate, statementDate, keepPaidStatus(existing.status), accountId, existing.id).run()
-    } catch {
-      await db.prepare(
-        'UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?, status = ? WHERE id = ?'
-      ).bind(amount, minPayment, dueDate, statementDate, keepPaidStatus(existing.status), existing.id).run()
+      billId = existing.id
+      action = 'updated'
+    } else {
+      if (!options.trusted) {
+        return {
+          billId: existing.id,
+          action: 'preserved',
+          reason: `该卡 ${billMonth} 账单已存在，但收件人无法确认归属（已回落默认持卡人），保留原值`,
+        }
+      }
+      billId = existing.id
+      action = 'updated'
+      try {
+        await db.prepare(
+          'UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?, status = ?, account_id = COALESCE(account_id, ?) WHERE id = ?'
+        ).bind(amount, minPayment, dueDate, statementDate, keepPaidStatus(existing.status), accountId, existing.id).run()
+      } catch {
+        await db.prepare(
+          'UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?, status = ? WHERE id = ?'
+        ).bind(amount, minPayment, dueDate, statementDate, keepPaidStatus(existing.status), existing.id).run()
+      }
     }
   } else {
     billId = crypto.randomUUID()
@@ -687,7 +727,7 @@ export async function syncBillingDayFromBill(
  * 把顶层转发包里的 .eml 附件逐个拆成独立的嵌套账单邮件。
  *
  * 每个嵌套 .eml 都当成一封完整邮件重新走 parseRawMessage：它自己可能还是 multipart，
- * 正文可能是 base64 + gbk，直接当字符串处理会乱码。PDF 等非邮件附件本轮跳过。
+ * 正文可能是 base64 + gbk，直接当字符串处理会乱码。保留嵌套附件以供共享解析器处理。
  */
 export function extractNestedBillMessages(attachments: RawAttachment[]): NestedBillMessage[] {
   const messages: NestedBillMessage[] = []
@@ -707,6 +747,7 @@ export function extractNestedBillMessages(attachments: RawAttachment[]): NestedB
         to: parsed.headers.to,
         date: parsed.headers.date ?? null,
         text: parsed.text,
+        attachments: parsed.attachments,
         headerName: extractHeaderDisplayName(parsed.headers.to),
         // 部分银行（如农行）只在正文写「尊敬的X先生/女士」，To 头里没有姓名
         bodyName: extractNameFromBody(parsed.text),
@@ -714,7 +755,7 @@ export function extractNestedBillMessages(attachments: RawAttachment[]): NestedB
     } catch {
       // 单封坏件不该拖垮整个包，记一条空结果由上层按「无正文」跳过
       messages.push({
-        label, subject: null, from: null, to: null, date: null, text: '', headerName: null, bodyName: null,
+        label, subject: null, from: null, to: null, date: null, text: '', headerName: null, bodyName: null, attachments: [],
       })
     }
   }
@@ -722,108 +763,101 @@ export function extractNestedBillMessages(attachments: RawAttachment[]): NestedB
   return messages
 }
 
-export interface PersistNestedBillsResult {
-  written: HolderScopedBill[]
-  skipped: Array<{ label: string; reason: string }>
+export interface BillAttributionInput {
+  userId: string
+  statement: ParsedStatementItem
+  headerName?: string | null
+  bodyName?: string | null
+  recipient?: string | null
+  defaultHolderId?: string | null
+  attributionMode?: 'auto_then_default' | 'force_default_unless_conflict'
 }
 
-/**
- * 逐个嵌套账单：认持卡人 -> 找/建卡 -> 写账单。
- * AI 解析由调用方注入，这样本地重放和测试都不用打网络。
- */
-export async function persistNestedBills(
-  db: D1Database,
-  scope: HolderScope,
-  messages: NestedBillMessage[],
-  parse: (text: string) => Promise<BillParseResult>
-): Promise<PersistNestedBillsResult> {
-  const written: HolderScopedBill[] = []
-  const skipped: Array<{ label: string; reason: string }> = []
+interface AttributionTarget {
+  card_id: string
+  holder_id: string
+  account_id: string | null
+  bank_name: string
+  currency: string
+}
 
-  for (const message of messages) {
-    if (!message.text.trim()) {
-      skipped.push({ label: message.label, reason: '附件无正文' })
-      continue
-    }
-
-    let parsed: BillParseResult
-    try {
-      if (isCmbStatement({ fromEmail: message.from, subject: message.subject, text: message.text })) {
-        parsed = parseCmbStatement(message.text)
-      } else {
-        parsed = await parse(message.text)
-      }
-    } catch (err) {
-      skipped.push({ label: message.label, reason: 'AI 解析失败：' + (err instanceof Error ? err.message : String(err)) })
-      continue
-    }
-
-    // 转发包里混着「电子对账单已可查阅」这类通知和营销邮件，字段不全的一律跳过；
-    // 非 0 元账单必须有确切 YYYY-MM-DD 还款日，明确区分「邮件未提供」与「日期模糊/只有宽限期」。
-    const dueEval = evaluateParsedBillDueDate(parsed)
-    if (!dueEval.ok) {
-      skipped.push({ label: message.label, reason: dueEval.reason })
-      continue
-    }
-
-    const resolution = resolveHolder({
-      holders: scope.holders,
-      defaultHolderId: scope.defaultHolderId,
-      headerName: message.headerName,
-      bodyName: message.bodyName,
-    })
-    if (!resolution.holderId) {
-      skipped.push({ label: message.label, reason: '该用户名下无持卡人' })
-      continue
-    }
-
-    // 归属是否可信只由「真的命中了某个人」决定；回落默认持卡人不算可信。
-    const trusted = resolution.source === 'header_name' || resolution.source === 'body_honorific'
-
-    const card = await findOrCreateCardForHolder(db, {
-      holderId: resolution.holderId,
-      cardTail: parsed.card_last4 ?? null,
-      statementDate: parsed.statement_date ?? null,
-      statementDay: parsed.statement_day ?? null,
-      dueDate: dueEval.dueDate,
-      receivedDate: message.date,
-      bankName: parsed.bank_name ?? null,
-      currency: parsed.currency ?? null,
-      creditLimit: parsed.credit_limit ?? null,
-      // 归属不可信时绝不自动建卡（会挂到默认持卡人头上）；落草稿等人工确认。
-      allowCreate: trusted,
-    })
-    if (!card.ok) {
-      if (card.needsDraft && scope.userId) {
-        await parkBillAsDraft(db, scope.userId, parsed as unknown as Record<string, unknown>)
-        skipped.push({ label: message.label, reason: `${card.reason}｜草稿已保存` })
-        continue
-      }
-      // 尾号缺失、或按银行名匹配不到卡产品时都不建卡，也不能随便挂到已有卡上，
-      // 记录后跳过，等人工在界面补
-      skipped.push({ label: message.label, reason: card.reason })
-      continue
-    }
-
-    const outcome = await upsertBillForCard(db, card.cardId, parsed, { trusted })
-    if (outcome.action === 'preserved') {
-      // 归属不可信 + 该月账单已存在：不覆盖，如实记进 skipped
-      skipped.push({ label: message.label, reason: outcome.reason ?? '归属无法确认，保留原值' })
-      continue
-    }
-    // 每期账单落库后回写卡档账单日（有出账日证据互相印证才动，见函数注释）
-    const billingDayUpdated = await syncBillingDayFromBill(db, card.cardId, parsed)
-    await syncCreditLimitFromBill(db, card.cardId, parsed)
-    written.push({
-      holderId: resolution.holderId,
-      holderName: scope.holders.find(h => h.id === resolution.holderId)?.name ?? '',
-      cardId: card.cardId,
-      billId: outcome.billId,
-      aiResult: parsed,
-      matchSource: resolution.source,
-      billingDayUpdated,
-    })
+export async function resolveBillAttribution(
+  db: D1Database, input: BillAttributionInput, scope?: HolderScope,
+): Promise<AttributionResolution> {
+  const { statement: parsed } = input
+  const { holders } = scope ?? await loadHolderScope(db, input.userId)
+  const tail = normalizeCardTail(parsed.card_last4)
+  const accountTail = normalizeCardTail(parsed.account_tail) ?? tail
+  const wantedBank = normalizeBankName(parsed.bank_name)
+  const currency = parsed.currency?.toUpperCase()
+  const matchesBank = (bank: string) => {
+    const normalized = normalizeBankName(bank)
+    if (!normalized || !wantedBank) return false
+    if (normalized === wantedBank) return true
+    // Permit spelling variants such as “Chase”/“Chase Bank” without matching
+    // portfolios from different jurisdictions by a generic shared prefix.
+    const base = (name: string) => name.replace(/bank$/, '')
+    return base(normalized) !== '' && base(normalized) === base(wantedBank)
   }
-
-  return { written, skipped }
+  const targets: AttributionTarget[] = []
+  if (wantedBank) {
+    for (const holder of holders) {
+      if (tail) {
+        const cards = await db.prepare(
+          `SELECT c.id AS card_id, c.holder_id, c.account_id, p.bank_name, p.currency
+           FROM credit_cards c JOIN card_products p ON p.id = c.card_product_id
+           LEFT JOIN credit_accounts a ON a.id = c.account_id
+           WHERE c.holder_id = ? AND c.card_number_last4 = ? AND c.status != 'cancelled'
+             AND c.card_type = 'credit' AND (a.id IS NULL OR (a.status = 'active' AND a.holder_id = c.holder_id))`,
+        ).bind(holder.id, tail).all<AttributionTarget>()
+        targets.push(...cards.results)
+      }
+      if (accountTail || parsed.statement_scope === 'account_merged') {
+        const accounts = await db.prepare(
+          `SELECT c.id AS card_id, a.holder_id, a.id AS account_id, a.bank_name, a.currency
+           FROM credit_accounts a JOIN credit_cards c
+             ON c.id = a.primary_card_id AND c.holder_id = a.holder_id AND c.account_id = a.id
+           WHERE a.holder_id = ? AND a.statement_mode = 'merged' AND a.status = 'active'
+             AND c.status != 'cancelled' AND c.card_type = 'credit'
+             AND (a.account_tail = ? OR (? IS NULL AND ? = 'account_merged'))`,
+        ).bind(holder.id, accountTail, accountTail, parsed.statement_scope ?? null).all<AttributionTarget>()
+        targets.push(...accounts.results)
+      }
+    }
+  }
+  const matches = targets.filter(t => matchesBank(t.bank_name) && (!currency || t.currency === currency))
+  const candidates = [...new Set(matches.map(target => target.card_id))].sort()
+  const distinctTargets = [...new Map(matches.map(target => [target.account_id ?? target.card_id, target])).values()]
+  const result = (source: AttributionSource, holderId: string | null, target?: AttributionTarget): AttributionResolution => ({
+    source, holderId, cardId: target?.card_id ?? null, accountId: target?.account_id ?? null,
+    trusted: holderId !== null && source !== 'conflict', candidateCardIds: candidates,
+  })
+  const conflict = () => result('conflict', null)
+  const hints: Array<[AttributionSource, string | null | undefined]> = [
+    ['header_name', input.headerName], ['body_honorific', input.bodyName], ['pdf_holder_hint', parsed.holder_hint],
+  ]
+  const people = hints.flatMap(([source, name]) => matchHolderNames(name, holders).map(holderId => ({ source, holderId })))
+  const named = people[0]
+  if (named && people.some(person => person.holderId !== named.holderId)) return conflict()
+  const defaultHolderId = holders.find(holder => holder.id === input.defaultHolderId)?.id
+  if (defaultHolderId && input.attributionMode === 'force_default_unless_conflict' &&
+      ((named && named.holderId !== defaultHolderId) ||
+       (distinctTargets.length === 1 && distinctTargets[0].holder_id !== defaultHolderId))) return conflict()
+  if (distinctTargets.length === 1) {
+    const target = distinctTargets[0]
+    if (named && target.holder_id !== named.holderId) return conflict()
+    return result('unique_card', target.holder_id, target)
+  }
+  const recipientAddresses = new Set(input.recipient?.toLowerCase().match(/[\w.!#$%&'*+/=?^\x60{|}~-]+@[\w.-]+\.[a-z0-9-]+/g) ?? [])
+  const emailMatches = holders.filter(holder => holder.email && recipientAddresses.has(holder.email.trim().toLowerCase()))
+  const person = named ??
+    (defaultHolderId ? { source: 'connection_default' as const, holderId: defaultHolderId } : undefined) ??
+    (emailMatches.length === 1 ? { source: 'holder_email' as const, holderId: emailMatches[0].id } : undefined)
+  if (person) {
+    const owned = distinctTargets.filter(target => target.holder_id === person.holderId)
+    if (owned.length === 1) return result(person.source, person.holderId, owned[0])
+    if (distinctTargets.length) return conflict()
+    return result(person.source, person.holderId)
+  }
+  return distinctTargets.length > 1 || emailMatches.length > 1 ? conflict() : result('unknown', null)
 }

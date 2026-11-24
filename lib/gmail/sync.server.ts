@@ -1,30 +1,6 @@
-// lib/gmail/sync.server.ts — Gmail 拉取 → 解析 → 落账单/停草稿（server only）。
-//
-// 路由口径与 email-worker 完全一致（共用 lib/email-core）：
-//   字段齐 + 持卡人命中 + 卡命中/可建 → upsertBillForCard 直接合并落账单
-//   其余（认不出人、卡对不上、字段缺）→ parkBillAsDraft 预填草稿，账单页手改
-// 每个 Gmail message 必写 gmail_sync_messages 一行做去重与审计。
-
+// Gmail polling uses the same statement ingestion and posting rules as Email Routing.
 import { getDb, getWorkerEnv } from "../db/client";
-import { query, queryOne, execute } from "../db/helpers";
-import {
-  loadAiConfig,
-  parseBillWithAI,
-  parseRawMessage,
-  loadHolderScope,
-  resolveHolder,
-  extractHeaderDisplayName,
-  extractNameFromBody,
-  findOrCreateCardForHolder,
-  upsertBillForCard,
-  parkBillAsDraft,
-  syncBillingDayFromBill,
-  syncCreditLimitFromBill,
-  evaluateParsedBillDueDate,
-  isCmbStatement,
-  parseCmbStatement,
-  type BillParseResult,
-} from "../email-core";
+import { ingestStatementEmail, parseRawMessage, type BillParseResult } from "../email-core";
 import { decryptToken } from "./token-crypto";
 import { refreshAccessToken, listMessageRefs, getRawMessage, type GmailClientOptions } from "./api";
 
@@ -34,22 +10,19 @@ export interface GmailSyncSummary {
   drafted: number;
   skipped: number;
   failed: number;
-  /**
-   * 本次匹配到、但还没处理的邮件数（分批闸门截断的部分）。
-   * 客户端循环调用直到 remaining === 0；cron 不设限，恒为 0。
-   */
   remaining: number;
   errors: string[];
 }
 
 export interface SyncUserGmailOptions {
-  /** 单次调用最多处理的新邮件数；省略 = 不设限（cron 全量跑）。 */
+  /** When omitted, use the oldest enabled connection for legacy API callers. */
+  connectionId?: string;
   maxMessages?: number;
 }
 
-/** 预筛查询：宁可多拉几封让 AI 用 email_kind 门禁过滤，也不要漏账单。 */
 const DEFAULT_QUERY =
   'newer_than:30d (账单 OR 对账单 OR 月结单 OR statement OR "payment due" OR "e-statement")';
+const LEASE_MINUTES = 15;
 
 interface SyncDeps {
   parse: (text: string) => Promise<BillParseResult>;
@@ -60,269 +33,209 @@ interface SyncDeps {
   bucket?: R2Bucket | null;
 }
 
+interface GmailConnection {
+  id: string;
+  user_id: string;
+  email: string;
+  display_label: string | null;
+  default_holder_id: string | null;
+  attribution_mode: "auto_then_default" | "force_default_unless_conflict";
+  refresh_token_enc: string;
+}
+
 let depsOverride: SyncDeps | null = null;
-/** 仅测试用：注入 AI 解析、fetch 与 R2。 */
+/** Inject external dependencies for tests without changing the production parser. */
 export function __setGmailSyncDeps(deps: SyncDeps | null) {
   depsOverride = deps;
 }
 
-function resolveSecret(override?: string): string {
-  if (override) return override;
-  const env = getWorkerEnv() as { SESSION_SECRET?: string };
-  return (
-    env.SESSION_SECRET ??
-    (typeof process !== "undefined" ? (process.env?.SESSION_SECRET ?? "") : "")
-  );
+function extractRfcMessageId(raw: Uint8Array): string | null {
+  const header = new TextDecoder().decode(raw.subarray(0, 64 * 1024)).split(/\r?\n\r?\n/, 1)[0];
+  const unfolded = header.replace(/\r?\n[ \t]+/g, " ");
+  const id = /^message-id:[ \t]*<?([^<>\s]+)>?/im.exec(unfolded)?.[1];
+  return id && id.length <= 998 ? id.toLowerCase() : null;
 }
 
-/** parseRawMessage 不单独留 message-id，这里从原始字节头部取，用于审计对账。 */
-function extractRfcMessageId(raw: Uint8Array): string | null {
-  const head = new TextDecoder("utf-8", { fatal: false }).decode(raw.subarray(0, 2048));
-  const m = head.match(/^message-id:\s*(.+)$/im);
-  return m ? m[1].trim() : null;
+const activeLease = "(error_msg LIKE 'lease:%' AND substr(error_msg, 7, 19) > datetime('now'))";
+
+/** D1 takes the claim in a single statement, including across mailboxes and isolates. */
+async function claimMessage(
+  db: D1Database, conn: GmailConnection, gmailId: string, rfcId: string | null,
+): Promise<string | null> {
+  const clock = await db.prepare("SELECT 'lease:' || datetime('now', ?) || ':' || ? AS token")
+    .bind(`+${LEASE_MINUTES} minutes`, crypto.randomUUID()).first<{ token: string }>();
+  const lease = clock?.token;
+  if (!lease) throw new Error("无法建立邮件处理租约");
+  const claim = await db.prepare(
+    `INSERT INTO gmail_sync_messages (connection_id, gmail_message_id, user_id, rfc_message_id, status, error_msg)
+     SELECT ?, ?, ?, ?, 'failed', ?
+     WHERE EXISTS (SELECT 1 FROM gmail_connections WHERE id = ? AND status = 'active' AND sync_enabled = 1)
+       AND (? IS NULL OR NOT EXISTS (
+         SELECT 1 FROM gmail_sync_messages WHERE user_id = ? AND rfc_message_id = ?
+           AND (status != 'failed' OR ${activeLease})
+       ))
+     ON CONFLICT(user_id, gmail_message_id) DO UPDATE SET
+       connection_id = excluded.connection_id, rfc_message_id = excluded.rfc_message_id, error_msg = excluded.error_msg
+     WHERE gmail_sync_messages.status = 'failed' AND NOT COALESCE(${activeLease}, 0)`,
+  ).bind(conn.id, gmailId, conn.user_id, rfcId, lease, conn.id, rfcId, conn.user_id, rfcId).run();
+  return claim.meta.changes ? lease : null;
+}
+
+async function rememberDuplicate(
+  db: D1Database, conn: GmailConnection, gmailId: string, rfcId: string,
+): Promise<boolean> {
+  const duplicate = await db.prepare(
+    `INSERT INTO gmail_sync_messages (connection_id, gmail_message_id, user_id, rfc_message_id, status)
+     SELECT ?, ?, ?, ?, 'skipped'
+     WHERE EXISTS (SELECT 1 FROM gmail_connections WHERE id = ?)
+       AND EXISTS (SELECT 1 FROM gmail_sync_messages WHERE user_id = ? AND rfc_message_id = ? AND status != 'failed')
+     ON CONFLICT(user_id, gmail_message_id) DO UPDATE SET status = 'skipped', error_msg = NULL,
+       connection_id = excluded.connection_id, rfc_message_id = excluded.rfc_message_id
+     WHERE gmail_sync_messages.status = 'failed' AND NOT COALESCE(${activeLease}, 0)`,
+  ).bind(conn.id, gmailId, conn.user_id, rfcId, conn.id, conn.user_id, rfcId).run();
+  return duplicate.meta.changes > 0;
 }
 
 export async function syncUserGmail(
-  userId: string,
-  opts?: SyncUserGmailOptions,
+  userId: string, opts?: SyncUserGmailOptions,
 ): Promise<GmailSyncSummary> {
-  const summary: GmailSyncSummary = {
-    scanned: 0,
-    written: 0,
-    drafted: 0,
-    skipped: 0,
-    failed: 0,
-    remaining: 0,
-    errors: [],
-  };
   const db = getDb();
+  const conn = await db.prepare(
+    `SELECT id, user_id, email, display_label, default_holder_id, attribution_mode, refresh_token_enc
+     FROM gmail_connections WHERE user_id = ? AND status = 'active' AND sync_enabled = 1 AND (? IS NULL OR id = ?)
+     ORDER BY created_at, id LIMIT 1`,
+  ).bind(userId, opts?.connectionId ?? null, opts?.connectionId ?? null).first<GmailConnection>();
+  if (!conn) throw new Error("未连接 Gmail 或连接已停用");
+  return syncConnection(db, conn, opts?.maxMessages);
+}
 
-  const conn = await queryOne<{ user_id: string; refresh_token_enc: string }>(
-    "SELECT user_id, refresh_token_enc FROM gmail_connections WHERE user_id = ? AND status = 'active'",
-    [userId],
-  );
-  if (conn.error) throw new Error(conn.error.message);
-  if (!conn.data) throw new Error("未连接 Gmail 或连接已停用");
-
-  const deps: SyncDeps = depsOverride ?? {
-    parse: async (text) =>
-      isCmbStatement({ text })
-        ? parseCmbStatement(text)
-        : parseBillWithAI(await loadAiConfig(db), text),
-  };
-  const secret = resolveSecret(deps.sessionSecret);
+async function syncConnection(db: D1Database, conn: GmailConnection, maxMessages?: number): Promise<GmailSyncSummary> {
+  const summary: GmailSyncSummary = { scanned: 0, written: 0, drafted: 0, skipped: 0, failed: 0, remaining: 0, errors: [] };
   const env = getWorkerEnv() as {
-    GOOGLE_CLIENT_ID?: string;
-    GOOGLE_CLIENT_SECRET?: string;
-    ATTACHMENTS?: R2Bucket;
+    SESSION_SECRET?: string; GOOGLE_CLIENT_ID?: string; GOOGLE_CLIENT_SECRET?: string; ATTACHMENTS?: R2Bucket;
+    IMAGES?: ImagesBinding;
   };
-  const clientOpts: GmailClientOptions = {
-    fetchImpl: deps.fetchImpl,
-    clientId: deps.clientId ?? env.GOOGLE_CLIENT_ID ?? process.env?.GOOGLE_CLIENT_ID,
-    clientSecret:
-      deps.clientSecret ?? env.GOOGLE_CLIENT_SECRET ?? process.env?.GOOGLE_CLIENT_SECRET,
+  const deps = depsOverride;
+  const secret = deps?.sessionSecret ?? env.SESSION_SECRET ?? process.env.SESSION_SECRET ?? "";
+  const store = deps?.bucket !== undefined ? deps.bucket : env.ATTACHMENTS;
+  const client: GmailClientOptions = {
+    fetchImpl: deps?.fetchImpl,
+    clientId: deps?.clientId ?? env.GOOGLE_CLIENT_ID ?? process.env.GOOGLE_CLIENT_ID,
+    clientSecret: deps?.clientSecret ?? env.GOOGLE_CLIENT_SECRET ?? process.env.GOOGLE_CLIENT_SECRET,
   };
+  const access = await refreshAccessToken(await decryptToken(conn.refresh_token_enc, secret), client);
+  await db.prepare(
+    "UPDATE gmail_connections SET access_token_expires_at = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
+  ).bind(new Date(Date.now() + access.expiresIn * 1000).toISOString(), conn.id, conn.user_id).run();
 
-  const refreshToken = await decryptToken(conn.data.refresh_token_enc, secret);
-  const tokens = await refreshAccessToken(refreshToken, clientOpts);
-  await execute(
-    "UPDATE gmail_connections SET access_token_expires_at = ?, updated_at = datetime('now') WHERE user_id = ?",
-    [new Date(Date.now() + tokens.expiresIn * 1000).toISOString(), userId],
-  );
-
-  const { refs } = await listMessageRefs(tokens.accessToken, DEFAULT_QUERY, clientOpts);
-  summary.scanned = refs.length;
-
-  // 分批闸门：每封邮件都要过一遍 LLM 解析（实测 5–15s/封），一次性处理
-  // 几十封会跑几分钟，超过 Cloudflare ~100s 代理超时——客户端先收到 524
-  // 报「同步失败」，worker 却还在后台推进（2026-10-28 首次回填实测 9 分钟）。
-  // 所以手动同步必须分轮：每轮 maxMessages 封，客户端看 remaining 续拉。
-  const maxMessages = opts?.maxMessages;
-  let alreadySeen = 0;
   let processed = 0;
-
-  for (const ref of refs) {
-    // failed 不算「已处理」：子请求超限这类瞬态错误不该永久挡住重试，
-    // 只有 bill_written/draft_parked/skipped 才走去重跳过。
-    const seen = await queryOne(
-      "SELECT gmail_message_id FROM gmail_sync_messages WHERE gmail_message_id = ? AND status != 'failed'",
-      [ref.id],
-    );
-    if (seen.data) {
-      alreadySeen++;
-      continue;
-    }
-    // continue 而不是 break：把剩余量数完，remaining 才准
-    if (maxMessages !== undefined && processed >= maxMessages) continue;
-
-    try {
-      const raw = await getRawMessage(tokens.accessToken, ref.id, clientOpts);
-      const parsedTop = parseRawMessage(raw);
-      const r2Key = `gmail-raw/${userId}/${ref.id}.eml`;
-      const bucket = deps.bucket !== undefined ? deps.bucket : (env.ATTACHMENTS ?? null);
-      if (bucket) await bucket.put(r2Key, raw as unknown as ArrayBuffer);
-
-      const aiResult = await deps.parse(parsedTop.text);
-      const outcome = await routeParsedMessage({ db, userId, top: parsedTop, aiResult });
-
-      // gmail_message_id 是主键：重试命中旧 failed 行时用 upsert 原地覆盖，
-      // 而不是让主键冲突把整封邮件再打成 failed。
-      await execute(
-        `INSERT INTO gmail_sync_messages
-           (gmail_message_id, user_id, thread_id, rfc_message_id, from_email, subject, internal_date,
-            raw_r2_key, status, bill_id, draft_id, parse_confidence, error_msg)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-         ON CONFLICT(gmail_message_id) DO UPDATE SET
-           thread_id = excluded.thread_id,
-           rfc_message_id = excluded.rfc_message_id,
-           from_email = excluded.from_email,
-           subject = excluded.subject,
-           internal_date = excluded.internal_date,
-           raw_r2_key = excluded.raw_r2_key,
-           status = excluded.status,
-           bill_id = excluded.bill_id,
-           draft_id = excluded.draft_id,
-           parse_confidence = excluded.parse_confidence,
-           error_msg = excluded.error_msg`,
-        [
-          ref.id,
-          userId,
-          ref.threadId,
-          extractRfcMessageId(raw),
-          parsedTop.headers.from ?? null,
-          parsedTop.headers.subject ?? null,
-          parsedTop.headers.date ?? null,
-          r2Key,
-          outcome.status,
-          outcome.billId ?? null,
-          outcome.draftId ?? null,
-          typeof aiResult.confidence === "number" ? aiResult.confidence : null,
-          outcome.reason ?? null,
-        ],
-      );
-      if (outcome.status === "bill_written") summary.written++;
-      else if (outcome.status === "draft_parked") summary.drafted++;
-      else if (outcome.status === "skipped") summary.skipped++;
-      else summary.failed++;
-      processed++;
-    } catch (err) {
-      summary.failed++;
-      const msg = err instanceof Error ? err.message : String(err);
-      summary.errors.push(`${ref.id}: ${msg}`);
-      await execute(
-        "INSERT INTO gmail_sync_messages (gmail_message_id, user_id, status, error_msg) VALUES (?,?, 'failed', ?) ON CONFLICT(gmail_message_id) DO UPDATE SET status = 'failed', error_msg = excluded.error_msg",
-        [ref.id, userId, msg],
-      );
+  let pageToken: string | undefined;
+  const visitedTokens = new Set<string>();
+  do {
+    const { refs, nextPageToken } = await listMessageRefs(access.accessToken, DEFAULT_QUERY, { ...client, pageToken });
+    const ids = [...new Set(refs.map(ref => ref.id))];
+    const seen = ids.length ? await db.prepare(
+      `SELECT gmail_message_id FROM gmail_sync_messages WHERE user_id = ? AND status != 'failed'
+       AND gmail_message_id IN (${ids.map(() => "?").join(",")})`,
+    ).bind(conn.user_id, ...ids).all<{ gmail_message_id: string }>() : null;
+    const terminal = new Set(seen?.results.map(row => row.gmail_message_id));
+    for (const ref of refs) {
+      summary.scanned++;
+      if (terminal.has(ref.id)) continue;
+      if (maxMessages !== undefined && processed >= maxMessages) {
+        summary.remaining++;
+        continue;
+      }
+      let lease: string | null = null;
+      try {
+        const raw = await getRawMessage(access.accessToken, ref.id, client);
+        const rfcId = extractRfcMessageId(raw);
+        lease = await claimMessage(db, conn, ref.id, rfcId);
+        if (!lease) {
+          if (rfcId && await rememberDuplicate(db, conn, ref.id, rfcId)) summary.skipped++;
+          // A concurrent delivery can still be in flight. A later run may retry it.
+          terminal.add(ref.id);
+          continue;
+        }
+        const top = parseRawMessage(raw);
+        const rawKey = store ? `gmail-raw/${conn.user_id}/${conn.id}/${encodeURIComponent(ref.id)}.eml` : null;
+        if (store && rawKey) await store.put(rawKey, raw as Uint8Array<ArrayBuffer>);
+        const outcome = await ingestStatementEmail({
+          db, userId: conn.user_id, top, bucket: store, secret, imagesBinding: env.IMAGES,
+          deliveryId: rfcId ? `rfc:${rfcId}` : `gmail:${conn.id}:${ref.id}`,
+          connection: {
+            id: conn.id, email: conn.email, label: conn.display_label, defaultHolderId: conn.default_holder_id,
+            attributionMode: conn.attribution_mode,
+          },
+          parseText: deps?.parse,
+        });
+        const status = outcome.billIds.length ? "bill_written" : outcome.draftIds.length ? "draft_parked" : "skipped";
+        await db.prepare(
+          `UPDATE gmail_sync_messages SET thread_id = ?, from_email = ?, subject = ?, internal_date = ?,
+            raw_r2_key = ?, status = ?, bill_id = ?, draft_id = ?, parse_confidence = ?, error_msg = ?
+           WHERE user_id = ? AND gmail_message_id = ? AND error_msg = ?`,
+        ).bind(ref.threadId, top.headers.from, top.headers.subject, top.headers.date, rawKey, status,
+          outcome.billIds[0] ?? null, outcome.draftIds[0] ?? null, outcome.confidence, outcome.reason,
+          conn.user_id, ref.id, lease).run();
+        summary.written += outcome.billIds.length;
+        summary.drafted += outcome.draftIds.length;
+        if (status === "skipped") summary.skipped++;
+        terminal.add(ref.id);
+      } catch (error) {
+        const message = deps ? String(error).slice(0, 300) : "邮件获取或入库失败，可重试";
+        summary.failed++;
+        summary.errors.push(`${ref.id}: ${message}`);
+        if (lease) {
+          await db.prepare("UPDATE gmail_sync_messages SET error_msg = ? WHERE user_id = ? AND gmail_message_id = ? AND error_msg = ?")
+            .bind(message, conn.user_id, ref.id, lease).run();
+        } else {
+          await db.prepare(
+            `INSERT INTO gmail_sync_messages (connection_id, gmail_message_id, user_id, status, error_msg)
+             SELECT ?, ?, ?, 'failed', ? WHERE EXISTS (SELECT 1 FROM gmail_connections WHERE id = ?)
+             ON CONFLICT(user_id, gmail_message_id) DO NOTHING`,
+          ).bind(conn.id, ref.id, conn.user_id, message, conn.id).run();
+        }
+      }
       processed++;
     }
-  }
-
-  summary.remaining = refs.length - alreadySeen - processed;
+    if (nextPageToken && visitedTokens.has(nextPageToken)) throw new Error("Gmail 返回重复分页标记");
+    if (nextPageToken) visitedTokens.add(nextPageToken);
+    pageToken = nextPageToken ?? undefined;
+  } while (pageToken);
 
   const summaryText = `扫描 ${summary.scanned}｜落账单 ${summary.written}｜草稿 ${summary.drafted}｜跳过 ${summary.skipped}｜失败 ${summary.failed}`;
-  await execute(
-    "UPDATE gmail_connections SET last_sync_at = datetime('now'), last_sync_summary = ?, last_error = ?, updated_at = datetime('now') WHERE user_id = ?",
-    [summaryText, summary.errors[0] ?? null, userId],
-  );
+  await db.prepare(
+    `UPDATE gmail_connections SET last_sync_at = datetime('now'), last_sync_summary = ?,
+      last_error = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?`,
+  ).bind(summaryText, summary.errors[0] ?? null, conn.id, conn.user_id).run();
   return summary;
 }
 
-interface RouteOutcome {
-  status: "bill_written" | "draft_parked" | "skipped" | "failed";
-  billId?: string | null;
-  draftId?: string | null;
-  reason?: string | null;
-}
-
-/**
- * 与 email-worker/src/index.ts 同款路由：
- *   email_kind 非 statement、字段缺 → skipped
- *   认得出人且（卡命中或可信可建卡）→ upsertBillForCard
- *   其余一切「解析出了账单但自动落不下去」→ 预填草稿
- */
-async function routeParsedMessage(params: {
-  db: D1Database;
-  userId: string;
-  top: ReturnType<typeof parseRawMessage>;
-  aiResult: BillParseResult;
-}): Promise<RouteOutcome> {
-  const { db, userId, top, aiResult } = params;
-
-  if (aiResult.email_kind && aiResult.email_kind !== "statement") {
-    return { status: "skipped", reason: `非账单邮件（email_kind=${aiResult.email_kind}）` };
-  }
-  const dueEval = evaluateParsedBillDueDate(aiResult);
-  if (!dueEval.ok) {
-    return {
-      status: "skipped",
-      reason:
-        dueEval.kind === "not_a_bill"
-          ? "Not a bill email or missing required fields"
-          : dueEval.reason,
-    };
-  }
-
-  const scope = await loadHolderScope(db, userId);
-  const toHeader = top.headers.to ?? "";
-  const resolution = resolveHolder({
-    holders: scope.holders,
-    defaultHolderId: scope.defaultHolderId,
-    headerName: extractHeaderDisplayName(toHeader),
-    bodyName: extractNameFromBody(top.text),
-  });
-  const trusted = resolution.source === "header_name" || resolution.source === "body_honorific";
-
-  const prefill = { ...aiResult, raw_text: top.text.slice(0, 2000) };
-
-  if (!resolution.holderId) {
-    const draftId = await parkBillAsDraft(db, userId, prefill);
-    return { status: "draft_parked", draftId, reason: "未找到持卡人，预填草稿待人工确认" };
-  }
-
-  const created = await findOrCreateCardForHolder(db, {
-    holderId: resolution.holderId,
-    cardTail: aiResult.card_last4 ?? null,
-    bankName: aiResult.bank_name ?? null,
-    currency: aiResult.currency ?? null,
-    creditLimit: aiResult.credit_limit ?? null,
-    statementDate: aiResult.statement_date ?? null,
-    statementDay: aiResult.statement_day ?? null,
-    dueDate: dueEval.dueDate,
-    receivedDate: top.headers.date ?? null,
-    allowCreate: trusted,
-  });
-  if (!created.ok) {
-    const draftId = await parkBillAsDraft(db, userId, prefill);
-    return { status: "draft_parked", draftId, reason: `${created.reason}｜草稿已预填` };
-  }
-
-  const outcome = await upsertBillForCard(db, created.cardId, aiResult, { trusted });
-  await syncBillingDayFromBill(db, created.cardId, aiResult);
-  await syncCreditLimitFromBill(db, created.cardId, aiResult);
-  return {
-    status: "bill_written",
-    billId: outcome.billId,
-    reason: outcome.action === "preserved" ? outcome.reason : null,
-  };
-}
-
-/** cron 用：同步全部 active 连接，单用户失败不影响其他用户。 */
+/** Iterate enabled connections with a bounded per-mailbox batch. */
 export async function syncAllGmailConnections(): Promise<{ users: number; failures: number }> {
-  const rows = await query<{ user_id: string }>(
-    "SELECT user_id FROM gmail_connections WHERE status = 'active'",
-  );
+  const db = getDb();
+  const users = new Set<string>();
   let failures = 0;
-  for (const row of rows.data ?? []) {
-    try {
-      await syncUserGmail(row.user_id);
-    } catch (err) {
-      failures++;
-      const msg = err instanceof Error ? err.message : String(err);
-      await execute(
-        "UPDATE gmail_connections SET status = 'error', last_error = ?, updated_at = datetime('now') WHERE user_id = ?",
-        [msg.slice(0, 300), row.user_id],
-      );
+  let cursor = "";
+  for (;;) {
+    const page = await db.prepare(
+      `SELECT id, user_id, email, display_label, default_holder_id, attribution_mode, refresh_token_enc
+       FROM gmail_connections WHERE status = 'active' AND sync_enabled = 1 AND id > ? ORDER BY id LIMIT 25`,
+    ).bind(cursor).all<GmailConnection>();
+    if (!page.results.length) break;
+    for (const conn of page.results) {
+      cursor = conn.id;
+      users.add(conn.user_id);
+      try {
+        await syncConnection(db, conn, 20);
+      } catch (error) {
+        failures++;
+        const message = error instanceof Error ? error.message.slice(0, 300) : "Gmail 同步失败";
+        await db.prepare(
+          "UPDATE gmail_connections SET status = 'error', last_error = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ? AND status = 'active'",
+        ).bind(message, conn.id, conn.user_id).run();
+      }
     }
   }
-  return { users: rows.data?.length ?? 0, failures };
+  return { users: users.size, failures };
 }

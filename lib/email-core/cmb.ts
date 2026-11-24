@@ -78,7 +78,7 @@ export function parseCmbStatement(text: string): BillParseResult {
 
   // 4. 本期应还金额（bill_amount）
   const amountMatch = text.match(/本期应还金额\s*(?:New Balance)?\s*[¥￥\s]*([0-9,-]+(?:\.[0-9]{2})?)/i)
-  const billAmount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : 0
+  const billAmount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : undefined
 
   // 5. 最低还款额（min_payment）
   const minMatch = text.match(/(?:本期)?最低还款额\s*(?:Min\.?\s*Payment)?\s*[¥￥\s]*([0-9,]+(?:\.[0-9]{2})?)/i)
@@ -139,7 +139,7 @@ export function parseCmbStatement(text: string): BillParseResult {
       cardLast4 = uniqueTails[0]
       subtotals.push({
         card_last4: uniqueTails[0],
-        amount: billAmount,
+        amount: billAmount ?? 0,
         currency: 'CNY',
       })
     } else if (uniqueTails.length > 1) {
@@ -167,7 +167,7 @@ export function parseCmbStatement(text: string): BillParseResult {
     due_date: dueDate,
     due_date_status: dueDateStatus,
     credit_limit: creditLimit,
-    bill_amount: billAmount,
+    bill_amount: billAmount ?? 0,
     min_payment: minPayment,
     currency: 'CNY',
     confidence: 0.98,

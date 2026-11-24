@@ -14,5 +14,10 @@
     "typescript": "^5.3.3",
     "vitest": "^4.1.11",
     "wrangler": "^3.95.0"
+  },
+  "dependencies": {
+    "@pdfsmaller/pdf-decrypt": "^1.0.1",
+    "pdf-lib": "^1.17.1",
+    "unpdf": "^2.2.1"
   }
 }
