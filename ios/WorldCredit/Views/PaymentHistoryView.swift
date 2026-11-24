@@ -82,17 +82,34 @@ struct PaymentHistoryView: View {
                 }
             }
             .sheet(isPresented: $showingRecordPaymentSheet) {
-                RecordPaymentView(item: item) { amount, date, channel, note in
-                    try await appState.recordPayment(
-                        billId: item.bill.id,
-                        amount: amount,
-                        paidAt: date,
-                        channel: channel,
-                        note: note
-                    )
-                    await loadPayments()
-                    await appState.reloadData()
-                }
+                RecordPaymentView(
+                    item: item,
+                    onPay: { amount, date, channel, note in
+                        try await appState.recordPayment(
+                            billId: item.bill.id,
+                            amount: amount,
+                            paidAt: date,
+                            channel: channel,
+                            note: note
+                        )
+                        await loadPayments()
+                        await appState.reloadData()
+                    },
+                    onPayWithFx: { amount, date, channel, note, settledCur, settledAmt, lockedRate in
+                        try await appState.recordPayment(
+                            billId: item.bill.id,
+                            amount: amount,
+                            paidAt: date,
+                            channel: channel,
+                            note: note,
+                            settledCurrency: settledCur,
+                            settledAmount: settledAmt,
+                            lockedFxRate: lockedRate
+                        )
+                        await loadPayments()
+                        await appState.reloadData()
+                    }
+                )
             }
         }
     }
@@ -291,6 +308,17 @@ struct PaymentHistoryView: View {
                     .padding(.vertical, 1)
                     .background(WCColors.subtle, in: Capsule())
                     .foregroundStyle(WCColors.textSecondary)
+            }
+
+            if let settledCur = p.settledCurrency,
+               let settledAmt = p.settledAmount,
+               let lockedRate = p.lockedFxRate {
+                Text("已锁汇率 1 \(billCurrency) = \(String(format: "%.4f", lockedRate)) \(settledCur) · 实付 \(DashboardMoney.format(settledAmt, currency: settledCur))")
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(WCColors.successSoft, in: Capsule())
+                    .foregroundStyle(WCColors.successInk)
             }
 
             if let note = p.note, !note.isEmpty {

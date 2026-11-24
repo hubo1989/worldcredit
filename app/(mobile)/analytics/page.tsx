@@ -3,32 +3,32 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import {
-  LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
+  LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
-import type { PieLabelRenderProps } from 'recharts'
-import { getAnalyticsSummary, getMonthlyDebtTrend, getCategoryBreakdown } from '@/lib/api/analytics'
+import { getAnalyticsSummary, getMonthlyDebtTrend } from '@/lib/api/analytics'
 import { getHolders } from '@/lib/api/holders'
 import { getCardsByHolder } from '@/lib/api/cards'
 import type { CreditCardWithProduct } from '@/lib/api/cards'
 import { useAuth } from '@/lib/auth'
 import { ExportDialog } from '@/components/mobile/ExportDialog'
+import { CategoryBreakdownSection } from '@/components/mobile/CategoryBreakdownSection'
+import { CashflowForecastSection } from '@/components/mobile/CashflowForecastSection'
 import { SelectField } from '@/components/obsidian/fields'
 import { Alert, Skeleton } from '@/components/obsidian/feedback'
 import { DownloadIcon } from '@/components/icons/WcIcon'
-import type { AnalyticsSummary, MonthlyDebtPoint, CategoryBreakdown } from '@/lib/api/analytics'
+import type { AnalyticsSummary, MonthlyDebtPoint } from '@/lib/api/analytics'
 import type { CardHolder } from '@/lib/types'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
 import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
 import { currencySymbol } from '@/lib/fx'
+import { getCategoryBreakdownExtended } from '@/lib/direction3/rpc'
+import type { CategoryBreakdownNormalized } from '@/lib/direction3/types'
 
 interface Filters {
   months: number
   holderId?: string
 }
-
-// 暗色底饼图色板：避开低饱和灰蓝，保证 12px 图例可辨
-const COLORS = ['#7aadff', '#6ee7a0', '#ffc46b', '#ff8a8a', '#c4a5ff', '#5fd4d0']
 
 // recharts 默认黑字在暗底不可读：统一口径到 d-muted / d-border
 const AXIS_TICK = { fontSize: 12, fill: '#9aa6bc' }
@@ -39,16 +39,26 @@ const TOOLTIP_STYLE = {
   color: '#f5f7fa',
 }
 
+const EMPTY_BREAKDOWN: CategoryBreakdownNormalized = {
+  items: [],
+  covered_bills: 0,
+  total_bills: 0,
+  fx_converted: true,
+  fx_unconverted_currencies: [],
+  unallocated_refunds_by_currency: {},
+}
+
 export default function AnalyticsPage() {
   const { user } = useAuth()
   const { displayConfig } = useUserPreferences()
   /** 折算目标币种：与服务端 analytics 使用同一份偏好，保证口径一致。 */
   const displayCurrency = resolveDisplayCurrency(displayConfig)
   const [filters, setFilters] = useState<Filters>({ months: 6 })
+  const [includeFees, setIncludeFees] = useState(true)
   const [holderOptions, setHolderOptions] = useState<Array<{ id: string; name: string }>>([])
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null)
   const [trend, setTrend] = useState<MonthlyDebtPoint[]>([])
-  const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryBreakdown[]>([])
+  const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryBreakdownNormalized>(EMPTY_BREAKDOWN)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
@@ -90,7 +100,11 @@ export default function AnalyticsPage() {
       const [summaryData, trendData, categoryData] = await Promise.all([
         getAnalyticsSummary({ holder_id: filters.holderId, display_currency: displayCurrency }),
         getMonthlyDebtTrend({ holder_id: filters.holderId, display_currency: displayCurrency }, filters.months),
-        getCategoryBreakdown({ holder_id: filters.holderId }),
+        getCategoryBreakdownExtended({
+          holder_id: filters.holderId,
+          display_currency: displayCurrency,
+          include_fees: includeFees,
+        }).catch(() => EMPTY_BREAKDOWN),
       ])
 
       setSummary(summaryData)
@@ -101,7 +115,7 @@ export default function AnalyticsPage() {
     } finally {
       setLoading(false)
     }
-  }, [filters, displayCurrency])
+  }, [filters, displayCurrency, includeFees])
 
   useEffect(() => {
     loadHolders()
@@ -291,55 +305,21 @@ export default function AnalyticsPage() {
             </ResponsiveContainer>
           </div>
 
-          {/* Category Breakdown Chart */}
-          {categoryBreakdown.length > 0 && (
-            <div className='rounded-2xl border border-d-border bg-d-surface p-3'>
-              <p className='mb-3 text-[19px] font-semibold leading-6 text-d-text'>消费分类占比</p>
-              <ResponsiveContainer width='100%' height={250}>
-                <PieChart>
-                  <Pie
-                    data={categoryBreakdown}
-                    cx='50%'
-                    cy='50%'
-                    labelLine={false}
-                    label={(props: PieLabelRenderProps) => {
-                      const p = props as unknown as { category?: string; percentage?: number }
-                      return `${p.category ?? ''} ${Number(p.percentage || 0).toFixed(1)}%`
-                    }}
-                    outerRadius={80}
-                    fill='#7aadff'
-                    dataKey='amount'
-                  >
-                    {categoryBreakdown.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={formatChartCurrency} contentStyle={TOOLTIP_STYLE} itemStyle={{ color: '#f5f7fa' }} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          )}
+          {/* Future 30/60/90d Multi-currency Cashflow Forecast */}
+          <CashflowForecastSection
+            holderId={filters.holderId}
+            displayCurrency={displayCurrency}
+          />
 
-          {/* Category List */}
-          <div className='rounded-2xl border border-d-border bg-d-surface p-3'>
-            <p className='mb-3 text-[19px] font-semibold leading-6 text-d-text'>分类详情</p>
-            <div className='flex flex-col gap-2'>
-              {categoryBreakdown.map((cat, i) => (
-                <div key={cat.category} className='flex items-center justify-between'>
-                  <span className='flex items-center gap-2'>
-                    <span
-                      className='h-3 w-3 shrink-0 rounded-full'
-                      style={{ backgroundColor: COLORS[i % COLORS.length] }}
-                    />
-                    <span className='text-[14px] leading-[18px] text-d-text'>{cat.category}</span>
-                  </span>
-                  <span className='num-tabular text-[14px] font-semibold leading-[18px] text-d-text'>
-                    {formatCurrency(cat.amount)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+          {/* Activated Category Breakdown & Drilldown */}
+          <CategoryBreakdownSection
+            breakdown={categoryBreakdown}
+            displayCurrency={displayCurrency}
+            filters={{ holder_id: filters.holderId }}
+            includeFees={includeFees}
+            onToggleIncludeFees={setIncludeFees}
+            onRefresh={loadData}
+          />
         </div>
       )}
 
@@ -349,6 +329,8 @@ export default function AnalyticsPage() {
         holderId={filters.holderId || holderOptions[0]?.id || ''}
         holders={holders}
         cards={cardOptions}
+        isAdmin={user?.role === 'admin'}
+        displayCurrency={displayCurrency}
       />
     </div>
   )

@@ -1829,14 +1829,20 @@ public final class AppState {
         amount: Double,
         paidAt: String? = nil,
         channel: String? = "手动还款",
-        note: String? = nil
+        note: String? = nil,
+        settledCurrency: String? = nil,
+        settledAmount: Double? = nil,
+        lockedFxRate: Double? = nil
     ) async throws {
         try await paymentService.recordPayment(
             billId: billId,
             amount: amount,
             paidAt: paidAt,
             channel: channel,
-            note: note
+            note: note,
+            settledCurrency: settledCurrency,
+            settledAmount: settledAmount,
+            lockedFxRate: lockedFxRate
         )
         // Refresh local UI immediately
         await reloadData()
@@ -1953,7 +1959,11 @@ public final class AppState {
         channel: String?,
         note: String?,
         clearChannel: Bool = false,
-        clearNote: Bool = false
+        clearNote: Bool = false,
+        settledCurrency: String? = nil,
+        settledAmount: Double? = nil,
+        lockedFxRate: Double? = nil,
+        clearFxLock: Bool = false
     ) async throws {
         let updated = try await performWithSilentRefresh {
             try await self.apiClient.updatePayment(
@@ -1963,7 +1973,11 @@ public final class AppState {
                 channel: channel,
                 note: note,
                 clearChannel: clearChannel,
-                clearNote: clearNote
+                clearNote: clearNote,
+                settledCurrency: settledCurrency,
+                settledAmount: settledAmount,
+                lockedFxRate: lockedFxRate,
+                clearFxLock: clearFxLock
             )
         }
         try? await dbManager.dbWriter.write { db in

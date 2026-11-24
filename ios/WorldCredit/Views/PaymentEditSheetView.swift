@@ -14,6 +14,10 @@ struct PaymentEditSheetView: View {
     @State private var paidAt: Date
     @State private var channel: String
     @State private var note: String
+    @State private var settledCurrency: String
+    @State private var settledAmountText: String
+    @State private var lockedRateText: String
+    @State private var fxCleared: Bool = false
     @State private var isSubmitting: Bool = false
     @State private var isDeleting: Bool = false
     @State private var showDeleteConfirm: Bool = false
@@ -49,6 +53,13 @@ struct PaymentEditSheetView: View {
         _paidAt = State(initialValue: Self.yyyymmddFormatter.date(from: String(payment.paidAt.prefix(10))) ?? Date())
         _channel = State(initialValue: payment.channel ?? "")
         _note = State(initialValue: payment.note ?? "")
+        _settledCurrency = State(initialValue: payment.settledCurrency ?? "CNY")
+        _settledAmountText = State(
+            initialValue: payment.settledAmount.map { String(format: "%.2f", $0) } ?? ""
+        )
+        _lockedRateText = State(
+            initialValue: payment.lockedFxRate.map { String(format: "%.4f", $0) } ?? ""
+        )
     }
 
     private var channelOptions: [String] {
@@ -130,6 +141,51 @@ struct PaymentEditSheetView: View {
                         TextField("可留空", text: $note)
                             .multilineTextAlignment(.trailing)
                             .accessibilityIdentifier("payment.edit.note")
+                    }
+                }
+
+                if item.currency.uppercased() != "CNY" || payment.settledCurrency != nil {
+                    Section("实际购汇/扣款汇率锁定") {
+                        Picker("实际结算币种", selection: $settledCurrency) {
+                            Text("CNY").tag("CNY")
+                            Text("USD").tag("USD")
+                            Text("HKD").tag("HKD")
+                        }
+                        if settledCurrency.uppercased() != item.currency.uppercased() {
+                            HStack {
+                                Text("实付金额 (\(settledCurrency))")
+                                Spacer()
+                                TextField("选填", text: $settledAmountText)
+                                    .keyboardType(.decimalPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .onChange(of: settledAmountText) { _, val in
+                                        if let s = Double(val), s > 0, let amt = parsedAmount, amt > 0 {
+                                            fxCleared = false
+                                            lockedRateText = String(format: "%.4f", s / amt)
+                                        }
+                                    }
+                            }
+                            HStack {
+                                Text("锁定汇率 (1 \(item.currency)=)")
+                                Spacer()
+                                TextField("如 7.2500", text: $lockedRateText)
+                                    .keyboardType(.decimalPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .onChange(of: lockedRateText) { _, val in
+                                        if let r = Double(val), r > 0, let amt = parsedAmount, amt > 0 {
+                                            fxCleared = false
+                                            settledAmountText = String(format: "%.2f", amt * r)
+                                        }
+                                    }
+                            }
+                            if !settledAmountText.isEmpty || !lockedRateText.isEmpty {
+                                Button("清除锁定汇率", role: .destructive) {
+                                    fxCleared = true
+                                    settledAmountText = ""
+                                    lockedRateText = ""
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -247,6 +303,32 @@ struct PaymentEditSheetView: View {
         let clearChannel = trimmedChannel.isEmpty && payment.channel != nil
         let clearNote = trimmedNote.isEmpty && payment.note != nil
 
+        let sTrim = settledAmountText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rTrim = lockedRateText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isCrossCurrency = settledCurrency.uppercased() != item.currency.uppercased()
+        let hasFxInput = isCrossCurrency && (!sTrim.isEmpty || !rTrim.isEmpty)
+        var nextSettledCurrency: String? = nil
+        var nextSettledAmount: Double? = nil
+        var nextLockedRate: Double? = nil
+        var shouldClearFx = fxCleared || (payment.settledCurrency != nil && !hasFxInput)
+
+        if hasFxInput {
+            guard let sAmt = Double(sTrim), sAmt > 0, let rate = Double(rTrim), rate > 0 else {
+                errorMessage = "请同时填写大于 0 的实付金额与锁定汇率"
+                errorTrigger += 1
+                return
+            }
+            if abs(amount * rate - sAmt) > 0.05 {
+                errorMessage = "实付金额与「原币 × 锁定汇率」偏差超过 0.05"
+                errorTrigger += 1
+                return
+            }
+            nextSettledCurrency = settledCurrency
+            nextSettledAmount = sAmt
+            nextLockedRate = rate
+            shouldClearFx = false
+        }
+
         isSubmitting = true
         defer { isSubmitting = false }
 
@@ -259,7 +341,11 @@ struct PaymentEditSheetView: View {
                 channel: trimmedChannel.isEmpty ? nil : trimmedChannel,
                 note: trimmedNote.isEmpty ? nil : trimmedNote,
                 clearChannel: clearChannel,
-                clearNote: clearNote
+                clearNote: clearNote,
+                settledCurrency: nextSettledCurrency,
+                settledAmount: nextSettledAmount,
+                lockedFxRate: nextLockedRate,
+                clearFxLock: shouldClearFx
             )
             successTrigger += 1
             await onSaved()

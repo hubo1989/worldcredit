@@ -10,6 +10,9 @@ public struct Payment: Codable, FetchableRecord, TableRecord, PersistableRecord,
     public var paidAt: String
     public var channel: String?
     public var note: String?
+    public var settledCurrency: String?
+    public var settledAmount: Double?
+    public var lockedFxRate: Double?
     public var idempotencyKey: String
     public var createdAt: String
 
@@ -20,6 +23,9 @@ public struct Payment: Codable, FetchableRecord, TableRecord, PersistableRecord,
         paidAt: String,
         channel: String? = "手动还款",
         note: String? = nil,
+        settledCurrency: String? = nil,
+        settledAmount: Double? = nil,
+        lockedFxRate: Double? = nil,
         idempotencyKey: String,
         createdAt: String = ISO8601DateFormatter().string(from: Date())
     ) {
@@ -29,6 +35,9 @@ public struct Payment: Codable, FetchableRecord, TableRecord, PersistableRecord,
         self.paidAt = paidAt
         self.channel = channel
         self.note = note
+        self.settledCurrency = settledCurrency
+        self.settledAmount = settledAmount
+        self.lockedFxRate = lockedFxRate
         self.idempotencyKey = idempotencyKey
         self.createdAt = createdAt
     }
@@ -40,6 +49,9 @@ public struct Payment: Codable, FetchableRecord, TableRecord, PersistableRecord,
         case paidAt = "paid_at"
         case channel
         case note
+        case settledCurrency = "settled_currency"
+        case settledAmount = "settled_amount"
+        case lockedFxRate = "locked_fx_rate"
         case idempotencyKey = "idempotency_key"
         case createdAt = "created_at"
     }

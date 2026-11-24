@@ -11,6 +11,8 @@ import {
   type CardWithBillsSummary,
   type BillDashboardItem,
 } from '@/lib/api/bills'
+import { createPaymentWithFx } from '@/lib/direction3/rpc'
+import type { PaymentFxLockFields } from '@/lib/direction3/types'
 import { syncGmailLedgerToCardsAndBills } from '@/lib/api/sync-gmail'
 import { getHolders } from '@/lib/api/holders'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
@@ -271,16 +273,33 @@ export default function BillsPage() {
     setSelectedTag('all')
   }, [dimension])
 
-  const handlePayment = async (data: { amount: number; paid_at: string; note?: string }) => {
+  const handlePayment = async (
+    data: { amount: number; paid_at: string; note?: string } & PaymentFxLockFields,
+  ) => {
     if (!selectedBill) return
     try {
-      await createPayment({
-        bill_id: selectedBill.id,
-        amount: data.amount,
-        paid_at: data.paid_at,
-        channel: '手动还款',
-        note: data.note,
-      })
+      const hasFxLock =
+        data.settled_currency != null && data.settled_amount != null && data.locked_fx_rate != null
+      if (hasFxLock) {
+        await createPaymentWithFx({
+          bill_id: selectedBill.id,
+          amount: data.amount,
+          paid_at: data.paid_at,
+          channel: '手动还款',
+          note: data.note,
+          settled_currency: data.settled_currency,
+          settled_amount: data.settled_amount,
+          locked_fx_rate: data.locked_fx_rate,
+        })
+      } else {
+        await createPayment({
+          bill_id: selectedBill.id,
+          amount: data.amount,
+          paid_at: data.paid_at,
+          channel: '手动还款',
+          note: data.note,
+        })
+      }
 
       const totalPaid = await getPaymentTotal(selectedBill.id)
       const billAmount = Number(selectedBill.bill_amount)
@@ -646,6 +665,9 @@ export default function BillsPage() {
           onSubmit={handlePayment}
           totalAmount={Number(selectedBill.bill_amount)}
           billMonth={format(new Date(selectedBill.statement_end || selectedBill.due_date), 'MM月')}
+          billCurrency={selectedBill.card?.card_product?.currency || 'CNY'}
+          displayCurrency={displayCurrency}
+          fxRates={fxRates}
           billId={selectedBill.id}
           onAttachmentChanged={loadData}
         />

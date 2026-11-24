@@ -35,6 +35,9 @@ import { QuickActionSheet } from "@/components/mobile/QuickActionSheet";
 import { consumeNativeQuickActionUrl, type NativeQuickAction } from "@/lib/native-action";
 import { DashboardView } from "@/components/obsidian/DashboardView";
 import { DashboardOverlays } from "@/components/obsidian/DashboardOverlays";
+import { computeThreePartDebtBreakdown } from "@/lib/direction3/pure";
+import { getInstallmentPlans } from "@/lib/direction3/rpc";
+import type { InstallmentPlanWithSummary } from "@/lib/direction3/types";
 import {
   EyeIcon,
   EyeOffIcon,
@@ -69,6 +72,7 @@ export default function DashboardPage() {
   const [holders, setHolders] = useState<CardHolder[]>([]);
   const [bills, setBills] = useState<BillDashboardItem[]>([]);
   const [payables, setPayables] = useState<PayableWithStatus[]>([]);
+  const [installmentPlans, setInstallmentPlans] = useState<InstallmentPlanWithSummary[]>([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [cards, setCards] = useState<Array<{ id: string; holder_id: string }>>([]);
   const unreadSyncedRef = useRef(false);
@@ -122,8 +126,8 @@ export default function DashboardPage() {
     setError(null);
     const shouldSyncUnread = !unreadSyncedRef.current;
     try {
-      // 并行：持卡人 / 账单 / 固定支出 / 未读通知数（仅首载同步当日通知）；卡片依赖持卡人 id
-      const [holderList, allBills, payableList, unreadCount] = await Promise.all([
+      // 并行：持卡人 / 账单 / 固定支出 / 未读通知数 / 活跃分期；卡片依赖持卡人 id
+      const [holderList, allBills, payableList, unreadCount, activeInstallments] = await Promise.all([
         getHolders(user.id),
         getBillDashboardItems(200, user.id),
         getRecurringPayables(user.id).catch((err) => {
@@ -146,6 +150,7 @@ export default function DashboardPage() {
             console.warn("[dashboard] Failed to load unread notification count:", err);
             return 0;
           }),
+        getInstallmentPlans({ status: "active" }).catch(() => [] as InstallmentPlanWithSummary[]),
       ]);
       holderList.sort((a, b) => a.created_at.localeCompare(b.created_at));
       const holderIds = holderList.map((h) => h.id);
@@ -155,6 +160,7 @@ export default function DashboardPage() {
       setCards(cardsRes);
       setBills(allBills);
       setPayables(payableList);
+      setInstallmentPlans(Array.isArray(activeInstallments) ? activeInstallments : []);
       setUnreadNotificationCount(unreadCount);
     } catch (err) {
       console.error("Dashboard load failed:", err);
@@ -304,6 +310,7 @@ export default function DashboardPage() {
   const closeToast = useCallback(() => setToast((prev) => ({ ...prev, open: false })), []);
   const goToBills = useCallback(() => router.push("/bills"), [router]);
   const goToPromos = useCallback(() => router.push("/promos"), [router]);
+  const goToCashflowForecast = useCallback(() => router.push("/analytics#cashflow"), [router]);
   const goToNotifications = useCallback(() => router.push("/notifications"), [router]);
 
   // 当前选中持卡人下的账单
@@ -327,6 +334,26 @@ export default function DashboardPage() {
   const metrics = useMemo(
     () => computeMetrics(visibleBills, futureRange, displayCurrency, fxRates, visiblePayables),
     [visibleBills, futureRange, displayCurrency, fxRates, visiblePayables],
+  );
+
+  const visibleInstallmentPlans = useMemo(() => {
+    if (holderFilter === "all") return installmentPlans;
+    const cardIds = new Set(visibleCards.map((c) => c.id));
+    return installmentPlans.filter(
+      (p) => p.holder_id === holderFilter || cardIds.has(p.card_id),
+    );
+  }, [installmentPlans, holderFilter, visibleCards]);
+
+  const debtBreakdown = useMemo(
+    () =>
+      computeThreePartDebtBreakdown({
+        bills: visibleBills,
+        payables: visiblePayables,
+        installmentPlans: visibleInstallmentPlans,
+        targetCurrency: displayCurrency,
+        rates: fxRates,
+      }),
+    [visibleBills, visiblePayables, visibleInstallmentPlans, displayCurrency, fxRates],
   );
 
   const cardsByHolder = useMemo(() => countCardsByHolder(cards), [cards]);
@@ -430,7 +457,9 @@ export default function DashboardPage() {
         onPayAllOpen={openPayAllConfirm}
         onNavBills={goToBills}
         onNavPromos={goToPromos}
+        onNavCashflowForecast={goToCashflowForecast}
         onNavNotifications={goToNotifications}
+        debtBreakdown={debtBreakdown}
         unreadNotificationCount={unreadNotificationCount}
         totalCardCount={totalCardCount}
         holders={holders}
