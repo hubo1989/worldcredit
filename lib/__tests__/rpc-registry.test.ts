@@ -98,6 +98,16 @@ describe("RPC registry contract", () => {
     ["bills", "updateBill"],
     ["bills", "updateBillStatus"],
     ["billDrafts", "confirmBillImportDraft"],
+    ["billDrafts", "importAndParseBill"],
+    ["billDrafts", "unlockEncryptedDraft"],
+    ["billDrafts", "retryParseDraft"],
+    ["billDrafts", "updateBillImportDraft"],
+    ["billDrafts", "discardBillImportDraft"],
+    ["billDrafts", "batchDiscardBillDrafts"],
+    ["passwordVault", "createPasswordRule"],
+    ["passwordVault", "updatePasswordRule"],
+    ["holders", "updateMyHolderAliases"],
+    ["gmail", "updateGmailConnection"],
     ["gmail-ledger", "getGmailLedgerEntries"],
     ["gmail-ledger", "getGmailLedgerSummary"],
     ["gmail-ledger", "markPayment"],
@@ -225,5 +235,79 @@ describe("RPC registry contract", () => {
     expect(route).not.toContain("export interface RpcDispatchResult");
     const pushRoute = readFileSync(join(ROOT, "app/api/sync/push/route.ts"), "utf8");
     expect(pushRoute).toMatch(/from ['"]@\/lib\/api\/rpc-dispatch['"]/);
+  });
+
+
+  // ─── HUB-156（方向1 / HUB-154 §3.3）新增面 ────────────────────────────────
+  describe("HUB-156 统一账单导入与多邮箱", () => {
+    it("importAndParseBill 以 bindField 覆盖 user_id，绝不信任客户端传入", () => {
+      const entry = RPC_REGISTRY.billDrafts.importAndParseBill;
+      expect(entry.bindField).toEqual({ arg: 0, field: "user_id" });
+      expect(entry.memberGuard).toBeDefined();
+    });
+
+    it("草稿读写按参数位绑定会话用户（客户端永远不传 userId）", () => {
+      expect(RPC_REGISTRY.billDrafts.getBillImportDrafts.bindUser).toBe(0);
+      expect(RPC_REGISTRY.billDrafts.getBillImportDraftById.bindUser).toBe(1);
+      expect(RPC_REGISTRY.billDrafts.updateBillImportDraft.bindUser).toBe(2);
+      expect(RPC_REGISTRY.billDrafts.confirmBillImportDraft.bindUser).toBe(2);
+      expect(RPC_REGISTRY.billDrafts.unlockEncryptedDraft.bindUser).toBe(2);
+      expect(RPC_REGISTRY.billDrafts.retryParseDraft.bindUser).toBe(2);
+      expect(RPC_REGISTRY.billDrafts.discardBillImportDraft.bindUser).toBe(1);
+      expect(RPC_REGISTRY.billDrafts.batchDiscardBillDrafts.bindUser).toBe(1);
+    });
+
+    it("每个草稿入口都带归属守卫（越权 403，AC-12）", () => {
+      for (const fn of [
+        "importAndParseBill",
+        "unlockEncryptedDraft",
+        "retryParseDraft",
+        "getBillImportDraftById",
+        "updateBillImportDraft",
+        "confirmBillImportDraft",
+        "discardBillImportDraft",
+        "batchDiscardBillDrafts",
+      ]) {
+        expect(
+          RPC_REGISTRY.billDrafts[fn]?.memberGuard,
+          `billDrafts.${fn} 缺少 memberGuard`,
+        ).toBeDefined();
+      }
+    });
+
+    it("密码本 RPC 不暴露密文：全部会话绑定 + 归属守卫", () => {
+      expect(RPC_REGISTRY.passwordVault.listPasswordRules.bindUser).toBe(0);
+      expect(RPC_REGISTRY.passwordVault.createPasswordRule.bindField).toEqual({
+        arg: 0,
+        field: "user_id",
+      });
+      expect(RPC_REGISTRY.passwordVault.createPasswordRule.memberGuard).toBeDefined();
+      expect(RPC_REGISTRY.passwordVault.updatePasswordRule.bindUser).toBe(2);
+      expect(RPC_REGISTRY.passwordVault.deletePasswordRule.bindUser).toBe(1);
+    });
+
+    it("多 Gmail 连接面全部会话绑定（AC-05）", () => {
+      expect(RPC_REGISTRY.gmail.getGmailConnections.bindUser).toBe(0);
+      expect(RPC_REGISTRY.gmail.updateGmailConnection.bindUser).toBe(2);
+      expect(RPC_REGISTRY.gmail.syncGmailConnection.bindUser).toBe(1);
+      expect(RPC_REGISTRY.gmail.disconnectGmailConnection.bindUser).toBe(1);
+    });
+
+    it("旧邮箱账本写入口保留条目但已封板（AC-09）", () => {
+      expect(RPC_REGISTRY["gmail-ledger"].markPayment).toBeDefined();
+      expect(RPC_REGISTRY["gmail-ledger"].updateLedgerAmount).toBeDefined();
+      expect(RPC_REGISTRY["gmail-ledger"].migrateLegacyLedgerToDrafts.bindUser).toBe(0);
+    });
+
+    it("import_config 独立偏好入口会话绑定", () => {
+      expect(RPC_REGISTRY.preferences.getUserImportPreferences.bindUser).toBe(0);
+      expect(RPC_REGISTRY.preferences.updateUserImportPreferences.bindUser).toBe(0);
+    });
+
+    it("成员自助别名入口绑定会话用户并带持卡人守卫", () => {
+      const entry = RPC_REGISTRY.holders.updateMyHolderAliases;
+      expect(entry.bindUser).toBe(2);
+      expect(entry.memberGuard).toBeDefined();
+    });
   });
 });

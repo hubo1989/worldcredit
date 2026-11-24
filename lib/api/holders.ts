@@ -25,3 +25,7 @@ export function updateHolder(...args: Parameters<typeof Server.updateHolder>) {
 export function mergeHolders(...args: Parameters<typeof Server.mergeHolders>) {
   return callRpc<typeof Server.mergeHolders>('holders', 'mergeHolders', ...args)
 }
+
+export function updateMyHolderAliases(...args: Parameters<typeof Server.updateMyHolderAliases>) {
+  return callRpc<typeof Server.updateMyHolderAliases>('holders', 'updateMyHolderAliases', ...args)
+}

@@ -1,6 +1,13 @@
 import { queryOne, execute, uuid, now } from '../db'
 import type { UserPreferences, UserDisplayConfig, UserReminderConfig } from '../types'
-import { DEFAULT_DISPLAY_CONFIG, DEFAULT_REMINDER_CONFIG } from './preferences.shared'
+import {
+  DEFAULT_DISPLAY_CONFIG,
+  DEFAULT_REMINDER_CONFIG,
+  DEFAULT_IMPORT_CONFIG,
+  normalizeImportConfig,
+  type UserImportConfig,
+} from './preferences.shared'
+import { tableColumns } from './schema-columns.server'
 import { mergeOpportunityReminderConfig } from '../opportunities/reminders'
 import {
   resolveNotificationSwitches,
@@ -87,4 +94,77 @@ export async function updateUserPreferences(
     )
   }
   return getUserPreferences(userId)
+}
+
+
+// ─── 邮件自动入账偏好（import_config，HUB-154 §2.2 / §3.3(4)）───────────────
+
+export interface UserImportPreferences {
+  user_id: string
+  import_config: UserImportConfig
+}
+
+export async function getUserImportPreferences(userId: string): Promise<UserImportPreferences> {
+  if (!userId) return { user_id: '', import_config: { ...DEFAULT_IMPORT_CONFIG } }
+  const columns = await tableColumns('user_preferences')
+  if (!columns.has('import_config')) {
+    return { user_id: userId, import_config: { ...DEFAULT_IMPORT_CONFIG } }
+  }
+  const { data, error } = await queryOne<{ import_config: string | null }>(
+    'SELECT import_config FROM user_preferences WHERE user_id = ?',
+    [userId],
+  )
+  if (error) throw new Error(error.message)
+  return {
+    user_id: userId,
+    import_config: normalizeImportConfig(data?.import_config),
+  }
+}
+
+/**
+ * 只写 import_config：display_config 与 reminder_config 原样保留，
+ * 避免「改一个自动入账开关把提醒时间冲回默认值」。
+ */
+export async function updateUserImportPreferences(
+  userId: string,
+  updates: Partial<UserImportConfig>,
+): Promise<UserImportPreferences> {
+  if (!userId) throw new Error('未登录，无法保存导入偏好')
+  const columns = await tableColumns('user_preferences')
+  if (!columns.has('import_config')) {
+    // 0035 未落地：静默返回默认值，绝不写坏其它两块配置。
+    return { user_id: userId, import_config: { ...DEFAULT_IMPORT_CONFIG } }
+  }
+  const current = await getUserImportPreferences(userId)
+  const next: UserImportConfig = {
+    auto_commit_trusted_email:
+      typeof updates.auto_commit_trusted_email === 'boolean'
+        ? updates.auto_commit_trusted_email
+        : current.import_config.auto_commit_trusted_email,
+  }
+
+  const existing = await queryOne('SELECT id FROM user_preferences WHERE user_id = ?', [userId])
+  if (existing.data) {
+    const { error } = await execute(
+      'UPDATE user_preferences SET import_config = ?, updated_at = ? WHERE user_id = ?',
+      [JSON.stringify(next), now(), userId],
+    )
+    if (error) throw new Error(error.message)
+  } else {
+    const { error } = await execute(
+      `INSERT INTO user_preferences
+         (id, user_id, display_config, reminder_config, import_config, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        uuid(),
+        userId,
+        JSON.stringify(DEFAULT_DISPLAY_CONFIG),
+        JSON.stringify(DEFAULT_REMINDER_CONFIG),
+        JSON.stringify(next),
+        now(),
+      ],
+    )
+    if (error) throw new Error(error.message)
+  }
+  return { user_id: userId, import_config: next }
 }

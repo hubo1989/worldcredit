@@ -1,28 +1,20 @@
-// lib/billRecognizer.ts
+// lib/billRecognizer.ts — 离线文本粗提（无 AI Key 时的服务端兜底）。
+//
+// HUB-154 §3.3 之后，这个模块不再是主解析路径：
+//   - 主路径：billDrafts.importAndParseBill → lib/email-core 多模态管道；
+//   - 兜底路径：未配置 system_settings.ai_api_key 且 source_type === 'text' 时，
+//     由服务端调用本模块，并强制 confidence = 0.3 + 写入告警
+//     （见 lib/api/bill-import-core.server.ts）。
+// 浏览器端组件不得再直接调用 recognizeBillFromText 直写草稿。
 import { parse, format } from 'date-fns'
 
-export interface BillDraftPayload {
-  card_id?: string
-  bill_month?: string
-  statement_start?: string
-  statement_end?: string
-  statement_date?: string
-  bill_amount?: number
-  min_payment?: number
-  due_date?: string
-  items?: BillDraftItem[]
-  raw_text?: string
-}
-
-export interface BillDraftItem {
-  transaction_date?: string
-  description: string
-  amount: number
-  category?: string
-  item_type: 'purchase' | 'refund' | 'fee' | 'interest'
-  confidence?: number
-  raw_text?: string
-}
+// 草稿 payload 的唯一真源在 lib/api/billDrafts.server.ts（HUB-154 §3.3 冻结 DTO）。
+// 这里用 `import type` 转出，组件既有 import 路径保持不变，且不会把服务端代码拉进浏览器包。
+export type {
+  BillDraftPayload,
+  BillDraftItem,
+} from './api/billDrafts.server'
+import type { BillDraftPayload, BillDraftItem } from './api/billDrafts.server'
 
 export interface ValidationResult {
   valid: boolean

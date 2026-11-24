@@ -31,6 +31,7 @@ import * as payablesServer from './payables.server'
 // server-only 模块，导入即并入服务端 bundle，符合现有约定。
 import * as paymentsServer from './payments'
 import * as preferencesServer from './preferences.server'
+import * as passwordVaultServer from './passwordVault.server'
 import * as promosServer from './promos.server'
 import * as opportunitiesServer from './opportunities.server'
 import { getTodayAvailableCount } from '../opportunities/queries.server'
@@ -190,24 +191,126 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     deleteBenefit: { impl: benefitsServer.deleteBenefit, admin: true },
   },
   billDrafts: {
+    // HUB-156（HUB-154 §3.3）：统一账单导入草稿箱。
+    // 约定：bindUser 的位置 = impl 收到 userId 的参数位；客户端永远不传 userId。
     createBillImportDraft: { impl: billDraftsServer.createBillImportDraft, bindField: { arg: 0, field: "created_by" }, memberGuard: guardObjField(0, "card_id", async (cardId, ctx) => { if (cardId) await assertCardAccess(cardId, ctx) }) },
-    confirmBillImportDraft: { impl: billDraftsServer.confirmBillImportDraft, memberGuard: (args, ctx) => assertDraftAccess(args[0], ctx) },
-    discardBillImportDraft: { impl: billDraftsServer.discardBillImportDraft, memberGuard: (args, ctx) => assertDraftAccess(args[0], ctx) },
+    importAndParseBill: {
+      impl: billDraftsServer.importAndParseBill,
+      // 附件二进制走 /api/attachments/upload，RPC 只收 attachment_ids + 元数据。
+      bindField: { arg: 0, field: 'user_id' },
+      memberGuard: async (args, ctx) => {
+        const input = args[0] as { card_id?: string | null; holder_id?: string | null } | undefined
+        if (!input || typeof input !== 'object') throw new MemberScopeError('参数缺少必需对象')
+        if (input.card_id) await assertCardAccess(input.card_id, ctx)
+        if (input.holder_id) assertHolderAccess(input.holder_id, ctx)
+      },
+    },
+    unlockEncryptedDraft: {
+      impl: billDraftsServer.unlockEncryptedDraft,
+      bindUser: 2,
+      memberGuard: async (args, ctx) => {
+        await assertDraftAccess(args[0], ctx)
+        const input = args[1] as { vault_holder_id?: string | null } | undefined
+        if (input?.vault_holder_id) assertHolderAccess(input.vault_holder_id, ctx)
+      },
+    },
+    retryParseDraft: {
+      impl: billDraftsServer.retryParseDraft,
+      bindUser: 2,
+      memberGuard: (args, ctx) => assertDraftAccess(args[0], ctx),
+    },
     getBillImportDrafts: { impl: billDraftsServer.getBillImportDrafts, bindUser: 0 },
+    getBillImportDraftById: {
+      impl: billDraftsServer.getBillImportDraftById,
+      bindUser: 1,
+      memberGuard: (args, ctx) => assertDraftAccess(args[0], ctx),
+    },
+    confirmBillImportDraft: {
+      impl: billDraftsServer.confirmBillImportDraft,
+      bindUser: 2,
+      memberGuard: async (args, ctx) => {
+        await assertDraftAccess(args[0], ctx)
+        // 快捷建卡：成员只能把新卡挂到自己名下的持卡人
+        const opts = args[1] as { quick_create_card?: { holder_id?: string } } | undefined
+        const quickHolder = opts?.quick_create_card?.holder_id
+        if (quickHolder) assertHolderAccess(quickHolder, ctx)
+      },
+    },
+    discardBillImportDraft: {
+      impl: billDraftsServer.discardBillImportDraft,
+      bindUser: 1,
+      memberGuard: (args, ctx) => assertDraftAccess(args[0], ctx),
+    },
+    batchDiscardBillDrafts: {
+      impl: billDraftsServer.batchDiscardBillDrafts,
+      bindUser: 1,
+      memberGuard: async (args, ctx) => {
+        const ids = args[0]
+        if (!Array.isArray(ids)) throw new MemberScopeError('参数必须是草稿 ID 数组')
+        // 逐条 fail-closed：数组里混进一条他人草稿即整体 403。
+        for (const id of ids) await assertDraftAccess(id, ctx)
+      },
+    },
     updateBillImportDraft: {
       impl: billDraftsServer.updateBillImportDraft,
+      bindUser: 2,
       memberGuard: async (args, ctx) => {
-        // member 只能把草稿改绑到自己有权的卡
+        // member 只能把草稿改绑到自己有权的卡/持卡人
         await assertDraftAccess(args[0], ctx)
-        const updates = args[1] as { card_id?: string } | undefined
+        const updates = args[1] as { card_id?: string; holder_id?: string | null } | undefined
         if (updates?.card_id) await assertCardAccess(updates.card_id, ctx)
+        if (updates?.holder_id) assertHolderAccess(updates.holder_id, ctx)
       },
     },
   },
+  passwordVault: {
+    // 月结单密码本（HUB-154 §3.3(2)）：bindUser 的位置按实际入参位数放置，
+    // 不能照抄契约表里的 `bindUser: 0`——那会把入参对象整个替换成 userId。
+    listPasswordRules: { impl: passwordVaultServer.listPasswordRules, bindUser: 0 },
+    createPasswordRule: {
+      impl: passwordVaultServer.createPasswordRule,
+      bindField: { arg: 0, field: 'user_id' },
+      memberGuard: guardObjField(0, 'holder_id', async (holderId, ctx) => {
+        if (holderId) assertHolderAccess(holderId, ctx)
+      }),
+    },
+    updatePasswordRule: {
+      impl: passwordVaultServer.updatePasswordRule,
+      bindUser: 2,
+      memberGuard: async (args, ctx) => {
+        const input = args[1] as { holder_id?: string | null } | undefined
+        if (input?.holder_id) assertHolderAccess(input.holder_id, ctx)
+      },
+    },
+    deletePasswordRule: { impl: passwordVaultServer.deletePasswordRule, bindUser: 1 },
+  },
   gmail: {
+    // 兼容红线：getGmailConnection / GET /api/gmail/status 的 6 字段结构不变。
     getGmailConnection: { impl: gmailServer.getGmailConnection, bindUser: 0 },
     syncGmailNow: { impl: gmailServer.syncGmailNow, bindUser: 0 },
     disconnectGmail: { impl: gmailServer.disconnectGmail, bindUser: 0 },
+    // 多邮箱（HUB-154 §3.3(3)）。bindUser 指向「最后一个参数」，
+    // 客户端的 (connectionId, patch) 两个入参保持原位。
+    getGmailConnections: { impl: gmailServer.getGmailConnections, bindUser: 0 },
+    updateGmailConnection: {
+      impl: gmailServer.updateGmailConnection,
+      bindUser: 2,
+      memberGuard: async (args, ctx) => {
+        // 非本人 connection 由 impl 内部判定并抛 MemberScopeError(403)；
+        // 这里只拦「成员把邮箱映射到他人持卡人」。
+        const patch = args[1] as { default_holder_id?: string | null } | undefined
+        if (patch?.default_holder_id) assertHolderAccess(patch.default_holder_id, ctx)
+      },
+    },
+    syncGmailConnection: {
+      impl: gmailServer.syncGmailConnection,
+      bindUser: 1,
+      // 单邮箱同步的归属校验在 impl 内完成（loadOwnedConnection）。
+    },
+    disconnectGmailConnection: {
+      impl: gmailServer.disconnectGmailConnection,
+      bindUser: 1,
+    },
   },
   bills: {
     getBillDashboardItems: { impl: billsServer.getBillDashboardItems, bindUser: 1 },
@@ -266,9 +369,11 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
   'gmail-ledger': {
     getGmailLedgerEntries: { impl: gmailLedgerServer.getGmailLedgerEntries, memberGuard: scopeLedgerOptions(0) },
     getGmailLedgerSummary: { impl: gmailLedgerServer.getGmailLedgerSummary, memberGuard: scopeLedgerUserArg(0) },
+    // 已封板：impl 直接抛 409 CONFLICT，只保留条目让旧客户端拿到可读错误（AC-09）。
     markPayment: { impl: gmailLedgerServer.markPayment, memberGuard: (args, ctx) => assertLedgerAccess(args[0], ctx) },
     updateLedgerAmount: { impl: gmailLedgerServer.updateLedgerAmount, memberGuard: (args, ctx) => assertLedgerAccess(args[0], ctx) },
     getGmailLedgerBanks: { impl: gmailLedgerServer.getGmailLedgerBanks, memberGuard: scopeLedgerUserArg(0) },
+    migrateLegacyLedgerToDrafts: { impl: gmailLedgerServer.migrateLegacyLedgerToDrafts, bindUser: 0 },
   },
   banks: {
     getBankNames: { impl: banksServer.getBankNames },
@@ -281,11 +386,23 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     getHolderCardCounts: { impl: holdersServer.getHolderCardCounts, memberGuard: async (args, ctx) => assertHolderIdsAccess(args[0], ctx) },
     createHolder: { impl: holdersServer.createHolder, bindField: { arg: 0, field: "created_by" } },
     updateHolder: { impl: holdersServer.updateHolder, admin: true },
+    // 成员自助维护本人持卡人别名：归属在 impl 内按 auth_user_id / created_by 判定。
+    updateMyHolderAliases: {
+      impl: holdersServer.updateMyHolderAliases,
+      bindUser: 2,
+      memberGuard: guardHolder(0),
+    },
     mergeHolders: { impl: holdersServer.mergeHolders, admin: true },
   },
   preferences: {
     getUserPreferences: { impl: preferencesServer.getUserPreferences, bindUser: 0 },
     updateUserPreferences: { impl: preferencesServer.updateUserPreferences, bindUser: 0 },
+    // import_config 与 display_config / reminder_config 物理隔离（HUB-154 §2.2）。
+    getUserImportPreferences: { impl: preferencesServer.getUserImportPreferences, bindUser: 0 },
+    updateUserImportPreferences: {
+      impl: preferencesServer.updateUserImportPreferences,
+      bindUser: 0,
+    },
   },
   notifications: {
     getNotifications: { impl: notificationsServer.getNotifications, bindUser: 0 },

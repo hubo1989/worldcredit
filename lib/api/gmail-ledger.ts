@@ -16,6 +16,9 @@ export function markPayment(...args: Parameters<typeof Server.markPayment>) {
 export function updateLedgerAmount(...args: Parameters<typeof Server.updateLedgerAmount>) {
   return callRpc<typeof Server.updateLedgerAmount>('gmail-ledger', 'updateLedgerAmount', ...args)
 }
+export function migrateLegacyLedgerToDrafts(...args: Parameters<typeof Server.migrateLegacyLedgerToDrafts>) {
+  return callRpc<typeof Server.migrateLegacyLedgerToDrafts>('gmail-ledger', 'migrateLegacyLedgerToDrafts', ...args)
+}
 export function getGmailLedgerBanks() {
   return callRpc<typeof Server.getGmailLedgerBanks>('gmail-ledger', 'getGmailLedgerBanks')
 }

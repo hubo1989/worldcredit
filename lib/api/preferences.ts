@@ -14,3 +14,12 @@ export function getUserPreferences(...args: Parameters<typeof Server.getUserPref
 export function updateUserPreferences(...args: Parameters<typeof Server.updateUserPreferences>) {
   return callRpc<typeof Server.updateUserPreferences>('preferences', 'updateUserPreferences', ...args)
 }
+
+export type { UserImportConfig } from './preferences.shared'
+export type { UserImportPreferences } from './preferences.server'
+export function getUserImportPreferences(...args: Parameters<typeof Server.getUserImportPreferences>) {
+  return callRpc<typeof Server.getUserImportPreferences>('preferences', 'getUserImportPreferences', ...args)
+}
+export function updateUserImportPreferences(...args: Parameters<typeof Server.updateUserImportPreferences>) {
+  return callRpc<typeof Server.updateUserImportPreferences>('preferences', 'updateUserImportPreferences', ...args)
+}

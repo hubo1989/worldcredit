@@ -114,10 +114,44 @@ export async function assertLedgerAccess(ledgerId: unknown, ctx: MemberContext):
   memberAssert(!!data && data.created_by === ctx.userId, '无权操作其他用户的邮件账本')
 }
 
+/**
+ * 草稿附件归属（HUB-154 §3.2 / AC-12）：
+ *   允许 = record.uploaded_by === 当前用户
+ *        或 存在 created_by === 当前用户 且 (id = record_id OR file_ref = record.id) 的草稿
+ * 其余一律 fail-closed。与角色无关——admin 也不能读别人的草稿原件。
+ */
+export async function assertDraftAttachmentAccess(
+  attachmentId: unknown,
+  userId: unknown,
+): Promise<void> {
+  memberAssert(typeof attachmentId === 'string', '参数必须是附件 ID')
+  memberAssert(typeof userId === 'string' && !!userId, '未登录')
+  const { data } = await queryOne<{ id: string; uploaded_by: string | null; record_id: string }>(
+    'SELECT id, uploaded_by, record_id FROM record_attachments WHERE id = ?',
+    [attachmentId],
+  )
+  memberAssert(!!data, '附件不存在')
+  if (data!.uploaded_by === userId) return
+  const { data: owned } = await queryOne<{ id: string }>(
+    'SELECT id FROM bill_import_drafts WHERE (id = ? OR file_ref = ?) AND created_by = ? LIMIT 1',
+    [data!.record_id, data!.id, userId],
+  )
+  memberAssert(!!owned, '无权访问其他用户的草稿附件')
+}
+
 const RECORD_TYPE_GUARDS: Record<string, (id: unknown, ctx: MemberContext) => Promise<void>> = {
   bill: assertBillAccess,
   card: assertCardAccess,
   holder: async (id, ctx) => assertHolderAccess(id, ctx),
+  // record_type = 'draft' 时 record_id 是草稿 ID：只认本人创建的草稿。
+  draft: async (id, ctx) => {
+    memberAssert(typeof id === 'string', '参数必须是草稿 ID')
+    const { data } = await queryOne<{ id: string }>(
+      'SELECT id FROM bill_import_drafts WHERE id = ? AND created_by = ? LIMIT 1',
+      [id, ctx.userId],
+    )
+    memberAssert(!!data, '无权访问其他用户的草稿附件')
+  },
 }
 
 export async function assertRecordAccess(recordType: unknown, recordId: unknown, ctx: MemberContext): Promise<void> {
