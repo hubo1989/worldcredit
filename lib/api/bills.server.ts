@@ -15,6 +15,28 @@ import {
 } from "../utils";
 import { format } from "date-fns";
 import { RpcDomainError } from "./errors";
+import { validateAndNormalizeFxLock } from "./direction3.shared";
+import { currencySymbol } from "../fx";
+
+/** 还款汇率锁定的三个可空列；只有客户端显式传入时才参与 INSERT / UPDATE。 */
+export interface PaymentFxInput {
+  settled_currency?: string | null;
+  settled_amount?: number | null;
+  locked_fx_rate?: number | null;
+}
+
+/** 账单币种（卡产品币种），用于汇率锁定归一与货币符号。 */
+async function getBillCurrency(billId: string): Promise<string> {
+  const { data, error } = await queryOne<{ currency: string | null }>(
+    `SELECT cp.currency FROM bills b
+     JOIN credit_cards cc ON cc.id = b.card_id
+     LEFT JOIN card_products cp ON cp.id = cc.card_product_id
+     WHERE b.id = ?`,
+    [billId],
+  );
+  if (error) throw new Error(error.message);
+  return data?.currency || "CNY";
+}
 
 export type BillDashboardItem = Bill & {
   card: CreditCard & { card_product: CardProduct };
@@ -1183,13 +1205,27 @@ export async function getPaymentsByBill(billId: string): Promise<Payment[]> {
 }
 
 export async function createPayment(
-  payment: Omit<Payment, "id" | "created_at" | "idempotency_key">,
-): Promise<Payment> {
+  payment: Omit<Payment, "id" | "created_at" | "idempotency_key"> & PaymentFxInput,
+): Promise<Payment & PaymentFxInput> {
   const id = uuid();
   const key = `pay_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const ts = now();
+  const billCurrency = await getBillCurrency(payment.bill_id);
+  const fxLock = validateAndNormalizeFxLock(
+    {
+      settled_currency: payment.settled_currency ?? null,
+      settled_amount: payment.settled_amount ?? null,
+      locked_fx_rate: payment.locked_fx_rate ?? null,
+    },
+    payment.amount,
+    billCurrency,
+  );
+  // 未锁定的还款不写这三列：旧库（0042 之前）没有这些列，保持向后兼容。
+  const hasFxLock = fxLock.settled_currency !== null;
   const { error } = await execute(
-    "INSERT INTO payments (id, bill_id, amount, paid_at, channel, note, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    `INSERT INTO payments (id, bill_id, amount, paid_at, channel, note, idempotency_key, created_at${
+      hasFxLock ? ", settled_currency, settled_amount, locked_fx_rate" : ""
+    }) VALUES (?, ?, ?, ?, ?, ?, ?, ?${hasFxLock ? ", ?, ?, ?" : ""})`,
     [
       id,
       payment.bill_id,
@@ -1199,10 +1235,13 @@ export async function createPayment(
       payment.note || null,
       key,
       ts,
+      ...(hasFxLock
+ ? [fxLock.settled_currency, fxLock.settled_amount, fxLock.locked_fx_rate]
+        : []),
     ],
   );
   if (error) throw new Error(error.message);
-  const created = await queryOne<Payment>("SELECT * FROM payments WHERE id = ?", [id]);
+  const created = await queryOne<Payment & PaymentFxInput>("SELECT * FROM payments WHERE id = ?", [id]);
   if (!created.data) throw new Error("还款记录创建失败");
   return created.data;
 }
@@ -1245,13 +1284,16 @@ export async function markBillAsPaid(
   const alreadyPaid = await getPaymentTotal(billId);
   const remaining = Math.max(0, billAmount - alreadyPaid);
   if (remaining <= 0) throw new Error("该账单已无应还金额，无需重复还款");
+  const billCurrency = await getBillCurrency(billId);
 
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error("还款金额必须是大于 0 的数字");
   }
   // 金额列为 REAL，留 0.01 的浮点余量；超过剩余一律拒绝（不再有「已还 > 应还」的账单）
   if (amount > remaining + 0.01) {
-    throw new Error(`还款金额超过剩余应还（剩余 ¥${remaining.toFixed(2)}）`);
+    throw new Error(
+      `还款金额超过剩余应还（剩余 ${currencySymbol(billCurrency)}${remaining.toFixed(2)}）`,
+    );
   }
 
   const covered = alreadyPaid + amount >= billAmount - 0.01;
@@ -1281,10 +1323,14 @@ export interface RecordPaymentInput {
   channel?: string | null;
   note?: string | null;
   idempotency_key: string;
+  /** 还款汇率锁定（可选）：实付币种 / 实付金额 / 锁定汇率。 */
+  settled_currency?: string | null;
+  settled_amount?: number | null;
+  locked_fx_rate?: number | null;
 }
 
 export interface RecordPaymentResult {
-  payment: Payment;
+  payment: Payment & PaymentFxInput;
   bill_status: Bill["status"];
   already_processed?: boolean;
 }
@@ -1353,15 +1399,30 @@ export async function recordPayment(input: RecordPaymentInput): Promise<RecordPa
   const alreadyPaid = await getPaymentTotal(input.bill_id);
   const remaining = Math.max(0, billAmount - alreadyPaid);
   if (remaining <= 0) throw new RpcDomainError("CONFLICT", "该账单已无应还金额，无需重复还款");
+  const billCurrency = await getBillCurrency(input.bill_id);
 
   if (input.amount > remaining + 0.01) {
-    throw new RpcDomainError("CONFLICT", `还款金额超过剩余应还（剩余 ¥${remaining.toFixed(2)}）`);
+    throw new RpcDomainError(
+      "CONFLICT",
+      `还款金额超过剩余应还（剩余 ${currencySymbol(billCurrency)}${remaining.toFixed(2)}）`,
+    );
   }
 
   const paymentId = input.id || uuid();
   const paidAt = input.paid_at || today();
   const channel = input.channel || "手动还款";
   const note = input.note || null;
+  const fxLock = validateAndNormalizeFxLock(
+    {
+      settled_currency: input.settled_currency ?? null,
+      settled_amount: input.settled_amount ?? null,
+      locked_fx_rate: input.locked_fx_rate ?? null,
+    },
+    input.amount,
+    billCurrency,
+  );
+  // 未锁定的还款不写这三列：旧库（0042 之前）没有这些列，保持向后兼容。
+  const hasFxLock = fxLock.settled_currency !== null;
   const covered = alreadyPaid + input.amount >= billAmount - 0.01;
   const newStatus: Bill["status"] = covered ? "paid" : "partial";
   const ts = now();
@@ -1369,7 +1430,9 @@ export async function recordPayment(input: RecordPaymentInput): Promise<RecordPa
   // 3. 原子批处理插入与状态更新
   const { error } = await batch([
     {
-      sql: "INSERT INTO payments (id, bill_id, amount, paid_at, channel, note, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      sql: `INSERT INTO payments (id, bill_id, amount, paid_at, channel, note, idempotency_key, created_at${
+        hasFxLock ? ", settled_currency, settled_amount, locked_fx_rate" : ""
+      }) VALUES (?, ?, ?, ?, ?, ?, ?, ?${hasFxLock ? ", ?, ?, ?" : ""})`,
       params: [
         paymentId,
         input.bill_id,
@@ -1379,6 +1442,9 @@ export async function recordPayment(input: RecordPaymentInput): Promise<RecordPa
         note,
         input.idempotency_key,
         ts,
+        ...(hasFxLock
+          ? [fxLock.settled_currency, fxLock.settled_amount, fxLock.locked_fx_rate]
+          : []),
       ],
     },
     {
@@ -1418,13 +1484,13 @@ export async function recordPayment(input: RecordPaymentInput): Promise<RecordPa
         throw new RpcDomainError("CONFLICT", "该账单已无应还金额，无需重复还款");
       throw new RpcDomainError(
         "CONFLICT",
-        `还款金额超过剩余应还（剩余 ¥${latestRemaining.toFixed(2)}）`,
+        `还款金额超过剩余应还（剩余 ${currencySymbol(billCurrency)}${latestRemaining.toFixed(2)}）`,
       );
     }
     throw new Error(error.message);
   }
 
-  const created = await queryOne<Payment>("SELECT * FROM payments WHERE id = ?", [paymentId]);
+  const created = await queryOne<Payment & PaymentFxInput>("SELECT * FROM payments WHERE id = ?", [paymentId]);
   const updatedBill = await getBillById(input.bill_id);
   if (!created.data) throw new Error("还款记录保存失败");
 
