@@ -410,6 +410,17 @@ export async function updateOpportunityReminderState(
     ? reminderStateFromRow(existing)
     : { read_steps: [], dismissed_at: null, snooze_until: null, revision: 0 }
 
+  // Offline replay carries no CAS anchor: a repeated dismiss / identical
+  // snooze / already-read step / restore of an already-live reminder is the
+  // same intent. Answer with the current revision instead of bumping it, so a
+  // replayed mutation never looks like a fresh state change downstream.
+  if (
+    (input.expected_revision === undefined || input.expected_revision === null) &&
+    reminderActionAlreadyApplied(current, input)
+  ) {
+    return { event_key: input.event_key, revision: current.revision }
+  }
+
   if (
     input.expected_revision !== undefined &&
     input.expected_revision !== null &&
@@ -448,4 +459,25 @@ export async function updateOpportunityReminderState(
     .run()
 
   return { event_key: input.event_key, revision: next.revision }
+}
+
+/** True when applying `input` to `state` would leave every stored field unchanged. */
+function reminderActionAlreadyApplied(
+  state: { read_steps: string[]; dismissed_at: string | null; snooze_until: string | null },
+  input: UpdateReminderStateInput,
+): boolean {
+  switch (input.action) {
+    case 'read':
+      return typeof input.step === 'string' && state.read_steps.includes(input.step)
+    case 'dismiss':
+      return state.dismissed_at !== null
+    case 'snooze':
+      return (
+        typeof input.until_at === 'string' &&
+        input.until_at !== null &&
+        state.snooze_until === input.until_at
+      )
+    case 'restore':
+      return state.dismissed_at === null && state.snooze_until === null
+  }
 }

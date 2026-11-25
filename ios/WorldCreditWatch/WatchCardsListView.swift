@@ -29,12 +29,12 @@ struct WatchCardsListView: View {
                         }
                         Divider()
                         HStack {
-                            Text("额度 ¥\(String(format: "%.0f", card.creditLimit))")
+                            Text("额度 \(DashboardMoney.formatCompact(card.creditLimit, currency: card.currency))")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                             Spacer()
                             if card.unpaidAmount > 0.01 {
-                                Text("欠款 ¥\(String(format: "%.0f", card.unpaidAmount))")
+                                Text("欠款 \(DashboardMoney.formatCompact(card.unpaidAmount, currency: card.currency))")
                                     .font(.caption2.bold())
                                     .foregroundStyle(.orange)
                             }

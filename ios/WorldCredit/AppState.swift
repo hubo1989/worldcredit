@@ -1,7 +1,17 @@
 import Foundation
 import SwiftUI
 import Observation
+#if canImport(WidgetKit)
+import WidgetKit
+#endif
 import WorldCreditCore
+
+public enum BenefitsHubRoute: Equatable, Sendable {
+    case ledger(accountId: String? = nil)
+    case calendar(eventKey: String? = nil)
+    case tasks(taskCycleId: String? = nil)
+    case promos
+}
 
 @MainActor
 @Observable
@@ -17,6 +27,8 @@ public final class AppState {
     public let billEditService: BillEditService
     public let cardEditService: CardEditService
     public let queryService: QueryService
+    public let opportunityQueryService: OpportunityQueryService
+    public let opportunityWriteService: OpportunityWriteService
     public let notificationScheduler: NotificationScheduler
     @ObservationIgnored private let syncCoordinator = SyncCoordinator()
     @ObservationIgnored private var accountCleanupTask: Task<Void, Error>?
@@ -84,6 +96,7 @@ public final class AppState {
     @ObservationIgnored private lazy var dashboardRemote = DashboardRemoteService(apiClient: apiClient)
     @ObservationIgnored private lazy var payablesService = PayablesRemoteService(apiClient: apiClient)
     @ObservationIgnored private lazy var notificationsRemote = NotificationsRemoteService(apiClient: apiClient)
+    @ObservationIgnored private lazy var opportunityRemote = OpportunityRemoteService(apiClient: apiClient)
 
     public var summary: DashboardSummary?
     public var bills: [BillDisplayItem] = []
@@ -150,6 +163,14 @@ public final class AppState {
     public var notificationsError: String?
     public var pendingOpenNotifications: Bool = false
     public var pendingWebDestination: DashboardWebDestination?
+    public var pendingBenefitsRoute: BenefitsHubRoute?
+    public var pendingBenefitsAction: String?
+    public var opportunityLedger: [OpportunityLedgerItem] = []
+    public var opportunityLedgerCounts: [String: Int] = [:]
+    public var opportunityCalendarEvents: [OpportunityCalendarEventView] = []
+    public var opportunityReminders: [OpportunityCalendarEventView] = []
+    public var opportunityTasks: [OpportunityTaskView] = []
+    public var syncRejectedNotices: [SyncRejectedNotice] = []
     public var reminderPreferences: UserReminderPreferences = UserReminderPreferences()
     public var isSavingReminderPreferences: Bool = false
     public var reminderPreferencesError: String?
@@ -243,6 +264,8 @@ public final class AppState {
         self.billEditService = BillEditService(dbManager: db)
         self.cardEditService = CardEditService(dbManager: db)
         self.queryService = QueryService(dbManager: db)
+        self.opportunityQueryService = OpportunityQueryService(dbManager: db)
+        self.opportunityWriteService = OpportunityWriteService(dbManager: db)
         self.notificationScheduler = NotificationScheduler(dbManager: db)
         self.clearUserDataHandler = { [db] in try await db.clearUserData() }
 
@@ -404,6 +427,11 @@ public final class AppState {
             let promoList = try await queryService.fetchPromos(activeOnly: true, asOf: today, includeUpcoming: true)
             let loadedDisplayConfig = try await queryService.fetchDisplayConfig(userId: userId)
             let offlinePayables = try await fetchOfflinePayablesFallback(today: today)
+            let ledgerResult = (try? await opportunityQueryService.fetchLedger(userId: userId, today: today))
+                ?? (items: [], counts: [:])
+            let localReminders = (try? await opportunityQueryService.fetchReminders(userId: userId, today: today)) ?? []
+            let localTasks = (try? await opportunityQueryService.fetchTasks(today: today)) ?? []
+            let rejectedNotices = await syncEngine.fetchRejectedNotices()
 
             // 读失败只保留旧值，不把同步状态静默重置为「0 待同步/从未同步」。
             let meta: (String?, Int, [[String: String]], Bool)? = try? await dbManager.dbWriter.read { db in
@@ -434,6 +462,11 @@ public final class AppState {
             }
             self.creditAccountGroups = accountGroups
             self.promos = promoList
+            self.opportunityLedger = ledgerResult.items
+            self.opportunityLedgerCounts = ledgerResult.counts
+            self.opportunityReminders = localReminders
+            self.opportunityTasks = localTasks
+            self.syncRejectedNotices = rejectedNotices
             self.displayConfig = loadedDisplayConfig
             let hasSyncedDisplayConfig = (meta?.3 ?? false) || (loadedDisplayConfig != UserDisplayConfig())
             if hasSyncedDisplayConfig {
@@ -446,6 +479,17 @@ public final class AppState {
                !offlinePayables.isEmpty {
                 self.payables = offlinePayables
             }
+            if self.dashboardAvailableCount == nil || !ledgerResult.items.isEmpty {
+                let localCount = (ledgerResult.counts[OpportunityAvailabilityStatus.availableToday.rawValue] ?? 0)
+                    + (ledgerResult.counts[OpportunityAvailabilityStatus.expiringSoon.rawValue] ?? 0)
+                    + (ledgerResult.counts[OpportunityAvailabilityStatus.claimable.rawValue] ?? 0)
+                if self.dashboardAvailableCount == nil {
+                    self.dashboardAvailableCount = localCount
+                }
+            }
+            if self.dashboardReminders.isEmpty && !localReminders.isEmpty {
+                self.dashboardReminders = Self.mapToDashboardReminders(Array(localReminders.prefix(3)))
+            }
             self.dashboardLoadError = nil
             self.refreshState.markLoaded(today: today)
             if let meta {
@@ -454,13 +498,24 @@ public final class AppState {
                 self.isolatedSyncChanges = meta.2
             }
 
-            // 生成并更新 Apple Watch 快照（复用本次已查数据，避免重复查询）
-            if let snapshot = try? await watchSnapshots.buildSnapshot(
-                summary: sum, bills: bList, cards: cList, today: today) {
-                // buildSnapshot 是 await 边界；换号后不可把前账号快照写盘或发给手表。
-                guard isLoggedIn, sessionEpoch == epoch, !Task.isCancelled else { return false }
+            // 生成并更新 Apple Watch 与桌面组件快照（复用本次已查数据，避免重复查询）
+            let snapshot = watchSnapshots.buildSnapshot(
+                summary: sum,
+                bills: bList,
+                cards: cList,
+                today: today,
+                displayCurrency: self.dashboardCurrency,
+                rates: self.dashboardRates,
+                payables: self.payables,
+                creditAccounts: accountGroups.map(\.account)
+            )
+            // 仅主线程写盘与传表前再二次校验会话未切号。
+            if isLoggedIn, sessionEpoch == epoch, !Task.isCancelled {
                 try? saveWatchSnapshot(snapshot)
                 try? sendWatchSnapshot(snapshot)
+                #if canImport(WidgetKit)
+                WidgetCenter.shared.reloadAllTimelines()
+                #endif
             }
             #if DEBUG
             // 证据采集不得阻塞业务链路：放后台，失败也不影响 UI 测试主流程。
@@ -521,8 +576,15 @@ public final class AppState {
                dashboardRequestID == requestID, isLoggedIn {
                 self.bankOptions = remoteBanks
             }
-            dashboardAvailableCount = snapshot.availableCount
-            dashboardReminders = Array((snapshot.reminders ?? []).prefix(3))
+            let localAvailable = try? await opportunityQueryService.fetchTodayAvailableCount()
+            dashboardAvailableCount = snapshot.availableCount ?? localAvailable
+            let remoteReminders = snapshot.reminders ?? []
+            if !remoteReminders.isEmpty {
+                dashboardReminders = Array(remoteReminders.prefix(3))
+            } else {
+                let localReminders = (try? await opportunityQueryService.fetchReminders(userId: user.id)) ?? []
+                dashboardReminders = Self.mapToDashboardReminders(Array(localReminders.prefix(3)))
+            }
             if let rates = snapshot.exchangeRates {
                 dashboardRates = FxRates(base: rates.base, rates: rates.rates,
                                          timestamp: rates.timestamp, fetchedAt: rates.fetchedAt.timeIntervalSince1970 * 1000)
@@ -533,8 +595,9 @@ public final class AppState {
         } catch {
             guard dashboardRequestID == requestID, apiClient.token == credential else { return }
             dashboardRemoteErrors = ["首页在线信息暂不可用：\(error.localizedDescription)"]
-            dashboardAvailableCount = nil
-            dashboardReminders = []
+            dashboardAvailableCount = try? await opportunityQueryService.fetchTodayAvailableCount()
+            let localReminders = (try? await opportunityQueryService.fetchReminders(userId: currentUser?.id)) ?? []
+            dashboardReminders = Self.mapToDashboardReminders(Array(localReminders.prefix(3)))
         }
     }
 
@@ -845,6 +908,14 @@ public final class AppState {
         notificationsError = nil
         pendingOpenNotifications = false
         pendingWebDestination = nil
+        pendingBenefitsRoute = nil
+        pendingBenefitsAction = nil
+        opportunityLedger = []
+        opportunityLedgerCounts = [:]
+        opportunityCalendarEvents = []
+        opportunityReminders = []
+        opportunityTasks = []
+        syncRejectedNotices = []
         currentNotificationFilter = "all"
         reminderPreferences = UserReminderPreferences()
         lastConfirmedReminderPreferences = nil
@@ -1219,7 +1290,20 @@ public final class AppState {
                 await loadNotifications(filter: filter, syncToday: syncToday)
                 return
             }
-            notificationsError = error.localizedDescription
+            if let localPage = try? await opportunityQueryService.fetchLocalNotifications(
+                category: filter == "unread" ? "all" : filter,
+                unreadOnly: filter == "unread",
+                limit: notificationPageSize,
+                offset: 0
+            ) {
+                notifications = localPage.items
+                unreadNotificationCount = max(0, localPage.unreadCount)
+                totalNotificationCount = max(0, localPage.totalCount)
+                hasMoreNotifications = false
+                notificationsError = nil
+            } else {
+                notificationsError = error.localizedDescription
+            }
         }
     }
 
@@ -1272,12 +1356,27 @@ public final class AppState {
     public func handleNotificationRoute(_ rawUrl: String) {
         let trimmed = rawUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("/"), !trimmed.hasPrefix("//") else { return }
+        let components = URLComponents(string: trimmed)
         let noQuery = trimmed
             .split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first
             .map(String.init) ?? trimmed
         let path = noQuery
             .split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first
             .map(String.init) ?? noQuery
+        let queryItems = components?.queryItems ?? []
+        func queryValue(_ name: String) -> String? {
+            guard let raw = queryItems.first(where: { $0.name == name })?.value?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !raw.isEmpty else {
+                return nil
+            }
+            return raw
+        }
+
+        let accountIdQuery = queryValue("account_id")
+        let actionQuery = queryValue("action")
+        let eventKeyQuery = queryValue("event_key")
+        let taskCycleIdQuery = queryValue("task_cycle_id")
 
         if path == "/dashboard" || path == "/" {
             pendingWebDestination = nil
@@ -1300,17 +1399,23 @@ public final class AppState {
             pendingOpenNotifications = false
             selectedTab = 4
         } else if path == "/promos" {
-            pendingWebDestination = nil
-            pendingOpenNotifications = false
-            selectedTab = 3
-        } else if path == "/benefits/calendar" {
-            pendingOpenNotifications = false
-            selectedTab = 3
-            pendingWebDestination = .benefitCalendar
-        } else if path == "/benefits" || path.hasPrefix("/benefits/") {
-            pendingWebDestination = nil
-            pendingOpenNotifications = false
-            selectedTab = 3
+            openBenefits(.promos, action: nil)
+        } else if path == "/benefits/calendar" || path.hasPrefix("/benefits/calendar/") {
+            openBenefits(.calendar(eventKey: eventKeyQuery), action: actionQuery)
+        } else if path == "/benefits/tasks" || path.hasPrefix("/benefits/tasks/") {
+            let suffix = path.hasPrefix("/benefits/tasks/")
+                ? String(path.dropFirst("/benefits/tasks/".count))
+                    .split(separator: "/").first.map(String.init)
+                : nil
+            let resolvedCycleId = taskCycleIdQuery ?? ((suffix?.isEmpty == false) ? suffix : nil)
+            openBenefits(.tasks(taskCycleId: resolvedCycleId), action: actionQuery)
+        } else if path == "/benefits" {
+            openBenefits(.ledger(accountId: accountIdQuery), action: actionQuery)
+        } else if path.hasPrefix("/benefits/") {
+            let suffix = String(path.dropFirst("/benefits/".count))
+                .split(separator: "/").first.map(String.init)
+            let resolvedAccountId = accountIdQuery ?? ((suffix?.isEmpty == false) ? suffix : nil)
+            openBenefits(.ledger(accountId: resolvedAccountId), action: actionQuery)
         } else if path == "/gmail-ledger" {
             pendingOpenNotifications = false
             selectedTab = 0
@@ -1320,6 +1425,14 @@ public final class AppState {
             selectedTab = 0
             pendingOpenNotifications = true
         }
+    }
+
+    public func openBenefits(_ route: BenefitsHubRoute, action: String? = nil) {
+        pendingWebDestination = nil
+        pendingOpenNotifications = false
+        selectedTab = 3
+        pendingBenefitsAction = action
+        pendingBenefitsRoute = route
     }
 
     private func performWithSilentRefresh<T>(
@@ -1400,6 +1513,11 @@ public final class AppState {
                 try await self.notificationsRemote.delete(notificationId: id)
             }
             unreadNotificationCount = max(0, result.unreadCount)
+        } catch let urlError as URLError {
+            _ = urlError
+            try await opportunityWriteService.deleteNotification(notificationId: id)
+            await reloadData()
+            Task { await self.sync() }
         } catch {
             notifications = prevItems
             unreadNotificationCount = prevUnread
@@ -1718,6 +1836,14 @@ public final class AppState {
         notificationsError = nil
         pendingOpenNotifications = false
         pendingWebDestination = nil
+        pendingBenefitsRoute = nil
+        pendingBenefitsAction = nil
+        opportunityLedger = []
+        opportunityLedgerCounts = [:]
+        opportunityCalendarEvents = []
+        opportunityReminders = []
+        opportunityTasks = []
+        syncRejectedNotices = []
         currentNotificationFilter = "all"
         reminderPreferences = UserReminderPreferences()
         lastConfirmedReminderPreferences = nil
@@ -1889,8 +2015,24 @@ public final class AppState {
         statementEnd: String? = nil
     ) async throws -> Bill {
         let accountId = cards.first(where: { $0.id == cardId })?.card.accountId
-        let created = try await performWithSilentRefresh {
-            try await self.apiClient.createBill(
+        let created: Bill
+        do {
+            created = try await performWithSilentRefresh {
+                try await self.apiClient.createBill(
+                    cardId: cardId,
+                    billMonth: billMonth,
+                    dueDate: dueDate,
+                    billAmount: billAmount,
+                    minPayment: minPayment,
+                    statementStart: statementStart,
+                    statementEnd: statementEnd,
+                    statementDate: statementDate,
+                    accountId: accountId
+                )
+            }
+            await sync()
+        } catch is URLError {
+            let input = ApiClient.CreateBillInput(
                 cardId: cardId,
                 billMonth: billMonth,
                 dueDate: dueDate,
@@ -1901,8 +2043,10 @@ public final class AppState {
                 statementDate: statementDate,
                 accountId: accountId
             )
+            created = try await opportunityWriteService.createBillOffline(input: input)
+            await reloadData()
+            Task { await self.sync() }
         }
-        await sync()
         try? await rescheduleLocalNotifications()
         return created
     }
@@ -2190,9 +2334,380 @@ public final class AppState {
         if let last4 = last4?.trimmingCharacters(in: .whitespaces), !last4.isEmpty {
             payload["card_number_last4"] = AnyCodable(last4)
         }
-        let card: CreditCard = try await apiClient.rpc(module: "cards", function: "createCard", args: [AnyCodable(payload)])
-        await self.sync()
+        let card: CreditCard
+        do {
+            card = try await performWithSilentRefresh {
+                try await self.apiClient.rpc(module: "cards", function: "createCard", args: [AnyCodable(payload)])
+            }
+            await self.sync()
+        } catch is URLError {
+            card = try await opportunityWriteService.createCardOffline(
+                bankId: bankId,
+                cardProductId: cardProductId ?? "",
+                holderId: holderId,
+                cardNumberLast4: last4?.trimmingCharacters(in: .whitespaces),
+                creditLimit: creditLimit,
+                billingDay: billingDay,
+                nameOverride: trimmedName.isEmpty ? nil : trimmedName
+            )
+            await reloadData()
+            Task { await self.sync() }
+        }
         return card
+    }
+
+    // MARK: - Phase 2 Opportunities (Native Offline-First & Online RPCs)
+
+    private static func mapToDashboardReminders(_ items: [OpportunityCalendarEventView]) -> [DashboardReminder] {
+        items.map { item in
+            DashboardReminder(
+                event: DashboardReminder.Event(
+                    eventKey: item.eventKey,
+                    kind: item.kind,
+                    accountId: item.accountId,
+                    cycleId: item.cycleId,
+                    title: item.title,
+                    localDateOn: item.localDateOn,
+                    timeZone: item.timeZone,
+                    deadlineBefore: item.deadlineBefore,
+                    actionHint: item.actionHint,
+                    needsReview: item.needsReview
+                ),
+                state: DashboardReminder.State(
+                    readSteps: item.readSteps,
+                    dismissedAt: nil,
+                    snoozeUntil: item.snoozedUntil,
+                    revision: item.stateRevision
+                )
+            )
+        }
+    }
+
+    public func loadOpportunityCalendar(fromOn: String, toBefore: String, holderId: String? = nil, cardId: String? = nil) async {
+        let userId = currentUser?.id
+        opportunityCalendarEvents = (try? await opportunityQueryService.fetchCalendar(
+            fromOn: fromOn,
+            toBefore: toBefore,
+            holderId: holderId,
+            cardId: cardId,
+            userId: userId
+        )) ?? []
+    }
+
+    public func recordOpportunityUsage(
+        accountId: String,
+        cycleId: String,
+        cardId: String,
+        usedOn: String,
+        quantity: Int,
+        amountMinor: Int,
+        note: String?
+    ) async throws {
+        let userId = currentUser?.id ?? ""
+        _ = try await opportunityWriteService.recordUsage(
+            accountId: accountId,
+            cycleId: cycleId,
+            cardId: cardId,
+            usedOn: usedOn,
+            quantity: quantity,
+            amountMinor: amountMinor,
+            note: note,
+            actorUserId: userId
+        )
+        await reloadData()
+        Task { await self.sync() }
+    }
+
+    public func correctOpportunityUsage(
+        usageId: String,
+        usedOn: String?,
+        quantity: Int?,
+        amountMinor: Int?,
+        note: String?,
+        clearNote: Bool,
+        reason: String,
+        expectedRevision: Int
+    ) async throws {
+        let userId = currentUser?.id ?? ""
+        try await opportunityWriteService.correctUsage(
+            usageId: usageId,
+            usedOn: usedOn,
+            quantity: quantity,
+            amountMinor: amountMinor,
+            note: note,
+            clearNote: clearNote,
+            reason: reason,
+            expectedRevision: expectedRevision,
+            actorUserId: userId
+        )
+        await reloadData()
+        Task { await self.sync() }
+    }
+
+    public func voidOpportunityUsage(
+        usageId: String,
+        reason: String,
+        expectedRevision: Int
+    ) async throws {
+        let userId = currentUser?.id ?? ""
+        try await opportunityWriteService.voidUsage(
+            usageId: usageId,
+            reason: reason,
+            expectedRevision: expectedRevision,
+            actorUserId: userId
+        )
+        await reloadData()
+        Task { await self.sync() }
+    }
+
+    public func recordOpportunityClaim(
+        accountId: String,
+        cycleId: String,
+        cardId: String,
+        holderId: String,
+        claimedOn: String,
+        note: String?
+    ) async throws {
+        let userId = currentUser?.id ?? ""
+        _ = try await opportunityWriteService.recordClaim(
+            accountId: accountId,
+            cycleId: cycleId,
+            cardId: cardId,
+            claimedOn: claimedOn,
+            holderId: holderId,
+            note: note,
+            actorUserId: userId
+        )
+        await reloadData()
+        Task { await self.sync() }
+    }
+
+    public func voidOpportunityClaim(
+        fulfillmentId: String,
+        reason: String,
+        expectedRevision: Int
+    ) async throws {
+        let userId = currentUser?.id ?? ""
+        try await opportunityWriteService.voidClaim(
+            fulfillmentId: fulfillmentId,
+            reason: reason,
+            expectedRevision: expectedRevision,
+            actorUserId: userId
+        )
+        await reloadData()
+        Task { await self.sync() }
+    }
+
+    public func recordOpportunityBooking(
+        accountId: String,
+        cycleId: String,
+        cardId: String,
+        holderId: String,
+        serviceAt: String,
+        serviceTimeZone: String,
+        quantity: Int,
+        amountMinor: Int,
+        note: String?
+    ) async throws {
+        let userId = currentUser?.id ?? ""
+        _ = try await opportunityWriteService.recordBooking(
+            accountId: accountId,
+            cycleId: cycleId,
+            cardId: cardId,
+            holderId: holderId,
+            serviceAt: serviceAt,
+            serviceTimeZone: serviceTimeZone,
+            quantity: quantity,
+            amountMinor: amountMinor,
+            note: note,
+            actorUserId: userId
+        )
+        await reloadData()
+        Task { await self.sync() }
+    }
+
+    public func completeOpportunityBooking(
+        fulfillmentId: String,
+        usedOn: String,
+        expectedRevision: Int
+    ) async throws {
+        let userId = currentUser?.id ?? ""
+        try await opportunityWriteService.completeBooking(
+            fulfillmentId: fulfillmentId,
+            usedOn: usedOn,
+            expectedRevision: expectedRevision,
+            actorUserId: userId
+        )
+        await reloadData()
+        Task { await self.sync() }
+    }
+
+    public func cancelOpportunityBooking(
+        fulfillmentId: String,
+        settlement: String,
+        reason: String,
+        expectedRevision: Int
+    ) async throws {
+        let userId = currentUser?.id ?? ""
+        try await opportunityWriteService.cancelBooking(
+            fulfillmentId: fulfillmentId,
+            settlement: settlement,
+            reason: reason,
+            expectedRevision: expectedRevision,
+            actorUserId: userId
+        )
+        await reloadData()
+        Task { await self.sync() }
+    }
+
+    public func updateManualTaskProgress(
+        taskCycleId: String,
+        progress: ManualProgress,
+        reason: String,
+        expectedRevision: Int
+    ) async throws {
+        let userId = currentUser?.id ?? ""
+        try await opportunityWriteService.updateTaskProgress(
+            taskCycleId: taskCycleId,
+            progress: progress,
+            reason: reason,
+            expectedRevision: expectedRevision,
+            actorUserId: userId
+        )
+        await reloadData()
+        Task { await self.sync() }
+    }
+
+    public func recordTaskRewardReceived(
+        taskCycleId: String,
+        rewardKey: String,
+        receivedOn: String,
+        holderId: String,
+        accountId: String?,
+        usableStartOn: String?,
+        usableEndBefore: String?,
+        note: String?
+    ) async throws {
+        let userId = currentUser?.id ?? ""
+        _ = try await opportunityWriteService.recordTaskRewardReceived(
+            taskCycleId: taskCycleId,
+            rewardKey: rewardKey,
+            receivedOn: receivedOn,
+            holderId: holderId,
+            accountId: accountId,
+            usableStartOn: usableStartOn,
+            usableEndBefore: usableEndBefore,
+            note: note,
+            actorUserId: userId
+        )
+        await reloadData()
+        Task { await self.sync() }
+    }
+
+    public func toggleOpportunityFollowed(_ item: OpportunityLedgerItem) async throws {
+        guard let userId = currentUser?.id, !userId.isEmpty else { return }
+        try await opportunityWriteService.setFollowed(
+            userId: userId,
+            accountId: item.account.id,
+            followed: !item.followed,
+            expectedRevision: item.userStateRevision > 0 ? item.userStateRevision : nil
+        )
+        await reloadData()
+        Task { await self.sync() }
+    }
+
+    public func updateOpportunityReminderState(
+        eventKey: String,
+        action: String,
+        untilAt: String? = nil,
+        deadlineUtc: String? = nil,
+        expectedRevision: Int? = nil
+    ) async throws {
+        guard let userId = currentUser?.id, !userId.isEmpty else { return }
+        try await opportunityWriteService.updateReminderState(
+            userId: userId,
+            eventKey: eventKey,
+            action: action,
+            untilAt: untilAt,
+            deadlineUtc: deadlineUtc,
+            expectedRevision: expectedRevision
+        )
+        await reloadData()
+        Task { await self.sync() }
+    }
+
+    public func confirmOpportunityEligibility(
+        accountId: String,
+        eligibility: String,
+        eligibleFromOn: String?,
+        note: String?,
+        expectedRevision: Int
+    ) async throws {
+        try await performWithSilentRefresh {
+            try await self.opportunityRemote.confirmOpportunityEligibility(
+                accountId: accountId,
+                eligibility: eligibility,
+                eligibleFromOn: eligibleFromOn,
+                note: note,
+                expectedRevision: expectedRevision
+            )
+        }
+        await sync()
+    }
+
+    public func confirmOpeningBalance(
+        accountId: String,
+        cycleId: String,
+        openingUsedCount: Int,
+        openingUsedMinor: Int,
+        asOfOn: String,
+        expectedRevision: Int
+    ) async throws {
+        try await performWithSilentRefresh {
+            try await self.opportunityRemote.confirmOpeningBalance(
+                accountId: accountId,
+                cycleId: cycleId,
+                openingUsedCount: openingUsedCount,
+                openingUsedMinor: openingUsedMinor,
+                asOfOn: asOfOn,
+                expectedRevision: expectedRevision
+            )
+        }
+        await sync()
+    }
+
+    public func createOpportunityAccount(
+        definitionId: String,
+        holderId: String,
+        scopeKind: String,
+        cardIds: [String],
+        eligibility: String,
+        eligibleFromOn: String?,
+        note: String?
+    ) async throws {
+        _ = try await performWithSilentRefresh {
+            try await self.opportunityRemote.createOpportunityAccount(
+                definitionId: definitionId,
+                holderId: holderId,
+                scopeKind: scopeKind,
+                cardIds: cardIds,
+                eligibility: eligibility,
+                eligibleFromOn: eligibleFromOn,
+                note: note
+            )
+        }
+        await sync()
+    }
+
+    public func fetchOpportunityUsageHistory(accountId: String) async throws -> OpportunityUsageHistoryResponseDTO {
+        try await performWithSilentRefresh {
+            try await self.opportunityRemote.getUsageHistory(accountId: accountId)
+        }
+    }
+
+    public func clearAllSyncRejectedNotices() async {
+        try? await syncEngine.clearRejectedNotices()
+        syncRejectedNotices = []
     }
 
     public func allBanks() async -> [Bank] {

@@ -70,7 +70,7 @@ public enum DashboardFx {
     /// 按币种分组求和，再逐币种折算到目标币种。
     /// `byCurrency` 无论汇率是否可用都保留完整的原币小计；缺汇率的币种被排除在
     /// `total` 之外并记入 `unconvertedCurrencies`。
-    static func sumByCurrency(
+    public static func sumByCurrency(
         _ entries: [(amount: Double, currency: String)],
         target: String,
         rates: FxRates?
@@ -123,6 +123,15 @@ public enum DashboardMoney {
     /// 金额转展示字符串（符号 + 千分位，最多两位小数）。隐私模式由调用方决定是否脱敏。
     /// 非有限数按 0 展示（对齐 Web 的 `(n || 0)`）。
     public static func format(_ amount: Double, currency: String) -> String {
+        format(amount, currency: currency, maxFractionDigits: 2)
+    }
+
+    /// 紧凑金额格式化（不保留小数位，适合 Watch / 小尺寸 Widget 空间）。
+    public static func formatCompact(_ amount: Double, currency: String) -> String {
+        format(amount, currency: currency, maxFractionDigits: 0)
+    }
+
+    private static func format(_ amount: Double, currency: String, maxFractionDigits: Int) -> String {
         let value = amount.isFinite ? amount : 0
         let formatter = NumberFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
@@ -131,7 +140,7 @@ public enum DashboardMoney {
         formatter.groupingSeparator = ","
         formatter.decimalSeparator = "."
         formatter.roundingMode = .halfUp
-        formatter.maximumFractionDigits = 2
+        formatter.maximumFractionDigits = maxFractionDigits
         formatter.minimumFractionDigits = 0
         let number = formatter.string(from: NSNumber(value: value)) ?? "\(value)"
         return "\(currencySymbol(currency))\(number)"
