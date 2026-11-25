@@ -60,8 +60,7 @@ struct ContentView: View {
                     }
                 }
                 .sheet(item: $bindableAppState.pendingWebDestination) { destination in
-                    // 全局唯一挂载 DashboardWebView sheet：无论用户在哪个 Tab 触发
-                    // 权益/权益日历/邮箱账单 或从通知深链进入，均统一由主壳弹出。
+                    // 全局唯一挂载 DashboardWebView sheet：Phase 2 起仅保留邮箱账单等受限页面。
                     if let token = appState.apiClient.token {
                         DashboardWebView(destination: destination, sessionToken: token) {
                             appState.pendingWebDestination = nil
