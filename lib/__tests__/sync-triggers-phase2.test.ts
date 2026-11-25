@@ -1,6 +1,9 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { POST as syncPull } from '../../app/api/sync/pull/route'
+import { setDb, setWorkerEnv } from '../db/client'
+import { createSessionValue } from '../session'
 import { FIXTURE_IDS, LEDGER_IDS, seedOpportunityFixtures, seedOpportunityLedgerWorld } from './helpers/opportunity-fixtures'
 import { createSqliteD1, SQLITE_D1_MIGRATIONS_DIR, type SqliteD1 } from './helpers/sqlite-d1'
 
@@ -91,6 +94,45 @@ describe('Phase 2 D1 migrations', () => {
     db.exec(sql(apnsMigration))
     expect(db.raw.prepare('SELECT id, channel FROM opportunity_notification_deliveries ORDER BY id').all())
       .toEqual([{ id: 'existing', channel: 'web_push' }, { id: 'ios', channel: 'apns' }])
+  })
+
+  it('pulls backfilled private and composite rows under current session scope', async () => {
+    setDb(db as unknown as D1Database)
+    setWorkerEnv({ SESSION_SECRET: 'phase2-migration-sync-test' })
+    try {
+      const since = cursor()
+      db.exec(sql(syncMigration))
+      const pull = async (email: string, from: number) => {
+        const token = await createSessionValue({
+          id: users.adminA, email, name: null, role: 'admin', created_at: NOW,
+        })
+        const response = await syncPull(new Request('https://app.all-bill.com/api/sync/pull', {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify({ cursor: from }),
+        }))
+        expect(response.status).toBe(200)
+        return response.json() as Promise<{ cursor: number; changes: unknown[] }>
+      }
+      const admin = await pull('hubo1989@gmail.com', since)
+      expect(admin.changes).toEqual(expect.arrayContaining([
+        expect.objectContaining({ tbl: 'opportunity_accounts', row_id: accounts.self, op: 'upsert' }),
+        expect.objectContaining({
+          tbl: 'opportunity_user_states', row_id: JSON.stringify([users.adminA, accounts.self]), op: 'upsert',
+        }),
+      ]))
+      const member = await pull('demoted@example.test', since)
+      expect(member.changes).toContainEqual({ tbl: 'opportunity_accounts', row_id: accounts.self, op: 'delete' })
+      expect(member.cursor).toBeGreaterThan(since)
+
+      db.raw.prepare('UPDATE card_holders SET created_by = ?, managed_by = ?, auth_user_id = ? WHERE id = ?')
+        .run(users.adminB, users.adminB, users.adminA, holders.self)
+      expect((await pull('hubo1989@gmail.com', admin.cursor)).changes)
+        .toContainEqual({ tbl: 'opportunity_accounts', row_id: accounts.self, op: 'delete' })
+      expect((await pull('demoted@example.test', member.cursor)).changes).toEqual(expect.arrayContaining([
+        expect.objectContaining({ tbl: 'opportunity_accounts', row_id: accounts.self, op: 'upsert' }),
+      ]))
+    } finally {
+      setDb(null)
+    }
   })
 
   it('backfills all 12 tables in dependency order with private scopes and canonical tuple keys', () => {

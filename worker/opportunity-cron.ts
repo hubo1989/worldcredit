@@ -1,4 +1,5 @@
 import webpush from 'web-push'
+import { isAdminEmail } from '../lib/admin-emails'
 import { addDays, isValidIanaTimeZone, localDateInZone } from '../lib/opportunities/dates'
 import { sendApnsToUser, type SendPushOptions } from '../lib/apns.server'
 import { currencySymbol } from '../lib/fx'
@@ -158,6 +159,7 @@ interface UserWorld {
   rawConfig: Partial<UserReminderConfig> | null
   quiet: { quiet_hours_start?: string; quiet_hours_end?: string }
   webPushGloballyEnabled: boolean
+  privacyMode: boolean
 }
 
 interface PushEvent {
@@ -316,11 +318,15 @@ async function loadTaskWorlds(db: D1Database, id?: string): Promise<EventWorld[]
     } catch {
       continue
     }
+    const deadline = new Date(row.deadline_at)
+    if (!Number.isFinite(deadline.getTime())) continue
     const events = await buildTaskCalendarEvents({ ...row, task_cycle_id: row.id, satisfied, version: 'task' })
     worlds.push({
       id: row.id, kind: 'task', holderId: row.holder_id, holderName: row.holder_name,
       events: events.map(event => ({
-        event,
+        event: event.kind === 'task_deadline'
+          ? { ...event, local_date_on: localDateInZone(deadline, event.time_zone) } : event,
+        closesAt: event.kind === 'task_deadline' ? toRfc3339Utc(deadline) : undefined,
         eligible: event.kind === 'task_deadline' ? !satisfied : !row.reward_recorded,
       })),
     })
@@ -361,6 +367,7 @@ async function loadBookingWorlds(db: D1Database, id?: string): Promise<EventWorl
         event: { ...event, local_date_on: localDate, deadline_before: localDate },
         eligible: true,
         serviceTime: `${localDate} ${localTime}`,
+        closesAt: toRfc3339Utc(serviceAt),
       })),
     })
   }
@@ -376,16 +383,17 @@ const worldLoaders = {
 /** Users + holder universe + merged opportunity preferences (batched). */
 async function loadUsers(db: D1Database, userId?: string): Promise<UserWorld[]> {
   const { results: rows } = await db.prepare(
-    `SELECT u.id AS user_id, p.reminder_config, h.id AS holder_id
+    `SELECT u.id AS user_id, u.email, p.reminder_config,
+            CASE WHEN json_valid(p.display_config)
+                 THEN json_type(p.display_config, '$.privacy_mode') = 'true' ELSE 0 END AS privacy_mode,
+            h.id AS holder_id, h.created_by, h.managed_by, h.auth_user_id
      FROM users u
      LEFT JOIN user_preferences p ON p.user_id = u.id
-     LEFT JOIN card_holders h ON (
-       (u.role = 'admin' AND (h.created_by = u.id OR h.managed_by = u.id))
-       OR (u.role = 'member' AND h.auth_user_id = u.id)
-     )
+     LEFT JOIN card_holders h ON h.created_by = u.id OR h.managed_by = u.id OR h.auth_user_id = u.id
      ${userId ? 'WHERE u.id = ?' : ''}`,
   ).bind(...(userId ? [userId] : [])).all<{
-    user_id: string; reminder_config: string | null; holder_id: string | null
+    user_id: string; email: string; reminder_config: string | null; privacy_mode: number | null;
+    holder_id: string | null; created_by: string | null; managed_by: string | null; auth_user_id: string | null;
   }>()
   const users = new Map<string, UserWorld>()
   for (const row of rows) {
@@ -409,10 +417,14 @@ async function loadUsers(db: D1Database, userId?: string): Promise<UserWorld[]> 
           quiet_hours_end: rawConfig?.quiet_hours_end,
         },
         webPushGloballyEnabled: isWebPushChannelEnabled(row.reminder_config),
+        privacyMode: row.privacy_mode === 1,
       }
       users.set(row.user_id, user)
     }
-    if (row.holder_id) user.holderIds.add(row.holder_id)
+    const canAccessHolder = isAdminEmail(row.email)
+      ? row.created_by === row.user_id || row.managed_by === row.user_id
+      : row.auth_user_id === row.user_id
+    if (row.holder_id && canAccessHolder) user.holderIds.add(row.holder_id)
   }
   return [...users.values()]
 }
@@ -643,7 +655,7 @@ async function recordDelivery(
   if (outcome.ok) {
     statements.push(db.prepare(
       `UPDATE notification_history SET status = 'sent', push_sent_at = ?, error = NULL
-       WHERE user_id = ? AND notification_key = ? AND push_sent_at IS NULL
+       WHERE user_id = ? AND notification_key = ? AND push_sent_at IS NULL AND deleted_at IS NULL AND read_at IS NULL
          AND EXISTS (SELECT 1 FROM opportunity_notification_deliveries
                      WHERE job_id = ? AND subscription_id = ? AND status = 'accepted')`,
     ).bind(nowIso, job.user_id, `opp:${job.delivery_key}`, job.id, targetId))
@@ -743,7 +755,10 @@ async function deliverJob(
     else if (!outcome.gone) failures++
   }
 
-  const payload = JSON.stringify({ ...message, tag: reminderTag(job.delivery_key) })
+  const alert = user.privacyMode
+    ? { title: '权益提醒', body: '打开 WorldCredit 查看详情。' }
+    : { title: message.title, body: message.body }
+  const payload = JSON.stringify({ ...alert, url: message.url, tag: reminderTag(job.delivery_key) })
   const ttlSeconds = Math.min(86_400, Math.floor((Date.parse(expiresAt) - deps.now.getTime()) / 1000))
   for (const sub of subs) {
     if (terminalTargets.has(sub.id)) continue
@@ -765,7 +780,7 @@ async function deliverJob(
     let outcomes: Map<string, SendOutcome>
     try {
       outcomes = await deps.apnsSender(job.user_id, pendingDevices, {
-        alert: { title: message.title, body: message.body },
+        alert,
         sound: 'default',
         badge: 1,
         expirationSeconds: ttlSeconds,
@@ -791,7 +806,7 @@ async function deliverJob(
   if (accepted > 0 || status === 'failed') {
     await db.prepare(
       `UPDATE notification_history SET status = ?, error = ?
-       WHERE user_id = ? AND notification_key = ? AND error IS NOT ?`,
+       WHERE user_id = ? AND notification_key = ? AND deleted_at IS NULL AND read_at IS NULL AND error IS NOT ?`,
     ).bind(accepted > 0 ? 'sent' : 'failed', error, job.user_id, inboxKey, error).run()
   }
   if (status === 'sent' || status === 'partial' || status === 'failed') report[status]++

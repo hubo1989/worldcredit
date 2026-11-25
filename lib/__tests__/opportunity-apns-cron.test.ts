@@ -64,6 +64,7 @@ beforeEach(async () => {
   web.mockReset().mockResolvedValue({ ok: true })
   sendApns.mockReset().mockResolvedValue({ success: true })
   await seedOpportunityFixtures(db)
+  db.exec("UPDATE users SET email = 'hubo1989@gmail.com' WHERE email = 'admin-a@example.test'")
   await seedOpportunityLedgerWorld(db)
   // The old version still covers the seeded cycle's version-as-of date.
   db.exec("UPDATE opportunity_rule_versions SET effective_until_before = '2026-10-02' WHERE id = 'orv-shared'")
@@ -250,6 +251,12 @@ describe('opportunity cron APNs and Web Push', () => {
     ])
     await scan()
     const options = sendApns.mock.calls.map(([, option]) => option)
+    expect(db.raw.prepare(
+      "SELECT object_id, expires_at FROM opportunity_notification_jobs WHERE object_id IN ('pending', 'booking') ORDER BY object_id",
+    ).all()).toEqual([
+      { object_id: 'booking', expires_at: '2026-10-31T18:00:00Z' },
+      { object_id: 'pending', expires_at: '2026-10-31T15:59:00Z' },
+    ])
     expect(options).toEqual(expect.arrayContaining([
       expect.objectContaining({ customData: expect.objectContaining({
         type: 'opportunity_task', url: '/benefits/tasks?task_cycle_id=pending',

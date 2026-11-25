@@ -112,6 +112,7 @@ function jobs(): Array<{ id: string; status: string; delivery_key: string; event
 beforeEach(async () => {
   db = createOpportunityDb()
   await seedOpportunityFixtures(db)
+  db.exec("UPDATE users SET email = 'hubo1989@gmail.com' WHERE email = 'admin-a@example.test'")
   setDb(db as unknown as D1Database)
 })
 
@@ -144,6 +145,25 @@ describe('scanOpportunityNotifications', () => {
     expect(second.jobs_claimed).toBe(0)
     expect(calls).toHaveLength(1)
     expect(jobs().every((j) => j.status === 'sent')).toBe(true)
+  })
+
+  it('redacts lock-screen pushes and ignores a stale persisted admin role', async () => {
+    await seedExpiringWorld()
+    await addSubscription(f.users.adminA, 'https://push.example/a')
+    await db.prepare(`INSERT INTO user_preferences (user_id, display_config)
+       VALUES (?, '{"privacy_mode":true}')`).bind(f.users.adminA).run()
+    const { sender, calls } = stubSender()
+    await scanOpportunityNotifications({ db: db as unknown as D1Database, now: CLOCK, sender })
+    expect(calls.map(call => call.payload)).toEqual([
+      expect.objectContaining({ title: '权益提醒', body: '打开 WorldCredit 查看详情。' }),
+    ])
+
+    const tomorrow = new Date('2026-10-16T01:00:00Z')
+    await seedExpiringWorld('2026-10-17')
+    await db.prepare("UPDATE users SET email = 'former-admin@example.test' WHERE id = ?")
+      .bind(f.users.adminA).run()
+    await scanOpportunityNotifications({ db: db as unknown as D1Database, now: tomorrow, sender })
+    expect(calls).toHaveLength(1)
   })
 
   it('payload 带稳定 wc-op tag 与站内白名单 URL', async () => {

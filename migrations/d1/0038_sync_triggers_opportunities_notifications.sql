@@ -13,7 +13,8 @@ CREATE INDEX IF NOT EXISTS idx_phase2_fulfillments_holder
 CREATE INDEX IF NOT EXISTS idx_phase2_fulfillments_task
   ON opportunity_fulfillments(task_cycle_id);
 
--- Each user is included once per holder, even when multiple owner columns match.
+-- Record candidate owners independent of the persisted role, which can lag the session.
+-- The pull route rechecks current role and holder scope before returning any row.
 CREATE VIEW IF NOT EXISTS phase2_sync_holder_owners AS
   SELECT id AS holder_id, created_by AS owner_id FROM card_holders WHERE created_by IS NOT NULL
   UNION ALL
@@ -361,7 +362,11 @@ CREATE TRIGGER IF NOT EXISTS trg_phase2_user_states_insert
 AFTER INSERT ON opportunity_user_states
 BEGIN
   INSERT INTO sync_changes (owner_id, tbl, row_id, op)
-  SELECT NEW.user_id, 'opportunity_user_states', json_array(NEW.user_id, NEW.account_id), 'upsert';
+  SELECT NEW.user_id, 'opportunity_user_states', json_array(NEW.user_id, NEW.account_id), 'upsert'
+  WHERE EXISTS (
+    SELECT 1 FROM opportunity_accounts a JOIN phase2_sync_holder_owners o ON o.holder_id = a.holder_id
+    WHERE a.id = NEW.account_id AND o.owner_id = NEW.user_id
+  );
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_phase2_user_states_old_scope
@@ -376,7 +381,11 @@ CREATE TRIGGER IF NOT EXISTS trg_phase2_user_states_update
 AFTER UPDATE ON opportunity_user_states
 BEGIN
   INSERT INTO sync_changes (owner_id, tbl, row_id, op)
-  SELECT NEW.user_id, 'opportunity_user_states', json_array(NEW.user_id, NEW.account_id), 'upsert';
+  SELECT NEW.user_id, 'opportunity_user_states', json_array(NEW.user_id, NEW.account_id), 'upsert'
+  WHERE EXISTS (
+    SELECT 1 FROM opportunity_accounts a JOIN phase2_sync_holder_owners o ON o.holder_id = a.holder_id
+    WHERE a.id = NEW.account_id AND o.owner_id = NEW.user_id
+  );
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_phase2_user_states_delete
@@ -485,10 +494,7 @@ BEGIN
   SELECT u.id, r.tbl, r.row_id, 'delete'
   FROM users u CROSS JOIN phase2_sync_holder_activity_rows r
   WHERE u.id IN (OLD.created_by, OLD.managed_by, OLD.auth_user_id)
-    AND CASE u.role WHEN 'admin' THEN u.id IS OLD.created_by OR u.id IS OLD.managed_by
-                    ELSE u.id IS OLD.auth_user_id END
-    AND NOT CASE u.role WHEN 'admin' THEN u.id IS NEW.created_by OR u.id IS NEW.managed_by
-                        ELSE u.id IS NEW.auth_user_id END
+    AND u.id IS NOT NEW.created_by AND u.id IS NOT NEW.managed_by AND u.id IS NOT NEW.auth_user_id
     AND r.holder_id = NEW.id AND (r.row_user_id IS NULL OR r.row_user_id = u.id)
   ORDER BY CASE r.tbl
     WHEN 'opportunity_tasks' THEN 1
@@ -499,10 +505,7 @@ BEGIN
   SELECT u.id, r.tbl, r.row_id, 'delete'
   FROM users u CROSS JOIN phase2_sync_holder_account_rows r
   WHERE u.id IN (OLD.created_by, OLD.managed_by, OLD.auth_user_id)
-    AND CASE u.role WHEN 'admin' THEN u.id IS OLD.created_by OR u.id IS OLD.managed_by
-                    ELSE u.id IS OLD.auth_user_id END
-    AND NOT CASE u.role WHEN 'admin' THEN u.id IS NEW.created_by OR u.id IS NEW.managed_by
-                        ELSE u.id IS NEW.auth_user_id END
+    AND u.id IS NOT NEW.created_by AND u.id IS NOT NEW.managed_by AND u.id IS NOT NEW.auth_user_id
     AND r.holder_id = NEW.id AND (r.row_user_id IS NULL OR r.row_user_id = u.id)
   ORDER BY CASE r.tbl
     WHEN 'opportunity_definitions' THEN 1
@@ -514,10 +517,11 @@ BEGIN
   SELECT u.id, r.tbl, r.row_id, 'upsert'
   FROM users u CROSS JOIN phase2_sync_holder_account_rows r
   WHERE u.id IN (NEW.created_by, NEW.managed_by, NEW.auth_user_id)
-    AND CASE u.role WHEN 'admin' THEN u.id IS NEW.created_by OR u.id IS NEW.managed_by
-                    ELSE u.id IS NEW.auth_user_id END
-    AND NOT CASE u.role WHEN 'admin' THEN u.id IS OLD.created_by OR u.id IS OLD.managed_by
-                        ELSE u.id IS OLD.auth_user_id END
+    AND (
+      (u.id IS OLD.created_by OR u.id IS OLD.managed_by) IS NOT
+        (u.id IS NEW.created_by OR u.id IS NEW.managed_by)
+      OR (u.id IS OLD.auth_user_id) IS NOT (u.id IS NEW.auth_user_id)
+    )
     AND r.holder_id = NEW.id AND (r.row_user_id IS NULL OR r.row_user_id = u.id)
   ORDER BY CASE r.tbl
     WHEN 'opportunity_definitions' THEN 1
@@ -529,10 +533,11 @@ BEGIN
   SELECT u.id, r.tbl, r.row_id, 'upsert'
   FROM users u CROSS JOIN phase2_sync_holder_activity_rows r
   WHERE u.id IN (NEW.created_by, NEW.managed_by, NEW.auth_user_id)
-    AND CASE u.role WHEN 'admin' THEN u.id IS NEW.created_by OR u.id IS NEW.managed_by
-                    ELSE u.id IS NEW.auth_user_id END
-    AND NOT CASE u.role WHEN 'admin' THEN u.id IS OLD.created_by OR u.id IS OLD.managed_by
-                        ELSE u.id IS OLD.auth_user_id END
+    AND (
+      (u.id IS OLD.created_by OR u.id IS OLD.managed_by) IS NOT
+        (u.id IS NEW.created_by OR u.id IS NEW.managed_by)
+      OR (u.id IS OLD.auth_user_id) IS NOT (u.id IS NEW.auth_user_id)
+    )
     AND r.holder_id = NEW.id AND (r.row_user_id IS NULL OR r.row_user_id = u.id)
   ORDER BY CASE r.tbl
     WHEN 'opportunity_tasks' THEN 1
@@ -622,6 +627,8 @@ WHERE NOT EXISTS (
 INSERT INTO sync_changes (owner_id, tbl, row_id, op)
 SELECT t.user_id, 'opportunity_user_states', json_array(t.user_id, t.account_id), 'upsert'
 FROM opportunity_user_states t
+JOIN opportunity_accounts a ON a.id = t.account_id
+JOIN phase2_sync_holder_owners o ON o.holder_id = a.holder_id AND o.owner_id = t.user_id
 WHERE NOT EXISTS (
   SELECT 1 FROM sync_changes s
   WHERE s.tbl = 'opportunity_user_states' AND s.row_id = json_array(t.user_id, t.account_id) AND s.owner_id IS t.user_id

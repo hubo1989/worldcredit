@@ -46,7 +46,7 @@ async function seedWorld(db: SqliteD1) {
   await db.batch([
     db
       .prepare(`INSERT INTO users (id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)`)
-      .bind('user-a', 'a@test.local', 'hash-a', '用户A', 'admin'),
+      .bind('user-a', 'hubo1989@gmail.com', 'hash-a', '用户A', 'admin'),
     db
       .prepare(`INSERT INTO users (id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)`)
       .bind('user-b', 'b@test.local', 'hash-b', '用户B', 'member'),
