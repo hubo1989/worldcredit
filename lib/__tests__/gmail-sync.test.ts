@@ -73,6 +73,9 @@ async function seedHolderAndProduct() {
     )
     .bind("p1", "Chase Bank", "Sapphire", "USD", "2026-10-01T00:00:00Z")
     .run();
+  await db.prepare(
+    "INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day, card_number_last4) VALUES ('c1', 'h1', 'p1', 16, '7491')",
+  ).run();
 }
 
 const parseOk = {
@@ -83,6 +86,7 @@ const parseOk = {
   bill_amount: 1234.56,
   min_payment: 100,
   due_date: "2026-11-10",
+  due_date_status: "exact" as const,
   bill_month: "2026-10",
   statement_date: "2026-10-16",
   currency: "USD",
@@ -114,7 +118,10 @@ describe("syncUserGmail", () => {
   it("证据足够时直接落账单，并记录去重行", async () => {
     await seedHolderAndProduct();
     __setGmailSyncDeps({
-      parse: async () => ({ ...parseOk }),
+      parse: async () => ({ ...parseOk, items: [
+        { description: "Dinner", amount: 50, transaction_date: "2026-10-15" },
+        { description: "Refund", amount: -9, currency: "HKD" },
+      ] }),
       fetchImpl: gmailFetch({
         list: { messages: [{ id: "m1", threadId: "t1" }] },
         raw: { raw: toRawB64(RAW_EML), id: "m1" },
@@ -130,6 +137,13 @@ describe("syncUserGmail", () => {
       .prepare("SELECT * FROM gmail_sync_messages WHERE gmail_message_id='m1'")
       .first<{ status: string }>();
     expect(msg?.status).toBe("bill_written");
+    await expect(syncUserGmail("u1")).resolves.toMatchObject({ written: 0, drafted: 0 });
+    expect(db.raw.prepare(
+      "SELECT description, amount, currency, item_type, source FROM bill_items ORDER BY description",
+    ).all()).toEqual([
+      { description: "Dinner", amount: 50, currency: "USD", item_type: "purchase", source: "email" },
+      { description: "Refund", amount: 9, currency: "HKD", item_type: "refund", source: "email" },
+    ]);
   });
 
   it("证据不足（识别不出持卡人）时停草稿", async () => {
@@ -204,6 +218,7 @@ describe("syncUserGmail", () => {
       .prepare("SELECT status FROM gmail_sync_messages WHERE gmail_message_id='m-retry'")
       .first<{ status: string }>();
     expect(msg?.status).toBe("bill_written");
+
   });
 
   it("重试再败：failed 行原地更新错误信息，不插新行", async () => {
@@ -287,6 +302,26 @@ describe("syncUserGmail", () => {
 });
 
 describe("syncAllGmailConnections", () => {
+  it.each([429, 503])("keeps a mailbox active after a transient list failure (%s) and retries it", async (status) => {
+    let shouldFail = true;
+    __setGmailSyncDeps({
+      parse: async () => ({ ...parseOk }),
+      sessionSecret: SECRET,
+      bucket: null,
+      fetchImpl: async input => {
+        if (String(input).includes("/token")) return Response.json({ access_token: "at", expires_in: 3600 });
+        const response = shouldFail ? Response.json({ error: "temporary" }, { status }) : Response.json({});
+        shouldFail = false;
+        return response;
+      },
+    });
+    const connection = () => db.raw.prepare("SELECT status, last_error FROM gmail_connections WHERE user_id = 'u1'").get();
+    await expect(syncAllGmailConnections()).resolves.toEqual({ users: 1, failures: 1 });
+    expect(connection()).toEqual({ status: "active", last_error: `Gmail API error (${status})` });
+    await expect(syncAllGmailConnections()).resolves.toEqual({ users: 1, failures: 0 });
+    expect(connection()).toEqual({ status: "active", last_error: null });
+  });
+
   it("单用户失败被隔离：u1 置 error，u2 仍被处理", async () => {
     await seedUser("u2");
     await seedConnection("u2");
@@ -298,9 +333,12 @@ describe("syncAllGmailConnections", () => {
       .bind("h2", "u2", "u2", "Hubo", "2026-10-02T00:00:00Z")
       .run();
 
-    // u1 的 refresh token 是用错误密钥加密的：decryptToken 必然失败，
-    // 不依赖 fetch 就能触发单用户失败路径；u2 走正常链路。
-    const badEnc = await encryptToken("rt", "wrong-secret");
+    await db.prepare(
+      "INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day, card_number_last4) VALUES ('c2', 'h2', 'p1', 16, '7491')",
+    ).run();
+
+    // Google confirms that u1 revoked consent. u2 still uses the normal path.
+    const badEnc = await encryptToken("revoked", SECRET);
     await db
       .prepare("UPDATE gmail_connections SET refresh_token_enc=? WHERE user_id='u1'")
       .bind(badEnc)
@@ -311,7 +349,12 @@ describe("syncAllGmailConnections", () => {
     });
     __setGmailSyncDeps({
       parse: async () => ({ ...parseOk }),
-      fetchImpl: okFetch as unknown as typeof fetch,
+      fetchImpl: (input, init) => {
+        if (String(input).includes("/token") && String(init?.body).includes("refresh_token=revoked")) {
+          return Promise.resolve(Response.json({ error: "invalid_grant" }, { status: 400 }));
+        }
+        return okFetch(input);
+      },
       sessionSecret: SECRET,
       bucket: null,
     });
@@ -341,5 +384,159 @@ describe("syncAllGmailConnections", () => {
     expect(src).toMatch(/import \{ syncAllGmailConnections \}/);
     const billsBranch = src.split('route === "bills"')[1]?.split("return;")[0] ?? "";
     expect(billsBranch).toContain("syncAllGmailConnections");
+  });
+});
+
+describe("multi-mailbox scheduling and posting gates", () => {
+  const scopedMail = (rfc: string | null, recipient = "Gmail <box@example.test>") => new TextEncoder().encode([
+    "From: statements@chase.example", `To: ${recipient}`, "Subject: Your statement",
+    ...(rfc ? [`Message-ID: <${rfc}>`] : []), "", "This month's statement",
+  ].join("\r\n"));
+
+  async function seedMailbox(id: string, owner = "u1", holder: string | null = null, enabled = 1) {
+    const ciphertext = await encryptToken(id, SECRET);
+    await db.prepare(
+      `INSERT INTO gmail_connections (id, user_id, google_sub, email, refresh_token_enc, scopes, default_holder_id, sync_enabled)
+       VALUES (?, ?, ?, ?, ?, 'gmail.readonly', ?, ?)`,
+    ).bind(id, owner, id, `${id}@example.test`, ciphertext, holder, enabled).run();
+  }
+
+  function mailboxes(
+    accounts: Record<string, { id: string; raw: Uint8Array }>,
+  ) {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/token")) {
+        const account = (init?.body as URLSearchParams).get("refresh_token");
+        return Response.json({ access_token: account, expires_in: 3600 });
+      }
+      const account = new Headers(init?.headers).get("Authorization")?.slice("Bearer ".length) ?? "";
+      const item = accounts[account];
+      if (!item) return new Response(null, { status: 401 });
+      return url.includes("/messages?")
+        ? Response.json({ messages: [{ id: item.id }] })
+        : Response.json({ raw: toRawB64(item.raw) });
+    });
+  }
+
+  it("claims a forwarded RFC Message-ID once across concurrently syncing connections", async () => {
+    await db.exec("DELETE FROM gmail_connections");
+    await seedMailbox("box-a");
+    await seedMailbox("box-b");
+    const parse = vi.fn(async () => ({ ...parseOk }));
+    const put = vi.fn(async (_key: string, _value: Uint8Array) => {});
+    __setGmailSyncDeps({
+      parse, bucket: { put } as unknown as R2Bucket,
+      fetchImpl: mailboxes({
+        "box-a": { id: "a-message", raw: scopedMail("Statement@Bank.Example") },
+        "box-b": { id: "b-message", raw: scopedMail("statement@bank.example") },
+      }),
+    });
+    const summaries = await Promise.all([
+      syncUserGmail("u1", { connectionId: "box-a" }),
+      syncUserGmail("u1", { connectionId: "box-b" }),
+    ]);
+    expect(summaries.reduce((count, summary) => count + summary.drafted, 0)).toBe(1);
+    expect(parse).toHaveBeenCalledOnce();
+    expect(put).toHaveBeenCalledOnce();
+    expect(put.mock.calls[0]).toEqual([
+      expect.stringMatching(/^gmail-raw\/u1\/box-[ab]\/[ab]-message\.eml$/), expect.any(Uint8Array),
+    ]);
+    const retry = await syncAllGmailConnections();
+    expect(retry).toEqual({ users: 1, failures: 0 });
+    expect(parse).toHaveBeenCalledOnce();
+    expect(db.raw.prepare("SELECT COUNT(*) AS count FROM bill_import_drafts").get()).toEqual({ count: 1 });
+    expect(db.raw.prepare("SELECT status FROM gmail_sync_messages ORDER BY status").all())
+      .toEqual([{ status: "draft_parked" }, { status: "skipped" }]);
+  });
+
+  it("isolates IDs by owner, maps the connection default, and ignores paused mailboxes", async () => {
+    await db.exec("DELETE FROM gmail_connections");
+    await seedUser("u2");
+    await db.exec(`INSERT INTO card_holders (id, created_by, managed_by, name) VALUES ('h1', 'u1', 'u1', 'Alice Lee')`);
+    await seedMailbox("primary", "u1", "h1");
+    await seedMailbox("second", "u1");
+    await seedMailbox("paused", "u1", null, 0);
+    await seedMailbox("foreign", "u2");
+    const fetchImpl = mailboxes({
+      primary: { id: "shared-id", raw: scopedMail("same@bank.test") },
+      second: { id: "distinct", raw: scopedMail(null) },
+      foreign: { id: "shared-id", raw: scopedMail("same@bank.test") },
+    });
+    const parse = vi.fn(async () => ({ ...parseOk }));
+    __setGmailSyncDeps({ parse, fetchImpl, bucket: null });
+    await expect(syncUserGmail("u1", { connectionId: "foreign" })).rejects.toThrow("未连接");
+    await expect(syncUserGmail("u1", { connectionId: "paused" })).rejects.toThrow("未连接");
+    await expect(syncAllGmailConnections()).resolves.toEqual({ users: 2, failures: 0 });
+    expect(parse).toHaveBeenCalledTimes(3);
+    expect(db.raw.prepare(
+      "SELECT user_id, connection_id, gmail_message_id FROM gmail_sync_messages ORDER BY connection_id",
+    ).all()).toEqual([
+      { user_id: "u2", connection_id: "foreign", gmail_message_id: "shared-id" },
+      { user_id: "u1", connection_id: "primary", gmail_message_id: "shared-id" },
+      { user_id: "u1", connection_id: "second", gmail_message_id: "distinct" },
+    ]);
+    expect(db.raw.prepare(
+      "SELECT holder_id, attribution_source, attribution_trusted FROM bill_import_drafts WHERE source_connection_id='primary'",
+    ).get()).toEqual({ holder_id: "h1", attribution_source: "connection_default", attribution_trusted: 1 });
+    expect(db.raw.prepare("SELECT last_sync_at FROM gmail_connections WHERE id='paused'").get())
+      .toEqual({ last_sync_at: null });
+  });
+
+  it("parks each unsafe statement and does not add a credit card", async () => {
+    await seedHolderAndProduct();
+    const raw = scopedMail(null, "Hubo <hubo@example.test>");
+    let parsed = { ...parseOk };
+    const run = (id: string) => {
+      __setGmailSyncDeps({
+        parse: async () => parsed, bucket: null,
+        fetchImpl: gmailFetch({ list: { messages: [{ id }] }, raw: { raw: toRawB64(raw) } }),
+      });
+      return syncUserGmail("u1");
+    };
+    parsed = { ...parseOk, confidence: 0.62 };
+    expect((await run("low-confidence")).drafted).toBe(1);
+    parsed = { ...parseOk, due_date: "2026-02-30" };
+    expect((await run("missing-due")).drafted).toBe(1);
+    parsed = { ...parseOk, card_last4: "9910" };
+    expect((await run("new-card")).drafted).toBe(1);
+    expect(db.raw.prepare("SELECT COUNT(*) AS count FROM bills").get()).toEqual({ count: 0 });
+    expect(db.raw.prepare("SELECT COUNT(*) AS count FROM credit_cards").get()).toEqual({ count: 1 });
+  });
+
+  it("protects paid state and amount overrides even when the incoming parse is high-confidence", async () => {
+    await seedHolderAndProduct();
+    db.exec(`INSERT INTO bills (id, card_id, bill_month, bill_amount, bill_amount_override, due_date, status)
+      VALUES ('posted', 'c1', '2026-10', 1234.56, 1234.56, '2026-11-10', 'paid')`);
+    const raw = scopedMail(null);
+    __setGmailSyncDeps({
+      parse: async () => ({ ...parseOk, bill_amount: 2000 }), bucket: null,
+      fetchImpl: gmailFetch({ list: { messages: [{ id: "conflict" }] }, raw: { raw: toRawB64(raw) } }),
+    });
+    expect((await syncUserGmail("u1")).drafted).toBe(1);
+    __setGmailSyncDeps({
+      parse: async () => ({ ...parseOk }), bucket: null,
+      fetchImpl: gmailFetch({ list: { messages: [{ id: "safe-replay" }] }, raw: { raw: toRawB64(raw) } }),
+    });
+    expect((await syncUserGmail("u1")).written).toBe(1);
+    expect(db.raw.prepare("SELECT id, bill_amount, bill_amount_override, status FROM bills").all())
+      .toEqual([{ id: "posted", bill_amount: 1234.56, bill_amount_override: 1234.56, status: "paid" }]);
+  });
+
+  it("parks an unresolved shared card tail with both candidates", async () => {
+    await seedHolderAndProduct();
+    db.exec(`INSERT INTO card_holders (id, created_by, managed_by, name) VALUES ('h2', 'u1', 'u1', 'Jiang Li');
+      INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day, card_number_last4) VALUES ('c2', 'h2', 'p1', 16, '7491')`);
+    __setGmailSyncDeps({
+      parse: async () => ({ ...parseOk }), bucket: null,
+      fetchImpl: gmailFetch({
+        list: { messages: [{ id: "ambiguous" }] },
+        raw: { raw: toRawB64(scopedMail(null)) },
+      }),
+    });
+    expect((await syncUserGmail("u1")).drafted).toBe(1);
+    expect(db.raw.prepare(
+      "SELECT card_id, attribution_source, json_extract(parsed_payload, '$.candidate_card_ids') AS candidates FROM bill_import_drafts",
+    ).get()).toEqual({ card_id: null, attribution_source: "conflict", candidates: '["c1","c2"]' });
   });
 });

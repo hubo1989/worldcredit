@@ -1,5 +1,8 @@
 export interface Env {
   DB: D1Database
+  ATTACHMENTS?: R2Bucket
+  IMAGES?: ImagesBinding
+  SESSION_SECRET?: string
   APNS_KEY_P8?: string
   APNS_KEY_ID?: string
   APNS_TEAM_ID?: string
@@ -107,7 +110,8 @@ export interface RawAttachment {
   filename: string
   contentType: string
   bytes: Uint8Array
-  /** Content-ID，暂时不用，保留给将来对齐内嵌图片/账单。 */
+  disposition?: string | null
+  /** Content-ID for embedded MIME resources. */
   contentId: string | null
 }
 
@@ -131,9 +135,6 @@ export interface ParsedRawMessage {
 
 // ─── 转发账单包 ───────────────────────────────────────────────────────────────
 
-/** 持卡人识别结果的来源，用于如实记录「这个账单凭什么是这个人的」。 */
-export type HolderMatchSource = 'header_name' | 'body_honorific' | 'default_holder' | 'unknown'
-
 /** 一封嵌套账单邮件解析后的中间结果，尚未落库。 */
 export interface NestedBillMessage {
   /** 附件文件名或编号，仅用于日志定位。 */
@@ -149,34 +150,38 @@ export interface NestedBillMessage {
   headerName: string | null
   /** 从正文称呼里解出的名字（如「高敏」），取不到为 null。 */
   bodyName: string | null
+  attachments: RawAttachment[]
 }
 
-/** 一条待写入 bills 的记录：已绑定到具体持卡人与卡片。 */
-export interface HolderScopedBill {
-  holderId: string
-  holderName: string
-  cardId: string
-  billId: string
-  aiResult: BillParseResult
-  /** 记录这条账单的归属依据，便于排查「为什么算到他头上」。 */
-  matchSource: HolderMatchSource
-  /** 本期账单的证据是否触发了卡档账单日回写。 */
-  billingDayUpdated?: boolean
+export type AttributionSource =
+  | 'unique_card' | 'header_name' | 'body_honorific' | 'pdf_holder_hint'
+  | 'connection_default' | 'holder_email' | 'conflict' | 'unknown' | 'manual'
+
+export interface ParsedStatementItem extends BillParseResult {
+  holder_hint?: string | null
+  warnings?: string[]
+  items?: Array<{
+    transaction_date?: string
+    description: string
+    amount: number
+    currency?: string
+    category?: string
+    item_type?: 'purchase' | 'refund' | 'fee' | 'interest'
+  }>
 }
 
-export interface ForwardedBundleOutcome {
-  /** 顶层流里解析出的附件总数。 */
-  attachmentCount: number
-  /** 只统计 .eml 附件，它们才是账单本体。 */
-  nestedCount: number
-  /** 被跳过、没有加进 bills 的嵌套附件及原因。 */
-  skipped: Array<{ label: string; reason: string }>
-  /** 非 .eml 附件（如 PDF），本轮不解析。 */
-  unsupported: string[]
-  /** 已识别持卡人并写入或更新账单的数量。 */
-  billsWritten: number
-  /** 每条账单的持卡人、卡片与归属依据，写进日志便于排查「为什么算到他头上」。 */
-  written: HolderScopedBill[]
-  /** 汇总写入 email_parse_logs.error_msg 的说明文本。 */
-  summary: string
+export interface MultimodalParseEnvelope {
+  is_bill: boolean
+  email_kind: 'statement' | 'autopay_scheduled' | 'payment_reminder' | 'other'
+  non_bill_reason?: string | null
+  statements: ParsedStatementItem[]
+}
+
+export interface AttributionResolution {
+  holderId: string | null
+  cardId: string | null
+  accountId: string | null
+  trusted: boolean
+  source: AttributionSource
+  candidateCardIds: string[]
 }

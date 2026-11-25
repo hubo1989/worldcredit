@@ -15,6 +15,7 @@ export interface HolderRecord {
   id: string
   name: string
   aliases: string[]
+  email?: string | null
 }
 
 /** 姓名归一化：去首尾空白、去内部空白、小写。
@@ -86,7 +87,30 @@ export function extractNameFromBody(text: string | null | undefined): string | n
       return name
     }
   }
-  return null
+  const english = /(?:\bDear\s+|\bCustomer:\s*)([\p{L}][\p{L} .’'-]{1,69})(?=[,:\r\n]|$)/iu.exec(text)?.[1]
+    ?? /^([\p{L}][\p{L} .’'-]{1,69})\s+Account\s+Ending\b/imu.exec(text)?.[1]
+  const name = english?.trim().replace(/^(?:mr|mrs|ms|miss|dr)\.?\s+/i, '')
+  return name && !/^(?:valued\s+)?(?:customer|cardholder|member|client|sir|madam)$/i.test(name) ? name : null
+}
+
+/** Return every matching holder so ambiguous names cannot select the first row. */
+export function matchHolderNames(value: string | null | undefined, holders: HolderRecord[]): string[] {
+  const bare = value?.trim().replace(/^(?:mr|mrs|ms|miss|dr)\.?\s+/i, '')
+  const candidates = toCandidates(bare)
+  if (!candidates.length) return []
+  const keys = holders.map(holder => ({
+    id: holder.id,
+    originalNames: [holder.name, ...holder.aliases],
+    names: [holder.name, ...holder.aliases].map(name => normalizeName(name)).filter(Boolean),
+  }))
+  const exact = keys.filter(holder => holder.names.some(name => candidates.includes(name)))
+  if (exact.length) return exact.map(holder => holder.id)
+  return keys.filter(holder => holder.names.some(name => candidates.some(candidate =>
+    (isNameLike(candidate) && isNameLike(name) && (name.startsWith(candidate) || candidate.startsWith(name))) ||
+    (Boolean(bare && /^[a-z'-]+$/i.test(bare)) &&
+      holder.originalNames.some(full => full.split(/\s+/).length > 1 &&
+        full.split(/\s+/).some(part => normalizeName(part) === candidate))),
+  ))).map(holder => holder.id)
 }
 
 /** 把持卡人的姓名与别名摊平成「归一化名 -> holderId」的查找表。 */

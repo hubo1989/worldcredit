@@ -12,6 +12,7 @@ import {
 
 interface CronEnv {
   DB: D1Database;
+  ATTACHMENTS?: R2Bucket;
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;
@@ -71,6 +72,7 @@ export async function handleScheduled(
   console.log("[cron] Running daily notification scan...");
 
   const db = env.DB;
+  if (env.ATTACHMENTS) _ctx.waitUntil(pruneOrphanDraftAttachments(db, env.ATTACHMENTS));
   await pruneStaleMutationsAndAuthAttempts(db);
   const nowDate =
     scheduledEvent &&
@@ -299,6 +301,48 @@ export async function handleScheduled(
   console.log(
     `[cron] Notification scan complete. Sent ${sentCount} push notifications, saved ${inboxCount} inbox items.`,
   );
+}
+
+async function pruneOrphanDraftAttachments(db: D1Database, bucket: R2Bucket): Promise<void> {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  let cursor: string | undefined;
+  try {
+    do {
+      const page: R2Objects = await bucket.list({ prefix: "draft-files/", limit: 90, cursor });
+      const expired = page.objects.filter(object => object.uploaded.getTime() < cutoff);
+      if (expired.length) {
+        const rows = await db.prepare(
+          `SELECT id, record_type, storage_path FROM record_attachments WHERE bucket = 'record-attachments'
+             AND storage_path IN (${expired.map(() => "?").join(",")})`,
+        ).bind(...expired.map(object => object.key)).all<{ id: string; record_type: string; storage_path: string }>();
+        const records = new Map(rows.results.map(row => [row.storage_path, row]));
+        const removedKeys: string[] = [];
+        for (const object of expired) {
+          const record = records.get(object.key);
+          if (!record) {
+            removedKeys.push(object.key);
+            continue;
+          }
+          const removed = await db.prepare(
+            `DELETE FROM record_attachments WHERE id = ? AND (
+               (record_type = 'bill' AND NOT EXISTS (SELECT 1 FROM bills WHERE id = record_attachments.record_id))
+               OR (record_type = 'draft' AND NOT EXISTS (SELECT 1 FROM bill_import_drafts d
+                 WHERE d.created_by = record_attachments.uploaded_by AND d.status != 'discarded'
+                   AND (d.id = record_attachments.record_id OR d.file_ref = record_attachments.id
+                     OR EXISTS (SELECT 1 FROM json_each(
+                       CASE WHEN json_valid(d.parsed_payload) THEN d.parsed_payload ELSE '{}' END, '$.attachment_ids'
+                     ) WHERE value = record_attachments.id))))
+             )`,
+          ).bind(record.id).run();
+          if (removed.meta.changes) removedKeys.push(object.key);
+        }
+        if (removedKeys.length) await bucket.delete(removedKeys);
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+  } catch (error) {
+    console.warn("[cron] Draft attachment cleanup failed:", error);
+  }
 }
 
 async function pruneStaleMutationsAndAuthAttempts(db: D1Database): Promise<void> {
