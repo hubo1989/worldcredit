@@ -40,13 +40,23 @@ describe('repayment health', () => {
   it('falls back through posting date and statement or period day', () => {
     expect(estimateBillRepaymentHealth({
       ...input, items: [{ amount: 1000, item_type: 'purchase', post_date: '2026-10-10' }],
-    })).toMatchObject({ estimated_interest: 5, used_fallback_date: true })
+    })).toMatchObject({ estimated_interest: 10, interest_bearing_principal: 1000, used_fallback_date: true })
     expect(estimateBillRepaymentHealth({ ...input, items: [] })).toMatchObject({
       tier: 'B_statement_fallback', estimated_interest: 7.5,
     })
     expect(estimateBillRepaymentHealth({
       ...input, items: [], bill: { ...input.bill, statement_date: undefined, statement_start: undefined },
     })).toMatchObject({ estimated_interest: 21.5 })
+  })
+
+  it('estimates the unitemized balance without charging interest on identified installments', () => {
+    expect(estimateBillRepaymentHealth({
+      ...input,
+      items: [
+        { amount: 1000, item_type: 'purchase', transaction_date: '2026-10-05' },
+        { amount: 500, item_type: 'installment' },
+      ],
+    })).toMatchObject({ estimated_interest: 10, interest_bearing_principal: 500, used_fallback_date: true })
   })
 
   it.each([undefined, null, 0, -1])('treats a %s minimum amount as unset', minimum => {

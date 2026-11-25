@@ -150,7 +150,26 @@ export function parsePastedBillItems(text: string, options: ImportOptions): Pars
     const delimiter = line.includes('\t') ? /\t/ : /\s{2,}/
     let parts = line.split(delimiter).map(part => part.trim()).filter(Boolean)
     if (parts.length < 2) {
-      const csv = line.includes(',') ? parseCsvMatrix(line)[0] : undefined
+      let csv: string[] | undefined
+      if (line.includes(',')) {
+        try {
+          csv = parseCsvMatrix(line)[0]
+        } catch {
+          return null
+        }
+      }
+      if (csv) {
+        // Quoted amounts are already one field. Rejoin an unquoted trailing thousands group.
+        const amountEnd = mapExplicitCategory(csv.at(-1)) ? csv.length - 1 : csv.length
+        let amountStart = amountEnd - 1
+        while (amountStart > 1 && /^\d{3}(?:\.\d+)?$/.test(csv[amountStart])) {
+          if (!/^[+−–-]?\d{1,3}$/.test(csv[amountStart - 1])) break
+          amountStart--
+        }
+        if (amountStart < amountEnd - 1) {
+          csv.splice(amountStart, amountEnd - amountStart, csv.slice(amountStart, amountEnd).join(','))
+        }
+      }
       parts = csv?.length && csv.some(part => parseAmount(part) !== null) && parseAmount(csv[0]) === null
         ? csv
         : line.split(/\s+/)
@@ -166,7 +185,7 @@ export function parsePastedBillItems(text: string, options: ImportOptions): Pars
     const amounts = parts.map(parseAmount)
     const amountIndex = amounts.findLastIndex(amount => amount !== null)
     const amount = amounts[amountIndex]
-    if (amount == null) return null
+    if (amount === null || amount === undefined) return null
     const description = parts.filter((_, index) => index !== amountIndex).join(' ').trim()
     if (!description) return null
     return { transaction_date, description, amount, category, source: 'text', raw_text: line }
