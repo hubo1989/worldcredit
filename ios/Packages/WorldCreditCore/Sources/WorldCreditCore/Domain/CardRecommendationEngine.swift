@@ -347,18 +347,45 @@ public enum RoiDecisionTag: String, CaseIterable, Codable, Sendable {
     }
 }
 
-public struct UnvaluedOpportunityItem: Codable, Sendable, Equatable, Identifiable {
-    public var id: String { accountId ?? definitionId ?? title }
+public struct UnvaluedBenefitRefItem: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { "\(accountId ?? "")-\(definitionId ?? "")-\(quantity)" }
     public var accountId: String?
     public var definitionId: String?
-    public var title: String
-    public var usedCount: Int
+    public var quantity: Int
 
     enum CodingKeys: String, CodingKey {
         case accountId = "account_id"
         case definitionId = "definition_id"
-        case title
-        case usedCount = "used_count"
+        case quantity
+    }
+}
+
+public struct RoiItemCounts: Codable, Sendable, Equatable {
+    public var benefitUsages: Int
+    public var promoUsages: Int
+    public var taskResults: Int
+
+    enum CodingKeys: String, CodingKey {
+        case benefitUsages = "benefit_usages"
+        case promoUsages = "promo_usages"
+        case taskResults = "task_results"
+    }
+}
+
+public struct FxSumDTO: Codable, Sendable, Equatable {
+    public var convertedCurrency: String
+    public var byCurrency: [String: Double]
+    public var total: Double
+    public var converted: Bool
+    public var unconvertedCurrencies: [String]
+    public var mixed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case convertedCurrency = "converted_currency"
+        case byCurrency = "by_currency"
+        case total, converted
+        case unconvertedCurrencies = "unconverted_currencies"
+        case mixed
     }
 }
 
@@ -371,15 +398,12 @@ public struct CardAnnualFeeRoiDetail: Codable, Sendable, Equatable, Identifiable
     public var cardName: String
     public var cardNumberLast4: String?
     public var cardCurrency: String
-    public var periodModeRequested: String
+    public var periodMode: String
+    public var periodStart: String
+    public var periodEndExclusive: String
     public var windowModeResolved: String
-    public var windowStart: String
-    public var windowEndExclusive: String
-    public var nextAnnualFeeDate: String?
-    public var daysUntilAnnualFee: Int?
-    public var annualFeeStatus: String
-    public var costBasis: String
     public var annualFeeCost: Double
+    public var costBasis: String
     public var redeemedBenefitsValue: Double
     public var promoAndRewardValue: Double
     public var manualRewardValue: Double
@@ -388,8 +412,13 @@ public struct CardAnnualFeeRoiDetail: Codable, Sendable, Equatable, Identifiable
     public var coveragePct: Double?
     public var roiPct: Double?
     public var decisionTag: RoiDecisionTag
+    public var decisionLabel: String?
     public var unvaluedBenefitCount: Int
-    public var unvaluedOpportunities: [UnvaluedOpportunityItem]
+    public var unvaluedBenefitRefs: [UnvaluedBenefitRefItem]
+    public var itemCounts: RoiItemCounts?
+    public var nextAnnualFeeDate: String?
+    public var daysUntilAnnualFee: Int?
+    public var annualFeeStatus: String?
 
     enum CodingKeys: String, CodingKey {
         case cardId = "card_id"
@@ -399,15 +428,12 @@ public struct CardAnnualFeeRoiDetail: Codable, Sendable, Equatable, Identifiable
         case cardName = "card_name"
         case cardNumberLast4 = "card_number_last4"
         case cardCurrency = "card_currency"
-        case periodModeRequested = "period_mode_requested"
+        case periodMode = "period_mode"
+        case periodStart = "period_start"
+        case periodEndExclusive = "period_end_exclusive"
         case windowModeResolved = "window_mode_resolved"
-        case windowStart = "window_start"
-        case windowEndExclusive = "window_end_exclusive"
-        case nextAnnualFeeDate = "next_annual_fee_date"
-        case daysUntilAnnualFee = "days_until_annual_fee"
-        case annualFeeStatus = "annual_fee_status"
-        case costBasis = "cost_basis"
         case annualFeeCost = "annual_fee_cost"
+        case costBasis = "cost_basis"
         case redeemedBenefitsValue = "redeemed_benefits_value"
         case promoAndRewardValue = "promo_and_reward_value"
         case manualRewardValue = "manual_reward_value"
@@ -416,70 +442,81 @@ public struct CardAnnualFeeRoiDetail: Codable, Sendable, Equatable, Identifiable
         case coveragePct = "coverage_pct"
         case roiPct = "roi_pct"
         case decisionTag = "decision_tag"
+        case decisionLabel = "decision_label"
         case unvaluedBenefitCount = "unvalued_benefit_count"
-        case unvaluedOpportunities = "unvalued_opportunities"
+        case unvaluedBenefitRefs = "unvalued_benefit_refs"
+        case itemCounts = "item_counts"
+        case nextAnnualFeeDate = "next_annual_fee_date"
+        case daysUntilAnnualFee = "days_until_annual_fee"
+        case annualFeeStatus = "annual_fee_status"
     }
 }
 
-public struct FamilyAnnualFeeRoiSummary: Codable, Sendable, Equatable {
-    public var cardCount: Int
-    public var pendingDecision30dCount: Int
-    public var totalAnnualFeeCost: Double
-    public var totalRedeemedBenefitsValue: Double
-    public var totalPromoAndRewardValue: Double
-    public var totalValue: Double
-    public var netValue: Double
-    public var overallRoiPct: Double?
-    public var overallCoveragePct: Double?
+public struct FamilyAnnualFeeRoiTotals: Codable, Sendable, Equatable {
+    public var annualFeeCost: FxSumDTO
+    public var redeemedBenefitsValue: FxSumDTO
+    public var promoAndRewardValue: FxSumDTO
+    public var manualRewardValue: FxSumDTO
+    public var totalValue: FxSumDTO
+    public var netValue: FxSumDTO
 
     enum CodingKeys: String, CodingKey {
-        case cardCount = "card_count"
-        case pendingDecision30dCount = "pending_decision_30d_count"
-        case totalAnnualFeeCost = "total_annual_fee_cost"
-        case totalRedeemedBenefitsValue = "total_redeemed_benefits_value"
-        case totalPromoAndRewardValue = "total_promo_and_reward_value"
+        case annualFeeCost = "annual_fee_cost"
+        case redeemedBenefitsValue = "redeemed_benefits_value"
+        case promoAndRewardValue = "promo_and_reward_value"
+        case manualRewardValue = "manual_reward_value"
         case totalValue = "total_value"
         case netValue = "net_value"
-        case overallRoiPct = "overall_roi_pct"
-        case overallCoveragePct = "overall_coverage_pct"
     }
 }
 
 public struct FamilyAnnualFeeRoiBoard: Codable, Sendable, Equatable {
-    public var displayCurrency: String
     public var periodMode: String
+    public var windowStart: String
+    public var windowEndExclusive: String
+    public var displayCurrency: String
     public var fxAvailable: Bool
-    public var unconvertedCurrencies: [String]
-    public var summary: FamilyAnnualFeeRoiSummary
     public var cards: [CardAnnualFeeRoiDetail]
+    public var totals: FamilyAnnualFeeRoiTotals
+    public var unconvertedCurrencies: [String]
+    public var warnings: [String]
+
+    public var overallRoiPct: Double? {
+        let cost = totals.annualFeeCost.total
+        guard cost > 0 else { return nil }
+        return ((totals.netValue.total / cost) * 1000).rounded() / 10
+    }
 
     enum CodingKeys: String, CodingKey {
-        case displayCurrency = "display_currency"
         case periodMode = "period_mode"
+        case windowStart = "window_start"
+        case windowEndExclusive = "window_end_exclusive"
+        case displayCurrency = "display_currency"
         case fxAvailable = "fx_available"
+        case cards, totals
         case unconvertedCurrencies = "unconverted_currencies"
-        case summary, cards
+        case warnings
     }
 }
 
 public struct CardCycleSpendEstimate: Codable, Sendable, Equatable {
     public var cardId: String
+    public var periodStart: String
+    public var periodEndExclusive: String
+    public var windowModeResolved: String
+    public var spendAmount: Double
+    public var spendCount: Int
     public var currency: String
-    public var windowStart: String
-    public var windowEndExclusive: String
-    public var estimatedAmount: Double
-    public var estimatedCount: Int
     public var source: String
-    public var note: String
 
     enum CodingKeys: String, CodingKey {
         case cardId = "card_id"
-        case currency
-        case windowStart = "window_start"
-        case windowEndExclusive = "window_end_exclusive"
-        case estimatedAmount = "estimated_amount"
-        case estimatedCount = "estimated_count"
-        case source, note
+        case periodStart = "period_start"
+        case periodEndExclusive = "period_end_exclusive"
+        case windowModeResolved = "window_mode_resolved"
+        case spendAmount = "spend_amount"
+        case spendCount = "spend_count"
+        case currency, source
     }
 }
 

@@ -140,7 +140,7 @@ export function CardRoiSummaryCard({ card, product, onUpdated, highlighted = fal
   }
 
   const meta = roi ? ROI_DECISION_META[roi.decision_tag] : null
-  const firstUnvalued = roi?.unvalued_opportunities?.[0] ?? null
+  const firstUnvalued = roi?.unvalued_benefit_refs?.[0] ?? null
 
   return (
     <div id='roi-section' className='mb-2.5'>
@@ -251,7 +251,10 @@ export function CardRoiSummaryCard({ card, product, onUpdated, highlighted = fal
                 <div>
                   <p className='text-[11px] text-d-muted'>优惠与返现</p>
                   <p className='num-tabular mt-0.5 text-[14px] font-bold text-d-gold'>
-                    {formatCurrencyAmount(roi.promo_and_reward_value, roi.card_currency)}
+                    {formatCurrencyAmount(
+                      roi.promo_and_reward_value + roi.manual_reward_value,
+                      roi.card_currency
+                    )}
                   </p>
                 </div>
               </div>
@@ -282,7 +285,7 @@ export function CardRoiSummaryCard({ card, product, onUpdated, highlighted = fal
                         setValuationTarget({
                           account_id: firstUnvalued.account_id,
                           definition_id: firstUnvalued.definition_id,
-                          title: firstUnvalued.title,
+                          title: `已核销权益（${firstUnvalued.quantity} 次）`,
                         })
                         setUnitValueInput('')
                       }}
@@ -296,7 +299,7 @@ export function CardRoiSummaryCard({ card, product, onUpdated, highlighted = fal
 
               <div className='flex items-center justify-between gap-2 text-[11px] text-d-muted'>
                 <span>
-                  统计区间：{roi.window_start} ~ {roi.window_end_exclusive}
+                  统计区间：{roi.period_start} ~ {roi.period_end_exclusive}
                 </span>
                 <button
                   type='button'

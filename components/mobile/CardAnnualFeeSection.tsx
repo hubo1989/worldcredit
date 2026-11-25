@@ -95,14 +95,26 @@ export function CardAnnualFeeSection({ card, product, onUpdated }: Props) {
     setFormError(null)
     try {
       const est = await getCardCycleSpendEstimate(card.id)
-      setProgressAmountInput(String(est.estimated_amount))
-      setProgressCountInput(String(est.estimated_count))
-      setProgressSource(est.source === 'none' ? 'manual' : est.source)
+      const mappedSource: WaiverProgressV1['source'] =
+        est.source === 'bill_items'
+          ? 'bill_items_estimate'
+          : est.source === 'bills'
+            ? 'bills_estimate'
+            : 'manual'
+      const sourceLabel =
+        est.source === 'bill_items' ? '消费明细' : est.source === 'bills' ? '账单总额' : '无账单记录'
+      const noteText =
+        est.source === 'none'
+          ? `统计区间 ${est.period_start} ~ ${est.period_end_exclusive} 暂无账单记录，可手动填写`
+          : `已按 ${est.period_start} ~ ${est.period_end_exclusive} ${sourceLabel}预填（${est.spend_count} 笔），请核对后保存`
+      setProgressAmountInput(String(est.spend_amount))
+      setProgressCountInput(String(est.spend_count))
+      setProgressSource(mappedSource)
       setProgressAsOf(todayStr)
-      setProgressNote(est.note)
+      setProgressNote(noteText)
       setToast({
         open: true,
-        message: est.note || '已预填参考进度，请核对后保存',
+        message: noteText,
         severity: 'info',
       })
     } catch (err) {

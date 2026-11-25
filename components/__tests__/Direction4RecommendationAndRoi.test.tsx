@@ -264,22 +264,64 @@ describe('方向 4 前端：选卡助手、年费周期、ROI 看板与规则编
     expect(screen.getByText(/当前仅推荐本人持卡人档案：李四/)).toBeInTheDocument()
   })
 
-  it('AnnualFeeRoiBoard 展示全家汇总、缺汇率隔离、免年费防除零与补填单次估值弹窗', async () => {
+  it('AnnualFeeRoiBoard 按 PR #65 真实 DTO（totals / unvalued_benefit_refs / period_start）展示全家汇总、缺汇率隔离与补填估值', async () => {
     const board: FamilyAnnualFeeRoiBoard = {
-      display_currency: 'CNY',
       period_mode: 'last_12m',
+      window_start: '2025-11-25',
+      window_end_exclusive: '2026-11-26',
+      display_currency: 'CNY',
       fx_available: false,
       unconverted_currencies: ['USD'],
-      summary: {
-        card_count: 2,
-        pending_decision_30d_count: 1,
-        total_annual_fee_cost: 3600,
-        total_redeemed_benefits_value: 1300,
-        total_promo_and_reward_value: 2800,
-        total_value: 4100,
-        net_value: 500,
-        overall_roi_pct: 13.9,
-        overall_coverage_pct: 113.9,
+      warnings: [],
+      totals: {
+        annual_fee_cost: {
+          converted_currency: 'CNY',
+          by_currency: { CNY: 3600, USD: 550 },
+          total: 3600,
+          converted: false,
+          unconverted_currencies: ['USD'],
+          mixed: true,
+        },
+        redeemed_benefits_value: {
+          converted_currency: 'CNY',
+          by_currency: { CNY: 1300 },
+          total: 1300,
+          converted: true,
+          unconverted_currencies: [],
+          mixed: false,
+        },
+        promo_and_reward_value: {
+          converted_currency: 'CNY',
+          by_currency: { CNY: 2800 },
+          total: 2800,
+          converted: true,
+          unconverted_currencies: [],
+          mixed: false,
+        },
+        manual_reward_value: {
+          converted_currency: 'CNY',
+          by_currency: {},
+          total: 0,
+          converted: true,
+          unconverted_currencies: [],
+          mixed: false,
+        },
+        total_value: {
+          converted_currency: 'CNY',
+          by_currency: { CNY: 4100 },
+          total: 4100,
+          converted: true,
+          unconverted_currencies: [],
+          mixed: false,
+        },
+        net_value: {
+          converted_currency: 'CNY',
+          by_currency: { CNY: 500, USD: -550 },
+          total: 500,
+          converted: false,
+          unconverted_currencies: ['USD'],
+          mixed: true,
+        },
       },
       cards: [
         {
@@ -290,15 +332,12 @@ describe('方向 4 前端：选卡助手、年费周期、ROI 看板与规则编
           card_name: '经典白金卡',
           card_number_last4: '8888',
           card_currency: 'CNY',
-          period_mode_requested: 'last_12m',
-          window_mode_resolved: 'last_12m',
-          window_start: '2025-11-25',
-          window_end_exclusive: '2026-11-26',
-          next_annual_fee_date: '2026-12-20',
-          days_until_annual_fee: 25,
-          annual_fee_status: 'in_progress',
-          cost_basis: 'estimated_nominal',
+          period_mode: 'last_12m',
+          period_start: '2025-11-25',
+          period_end_exclusive: '2026-11-26',
+          window_mode_resolved: 'last_12m_fallback',
           annual_fee_cost: 3600,
+          cost_basis: 'estimated_nominal',
           redeemed_benefits_value: 1300,
           promo_and_reward_value: 2800,
           manual_reward_value: 0,
@@ -307,8 +346,14 @@ describe('方向 4 前端：选卡助手、年费周期、ROI 看板与规则编
           coverage_pct: 113.9,
           roi_pct: 13.9,
           decision_tag: 'keep_high_roi',
+          decision_label: '高 ROI · 建议续卡',
           unvalued_benefit_count: 0,
-          unvalued_opportunities: [],
+          unvalued_benefit_refs: [],
+          item_counts: {
+            benefit_usages: 2,
+            promo_usages: 1,
+            task_results: 0,
+          },
         },
         {
           card_id: 'card-p',
@@ -318,15 +363,12 @@ describe('方向 4 前端：选卡助手、年费周期、ROI 看板与规则编
           card_name: 'Freedom',
           card_number_last4: '9999',
           card_currency: 'USD',
-          period_mode_requested: 'last_12m',
-          window_mode_resolved: 'last_12m',
-          window_start: '2025-11-25',
-          window_end_exclusive: '2026-11-26',
-          next_annual_fee_date: null,
-          days_until_annual_fee: null,
-          annual_fee_status: 'not_applicable',
-          cost_basis: 'zero_fee',
+          period_mode: 'last_12m',
+          period_start: '2025-11-25',
+          period_end_exclusive: '2026-11-26',
+          window_mode_resolved: 'last_12m_fallback',
           annual_fee_cost: 0,
+          cost_basis: 'zero_fee',
           redeemed_benefits_value: 0,
           promo_and_reward_value: 200,
           manual_reward_value: 0,
@@ -335,15 +377,20 @@ describe('方向 4 前端：选卡助手、年费周期、ROI 看板与规则编
           coverage_pct: null,
           roi_pct: null,
           decision_tag: 'free_earning',
+          decision_label: '纯赚持有',
           unvalued_benefit_count: 3,
-          unvalued_opportunities: [
+          unvalued_benefit_refs: [
             {
               account_id: 'acc-opp-1',
               definition_id: 'def-opp-1',
-              title: '贵宾厅',
-              used_count: 3,
+              quantity: 3,
             },
           ],
+          item_counts: {
+            benefit_usages: 1,
+            promo_usages: 0,
+            task_results: 0,
+          },
         },
       ],
     }
@@ -353,7 +400,8 @@ describe('方向 4 前端：选卡助手、年费周期、ROI 看板与规则编
     render(<AnnualFeeRoiBoard />)
 
     expect(await screen.findByText(/未含汇率：USD 未计入合计/)).toBeInTheDocument()
-    expect(screen.getByText(/30 天内待决策 1 张/)).toBeInTheDocument()
+    expect(screen.getByText(/全家年费 ROI 汇总（折算 CNY · 共 2 张信用卡）/)).toBeInTheDocument()
+    expect(screen.getAllByText(/2025-11-25 ~ 2026-11-26/).length).toBeGreaterThanOrEqual(2)
     expect(screen.getByText('免年费')).toBeInTheDocument()
     expect(screen.queryByText(/Infinity|NaN/)).not.toBeInTheDocument()
     expect(screen.getByText('另有 3 次已核销权益未设估值')).toBeInTheDocument()
@@ -418,7 +466,7 @@ describe('方向 4 前端：选卡助手、年费周期、ROI 看板与规则编
     expect(leap2028.nextDueDate).toBe('2028-02-29')
   })
 
-  it('CardAnnualFeeSection 与 CardRoiSummaryCard 渲染未知日期提示、ConfirmDialog 免除与账单预填', async () => {
+  it('CardAnnualFeeSection 与 CardRoiSummaryCard 按 PR #65 真实 DTO（period_start / spend_amount / spend_count）渲染与预填', async () => {
     const card: CreditCardWithAnnualFee = {
       id: 'card-1',
       holder_id: 'holder-1',
@@ -450,15 +498,12 @@ describe('方向 4 前端：选卡助手、年费周期、ROI 看板与规则编
       card_name: '经典白金卡',
       card_number_last4: '8888',
       card_currency: 'CNY',
-      period_mode_requested: 'current_cycle',
-      window_mode_resolved: 'last_12m_fallback',
-      window_start: '2025-11-25',
-      window_end_exclusive: '2026-11-26',
-      next_annual_fee_date: null,
-      days_until_annual_fee: null,
-      annual_fee_status: 'in_progress',
-      cost_basis: 'estimated_nominal',
+      period_mode: 'current_cycle',
+      period_start: '2025-12-25',
+      period_end_exclusive: '2026-12-25',
+      window_mode_resolved: 'exact_cycle',
       annual_fee_cost: 3600,
+      cost_basis: 'estimated_nominal',
       redeemed_benefits_value: 1300,
       promo_and_reward_value: 2800,
       manual_reward_value: 0,
@@ -467,19 +512,25 @@ describe('方向 4 前端：选卡助手、年费周期、ROI 看板与规则编
       coverage_pct: 113.9,
       roi_pct: 13.9,
       decision_tag: 'keep_high_roi',
+      decision_label: '高 ROI · 建议续卡',
       unvalued_benefit_count: 0,
-      unvalued_opportunities: [],
+      unvalued_benefit_refs: [],
+      item_counts: {
+        benefit_usages: 2,
+        promo_usages: 1,
+        task_results: 0,
+      },
     }
     mockedGetCardAnnualFeeRoi.mockResolvedValue(roiDetail)
     mockedGetCardCycleSpendEstimate.mockResolvedValue({
       card_id: 'card-1',
+      period_start: '2025-12-25',
+      period_end_exclusive: '2026-12-25',
+      window_mode_resolved: 'exact_cycle',
+      spend_amount: 800,
+      spend_count: 2,
       currency: 'CNY',
-      window_start: '2025-11-25',
-      window_end_exclusive: '2026-11-26',
-      estimated_amount: 12000,
-      estimated_count: 8,
-      source: 'bill_items_estimate',
-      note: '已从本周期消费明细预填',
+      source: 'bill_items',
     })
     mockedUpdateCardAnnualFeeFields.mockResolvedValue({} as never)
 
@@ -496,12 +547,15 @@ describe('方向 4 前端：选卡助手、年费周期、ROI 看板与规则编
     ).toBeInTheDocument()
     expect(await screen.findByText('高 ROI · 建议续卡')).toBeInTheDocument()
     expect(screen.getByText('113.9%')).toBeInTheDocument()
+    expect(screen.getByText(/统计区间：2025-12-25 ~ 2026-12-25/)).toBeInTheDocument()
 
-    // 点击按账单参考填充
+    // 点击按账单参考填充，验证 spend_amount / spend_count 预填到输入框
     fireEvent.click(screen.getByRole('button', { name: '更新进度' }))
     fireEvent.click(screen.getByRole('button', { name: '按账单参考填充' }))
     await waitFor(() => {
       expect(mockedGetCardCycleSpendEstimate).toHaveBeenCalledWith('card-1')
+      expect((screen.getByLabelText(/已消费金额/) as HTMLInputElement).value).toBe('800')
+      expect((screen.getByLabelText('已消费笔数') as HTMLInputElement).value).toBe('2')
     })
 
     // 取消编辑后点击标记已免年费（走 ConfirmDialog）

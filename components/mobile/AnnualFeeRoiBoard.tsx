@@ -290,188 +290,214 @@ export function AnnualFeeRoiBoard() {
           <Skeleton className='h-28 w-full rounded-2xl' />
         </div>
       ) : (
-        board && (
-          <div className='flex flex-col gap-3'>
-            {/* 缺汇率告警 */}
-            {(!board.fx_available || board.unconverted_currencies.length > 0) && (
-              <Alert severity='warning'>
-                未含汇率：{board.unconverted_currencies.join('、') || '外币'} 未计入合计（下方单卡仍精准展示原币 ROI）。
-              </Alert>
-            )}
+        board &&
+        (() => {
+          const annualFeeCost = board.totals.annual_fee_cost.total
+          const redeemedValue = board.totals.redeemed_benefits_value.total
+          const promoAndManualValue =
+            board.totals.promo_and_reward_value.total + board.totals.manual_reward_value.total
+          const netValue = board.totals.net_value.total
+          const pending30dCount = board.cards.filter(
+            (c) =>
+              c.days_until_annual_fee != null &&
+              c.days_until_annual_fee >= 0 &&
+              c.days_until_annual_fee <= 30
+          ).length
+          const overallRoiPct =
+            annualFeeCost > 0
+              ? Math.round((netValue / annualFeeCost) * 1000) / 10
+              : null
+          const isFullyConverted =
+            board.fx_available && board.unconverted_currencies.length === 0
 
-            {/* 全家汇总卡 */}
-            <div className='rounded-2xl border border-d-border bg-d-surface p-4'>
-              <div className='flex items-center justify-between gap-2'>
-                <div>
-                  <p className='text-[12px] text-d-muted'>
-                    全家年费 ROI 汇总（折算 {board.display_currency} · 共 {board.summary.card_count} 张信用卡）
-                  </p>
-                  <p
-                    className={
-                      'num-tabular mt-1 text-[24px] font-bold leading-7 ' +
-                      (board.summary.net_value >= 0 ? 'text-d-success-ink' : 'text-d-danger-ink')
-                    }
-                  >
-                    净收益 {formatCurrencyAmount(board.summary.net_value, board.display_currency, true)}
-                  </p>
-                </div>
-                <div className='text-right'>
-                  <span className='rounded-full bg-d-gold-soft px-2.5 py-1 text-[11px] font-semibold text-d-gold'>
-                    30 天内待决策 {board.summary.pending_decision_30d_count} 张
-                  </span>
-                  <p className='num-tabular mt-1.5 text-[12px] font-semibold text-d-muted'>
-                    {board.summary.overall_roi_pct !== null
-                      ? `整体 ROI ${formatPct1(board.summary.overall_roi_pct, true)}`
-                      : '整体零年费成本'}
-                  </p>
-                </div>
-              </div>
+          return (
+            <div className='flex flex-col gap-3'>
+              {/* 缺汇率告警 */}
+              {(!board.fx_available || board.unconverted_currencies.length > 0) && (
+                <Alert severity='warning'>
+                  未含汇率：{board.unconverted_currencies.join('、') || '外币'} 未计入合计（下方单卡仍精准展示原币 ROI）。
+                </Alert>
+              )}
 
-              <div className='mt-3 grid grid-cols-3 gap-2 rounded-xl bg-d-subtle p-3'>
-                <div>
-                  <p className='text-[11px] text-d-muted'>年费总成本</p>
-                  <p className='num-tabular mt-0.5 text-[14px] font-bold text-d-text'>
-                    {formatCurrencyAmount(board.summary.total_annual_fee_cost, board.display_currency)}
-                  </p>
-                </div>
-                <div>
-                  <p className='text-[11px] text-d-muted'>权益估值</p>
-                  <p className='num-tabular mt-0.5 text-[14px] font-bold text-d-accent-light'>
-                    {formatCurrencyAmount(
-                      board.summary.total_redeemed_benefits_value,
-                      board.display_currency
-                    )}
-                  </p>
-                </div>
-                <div>
-                  <p className='text-[11px] text-d-muted'>优惠与返现</p>
-                  <p className='num-tabular mt-0.5 text-[14px] font-bold text-d-gold'>
-                    {formatCurrencyAmount(
-                      board.summary.total_promo_and_reward_value,
-                      board.display_currency
-                    )}
-                  </p>
-                </div>
-              </div>
-            </div>
+              {board.warnings.length > 0 && (
+                <Alert severity='info'>{board.warnings.join('；')}</Alert>
+              )}
 
-            {/* 单卡列表 */}
-            {visibleCards.length === 0 ? (
-              <div className='rounded-2xl border border-dashed border-d-border bg-d-surface p-8 text-center text-[13px] text-d-muted'>
-                当前筛选下暂无信用卡记录
-              </div>
-            ) : (
-              visibleCards.map((card) => {
-                const meta = ROI_DECISION_META[card.decision_tag]
-                const tail = formatCardTail(card.card_number_last4)
-                const firstUnvalued = card.unvalued_opportunities[0]
-                return (
-                  <div
-                    key={card.card_id}
-                    className='rounded-2xl border border-d-border bg-d-surface p-4'
-                  >
-                    <div className='flex items-start justify-between gap-3'>
-                      <div className='min-w-0 flex-1'>
-                        <div className='flex flex-wrap items-center gap-1.5'>
-                          <span
-                            className={'rounded-full px-2 py-0.5 text-[11px] font-semibold ' + meta.badgeClass}
-                          >
-                            {meta.label}
-                          </span>
-                          {card.days_until_annual_fee !== null &&
-                            card.days_until_annual_fee >= 0 &&
-                            card.days_until_annual_fee <= 30 && (
-                              <span className='rounded-full bg-d-danger-soft px-2 py-0.5 text-[11px] font-semibold text-d-danger-ink'>
-                                距年费剩 {card.days_until_annual_fee} 天
-                              </span>
-                            )}
-                        </div>
-                        <Link
-                          href={`/cards/${card.card_id}?section=roi`}
-                          className='mt-1.5 flex items-center gap-1 text-[15px] font-bold text-d-text hover:text-d-accent-light'
-                        >
-                          <span className='truncate'>
-                            {card.bank_name} · {card.card_name}
-                            {tail ? ` (${tail})` : ''}
-                          </span>
-                          <ChevronRightIcon size={16} className='shrink-0 text-d-muted' />
-                        </Link>
-                        <p className='mt-0.5 text-[12px] text-d-muted'>
-                          {card.holder_name} · {card.card_currency} · 窗口 {card.window_start} ~ {card.window_end_exclusive}
-                        </p>
-                      </div>
-
-                      <div className='shrink-0 text-right'>
-                        <p
-                          className={
-                            'num-tabular text-[16px] font-bold ' +
-                            (card.net_value >= 0 ? 'text-d-success-ink' : 'text-d-danger-ink')
-                          }
-                        >
-                          {formatCurrencyAmount(card.net_value, card.card_currency, true)}
-                        </p>
-                        <p className='num-tabular text-[11px] text-d-muted'>
-                          {card.annual_fee_cost <= 0
-                            ? card.cost_basis === 'waived'
-                              ? '已免年费'
-                              : '免年费'
-                            : `ROI ${formatPct1(card.roi_pct, true)} · 覆盖 ${formatPct1(card.coverage_pct)}`}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className='mt-3 grid grid-cols-3 gap-2 rounded-xl bg-d-subtle px-3 py-2 text-[12px]'>
-                      <div>
-                        <p className='text-[11px] text-d-muted'>年费成本</p>
-                        <p className='num-tabular font-semibold text-d-text'>
-                          {formatCurrencyAmount(card.annual_fee_cost, card.card_currency)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className='text-[11px] text-d-muted'>权益估值</p>
-                        <p className='num-tabular font-semibold text-d-accent-light'>
-                          {formatCurrencyAmount(card.redeemed_benefits_value, card.card_currency)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className='text-[11px] text-d-muted'>优惠返现</p>
-                        <p className='num-tabular font-semibold text-d-gold'>
-                          {formatCurrencyAmount(card.promo_and_reward_value, card.card_currency)}
-                        </p>
-                      </div>
-                    </div>
-
-                    {card.unvalued_benefit_count > 0 && (
-                      <div className='mt-2.5 flex items-center justify-between gap-2 rounded-xl border border-d-border bg-d-bg px-3 py-2 text-[12px]'>
-                        <span className='text-d-warn-ink'>
-                          另有 {card.unvalued_benefit_count} 次已核销权益未设估值
-                        </span>
-                        {firstUnvalued && (
-                          <button
-                            type='button'
-                            onClick={() => {
-                              setValuationTarget({
-                                card,
-                                account_id: firstUnvalued.account_id,
-                                definition_id: firstUnvalued.definition_id,
-                                title: firstUnvalued.title,
-                                currency: card.card_currency,
-                              })
-                              setUnitValueInput('')
-                            }}
-                            className='min-h-[36px] shrink-0 font-semibold text-d-accent-light'
-                          >
-                            [去补填]
-                          </button>
-                        )}
-                      </div>
-                    )}
+              {/* 全家汇总卡 */}
+              <div className='rounded-2xl border border-d-border bg-d-surface p-4'>
+                <div className='flex items-center justify-between gap-2'>
+                  <div>
+                    <p className='text-[12px] text-d-muted'>
+                      全家年费 ROI 汇总（折算 {board.display_currency} · 共 {board.cards.length} 张信用卡）
+                    </p>
+                    <p
+                      className={
+                        'num-tabular mt-1 text-[24px] font-bold leading-7 ' +
+                        (netValue >= 0 ? 'text-d-success-ink' : 'text-d-danger-ink')
+                      }
+                    >
+                      净收益 {formatCurrencyAmount(netValue, board.display_currency, true)}
+                    </p>
                   </div>
-                )
-              })
-            )}
-          </div>
-        )
+                  <div className='text-right'>
+                    {pending30dCount > 0 ? (
+                      <span className='rounded-full bg-d-gold-soft px-2.5 py-1 text-[11px] font-semibold text-d-gold'>
+                        30 天内待决策 {pending30dCount} 张
+                      </span>
+                    ) : (
+                      <span className='rounded-full bg-d-subtle px-2.5 py-1 text-[11px] font-semibold text-d-muted'>
+                        {board.window_start} ~ {board.window_end_exclusive}
+                      </span>
+                    )}
+                    <p className='num-tabular mt-1.5 text-[12px] font-semibold text-d-muted'>
+                      {overallRoiPct !== null
+                        ? `${isFullyConverted ? '整体 ROI ' : '已折算 ROI '}${formatPct1(overallRoiPct, true)}`
+                        : '整体零年费成本'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className='mt-3 grid grid-cols-3 gap-2 rounded-xl bg-d-subtle p-3'>
+                  <div>
+                    <p className='text-[11px] text-d-muted'>年费总成本</p>
+                    <p className='num-tabular mt-0.5 text-[14px] font-bold text-d-text'>
+                      {formatCurrencyAmount(annualFeeCost, board.display_currency)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className='text-[11px] text-d-muted'>权益估值</p>
+                    <p className='num-tabular mt-0.5 text-[14px] font-bold text-d-accent-light'>
+                      {formatCurrencyAmount(redeemedValue, board.display_currency)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className='text-[11px] text-d-muted'>优惠与返现</p>
+                    <p className='num-tabular mt-0.5 text-[14px] font-bold text-d-gold'>
+                      {formatCurrencyAmount(promoAndManualValue, board.display_currency)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 单卡列表 */}
+              {visibleCards.length === 0 ? (
+                <div className='rounded-2xl border border-dashed border-d-border bg-d-surface p-8 text-center text-[13px] text-d-muted'>
+                  当前筛选下暂无信用卡记录
+                </div>
+              ) : (
+                visibleCards.map((card) => {
+                  const meta = ROI_DECISION_META[card.decision_tag]
+                  const tail = formatCardTail(card.card_number_last4)
+                  const firstUnvalued = card.unvalued_benefit_refs[0]
+                  const cardRewardTotal = card.promo_and_reward_value + card.manual_reward_value
+                  return (
+                    <div
+                      key={card.card_id}
+                      className='rounded-2xl border border-d-border bg-d-surface p-4'
+                    >
+                      <div className='flex items-start justify-between gap-3'>
+                        <div className='min-w-0 flex-1'>
+                          <div className='flex flex-wrap items-center gap-1.5'>
+                            <span
+                              className={'rounded-full px-2 py-0.5 text-[11px] font-semibold ' + meta.badgeClass}
+                            >
+                              {card.decision_label || meta.label}
+                            </span>
+                            {card.days_until_annual_fee != null &&
+                              card.days_until_annual_fee >= 0 &&
+                              card.days_until_annual_fee <= 30 && (
+                                <span className='rounded-full bg-d-danger-soft px-2 py-0.5 text-[11px] font-semibold text-d-danger-ink'>
+                                  距年费剩 {card.days_until_annual_fee} 天
+                                </span>
+                              )}
+                          </div>
+                          <Link
+                            href={`/cards/${card.card_id}?section=roi`}
+                            className='mt-1.5 flex items-center gap-1 text-[15px] font-bold text-d-text hover:text-d-accent-light'
+                          >
+                            <span className='truncate'>
+                              {card.bank_name} · {card.card_name}
+                              {tail ? ` (${tail})` : ''}
+                            </span>
+                            <ChevronRightIcon size={16} className='shrink-0 text-d-muted' />
+                          </Link>
+                          <p className='mt-0.5 text-[12px] text-d-muted'>
+                            {card.holder_name} · {card.card_currency} · 窗口 {card.period_start} ~ {card.period_end_exclusive}
+                          </p>
+                        </div>
+
+                        <div className='shrink-0 text-right'>
+                          <p
+                            className={
+                              'num-tabular text-[16px] font-bold ' +
+                              (card.net_value >= 0 ? 'text-d-success-ink' : 'text-d-danger-ink')
+                            }
+                          >
+                            {formatCurrencyAmount(card.net_value, card.card_currency, true)}
+                          </p>
+                          <p className='num-tabular text-[11px] text-d-muted'>
+                            {card.annual_fee_cost <= 0
+                              ? card.cost_basis === 'waived'
+                                ? '已免年费'
+                                : '免年费'
+                              : `ROI ${formatPct1(card.roi_pct, true)} · 覆盖 ${formatPct1(card.coverage_pct)}`}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className='mt-3 grid grid-cols-3 gap-2 rounded-xl bg-d-subtle px-3 py-2 text-[12px]'>
+                        <div>
+                          <p className='text-[11px] text-d-muted'>年费成本</p>
+                          <p className='num-tabular font-semibold text-d-text'>
+                            {formatCurrencyAmount(card.annual_fee_cost, card.card_currency)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className='text-[11px] text-d-muted'>权益估值</p>
+                          <p className='num-tabular font-semibold text-d-accent-light'>
+                            {formatCurrencyAmount(card.redeemed_benefits_value, card.card_currency)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className='text-[11px] text-d-muted'>优惠返现</p>
+                          <p className='num-tabular font-semibold text-d-gold'>
+                            {formatCurrencyAmount(cardRewardTotal, card.card_currency)}
+                          </p>
+                        </div>
+                      </div>
+
+                      {card.unvalued_benefit_count > 0 && (
+                        <div className='mt-2.5 flex items-center justify-between gap-2 rounded-xl border border-d-border bg-d-bg px-3 py-2 text-[12px]'>
+                          <span className='text-d-warn-ink'>
+                            另有 {card.unvalued_benefit_count} 次已核销权益未设估值
+                          </span>
+                          {firstUnvalued && (
+                            <button
+                              type='button'
+                              onClick={() => {
+                                setValuationTarget({
+                                  card,
+                                  account_id: firstUnvalued.account_id,
+                                  definition_id: firstUnvalued.definition_id,
+                                  title: `已核销权益（${firstUnvalued.quantity} 次）`,
+                                  currency: card.card_currency,
+                                })
+                                setUnitValueInput('')
+                              }}
+                              className='min-h-[36px] shrink-0 font-semibold text-d-accent-light'
+                            >
+                              [去补填]
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          )
+        })()
       )}
 
       {/* 单次估值补填弹窗 */}

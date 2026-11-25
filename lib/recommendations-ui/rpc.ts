@@ -6,7 +6,6 @@ import type {
   CardCycleSpendEstimate,
   CardProductStructuredRulesDraft,
   ExtendedCardProductPatch,
-  ExtendedPromoUsage,
   ExtendedUpdateCardPatch,
   FamilyAnnualFeeRoiBoard,
   PurchaseRecommendationInput,
@@ -108,7 +107,7 @@ export function upsertPromoUsageCashback(input: {
           usage_id?: string
         },
       ],
-      ExtendedPromoUsage
+      { id: string; usage_id: string }
     >
   >('recommendations', 'upsertPromoUsageCashback', input)
 }

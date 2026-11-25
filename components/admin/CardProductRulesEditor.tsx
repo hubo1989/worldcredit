@@ -219,8 +219,15 @@ export function CardProductRulesEditor({ product, onChange }: Props) {
                 ? ANNUAL_FEE_CYCLE_LABELS[aiDraft.annual_fee_cycle_type]
                 : '未指定'}
             </p>
-            {aiDraft.confidence_note && (
-              <p className='text-d-warn-ink'>说明：{aiDraft.confidence_note}</p>
+            {(aiDraft.notes || aiDraft.confidence_note) && (
+              <p className='text-d-warn-ink'>
+                {aiDraft.provenance === 'official'
+                  ? '官网依据：'
+                  : aiDraft.provenance === 'model'
+                    ? '模型参考：'
+                    : '说明：'}
+                {aiDraft.notes || aiDraft.confidence_note}
+              </p>
             )}
           </div>
         </div>

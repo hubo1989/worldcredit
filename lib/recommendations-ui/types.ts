@@ -280,6 +280,27 @@ export interface RoiUsageEntry {
   needs_valuation?: boolean
 }
 
+export interface FxSumDTO {
+  converted_currency: string
+  by_currency: Record<string, number>
+  total: number
+  converted: boolean
+  unconverted_currencies: string[]
+  mixed: boolean
+}
+
+export interface UnvaluedBenefitRef {
+  account_id: string | null
+  definition_id: string | null
+  quantity: number
+}
+
+export interface RoiItemCounts {
+  benefit_usages: number
+  promo_usages: number
+  task_results: number
+}
+
 export interface CardAnnualFeeRoiDetail {
   card_id: string
   holder_id: string
@@ -288,15 +309,12 @@ export interface CardAnnualFeeRoiDetail {
   card_name: string
   card_number_last4: string | null
   card_currency: string
-  period_mode_requested: 'current_cycle' | 'last_12m' | 'year'
-  window_mode_resolved: 'current_cycle' | 'last_12m' | 'last_12m_fallback' | 'year'
-  window_start: string
-  window_end_exclusive: string
-  next_annual_fee_date: string | null
-  days_until_annual_fee: number | null
-  annual_fee_status: AnnualFeeStatus
-  cost_basis: 'waived' | 'actual_paid' | 'estimated_nominal' | 'zero_fee'
+  period_mode: 'current_cycle' | 'last_12m' | 'year'
+  period_start: string
+  period_end_exclusive: string
+  window_mode_resolved: 'exact_cycle' | 'last_12m_fallback' | 'calendar_year' | string
   annual_fee_cost: number
+  cost_basis: 'waived' | 'actual_paid' | 'estimated_nominal' | 'zero_fee'
   redeemed_benefits_value: number
   promo_and_reward_value: number
   manual_reward_value: number
@@ -305,44 +323,44 @@ export interface CardAnnualFeeRoiDetail {
   coverage_pct: number | null
   roi_pct: number | null
   decision_tag: RoiDecisionTag
+  decision_label?: string
   unvalued_benefit_count: number
-  unvalued_opportunities: Array<{
-    account_id: string | null
-    definition_id: string | null
-    title: string
-    used_count: number
-  }>
+  unvalued_benefit_refs: UnvaluedBenefitRef[]
+  item_counts?: RoiItemCounts
+  next_annual_fee_date?: string | null
+  days_until_annual_fee?: number | null
+  annual_fee_status?: AnnualFeeStatus | null
   entries?: RoiUsageEntry[]
 }
 
 export interface FamilyAnnualFeeRoiBoard {
-  display_currency: string
   period_mode: 'last_12m' | 'current_cycle' | 'year'
+  window_start: string
+  window_end_exclusive: string
+  display_currency: string
   fx_available: boolean
-  unconverted_currencies: string[]
-  summary: {
-    card_count: number
-    pending_decision_30d_count: number
-    total_annual_fee_cost: number
-    total_redeemed_benefits_value: number
-    total_promo_and_reward_value: number
-    total_value: number
-    net_value: number
-    overall_roi_pct: number | null
-    overall_coverage_pct: number | null
-  }
   cards: CardAnnualFeeRoiDetail[]
+  totals: {
+    annual_fee_cost: FxSumDTO
+    redeemed_benefits_value: FxSumDTO
+    promo_and_reward_value: FxSumDTO
+    manual_reward_value: FxSumDTO
+    total_value: FxSumDTO
+    net_value: FxSumDTO
+  }
+  unconverted_currencies: string[]
+  warnings: string[]
 }
 
 export interface CardCycleSpendEstimate {
   card_id: string
+  period_start: string
+  period_end_exclusive: string
+  window_mode_resolved: string
+  spend_amount: number
+  spend_count: number
   currency: string
-  window_start: string
-  window_end_exclusive: string
-  estimated_amount: number
-  estimated_count: number
-  source: 'bill_items_estimate' | 'bills_estimate' | 'none'
-  note: string
+  source: 'bill_items' | 'bills' | 'none'
 }
 
 export interface CardProductStructuredRulesDraft {
@@ -351,6 +369,8 @@ export interface CardProductStructuredRulesDraft {
   reward_rules: RewardRulesV1 | null
   annual_fee_cycle_type: AnnualFeeCycleType | null
   annual_fee_waiver_rules: AnnualFeeWaiverRuleV1 | null
+  provenance?: 'official' | 'model'
+  notes?: string | null
   confidence_note?: string | null
 }
 

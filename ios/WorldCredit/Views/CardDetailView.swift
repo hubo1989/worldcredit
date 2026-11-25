@@ -780,7 +780,8 @@ struct CardDetailView: View {
 
                 LabeledContent("年费成本", value: DashboardMoney.format(roi.annualFeeCost, currency: roi.cardCurrency))
                 LabeledContent("权益估值", value: DashboardMoney.format(roi.redeemedBenefitsValue, currency: roi.cardCurrency))
-                LabeledContent("优惠与返现", value: DashboardMoney.format(roi.promoAndRewardValue, currency: roi.cardCurrency))
+                LabeledContent("优惠与返现", value: DashboardMoney.format(roi.promoAndRewardValue + roi.manualRewardValue, currency: roi.cardCurrency))
+                LabeledContent("统计区间", value: "\(roi.periodStart) ~ \(roi.periodEndExclusive)")
                 LabeledContent("净 ROI") {
                     if let roiPct = roi.roiPct {
                         Text(String(format: "%+.1f%%", roiPct))

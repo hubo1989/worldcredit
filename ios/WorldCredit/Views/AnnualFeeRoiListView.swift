@@ -51,23 +51,45 @@ struct AnnualFeeRoiListView: View {
                     }
                 }
 
-                Section("全家年费 ROI 汇总（\(board.displayCurrency)）") {
+                if !board.warnings.isEmpty {
+                    Section {
+                        ForEach(board.warnings, id: \.self) { warning in
+                            Text(warning)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                let netValue = board.totals.netValue.total
+                let annualFeeCost = board.totals.annualFeeCost.total
+                let redeemedValue = board.totals.redeemedBenefitsValue.total
+                let promoAndManualValue = board.totals.promoAndRewardValue.total + board.totals.manualRewardValue.total
+                let pending30d = board.cards.filter { ($0.daysUntilAnnualFee ?? -1) >= 0 && ($0.daysUntilAnnualFee ?? 999) <= 30 }.count
+
+                Section("全家年费 ROI 汇总（\(board.displayCurrency) · \(board.cards.count) 张）") {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("净收益")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text(DashboardMoney.format(board.summary.netValue, currency: board.displayCurrency))
+                            Text(DashboardMoney.format(netValue, currency: board.displayCurrency))
                                 .font(.title2.bold())
-                                .foregroundStyle(board.summary.netValue >= 0 ? WCColors.successInk : WCColors.dangerInk)
+                                .foregroundStyle(netValue >= 0 ? WCColors.successInk : WCColors.dangerInk)
                         }
                         Spacer()
                         VStack(alignment: .trailing, spacing: 4) {
-                            Text("30 天内待决策 \(board.summary.pendingDecision30dCount) 张")
-                                .font(.caption.bold())
-                                .foregroundStyle(WCColors.warningInk)
-                            if let roi = board.summary.overallRoiPct {
-                                Text(String(format: "整体 ROI %+.1f%%", roi))
+                            if pending30d > 0 {
+                                Text("30 天内待决策 \(pending30d) 张")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(WCColors.warningInk)
+                            } else {
+                                Text("\(board.windowStart) ~ \(board.windowEndExclusive)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let roi = board.overallRoiPct {
+                                Text(String(format: "%@ %+.1f%%", board.unconvertedCurrencies.isEmpty ? "整体 ROI" : "已折算 ROI", roi))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -75,9 +97,9 @@ struct AnnualFeeRoiListView: View {
                     }
 
                     HStack(spacing: 12) {
-                        summaryCell("年费成本", board.summary.totalAnnualFeeCost, board.displayCurrency)
-                        summaryCell("权益估值", board.summary.totalRedeemedBenefitsValue, board.displayCurrency)
-                        summaryCell("优惠返现", board.summary.totalPromoAndRewardValue, board.displayCurrency)
+                        summaryCell("年费成本", annualFeeCost, board.displayCurrency)
+                        summaryCell("权益估值", redeemedValue, board.displayCurrency)
+                        summaryCell("优惠返现", promoAndManualValue, board.displayCurrency)
                     }
                 }
 
@@ -104,7 +126,7 @@ struct AnnualFeeRoiListView: View {
                                     }
 
                                     HStack(spacing: 6) {
-                                        Text(card.decisionTag.label)
+                                        Text(card.decisionLabel ?? card.decisionTag.label)
                                             .font(.caption2.bold())
                                             .padding(.horizontal, 6)
                                             .padding(.vertical, 2)
@@ -113,6 +135,10 @@ struct AnnualFeeRoiListView: View {
                                             Text("距年费剩 \(days) 天")
                                                 .font(.caption2.bold())
                                                 .foregroundStyle(WCColors.dangerInk)
+                                        } else {
+                                            Text("\(card.periodStart) ~ \(card.periodEndExclusive)")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
                                         }
                                         Spacer()
                                         if let roiPct = card.roiPct {

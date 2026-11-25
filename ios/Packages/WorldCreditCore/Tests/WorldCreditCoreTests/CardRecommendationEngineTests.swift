@@ -170,4 +170,161 @@ struct CardRecommendationEngineTests {
         #expect(noFxOutput.fxAvailable == false)
         #expect(noFxOutput.topRecommendations.first?.creditCheck == "unknown_fx")
     }
+
+    @Test("Decodes real PR #65 ROI board, card ROI detail, cycle spend estimate, and optional external fixture")
+    func testPr65RpcContractDecoding() throws {
+        let boardJson = #"""
+        {
+          "period_mode": "last_12m",
+          "window_start": "2025-11-25",
+          "window_end_exclusive": "2026-11-26",
+          "display_currency": "CNY",
+          "fx_available": true,
+          "cards": [
+            {
+              "card_id": "qa-cny",
+              "holder_id": "qa-h1",
+              "holder_name": "QA Admin",
+              "bank_name": "QA Bank",
+              "card_name": "QA CNY",
+              "card_number_last4": null,
+              "card_currency": "CNY",
+              "period_mode": "last_12m",
+              "period_start": "2025-11-25",
+              "period_end_exclusive": "2026-11-26",
+              "window_mode_resolved": "last_12m_fallback",
+              "annual_fee_cost": 3600,
+              "cost_basis": "estimated_nominal",
+              "redeemed_benefits_value": 1300,
+              "promo_and_reward_value": 2800,
+              "manual_reward_value": 0,
+              "total_value": 4100,
+              "net_value": 500,
+              "coverage_pct": 113.9,
+              "roi_pct": 13.9,
+              "decision_tag": "keep_high_roi",
+              "decision_label": "高 ROI · 建议续卡",
+              "unvalued_benefit_count": 0,
+              "unvalued_benefit_refs": [],
+              "item_counts": { "benefit_usages": 2, "promo_usages": 1, "task_results": 0 }
+            },
+            {
+              "card_id": "qa-zero",
+              "holder_id": "qa-h2",
+              "holder_name": "QA Member",
+              "bank_name": "QA Bank",
+              "card_name": "QA Unconfigured",
+              "card_number_last4": null,
+              "card_currency": "CNY",
+              "period_mode": "last_12m",
+              "period_start": "2025-11-25",
+              "period_end_exclusive": "2026-11-26",
+              "window_mode_resolved": "last_12m_fallback",
+              "annual_fee_cost": 0,
+              "cost_basis": "zero_fee",
+              "redeemed_benefits_value": 0,
+              "promo_and_reward_value": 0,
+              "manual_reward_value": 200,
+              "total_value": 200,
+              "net_value": 200,
+              "coverage_pct": null,
+              "roi_pct": null,
+              "decision_tag": "free_earning",
+              "decision_label": "纯赚持有",
+              "unvalued_benefit_count": 3,
+              "unvalued_benefit_refs": [
+                { "account_id": "qa-a2", "definition_id": "qa-unvalued", "quantity": 3 }
+              ],
+              "item_counts": { "benefit_usages": 1, "promo_usages": 0, "task_results": 0 }
+            }
+          ],
+          "totals": {
+            "annual_fee_cost": { "converted_currency": "CNY", "by_currency": { "CNY": 3600, "USD": 550 }, "total": 7560, "converted": true, "unconverted_currencies": [], "mixed": true },
+            "redeemed_benefits_value": { "converted_currency": "CNY", "by_currency": { "CNY": 1300 }, "total": 1300, "converted": true, "unconverted_currencies": [], "mixed": false },
+            "promo_and_reward_value": { "converted_currency": "CNY", "by_currency": { "CNY": 2800 }, "total": 2800, "converted": true, "unconverted_currencies": [], "mixed": false },
+            "manual_reward_value": { "converted_currency": "CNY", "by_currency": { "USD": 300, "CNY": 200 }, "total": 2360, "converted": true, "unconverted_currencies": [], "mixed": true },
+            "total_value": { "converted_currency": "CNY", "by_currency": { "CNY": 4300, "USD": 300 }, "total": 6460, "converted": true, "unconverted_currencies": [], "mixed": true },
+            "net_value": { "converted_currency": "CNY", "by_currency": { "CNY": 700, "USD": -250 }, "total": -1100, "converted": true, "unconverted_currencies": [], "mixed": true }
+          },
+          "unconverted_currencies": [],
+          "warnings": []
+        }
+        """#
+        let cardJson = #"""
+        {
+          "card_id": "qa-cny",
+          "holder_id": "qa-h1",
+          "holder_name": "QA Admin",
+          "bank_name": "QA Bank",
+          "card_name": "QA CNY",
+          "card_number_last4": null,
+          "card_currency": "CNY",
+          "period_mode": "current_cycle",
+          "period_start": "2025-12-25",
+          "period_end_exclusive": "2026-12-25",
+          "window_mode_resolved": "exact_cycle",
+          "annual_fee_cost": 3600,
+          "cost_basis": "estimated_nominal",
+          "redeemed_benefits_value": 1300,
+          "promo_and_reward_value": 2800,
+          "manual_reward_value": 0,
+          "total_value": 4100,
+          "net_value": 500,
+          "coverage_pct": 113.9,
+          "roi_pct": 13.9,
+          "decision_tag": "keep_high_roi",
+          "decision_label": "高 ROI · 建议续卡",
+          "unvalued_benefit_count": 0,
+          "unvalued_benefit_refs": [],
+          "item_counts": { "benefit_usages": 2, "promo_usages": 1, "task_results": 0 }
+        }
+        """#
+        let estimateJson = #"""
+        {
+          "card_id": "qa-cny",
+          "period_start": "2025-12-25",
+          "period_end_exclusive": "2026-12-25",
+          "window_mode_resolved": "exact_cycle",
+          "spend_amount": 800,
+          "spend_count": 2,
+          "currency": "CNY",
+          "source": "bill_items"
+        }
+        """#
+
+        let decoder = JSONDecoder()
+        let board = try decoder.decode(FamilyAnnualFeeRoiBoard.self, from: Data(boardJson.utf8))
+        #expect(board.totals.netValue.total == -1100)
+        #expect(board.cards.count == 2)
+        #expect(board.cards[1].unvaluedBenefitRefs.first?.quantity == 3)
+        #expect(board.cards[1].annualFeeStatus == nil)
+
+        let card = try decoder.decode(CardAnnualFeeRoiDetail.self, from: Data(cardJson.utf8))
+        #expect(card.periodStart == "2025-12-25")
+        #expect(card.periodEndExclusive == "2026-12-25")
+        #expect(card.netValue == 500)
+        #expect(card.itemCounts?.benefitUsages == 2)
+
+        let estimate = try decoder.decode(CardCycleSpendEstimate.self, from: Data(estimateJson.utf8))
+        #expect(estimate.spendAmount == 800)
+        #expect(estimate.spendCount == 2)
+        #expect(estimate.periodStart == "2025-12-25")
+
+        if let fixturePath = ProcessInfo.processInfo.environment["HUB179_ROI_FIXTURE"] {
+            struct Envelope<T: Decodable>: Decodable { let data: T }
+            struct FixtureRoot: Decodable {
+                let board: Envelope<FamilyAnnualFeeRoiBoard>
+                let card: Envelope<CardAnnualFeeRoiDetail>
+                let estimate: Envelope<CardCycleSpendEstimate>
+                let recommendation: Envelope<RecommendationEngineOutput>
+            }
+            let fixtureData = try Data(contentsOf: URL(fileURLWithPath: fixturePath))
+            let fixture = try decoder.decode(FixtureRoot.self, from: fixtureData)
+            #expect(fixture.board.data.totals.netValue.total == -1100)
+            #expect(fixture.card.data.netValue == 500)
+            #expect(fixture.estimate.data.spendAmount == 800)
+            #expect(fixture.estimate.data.spendCount == 2)
+            #expect(fixture.recommendation.data.topRecommendations.first?.cardId == "qa-cny")
+        }
+    }
 }
