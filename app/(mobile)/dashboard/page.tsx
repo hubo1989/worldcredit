@@ -9,7 +9,7 @@ import {
   type BillDashboardItem,
 } from "@/lib/api/bills";
 import { getHolders } from "@/lib/api/holders";
-import { getCardsBasicByHolders } from "@/lib/api/cards";
+import { getAllCardsWithProduct } from "@/lib/api/cards";
 import {
   getRecurringPayables,
   payRecurringPayable,
@@ -74,7 +74,7 @@ export default function DashboardPage() {
   const [payables, setPayables] = useState<PayableWithStatus[]>([]);
   const [installmentPlans, setInstallmentPlans] = useState<InstallmentPlanWithSummary[]>([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
-  const [cards, setCards] = useState<Array<{ id: string; holder_id: string }>>([]);
+  const [cards, setCards] = useState<Array<{ id: string; holder_id: string; account_id?: string | null }>>([]);
   const unreadSyncedRef = useRef(false);
 
   // ---- 交互状态 ----
@@ -126,9 +126,10 @@ export default function DashboardPage() {
     setError(null);
     const shouldSyncUnread = !unreadSyncedRef.current;
     try {
-      // 并行：持卡人 / 账单 / 固定支出 / 未读通知数 / 活跃分期；卡片依赖持卡人 id
-      const [holderList, allBills, payableList, unreadCount, activeInstallments] = await Promise.all([
+      // 并行：持卡人 / 卡片（含 account_id 以支持合并账户分期去重） / 账单 / 固定支出 / 未读通知数 / 活跃分期
+      const [holderList, allCards, allBills, payableList, unreadCount, activeInstallments] = await Promise.all([
         getHolders(user.id),
+        getAllCardsWithProduct(),
         getBillDashboardItems(200, user.id),
         getRecurringPayables(user.id).catch((err) => {
           console.warn("[dashboard] Failed to load recurring payables:", err);
@@ -153,8 +154,10 @@ export default function DashboardPage() {
         getInstallmentPlans({ status: "active" }).catch(() => [] as InstallmentPlanWithSummary[]),
       ]);
       holderList.sort((a, b) => a.created_at.localeCompare(b.created_at));
-      const holderIds = holderList.map((h) => h.id);
-      const cardsRes = holderIds.length > 0 ? await getCardsBasicByHolders(holderIds) : [];
+      const holderIdSet = new Set(holderList.map((h) => h.id));
+      const cardsRes = allCards
+        .filter((c) => holderIdSet.has(c.holder_id))
+        .map((c) => ({ id: c.id, holder_id: c.holder_id, account_id: c.account_id ?? null }));
 
       setHolders(holderList);
       setCards(cardsRes);
@@ -348,12 +351,13 @@ export default function DashboardPage() {
     () =>
       computeThreePartDebtBreakdown({
         bills: visibleBills,
+        cards,
         payables: visiblePayables,
         installmentPlans: visibleInstallmentPlans,
         targetCurrency: displayCurrency,
         rates: fxRates,
       }),
-    [visibleBills, visiblePayables, visibleInstallmentPlans, displayCurrency, fxRates],
+    [visibleBills, cards, visiblePayables, visibleInstallmentPlans, displayCurrency, fxRates],
   );
 
   const cardsByHolder = useMemo(() => countCardsByHolder(cards), [cards]);

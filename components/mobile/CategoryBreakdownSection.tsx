@@ -96,11 +96,18 @@ export function CategoryBreakdownSection({
     }
   }
 
+  const getDrilldownItemId = (item: CategoryDrilldownItem) => item.item_id ?? item.id ?? ''
+
   const handleReclassify = async (item: CategoryDrilldownItem, nextCategory: string) => {
-    setSavingItemId(item.id)
+    const itemId = getDrilldownItemId(item)
+    if (!itemId) {
+      setDrillError('明细缺少有效 ID，无法更新分类')
+      return
+    }
+    setSavingItemId(itemId)
     setDrillError(null)
     try {
-      await updateBillItem(item.id, {
+      await updateBillItem(itemId, {
         category: nextCategory ? (nextCategory as SpendCategory) : null,
         remember_merchant: rememberMerchant && Boolean(nextCategory),
       })
@@ -293,12 +300,15 @@ export function CategoryBreakdownSection({
             <p className='py-6 text-center text-[13px] text-d-muted'>暂无该分类下的明细记录</p>
           ) : (
             <div className='flex flex-col gap-2.5'>
-              {drillItems.map((item) => {
+              {drillItems.map((item, idx) => {
+                const itemId = getDrilldownItemId(item)
                 const itemSym = currencySymbol(item.currency)
                 const isRefund = item.item_type === 'refund'
+                const selectVal =
+                  item.category === 'uncategorized' || !item.category ? '' : item.category
                 return (
                   <div
-                    key={item.id}
+                    key={itemId || `${item.bill_id}-${idx}`}
                     className='rounded-xl border border-d-border bg-d-subtle p-3'
                   >
                     <div className='flex items-start justify-between gap-2'>
@@ -329,8 +339,8 @@ export function CategoryBreakdownSection({
                     <div className='mt-2'>
                       <SelectField
                         aria-label={`修改 ${item.description} 分类`}
-                        disabled={savingItemId === item.id}
-                        value={item.category ?? ''}
+                        disabled={!itemId || savingItemId === itemId}
+                        value={selectVal}
                         onChange={(e) => void handleReclassify(item, e.target.value)}
                         options={CATEGORY_OPTIONS}
                       />

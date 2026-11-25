@@ -195,12 +195,18 @@ export function CashflowForecastSection({ holderId, displayCurrency }: Props) {
               {/* 到期流水列表 */}
               <div className='flex flex-col gap-1.5'>
                 {forecast.timeline.map((item) => {
-                  const badge = SOURCE_BADGES[item.source_type]
+                  const source = item.source ?? item.source_type ?? 'bill'
+                  const refId = item.ref_id ?? item.source_id ?? item.id ?? ''
+                  const badge = SOURCE_BADGES[source] ?? {
+                    label: String(source || '待还'),
+                    cls: 'bg-d-subtle text-d-muted',
+                  }
                   const sym = currencySymbol(item.currency)
+                  const itemKey = `${source}:${refId}:${item.due_date}:${item.period ?? ''}`
                   const href =
-                    item.source_type === 'bill'
-                      ? `/bills/${item.source_id}`
-                      : item.source_type === 'installment' && item.card_id
+                    source === 'bill' && refId
+                      ? `/bills/${refId}`
+                      : source === 'installment' && item.card_id
                         ? `/cards/${item.card_id}`
                         : null
 
@@ -214,7 +220,7 @@ export function CashflowForecastSection({ holderId, displayCurrency }: Props) {
                               badge.cls
                             }
                           >
-                            {item.source_type === 'installment' &&
+                            {source === 'installment' &&
                             item.period_index != null &&
                             item.total_periods != null
                               ? `分期 ${item.period_index}/${item.total_periods}`
@@ -229,6 +235,7 @@ export function CashflowForecastSection({ holderId, displayCurrency }: Props) {
                           {item.days_until_due === 0
                             ? '今天到期'
                             : `${item.days_until_due} 天后`}
+                          {item.card_tail ? ` · 尾号 ${item.card_tail}` : ''}
                           {item.holder_name ? ` · ${item.holder_name}` : ''}
                           {item.subtitle ? ` · ${item.subtitle}` : ''}
                         </p>
@@ -243,11 +250,11 @@ export function CashflowForecastSection({ holderId, displayCurrency }: Props) {
                   )
 
                   return href ? (
-                    <Link key={item.id} href={href} className='block'>
+                    <Link key={itemKey} href={href} className='block'>
                       {content}
                     </Link>
                   ) : (
-                    <div key={item.id}>{content}</div>
+                    <div key={itemKey}>{content}</div>
                   )
                 })}
               </div>

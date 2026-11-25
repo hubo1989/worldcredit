@@ -1,4 +1,3 @@
-import { format } from 'date-fns'
 import {
   convert,
   normalizeCurrency,
@@ -7,26 +6,27 @@ import {
   type FxRates,
 } from '@/lib/fx'
 import {
-  addMonthsToPayablePeriod,
-  billEffectiveDueDate,
-  billEffectiveMinPayment,
-  billEffectiveStatementDate,
-  effectiveBillAmount,
-  getLocalTodayString,
-  isBillUnissued,
-  payableDueDate,
-} from '@/lib/utils'
+  buildExistingBillScopes,
+  computeActiveInstallmentsExposure,
+  generateInstallmentSchedule,
+  nextInstallmentPeriod,
+  remainingInstallmentPrincipal,
+  type InstallmentPlanLike,
+} from '@/lib/finance/installments'
+import {
+  estimateBillRepaymentHealth,
+  simulateRepaymentScenarios,
+  type BillRepaymentHealth,
+  type RepaymentHealthInput,
+} from '@/lib/finance/rolling-interest'
 import {
   SPEND_CATEGORIES,
   SPEND_CATEGORY_LABELS,
-  type BillItem,
   type BillItemInput,
   type BillItemType,
   type FamilyStatementReport,
   type InstallmentFeeMode,
-  type InstallmentPeriod,
   type InstallmentPlan,
-  type PaymentWithFx,
   type SpendCategory,
 } from './types'
 
@@ -752,7 +752,7 @@ export function parseCsvBillItems(
 }
 
 // ---------------------------------------------------------------------------
-// 2. Installment schedule & exposure pure calculations
+// 2 & 3. Installment & rolling interest helpers (direct re-export from HUB-169)
 // ---------------------------------------------------------------------------
 
 export const INSTALLMENT_FEE_MODE_LABELS: Record<InstallmentFeeMode, string> = {
@@ -761,420 +761,17 @@ export const INSTALLMENT_FEE_MODE_LABELS: Record<InstallmentFeeMode, string> = {
   equal_installment_apr: '等额本息 (APR)',
 }
 
-export function generateInstallmentSchedule(plan: {
-  principal_amount: number
-  total_periods: number
-  paid_periods: number
-  fee_mode: InstallmentFeeMode
-  fee_charge_mode: 'per_period' | 'upfront'
-  fee_rate_per_period?: number | null
-  custom_period_fee?: number | null
-  apr?: number | null
-  start_month: string
-  due_day: number
-  due_month_offset: 0 | 1
-}): InstallmentPeriod[] {
-  const N = Math.max(1, Math.floor(plan.total_periods))
-  const P = round2(Math.max(0, plan.principal_amount))
-  const schedule: InstallmentPeriod[] = []
-  let remaining = P
-
-  const monthlyRate = plan.fee_mode === 'equal_installment_apr' ? (plan.apr ?? 0) / 12 : 0
-  let equalA = 0
-  if (plan.fee_mode === 'equal_installment_apr' && monthlyRate > 0) {
-    const pow = Math.pow(1 + monthlyRate, N)
-    equalA = round2((P * monthlyRate * pow) / (pow - 1))
-  }
-
-  const basePrincipal = round2(P / N)
-  const fixedFee =
-    plan.custom_period_fee != null
-      ? round2(plan.custom_period_fee)
-      : round2(P * (plan.fee_rate_per_period ?? 0))
-
-  for (let i = 1; i <= N; i++) {
-    let principal: number
-    let fee: number
-
-    if (plan.fee_mode === 'equal_installment_apr' && monthlyRate > 0) {
-      fee = round2(remaining * monthlyRate)
-      if (i === N) {
-        principal = round2(remaining)
-      } else {
-        principal = round2(Math.min(remaining, Math.max(0, equalA - fee)))
-      }
-    } else {
-      principal = i === N ? round2(remaining) : basePrincipal
-      if (plan.fee_mode === 'equal_principal_fee') {
-        if (plan.fee_charge_mode === 'upfront') {
-          fee = i === 1 ? fixedFee : 0
-        } else {
-          fee = fixedFee
-        }
-      } else {
-        fee = 0
-      }
-    }
-
-    remaining = round2(Math.max(0, remaining - principal))
-    const billMonth = addMonthsToPayablePeriod(plan.start_month, i - 1)
-    const dueMonth = addMonthsToPayablePeriod(billMonth, plan.due_month_offset)
-    const dueDate = format(payableDueDate(plan.due_day, dueMonth), 'yyyy-MM-dd')
-
-    schedule.push({
-      period_index: i,
-      bill_month: billMonth,
-      due_date: dueDate,
-      principal,
-      fee,
-      total: round2(principal + fee),
-      remaining_principal_after: remaining,
-      is_paid: i <= plan.paid_periods,
-    })
-  }
-
-  return schedule
-}
-
-export function computeActiveInstallmentsExposure(
-  plans: ReadonlyArray<InstallmentPlan>,
-  existingBillScopes: Set<string>,
-  cardAccountMap?: Map<string, string | null>,
-): {
-  unbilledByCardAndPlan: Map<string, { unbilledPrincipal: number; periods: InstallmentPeriod[] }>
-  unbilledEntries: Array<{ plan: InstallmentPlan; amount: number; currency: string }>
-} {
-  const unbilledByCardAndPlan = new Map<
-    string,
-    { unbilledPrincipal: number; periods: InstallmentPeriod[] }
-  >()
-  const unbilledEntries: Array<{ plan: InstallmentPlan; amount: number; currency: string }> = []
-
-  for (const plan of plans) {
-    if (plan.status !== 'active') continue
-    const schedule = generateInstallmentSchedule(plan)
-    const accountId = cardAccountMap?.get(plan.card_id) ?? null
-    let unbilledPrincipal = 0
-    const periods: InstallmentPeriod[] = []
-
-    for (const p of schedule) {
-      if (p.is_paid) continue
-      const cardScope = `card:${plan.card_id}:${p.bill_month}`
-      const accScope = accountId ? `acc:${accountId}:${p.bill_month}` : null
-      const covered =
-        plan.billing_mode === 'included_in_statement' &&
-        (existingBillScopes.has(cardScope) || (accScope !== null && existingBillScopes.has(accScope)))
-      periods.push({ ...p, covered_by_statement: covered })
-      if (!covered) {
-        unbilledPrincipal = round2(unbilledPrincipal + p.principal)
-      }
-    }
-
-    unbilledByCardAndPlan.set(plan.id, { unbilledPrincipal, periods })
-    if (unbilledPrincipal > 0) {
-      unbilledEntries.push({
-        plan,
-        amount: unbilledPrincipal,
-        currency: plan.currency,
-      })
-    }
-  }
-
-  return { unbilledByCardAndPlan, unbilledEntries }
-}
-
-// ---------------------------------------------------------------------------
-// 3. Rolling interest & repayment health pure engine
-// ---------------------------------------------------------------------------
-
-function calendarDaysBetween(startIso: string, endIso: string): number {
-  const s = new Date(`${startIso.slice(0, 10)}T00:00:00Z`).getTime()
-  const e = new Date(`${endIso.slice(0, 10)}T00:00:00Z`).getTime()
-  if (!Number.isFinite(s) || !Number.isFinite(e)) return 0
-  return Math.max(0, Math.round((e - s) / 86_400_000))
-}
-
-export interface BillRepaymentHealth {
-  applicable: boolean
-  tier: 'A_items' | 'B_statement_fallback'
-  effective_amount: number
-  total_paid: number
-  remaining_amount: number
-  min_payment: number | null
-  min_payment_status: 'unset' | 'covered' | 'uncovered'
-  uncovered_min: number
-  is_fully_paid: boolean
-  is_overdue: boolean
-  estimated_interest: number
-  daily_rate: number
-  estimate_date: string
-  used_fallback_date: boolean
-  interest_bearing_principal: number
-}
-
-export function estimateBillRepaymentHealth(input: {
-  bill: {
-    bill_month: string
-    bill_amount: number
-    bill_amount_override?: number | null
-    min_payment?: number | null
-    min_payment_override?: number | null
-    statement_date?: string | null
-    statement_date_override?: string | null
-    statement_start?: string | null
-    statement_end?: string | null
-    due_date: string
-    due_date_override?: string | null
-  }
-  cardType?: 'credit' | 'loan'
-  items: ReadonlyArray<BillItem>
-  payments: ReadonlyArray<Pick<PaymentWithFx, 'amount' | 'paid_at'>>
-  dailyRate?: number
-  estimateDate?: string
-}): BillRepaymentHealth {
-  const today = input.estimateDate || getLocalTodayString('Asia/Shanghai')
-  const dailyRate = input.dailyRate ?? 0.0005
-  const effectiveAmount = round2(effectiveBillAmount(input.bill))
-  const totalPaid = round2(
-    input.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0),
-  )
-  const remaining = round2(Math.max(0, effectiveAmount - totalPaid))
-  const rawMin = billEffectiveMinPayment(input.bill)
-  const minPayment = rawMin != null && rawMin > 0 ? round2(rawMin) : null
-  const dueDate = billEffectiveDueDate(input.bill)
-  const isOverdue = remaining > 0.01 && !isBillUnissued(input.bill) && dueDate < today
-
-  if (input.cardType === 'loan') {
-    return {
-      applicable: false,
-      tier: 'B_statement_fallback',
-      effective_amount: effectiveAmount,
-      total_paid: totalPaid,
-      remaining_amount: remaining,
-      min_payment: minPayment,
-      min_payment_status: 'unset',
-      uncovered_min: 0,
-      is_fully_paid: remaining <= 0.01,
-      is_overdue: isOverdue,
-      estimated_interest: 0,
-      daily_rate: dailyRate,
-      estimate_date: today,
-      used_fallback_date: false,
-      interest_bearing_principal: 0,
-    }
-  }
-
-  let minStatus: 'unset' | 'covered' | 'uncovered' = 'unset'
-  let uncoveredMin = 0
-  if (minPayment != null) {
-    if (totalPaid >= minPayment - 0.01) {
-      minStatus = 'covered'
-    } else {
-      minStatus = 'uncovered'
-      uncoveredMin = round2(Math.max(0, minPayment - totalPaid))
-    }
-  }
-
-  const isFullyPaid = totalPaid >= effectiveAmount - 0.01
-  if (isFullyPaid) {
-    return {
-      applicable: true,
-      tier: input.items.some(
-        (it) =>
-          (it.item_type === 'purchase' || it.item_type === 'fee' || it.item_type === 'interest') &&
-          it.amount > 0,
-      )
-        ? 'A_items'
-        : 'B_statement_fallback',
-      effective_amount: effectiveAmount,
-      total_paid: totalPaid,
-      remaining_amount: 0,
-      min_payment: minPayment,
-      min_payment_status: minStatus,
-      uncovered_min: uncoveredMin,
-      is_fully_paid: true,
-      is_overdue: false,
-      estimated_interest: 0,
-      daily_rate: dailyRate,
-      estimate_date: today,
-      used_fallback_date: false,
-      interest_bearing_principal: 0,
-    }
-  }
-
-  const fallbackStmtDate =
-    billEffectiveStatementDate(input.bill) ||
-    input.bill.statement_end ||
-    input.bill.statement_start ||
-    `${input.bill.bill_month}-01`
-
-  const bearingItems = input.items.filter(
-    (it) =>
-      (it.item_type === 'purchase' || it.item_type === 'fee' || it.item_type === 'interest') &&
-      it.amount > 0,
-  )
-
-  let usedFallbackDate = false
-  let tier: 'A_items' | 'B_statement_fallback' = 'B_statement_fallback'
-
-  interface PrincipalSlice {
-    startDate: string
-    amount: number
-  }
-  let slices: PrincipalSlice[]
-
-  if (bearingItems.length > 0) {
-    tier = 'A_items'
-    slices = bearingItems
-      .map((it) => {
-        if (!it.transaction_date) usedFallbackDate = true
-        const startDate = (
-          it.transaction_date ||
-          it.post_date ||
-          billEffectiveStatementDate(input.bill) ||
-          input.bill.statement_end ||
-          dueDate
-        ).slice(0, 10)
-        return { startDate, amount: round2(it.amount) }
-      })
-      .sort((a, b) => a.startDate.localeCompare(b.startDate))
-
-    // Apply refunds & negative adjustments to most recent slices first
-    const totalRefund = input.items.reduce((sum, it) => {
-      if (it.item_type === 'refund') return sum + Math.abs(it.amount)
-      if (it.item_type === 'adjustment' && it.amount < 0) return sum + Math.abs(it.amount)
-      return sum
-    }, 0)
-
-    let remRefund = totalRefund
-    for (let i = slices.length - 1; i >= 0 && remRefund > 0; i--) {
-      const deduct = Math.min(slices[i].amount, remRefund)
-      slices[i].amount = round2(slices[i].amount - deduct)
-      remRefund = round2(remRefund - deduct)
-    }
-    slices = slices.filter((s) => s.amount > 0.005)
-  } else {
-    usedFallbackDate = !billEffectiveStatementDate(input.bill) && !input.bill.statement_end
-    slices = [{ startDate: fallbackStmtDate.slice(0, 10), amount: effectiveAmount }]
-  }
-
-  const sortedPayments = [...input.payments]
-    .filter((p) => Number(p.amount) > 0)
-    .sort((a, b) => (a.paid_at || '').localeCompare(b.paid_at || ''))
-
-  let estimatedInterest = 0
-  let sliceIdx = 0
-
-  for (const pay of sortedPayments) {
-    let remPay = Number(pay.amount) || 0
-    const paidAt = (pay.paid_at || today).slice(0, 10)
-    while (remPay > 0.005 && sliceIdx < slices.length) {
-      const slice = slices[sliceIdx]
-      const cover = Math.min(slice.amount, remPay)
-      const days = calendarDaysBetween(slice.startDate, paidAt)
-      estimatedInterest += cover * dailyRate * days
-      slice.amount = round2(slice.amount - cover)
-      remPay = round2(remPay - cover)
-      if (slice.amount <= 0.005) sliceIdx++
-    }
-  }
-
-  let unpaidPrincipal = 0
-  for (let i = sliceIdx; i < slices.length; i++) {
-    const slice = slices[i]
-    if (slice.amount <= 0.005) continue
-    const days = calendarDaysBetween(slice.startDate, today)
-    estimatedInterest += slice.amount * dailyRate * days
-    unpaidPrincipal = round2(unpaidPrincipal + slice.amount)
-  }
-
-  return {
-    applicable: true,
-    tier,
-    effective_amount: effectiveAmount,
-    total_paid: totalPaid,
-    remaining_amount: remaining,
-    min_payment: minPayment,
-    min_payment_status: minStatus,
-    uncovered_min: uncoveredMin,
-    is_fully_paid: false,
-    is_overdue: isOverdue,
-    estimated_interest: round2(estimatedInterest),
-    daily_rate: dailyRate,
-    estimate_date: today,
-    used_fallback_date: usedFallbackDate,
-    interest_bearing_principal: unpaidPrincipal,
-  }
-}
-
-export function simulateRepaymentScenarios(
-  input: {
-    bill: {
-      bill_month: string
-      bill_amount: number
-      bill_amount_override?: number | null
-      min_payment?: number | null
-      min_payment_override?: number | null
-      statement_date?: string | null
-      statement_date_override?: string | null
-      statement_start?: string | null
-      statement_end?: string | null
-      due_date: string
-      due_date_override?: string | null
-    }
-    cardType?: 'credit' | 'loan'
-    items: ReadonlyArray<BillItem>
-    payments: ReadonlyArray<Pick<PaymentWithFx, 'amount' | 'paid_at'>>
-    dailyRate?: number
-    customPayAmount?: number
-  },
-  nextStatementDate: string,
-) {
-  const baseParams = {
-    bill: input.bill,
-    cardType: input.cardType,
-    items: input.items,
-    payments: input.payments,
-    dailyRate: input.dailyRate,
-    estimateDate: nextStatementDate,
-  }
-  const effective = effectiveBillAmount(input.bill)
-  const paid = input.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
-  const remaining = Math.max(0, round2(effective - paid))
-  const minPay = billEffectiveMinPayment(input.bill)
-  const today = getLocalTodayString('Asia/Shanghai')
-
-  const current = estimateBillRepaymentHealth(baseParams)
-
-  const extraForMin = minPay != null && minPay > paid ? round2(minPay - paid) : 0
-  const minScenario = estimateBillRepaymentHealth({
-    ...baseParams,
-    payments:
-      extraForMin > 0
-        ? [...input.payments, { amount: extraForMin, paid_at: today }]
-        : input.payments,
-  })
-
-  const fullScenario = estimateBillRepaymentHealth({
-    ...baseParams,
-    payments:
-      remaining > 0 ? [...input.payments, { amount: remaining, paid_at: today }] : input.payments,
-  })
-
-  const customExtra = Math.max(0, round2(input.customPayAmount ?? 0))
-  const customScenario = estimateBillRepaymentHealth({
-    ...baseParams,
-    payments:
-      customExtra > 0 ? [...input.payments, { amount: customExtra, paid_at: today }] : input.payments,
-  })
-
-  return {
-    nextStatementDate,
-    current,
-    min_payment: minScenario,
-    full_payment: fullScenario,
-    custom: customScenario,
-  }
+export {
+  buildExistingBillScopes,
+  computeActiveInstallmentsExposure,
+  generateInstallmentSchedule,
+  nextInstallmentPeriod,
+  remainingInstallmentPrincipal,
+  type InstallmentPlanLike,
+  estimateBillRepaymentHealth,
+  simulateRepaymentScenarios,
+  type BillRepaymentHealth,
+  type RepaymentHealthInput,
 }
 
 // ---------------------------------------------------------------------------
@@ -1291,79 +888,123 @@ export function statementReportToCsv(report: FamilyStatementReport): string {
     lines.push(cells.map(sanitizeCsvCell).join(','))
   }
 
-  pushRow(['# WorldCredit 对账单', report.scope_label, `${report.period_start} 至 ${report.period_end}`, `折算目标币种: ${report.display_currency}`])
+  const scopeLabel =
+    report.scope === 'family'
+      ? '全家庭合并'
+      : report.holders?.[0]?.holder_name || '个人持卡人'
+
+  pushRow([
+    '# WorldCredit 对账单',
+    scopeLabel,
+    `${report.period_start} 至 ${report.period_end}`,
+    `折算目标币种: ${report.display_currency}`,
+  ])
   pushRow([])
 
-  pushRow(['## 分币种总览'])
-  pushRow(['原币种', '账单总额', '已还总额', '已锁结算成本', '剩余待还', '分期未出本金', '固定支出应还', '逾期笔数'])
-  for (const row of report.currency_summary) {
+  pushRow(['## 分币种账务总览'])
+  pushRow(['原币种', '账单总额', '已还金额', '剩余待还'])
+  for (const [currency, row] of Object.entries(report.totals_by_currency ?? {})) {
     pushRow([
-      row.currency,
-      row.billed.toFixed(2),
-      row.paid.toFixed(2),
-      row.locked_settled_amount != null
-        ? `${row.locked_settled_currency ?? report.display_currency} ${row.locked_settled_amount.toFixed(2)}`
-        : '—',
-      row.remaining.toFixed(2),
-      row.installment_unbilled.toFixed(2),
-      row.payable_due.toFixed(2),
-      row.overdue_count,
+      currency,
+      Number(row.billed).toFixed(2),
+      Number(row.paid).toFixed(2),
+      Number(row.outstanding).toFixed(2),
     ])
   }
   pushRow([])
 
-  pushRow(['## 折算参考合计', report.fx_converted ? '汇率完整' : `未含缺汇率币种: ${report.fx_unconverted_currencies.join('、')}`])
+  const fxComplete = report.converted_totals?.fx_converted !== false
+  const unconverted = report.converted_totals?.fx_unconverted_currencies ?? []
+  pushRow([
+    '## 折算参考合计',
+    fxComplete ? '汇率完整' : `未含缺汇率币种: ${unconverted.join('、')}`,
+  ])
   pushRow(['指标', `金额 (${report.display_currency})`])
-  pushRow(['账单总额', report.converted_totals.billed.toFixed(2)])
-  pushRow(['已还金额', report.converted_totals.paid.toFixed(2)])
-  pushRow(['剩余待还', report.converted_totals.remaining.toFixed(2)])
-  pushRow(['分期未出本金', report.converted_totals.installment_unbilled.toFixed(2)])
-  pushRow(['固定支出应还', report.converted_totals.payable_due.toFixed(2)])
-  pushRow(['逾期账单笔数', report.converted_totals.overdue_count])
+  pushRow(['账单总额', Number(report.converted_totals?.billed ?? 0).toFixed(2)])
+  pushRow(['已还金额', Number(report.converted_totals?.paid ?? 0).toFixed(2)])
+  pushRow(['剩余待还', Number(report.converted_totals?.outstanding ?? 0).toFixed(2)])
   pushRow([])
 
-  if (report.card_rows.length > 0) {
-    pushRow(['## 持卡人 × 卡片对账清单'])
-    pushRow(['持卡人', '银行', '卡片', '尾号', '原币种', '账单金额', '已还金额', '剩余待还', '状态', '汇率备注'])
-    for (const c of report.card_rows) {
+  if (report.holders && report.holders.length > 0) {
+    pushRow(['## 持卡人账务汇总'])
+    pushRow(['持卡人', '账单数', `账单合计(${report.display_currency})`, `已还(${report.display_currency})`, `待还(${report.display_currency})`])
+    for (const h of report.holders) {
       pushRow([
-        c.holder_name,
-        c.bank_name,
-        c.card_name,
-        c.card_tail ?? '',
-        c.currency,
-        c.billed.toFixed(2),
-        c.paid.toFixed(2),
-        c.remaining.toFixed(2),
-        c.status,
-        c.fx_note ?? '',
+        h.holder_name,
+        h.bill_count,
+        Number(h.total_billed).toFixed(2),
+        Number(h.total_paid).toFixed(2),
+        Number(h.outstanding).toFixed(2),
       ])
     }
     pushRow([])
   }
 
-  if (report.category_breakdown.length > 0) {
+  if (report.bills && report.bills.length > 0) {
+    pushRow(['## 账单明细清单'])
+    pushRow(['账期', '持卡人', '银行', '卡片', '尾号', '原币种', '账单金额', '还款截止日', '状态'])
+    for (const b of report.bills) {
+      pushRow([
+        b.bill_month,
+        b.holder_name,
+        b.bank_name ?? '',
+        b.card_name ?? '',
+        b.card_tail ?? '',
+        b.currency,
+        Number(b.bill_amount).toFixed(2),
+        b.due_date,
+        b.status,
+      ])
+    }
+    pushRow([])
+  }
+
+  if (report.category_breakdown && report.category_breakdown.length > 0) {
     pushRow(['## 消费分类汇总'])
     pushRow(['分类', '折算金额', '占比(%)', '笔数'])
     for (const cat of report.category_breakdown) {
       pushRow([
         cat.category_label || categoryLabel(cat.category),
-        cat.amount.toFixed(2),
-        cat.percentage.toFixed(1),
+        Number(cat.amount).toFixed(2),
+        Number(cat.percentage).toFixed(1),
         cat.item_count ?? '',
       ])
     }
     pushRow([])
   }
 
-  if (report.monthly_breakdown && report.monthly_breakdown.length > 0) {
-    pushRow(['## 月度明细'])
-    pushRow(['月份', `折算账单(${report.display_currency})`, `折算已还(${report.display_currency})`, `折算待还(${report.display_currency})`, '原币明细'])
-    for (const m of report.monthly_breakdown) {
-      const orig = Object.entries(m.by_currency)
-        .map(([cur, v]) => `${cur} 账单 ${v.billed.toFixed(2)} / 已还 ${v.paid.toFixed(2)} / 待还 ${v.remaining.toFixed(2)}`)
-        .join('；')
-      pushRow([m.month, m.converted_billed.toFixed(2), m.converted_paid.toFixed(2), m.converted_remaining.toFixed(2), orig])
+  if (report.installments && report.installments.length > 0) {
+    pushRow(['## 分期计划摘要'])
+    pushRow(['持卡人', '银行', '卡片', '分期标题', '币种', '已还/总期数', '剩余本金', '状态'])
+    for (const inst of report.installments) {
+      pushRow([
+        inst.holder_name,
+        inst.bank_name ?? '',
+        inst.card_name ?? '',
+        inst.title,
+        inst.currency,
+        `${inst.paid_periods}/${inst.total_periods}`,
+        Number(inst.remaining_principal).toFixed(2),
+        inst.status,
+      ])
+    }
+    pushRow([])
+  }
+
+  if (report.payables && report.payables.length > 0) {
+    pushRow(['## 固定支出摘要'])
+    pushRow(['持卡人', '名称', '币种', '应还金额', '已付金额', '剩余待还', '截止日期', '状态'])
+    for (const p of report.payables) {
+      pushRow([
+        p.holder_name ?? '',
+        p.name,
+        p.currency,
+        Number(p.amount).toFixed(2),
+        Number(p.paid_amount).toFixed(2),
+        Number(p.remaining).toFixed(2),
+        p.due_date,
+        p.status,
+      ])
     }
   }
 
@@ -1395,6 +1036,10 @@ export function computeThreePartDebtBreakdown(input: {
       card_product?: { currency?: string }
     }
   }>
+  cards?: ReadonlyArray<{
+    id: string
+    account_id?: string | null
+  }>
   payables: ReadonlyArray<{
     category?: string
     status?: string
@@ -1417,12 +1062,15 @@ export function computeThreePartDebtBreakdown(input: {
 
   const plainSum = sumByCurrency(plainBills, pickBill, input.targetCurrency, input.rates)
 
-  const existingBillScopes = new Set<string>()
+  const existingBillScopes = buildExistingBillScopes(input.bills)
   const cardAccountMap = new Map<string, string | null>()
+  for (const card of input.cards ?? []) {
+    if (card.account_id) {
+      cardAccountMap.set(card.id, card.account_id)
+    }
+  }
   for (const b of input.bills) {
-    existingBillScopes.add(`card:${b.card_id}:${b.bill_month}`)
-    if (b.account_id) {
-      existingBillScopes.add(`acc:${b.account_id}:${b.bill_month}`)
+    if (b.account_id && !cardAccountMap.has(b.card_id)) {
       cardAccountMap.set(b.card_id, b.account_id)
     }
   }

@@ -189,7 +189,7 @@ export async function getCategoryBreakdownExtended(
 ): Promise<CategoryBreakdownNormalized> {
   const raw = await postRpc<CategoryBreakdownItem[] | Partial<CategoryBreakdownNormalized>>(
     'analytics',
-    'getCategoryBreakdown',
+    'getCategoryBreakdownReport',
     filters,
   )
   return normalizeCategoryBreakdownResponse(raw)
@@ -201,13 +201,44 @@ export async function getCategoryDrilldownItems(
   return postRpc<CategoryDrilldownItem[]>('analytics', 'getCategoryDrilldownItems', filters)
 }
 
+function normalizeCashflowEvent(
+  ev: CashflowForecastResult['timeline'][number],
+): CashflowForecastResult['timeline'][number] {
+  const source = ev.source ?? ev.source_type ?? 'bill'
+  const refId = ev.ref_id ?? ev.source_id ?? ev.id ?? ''
+  return {
+    ...ev,
+    source,
+    ref_id: refId,
+  }
+}
+
 export async function getCashflowForecast(filters: {
   holder_id?: string
   card_id?: string
   horizon_days: CashflowHorizonDays
   display_currency?: string
 }): Promise<CashflowForecastResult> {
-  return postRpc<CashflowForecastResult>('analytics', 'getCashflowForecast', filters)
+  const raw = await postRpc<
+    CashflowForecastResult & { as_of_date?: string }
+  >('analytics', 'getCashflowForecast', filters)
+  return {
+    ...raw,
+    base_date: raw.base_date ?? raw.as_of_date ?? '',
+    timeline: Array.isArray(raw.timeline) ? raw.timeline.map(normalizeCashflowEvent) : [],
+    overdue_alert: {
+      ...(raw.overdue_alert ?? {
+        count: 0,
+        by_currency: {},
+        total_converted: 0,
+        fx_converted: true,
+        items: [],
+      }),
+      items: Array.isArray(raw.overdue_alert?.items)
+        ? raw.overdue_alert.items.map(normalizeCashflowEvent)
+        : [],
+    },
+  }
 }
 
 export async function exportFamilyCsvRows(

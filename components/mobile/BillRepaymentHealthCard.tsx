@@ -47,11 +47,12 @@ export function BillRepaymentHealthCard({ bill, cardType, currency, items, payme
       estimateBillRepaymentHealth({
         bill,
         cardType,
+        billCurrency: currency,
         items,
         payments,
         dailyRate,
       }),
-    [bill, cardType, items, payments, dailyRate],
+    [bill, cardType, currency, items, payments, dailyRate],
   )
 
   const nextStatementDate = useMemo(() => {
@@ -67,6 +68,7 @@ export function BillRepaymentHealthCard({ bill, cardType, currency, items, payme
         {
           bill,
           cardType,
+          billCurrency: currency,
           items,
           payments,
           dailyRate,
@@ -74,7 +76,7 @@ export function BillRepaymentHealthCard({ bill, cardType, currency, items, payme
         },
         nextStatementDate,
       ),
-    [bill, cardType, items, payments, dailyRate, customPayText, nextStatementDate],
+    [bill, cardType, currency, items, payments, dailyRate, customPayText, nextStatementDate],
   )
 
   if (!health.applicable) return null

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { format, startOfMonth, endOfMonth } from 'date-fns'
+import { format } from 'date-fns'
 import { Modal } from '@/components/obsidian/overlays'
 import { Button } from '@/components/obsidian/controls'
 import { TextField, SelectField } from '@/components/obsidian/fields'
@@ -36,6 +36,7 @@ interface Props {
 }
 
 type ExportMode = 'data' | 'monthly_report' | 'annual_report'
+type PeriodPreset = 'current_month' | 'last_month' | 'custom_month' | 'custom_year'
 
 const TYPE_LABELS: Record<FamilyExportType, string> = {
   bills: '账单',
@@ -66,9 +67,7 @@ export function ExportDialog({
     isAdmin && !holderId ? 'family' : holderId || holders[0]?.id || '',
   )
   const [selectedCardId, setSelectedCardId] = useState<string>('')
-  const [dateRange, setDateRange] = useState<'current_month' | 'last_month' | 'custom'>('current_month')
-  const [startDate, setStartDate] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'))
-  const [endDate, setEndDate] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'))
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>('current_month')
   const [reportPeriod, setReportPeriod] = useState(format(new Date(), 'yyyy-MM'))
   const [reportYear, setReportYear] = useState(format(new Date(), 'yyyy'))
 
@@ -92,17 +91,16 @@ export function ExportDialog({
   const effectiveHolderId =
     effectiveScope === 'holder' ? selectedScope || holders[0]?.id || undefined : undefined
 
-  const handleDateRangeChange = (value: 'current_month' | 'last_month' | 'custom') => {
-    setDateRange(value)
+  const handlePeriodPresetChange = (value: PeriodPreset) => {
+    setPeriodPreset(value)
     const now = new Date()
-
     if (value === 'current_month') {
-      setStartDate(format(startOfMonth(now), 'yyyy-MM-dd'))
-      setEndDate(format(endOfMonth(now), 'yyyy-MM-dd'))
+      setReportPeriod(format(now, 'yyyy-MM'))
     } else if (value === 'last_month') {
       const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      setStartDate(format(startOfMonth(lastMonth), 'yyyy-MM-dd'))
-      setEndDate(format(endOfMonth(lastMonth), 'yyyy-MM-dd'))
+      setReportPeriod(format(lastMonth, 'yyyy-MM'))
+    } else if (value === 'custom_year') {
+      setReportYear(format(now, 'yyyy'))
     }
   }
 
@@ -112,17 +110,20 @@ export function ExportDialog({
     return h ? sanitizeFilenameSegment(h.name) : '个人'
   }
 
+  const dataMode: 'monthly' | 'annual' = periodPreset === 'custom_year' ? 'annual' : 'monthly'
+  const dataPeriod = dataMode === 'annual' ? reportYear : reportPeriod
+
   const handleExportData = async () => {
     setLoading(true)
     setError('')
     try {
       const res = await exportFamilyCsvRows({
-        type: exportType,
+        table: exportType,
         scope: effectiveScope,
         holder_id: effectiveHolderId,
         card_id: selectedCardId || undefined,
-        start_date: startDate,
-        end_date: endDate,
+        mode: dataMode,
+        period: dataPeriod,
         display_currency: displayCurrency,
       })
 
@@ -134,7 +135,7 @@ export function ExportDialog({
 
       const headers = res.headers.length > 0 ? res.headers : Object.keys(res.rows[0])
       const csvContent = buildSafeCsv(headers, res.rows)
-      const fallbackName = `worldcredit-${scopePrefix()}${TYPE_LABELS[exportType]}-${startDate}_${endDate}.csv`
+      const fallbackName = `worldcredit-${scopePrefix()}${TYPE_LABELS[exportType]}-${dataPeriod}.csv`
       downloadCsv(res.filename || fallbackName, csvContent)
       onClose()
     } catch (err) {
@@ -158,10 +159,13 @@ export function ExportDialog({
         display_currency: displayCurrency,
       })
 
+      const hasCurrencyTotals = Object.keys(report.totals_by_currency ?? {}).length > 0
       if (
-        report.currency_summary.length === 0 &&
-        report.card_rows.length === 0 &&
-        (!report.payable_summary || report.payable_summary.length === 0)
+        !hasCurrencyTotals &&
+        (report.bills?.length ?? 0) === 0 &&
+        (report.payments?.length ?? 0) === 0 &&
+        (report.installments?.length ?? 0) === 0 &&
+        (report.payables?.length ?? 0) === 0
       ) {
         setError('所选范围暂无数据')
         setLoading(false)
@@ -307,41 +311,39 @@ export function ExportDialog({
             />
 
             <SelectField
-              label='时间范围'
-              value={dateRange}
-              onChange={(e) =>
-                handleDateRangeChange(e.target.value as 'current_month' | 'last_month' | 'custom')
-              }
+              label='统计周期'
+              value={periodPreset}
+              onChange={(e) => handlePeriodPresetChange(e.target.value as PeriodPreset)}
               options={[
-                { value: 'current_month', label: '本月' },
-                { value: 'last_month', label: '上月' },
-                { value: 'custom', label: '自定义' },
+                { value: 'current_month', label: '本月 (月度)' },
+                { value: 'last_month', label: '上月 (月度)' },
+                { value: 'custom_month', label: '指定月份 (YYYY-MM)' },
+                { value: 'custom_year', label: '指定年份 (YYYY)' },
               ]}
             />
 
-            {dateRange === 'custom' && (
-              <div className='flex gap-3'>
-                <div className='min-w-0 flex-1'>
-                  <TextField
-                    label='开始日期'
-                    type='date'
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                  />
-                </div>
-                <div className='min-w-0 flex-1'>
-                  <TextField
-                    label='结束日期'
-                    type='date'
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                  />
-                </div>
-              </div>
+            {periodPreset === 'custom_month' && (
+              <TextField
+                label='目标月份'
+                type='month'
+                value={reportPeriod}
+                onChange={(e) => setReportPeriod(e.target.value)}
+              />
+            )}
+
+            {periodPreset === 'custom_year' && (
+              <TextField
+                label='目标年份'
+                type='number'
+                value={reportYear}
+                onChange={(e) => setReportYear(e.target.value)}
+                min={2020}
+                max={2035}
+              />
             )}
 
             <Alert severity='info'>
-              将导出「{scopePrefix()}」的 {TYPE_LABELS[exportType]} CSV（UTF-8 BOM + 公式安全转义）
+              将导出「{scopePrefix()}」{dataPeriod} 的 {TYPE_LABELS[exportType]} CSV（UTF-8 BOM + 公式安全转义）
             </Alert>
           </>
         )}

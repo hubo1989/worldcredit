@@ -229,49 +229,61 @@ export interface CategoryBreakdownNormalized {
 }
 
 export interface CategoryDrilldownItem {
-  id: string
+  item_id?: string
+  id?: string
   bill_id: string
   bill_month?: string
+  holder_id?: string
   card_id?: string | null
-  card_name?: string
-  bank_name?: string
+  card_name?: string | null
+  bank_name?: string | null
+  card_tail?: string | null
   transaction_date?: string | null
   post_date?: string | null
   description: string
   merchant_name?: string | null
-  category?: SpendCategory | null
+  category?: SpendCategory | 'uncategorized' | null
   amount: number
   currency: string
   item_type: BillItemType
 }
 
 export type CashflowHorizonDays = 30 | 60 | 90
+export type CashflowSource = 'bill' | 'installment' | 'payable'
 
-export interface CashflowTimelineItem {
-  id: string
-  source_type: 'bill' | 'installment' | 'payable'
-  source_id: string
+export interface CashflowEvent {
+  source: CashflowSource
+  ref_id: string
   title: string
-  subtitle?: string
-  holder_id?: string | null
-  holder_name?: string | null
-  card_id?: string | null
   due_date: string
   days_until_due: number
-  currency: string
   amount: number
+  currency: string
+  holder_id?: string | null
+  card_tail?: string | null
+  period?: string
+  // Defensive legacy aliases
+  id?: string
+  source_type?: CashflowSource
+  source_id?: string
+  card_id?: string | null
+  subtitle?: string
+  holder_name?: string | null
   period_index?: number
   total_periods?: number
 }
 
+export type CashflowTimelineItem = CashflowEvent
+
 export interface CashflowBucket {
-  key: string
   label: string
+  start_date: string
+  end_date: string
+  by_currency: Record<string, number>
   bill: number
   installment: number
   payable: number
   total: number
-  by_currency: Record<string, { bill: number; installment: number; payable: number; total: number }>
 }
 
 export interface CashflowCurrencyReserve {
@@ -282,21 +294,21 @@ export interface CashflowCurrencyReserve {
 }
 
 export interface CashflowForecastResult {
+  base_date: string
   horizon_days: CashflowHorizonDays
-  as_of_date: string
   display_currency: string
+  reserves_by_currency: Record<string, CashflowCurrencyReserve>
+  converted_summary: FxSum
+  buckets: CashflowBucket[]
+  timeline: CashflowEvent[]
   overdue_alert: {
     count: number
     by_currency: Record<string, number>
     total_converted: number
     fx_converted: boolean
     unconverted_currencies?: string[]
-    items: CashflowTimelineItem[]
+    items: CashflowEvent[]
   }
-  reserves_by_currency: Record<string, CashflowCurrencyReserve>
-  converted_summary: FxSum
-  buckets: CashflowBucket[]
-  timeline: CashflowTimelineItem[]
 }
 
 export type FamilyExportType =
@@ -309,14 +321,14 @@ export type FamilyExportType =
   | 'opportunity_usages'
 
 export interface FamilyExportRequest {
-  type: FamilyExportType
-  scope: 'family' | 'holder'
+  scope?: 'family' | 'holder'
   holder_id?: string
-  card_id?: string
-  bank_name?: string
-  start_date?: string
-  end_date?: string
+  mode?: 'monthly' | 'annual'
+  /** monthly: YYYY-MM；annual: YYYY */
+  period?: string
+  table?: FamilyExportType
   display_currency?: string
+  card_id?: string
 }
 
 export interface StatementReportRequest {
@@ -328,31 +340,100 @@ export interface StatementReportRequest {
   display_currency?: string
 }
 
-export interface StatementCurrencyRow {
-  currency: string
-  billed: number
-  paid: number
-  locked_settled_amount?: number
-  locked_settled_currency?: string
-  remaining: number
-  installment_unbilled: number
-  payable_due: number
-  overdue_count: number
-}
-
-export interface StatementCardRow {
+export interface StatementHolderSummary {
   holder_id: string
   holder_name: string
-  bank_name: string
-  card_id: string
-  card_name: string
-  card_tail?: string
+  bill_count: number
+  total_billed: number
+  total_paid: number
+  outstanding: number
+}
+
+export interface StatementBill {
+  id: string
+  holder_id: string
+  holder_name: string
+  bank_name: string | null
+  card_name: string | null
+  card_tail: string | null
+  bill_month: string
+  bill_amount: number
   currency: string
-  billed: number
-  paid: number
+  min_payment: number | null
+  due_date: string
+  status: string
+}
+
+export interface StatementPayment {
+  id: string
+  holder_id: string
+  holder_name: string
+  bank_name: string | null
+  card_name: string | null
+  card_tail: string | null
+  bill_month: string
+  paid_at: string
+  amount: number
+  currency: string
+  settled_currency: string | null
+  settled_amount: number | null
+  locked_fx_rate: number | null
+  channel: string | null
+  note: string | null
+}
+
+export interface StatementItem {
+  id: string
+  holder_id: string
+  holder_name: string
+  bank_name: string | null
+  card_name: string | null
+  card_tail: string | null
+  bill_month: string
+  transaction_date: string | null
+  description: string
+  merchant_name: string | null
+  category: string | null
+  item_type: string
+  amount: number
+  currency: string
+}
+
+export interface StatementInstallment {
+  id: string
+  holder_id: string
+  holder_name: string
+  bank_name: string | null
+  card_name: string | null
+  card_tail: string | null
+  title: string
+  plan_type: string
+  currency: string
+  principal_amount: number
+  total_periods: number
+  paid_periods: number
+  remaining_principal: number
+  fee_mode: string
+  billing_mode: string
+  status: string
+  next_due_date: string | null
+  next_amount: number | null
+}
+
+export interface StatementPayable {
+  id: string
+  holder_id: string | null
+  holder_name: string | null
+  name: string
+  category: string
+  amount: number
+  currency: string
+  due_day: number
+  period: string
+  due_date: string
+  paid_amount: number
   remaining: number
   status: string
-  fx_note?: string
 }
 
 export interface FamilyStatementReport {
@@ -361,47 +442,20 @@ export interface FamilyStatementReport {
   period_start: string
   period_end: string
   scope: 'family' | 'holder'
-  scope_label: string
   display_currency: string
-  generated_at: string
-  fx_converted: boolean
-  fx_unconverted_currencies: string[]
-  currency_summary: StatementCurrencyRow[]
+  holders: StatementHolderSummary[]
+  bills: StatementBill[]
+  payments: StatementPayment[]
+  bill_items: StatementItem[]
+  installments: StatementInstallment[]
+  payables: StatementPayable[]
+  category_breakdown: CategoryBreakdownItem[]
+  totals_by_currency: Record<string, { billed: number; paid: number; outstanding: number }>
   converted_totals: {
     billed: number
     paid: number
-    remaining: number
-    installment_unbilled: number
-    payable_due: number
-    overdue_count: number
+    outstanding: number
+    fx_converted: boolean
+    fx_unconverted_currencies: string[]
   }
-  card_rows: StatementCardRow[]
-  category_breakdown: CategoryBreakdownItem[]
-  installment_summary?: Array<{
-    holder_name?: string
-    bank_name?: string
-    card_name?: string
-    title: string
-    currency: string
-    paid_periods: number
-    total_periods: number
-    unbilled_principal: number
-    status: string
-  }>
-  payable_summary?: Array<{
-    name: string
-    holder_name?: string
-    currency: string
-    amount: number
-    paid_amount: number
-    due_date?: string
-    status: string
-  }>
-  monthly_breakdown?: Array<{
-    month: string
-    by_currency: Record<string, { billed: number; paid: number; remaining: number }>
-    converted_billed: number
-    converted_paid: number
-    converted_remaining: number
-  }>
 }
