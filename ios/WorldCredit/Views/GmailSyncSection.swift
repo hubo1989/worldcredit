@@ -3,30 +3,80 @@ import UIKit
 import GoogleSignIn
 import WorldCreditCore
 
-/// 设置页「Gmail 账单同步」卡片。
+/// 设置页「Gmail 账单同步」卡片（支持 1:N 多邮箱、默认归属人、单连接同步与全局草稿复核开关）。
 ///
 /// iOS 侧只做三件事：发起授权拿 serverAuthCode、把 code 交给服务端、
-/// 展示连接状态并支持手动同步/断开。refresh token 由服务端保管，客户端不落盘。
+/// 展示连接状态并支持手动同步/配置/断开。refresh token 由服务端保管，客户端不落盘。
 struct GmailSyncSection: View {
     @Environment(AppState.self) private var appState
-    @State private var status: GmailSyncStatus?
+    @State private var connections: [GmailConnectionDTO] = []
+    @State private var requireDraftReview: Bool = false
+    @State private var isLoadingPreferences: Bool = false
+    @State private var isUpdatingPreferences: Bool = false
     @State private var statusError: String?
     @State private var isConnecting = false
-    @State private var isSyncing = false
+    @State private var syncingConnectionId: String?
     @State private var isDisconnecting = false
+    @State private var pendingDisconnectConnection: GmailConnectionDTO?
     @State private var showingDisconnectAlert = false
     @State private var alertMessage: String?
     @State private var progressMessage: String?
 
+    @State private var showingAddMailboxSheet = false
+    @State private var addDisplayLabel = ""
+    @State private var addDefaultHolderId = ""
+    @State private var editingConnection: GmailConnectionDTO?
+
     var body: some View {
-        Section("Gmail 账单同步") {
-            if let status, status.connected {
-                connectedRows(status)
-            } else {
+        Section {
+            if connections.isEmpty {
                 disconnectedRows
+            } else {
+                ForEach(Array(connections.enumerated()), id: \.element.id) { index, conn in
+                    connectionCard(conn, isPrimary: index == 0)
+                }
+
+                Button {
+                    addDisplayLabel = ""
+                    addDefaultHolderId = ""
+                    showingAddMailboxSheet = true
+                } label: {
+                    HStack {
+                        Label("添加其他 Gmail 邮箱", systemImage: "plus.circle")
+                        Spacer()
+                        if isConnecting {
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(isConnecting || syncingConnectionId != nil || isDisconnecting || connections.count >= 10)
+                .accessibilityIdentifier("gmail.addAccount")
+                if connections.count >= 10 {
+                    Text("已达单账号最多 10 个邮箱上限")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
+
+            Toggle(isOn: Binding(
+                get: { requireDraftReview },
+                set: { newValue in
+                    Task { await updateSafetyPreference(requireReview: newValue) }
+                }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("全部邮箱同步先停草稿箱复核")
+                    Text("开启后，高置信度邮件账单也不自动入账，需在草稿箱确认。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(isLoadingPreferences || isUpdatingPreferences)
+            .accessibilityIdentifier("gmail.requireDraftReview")
+        } header: {
+            Text("Gmail 账单同步")
         }
-        .task { await refreshStatus() }
+        .task { await refreshAll() }
         .alert("Gmail 同步", isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } }
@@ -35,33 +85,83 @@ struct GmailSyncSection: View {
         } message: {
             Text(alertMessage ?? "")
         }
-        .confirmationDialog("断开后将停止每日自动拉取账单，已入库数据保留。确定断开？", isPresented: $showingDisconnectAlert, titleVisibility: .visible) {
+        .confirmationDialog(
+            "断开后将停止每日自动拉取账单，已入库数据保留。确定断开？",
+            isPresented: $showingDisconnectAlert,
+            titleVisibility: .visible
+        ) {
             Button("断开", role: .destructive) {
-                Task { await disconnect() }
+                let target = pendingDisconnectConnection
+                pendingDisconnectConnection = nil
+                Task { await disconnect(target) }
             }
-            Button("取消", role: .cancel) {}
+            Button("取消", role: .cancel) {
+                pendingDisconnectConnection = nil
+            }
+        }
+        .sheet(isPresented: $showingAddMailboxSheet) {
+            addMailboxSheet
+        }
+        .sheet(item: $editingConnection) { conn in
+            EditGmailConnectionSheet(
+                connection: conn,
+                holders: appState.dashboardHolders
+            ) { label, clearLabel, holderId, clearHolder, mode, syncEnabled in
+                try await appState.apiClient.updateGmailConnection(
+                    connectionId: conn.id,
+                    displayLabel: label,
+                    clearDisplayLabel: clearLabel,
+                    defaultHolderId: holderId,
+                    clearDefaultHolderId: clearHolder,
+                    attributionMode: mode,
+                    syncEnabled: syncEnabled
+                )
+                await reloadStatusAfterMutation()
+            }
         }
     }
 
     // MARK: - Rows
 
     @ViewBuilder
-    private func connectedRows(_ status: GmailSyncStatus) -> some View {
-        LabeledContent("账号", value: status.email ?? "未知")
+    private func connectionCard(_ conn: GmailConnectionDTO, isPrimary: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                if let label = conn.displayLabel, !label.isEmpty {
+                    Text(label)
+                        .font(.subheadline.weight(.semibold))
+                }
+                Text(conn.email)
+                    .font(.subheadline)
+                    .foregroundStyle(conn.displayLabel?.isEmpty == false ? .secondary : .primary)
+            }
+            Spacer()
+            Text(conn.syncEnabled ? (conn.status == "revoked" ? "已失效" : "已连接") : "已暂停")
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(statusBadgeColor(conn).opacity(0.16), in: Capsule())
+                .foregroundStyle(statusBadgeColor(conn))
+        }
 
-        if let summary = status.lastSyncSummary {
+        if let holderId = conn.defaultHolderId, !holderId.isEmpty {
+            let holderName = appState.dashboardHolders.first(where: { $0.id == holderId })?.name ?? holderId
+            LabeledContent("默认归属人", value: holderName)
+                .font(.caption)
+        }
+
+        if let summary = conn.lastSyncSummary {
             LabeledContent("上次同步") {
                 VStack(alignment: .trailing, spacing: 2) {
-                    if let at = status.lastSyncAt {
-                        Text(at)
-                            .font(.footnote)
+                    if let at = conn.lastSyncAt {
+                        Text(at).font(.footnote)
                     }
                     Text(summary)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             }
-        } else if let at = status.lastSyncAt {
+        } else if let at = conn.lastSyncAt {
             LabeledContent("上次同步", value: at)
         } else {
             LabeledContent("上次同步") {
@@ -71,13 +171,13 @@ struct GmailSyncSection: View {
             }
         }
 
-        if status.status == "revoked" {
+        if conn.status == "revoked" {
             Label("Google 侧授权已撤销，请断开后重新连接", systemImage: "exclamationmark.triangle.fill")
                 .font(.footnote)
                 .foregroundStyle(.orange)
         }
 
-        if let err = status.lastError, !err.isEmpty {
+        if let err = conn.lastError, !err.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 Text("最近同步错误")
                     .font(.caption.bold())
@@ -88,25 +188,37 @@ struct GmailSyncSection: View {
             }
         }
 
-        Button(action: { Task { await syncNow() } }) {
+        let isThisSyncing = syncingConnectionId == conn.id
+        Button(action: { Task { await syncNow(connectionId: conn.id) } }) {
             HStack {
                 Text("立即同步")
                 Spacer()
-                if isSyncing {
+                if isThisSyncing {
                     ProgressView()
                 }
             }
         }
-        .disabled(isSyncing || isConnecting || isDisconnecting)
-        .accessibilityIdentifier("gmail.sync")
+        .disabled(syncingConnectionId != nil || isConnecting || isDisconnecting)
+        .accessibilityIdentifier(isPrimary ? "gmail.sync" : "gmail.sync.\(conn.id)")
 
-        if isSyncing, let progressMessage {
+        if isThisSyncing, let progressMessage {
             Text(progressMessage)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
 
-        Button(role: .destructive, action: { showingDisconnectAlert = true }) {
+        if !conn.id.isEmpty {
+            Button("编辑归属与开关") {
+                editingConnection = conn
+            }
+            .font(.footnote)
+            .disabled(syncingConnectionId != nil || isConnecting || isDisconnecting)
+        }
+
+        Button(role: .destructive, action: {
+            pendingDisconnectConnection = conn
+            showingDisconnectAlert = true
+        }) {
             HStack {
                 Text("断开 Gmail")
                 Spacer()
@@ -115,8 +227,8 @@ struct GmailSyncSection: View {
                 }
             }
         }
-        .disabled(isSyncing || isDisconnecting)
-        .accessibilityIdentifier("gmail.disconnect")
+        .disabled(syncingConnectionId != nil || isDisconnecting)
+        .accessibilityIdentifier(isPrimary ? "gmail.disconnect" : "gmail.disconnect.\(conn.id)")
     }
 
     @ViewBuilder
@@ -131,15 +243,15 @@ struct GmailSyncSection: View {
                     .foregroundStyle(.secondary)
             }
             Button("重试") {
-                Task { await refreshStatus() }
+                Task { await refreshAll() }
             }
         } else {
-            Text("授权后服务端每日自动从 Gmail 拉取银行账单邮件并生成账单记录。仅需只读权限（gmail.readonly）。")
+            Text("授权后服务端每日自动从 Gmail 拉取银行账单邮件并进入草稿或账单。仅需只读权限（gmail.readonly），支持连接多个家庭/个人邮箱。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
 
-        Button(action: { Task { await connect() } }) {
+        Button(action: { Task { await connect(defaultHolderId: nil, displayLabel: nil) } }) {
             HStack {
                 Text("连接 Gmail（只读）")
                 Spacer()
@@ -148,42 +260,176 @@ struct GmailSyncSection: View {
                 }
             }
         }
-        .disabled(isConnecting || isSyncing)
+        .disabled(isConnecting || syncingConnectionId != nil)
         .accessibilityIdentifier("gmail.connect")
+
+        Button("设置归属人并连接...") {
+            addDisplayLabel = ""
+            addDefaultHolderId = ""
+            showingAddMailboxSheet = true
+        }
+        .font(.footnote)
+        .disabled(isConnecting || syncingConnectionId != nil)
+    }
+
+    private var addMailboxSheet: some View {
+        NavigationStack {
+            Form {
+                Section("邮箱标识") {
+                    TextField("备注名（如：主账号 / 配偶邮箱）", text: $addDisplayLabel)
+                    Picker("默认持卡人（兜底归属）", selection: $addDefaultHolderId) {
+                        Text("自动识别（不固定）").tag("")
+                        ForEach(appState.dashboardHolders) { holder in
+                            Text(holder.name).tag(holder.id)
+                        }
+                    }
+                }
+                Section {
+                    Button {
+                        let holder = addDefaultHolderId.isEmpty ? nil : addDefaultHolderId
+                        let label = addDisplayLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+                        showingAddMailboxSheet = false
+                        Task {
+                            await connect(
+                                defaultHolderId: holder,
+                                displayLabel: label.isEmpty ? nil : label
+                            )
+                        }
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Text("发起 Google 只读授权")
+                                .fontWeight(.semibold)
+                            Spacer()
+                        }
+                    }
+                } footer: {
+                    Text("将弹出 Google 账号选择页，仅申请 gmail.readonly 权限。")
+                }
+            }
+            .navigationTitle("添加 Gmail 邮箱")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { showingAddMailboxSheet = false }
+                }
+            }
+        }
+    }
+
+    private func statusBadgeColor(_ conn: GmailConnectionDTO) -> Color {
+        if conn.status == "revoked" { return .orange }
+        return conn.syncEnabled ? .green : .secondary
     }
 
     // MARK: - Actions
 
+    private func refreshAll() async {
+        await refreshStatus()
+        await refreshPreferences()
+    }
+
     private func refreshStatus() async {
         do {
-            status = try await appState.apiClient.gmailStatus()
+            let list = try await appState.apiClient.gmailConnections()
+            connections = list
             statusError = nil
+            return
         } catch is CancellationError {
-            // 视图离页/下拉刷新取消：静默
+            return
         } catch let urlError as URLError where urlError.code == .cancelled {
-            // 同上：URLError 形态的取消
+            return
         } catch {
-            // 会话未就绪（401）与取消都不是连接故障：保留上次状态，不打断设置页。
-            // 401 由 refreshPayables/sync 负责落地到登录页，这里不重复处理。
-            let nsError = error as NSError
-            if nsError.code == 401 { return }
-            // 服务端未部署或网络异常时保留上次状态，不打断设置页。
-            if status == nil { statusError = error.localizedDescription }
+            // 兼容仅实现旧单账号端点或 UI Test 离线 stub 的环境：回退查 /api/gmail/status。
+            do {
+                let legacy = try await appState.apiClient.gmailStatus()
+                if legacy.connected {
+                    connections = [
+                        GmailConnectionDTO(
+                            id: "",
+                            email: legacy.email ?? "未知",
+                            displayLabel: nil,
+                            defaultHolderId: nil,
+                            attributionMode: "auto_then_default",
+                            syncEnabled: true,
+                            status: legacy.status ?? "active",
+                            lastSyncAt: legacy.lastSyncAt,
+                            lastSyncSummary: legacy.lastSyncSummary,
+                            lastError: legacy.lastError
+                        )
+                    ]
+                } else {
+                    connections = []
+                }
+                statusError = nil
+            } catch is CancellationError {
+                return
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                return
+            } catch let fallbackError {
+                let nsError = fallbackError as NSError
+                if nsError.code == 401 { return }
+                if connections.isEmpty {
+                    statusError = fallbackError.localizedDescription
+                }
+            }
         }
     }
 
-    /// 已发生连接状态变更（连接/断开成功）后的刷新：失败不能回滚到旧状态误导用户，
-    /// 乐观值已先行落位，这里只在失败时提示状态可能过期。
+    private func refreshPreferences() async {
+        isLoadingPreferences = true
+        defer { isLoadingPreferences = false }
+        if let prefs = try? await appState.apiClient.fetchImportPreferences() {
+            requireDraftReview = !prefs.autoCommitTrustedEmail
+        }
+    }
+
+    private func updateSafetyPreference(requireReview: Bool) async {
+        let previous = requireDraftReview
+        requireDraftReview = requireReview
+        isUpdatingPreferences = true
+        defer { isUpdatingPreferences = false }
+        do {
+            let updated = try await appState.apiClient.updateImportPreferences(
+                autoCommitTrustedEmail: !requireReview
+            )
+            requireDraftReview = !updated.autoCommitTrustedEmail
+        } catch {
+            requireDraftReview = previous
+            alertMessage = "更新安全开关失败：\(error.localizedDescription)"
+        }
+    }
+
     private func reloadStatusAfterMutation() async {
         do {
-            status = try await appState.apiClient.gmailStatus()
+            let list = try await appState.apiClient.gmailConnections()
+            connections = list
             statusError = nil
         } catch {
-            alertMessage = "状态可能未刷新：\(error.localizedDescription)"
+            do {
+                let legacy = try await appState.apiClient.gmailStatus()
+                if legacy.connected {
+                    connections = [
+                        GmailConnectionDTO(
+                            id: "",
+                            email: legacy.email ?? "未知",
+                            status: legacy.status ?? "active",
+                            lastSyncAt: legacy.lastSyncAt,
+                            lastSyncSummary: legacy.lastSyncSummary,
+                            lastError: legacy.lastError
+                        )
+                    ]
+                } else {
+                    connections = []
+                }
+                statusError = nil
+            } catch let fallbackError {
+                alertMessage = "状态可能未刷新：\(fallbackError.localizedDescription)"
+            }
         }
     }
 
-    private func connect() async {
+    private func connect(defaultHolderId: String?, displayLabel: String?) async {
         guard let presenter = Self.presentingViewController() else {
             alertMessage = "无法获取当前窗口，请稍后重试"
             return
@@ -191,13 +437,24 @@ struct GmailSyncSection: View {
         isConnecting = true
         defer { isConnecting = false }
         do {
-            // 防跨账号污染：清除 SDK 里保存的 Google 身份，强制每次弹账号选择；
-            // 同时保证 addScopes 不会复用缺 serverClientID 的旧配置（拿不到 serverAuthCode）。
             GIDSignIn.sharedInstance.signOut()
             let code = try await Self.authorizeGmail(presenting: presenter)
-            let result = try await appState.apiClient.gmailConnect(serverAuthCode: code)
-            // 乐观更新：服务端已入库连接；随后的刷新失败不回滚此状态。
-            status = GmailSyncStatus(connected: true, email: result.email, status: "active")
+            let result = try await appState.apiClient.gmailConnectAccount(
+                serverAuthCode: code,
+                defaultHolderId: defaultHolderId,
+                displayLabel: displayLabel
+            )
+            if connections.isEmpty {
+                connections = [
+                    GmailConnectionDTO(
+                        id: "pending-\(UUID().uuidString)",
+                        email: result.email ?? "Gmail",
+                        displayLabel: displayLabel,
+                        defaultHolderId: defaultHolderId,
+                        status: "active"
+                    )
+                ]
+            }
             statusError = nil
             alertMessage = "已连接 \(result.email ?? "Gmail")，服务端将每日自动拉取账单。"
             await reloadStatusAfterMutation()
@@ -210,34 +467,38 @@ struct GmailSyncSection: View {
 
     /// 与 Web 面板同款的分轮拉取：每轮 6 封、按 remaining 续拉、最多 30 轮，
     /// 过程中实时展示进度，结束后一次性汇总。
-    private func syncNow() async {
-        isSyncing = true
+    private func syncNow(connectionId: String) async {
+        syncingConnectionId = connectionId
         progressMessage = nil
-        defer { isSyncing = false }
+        defer { syncingConnectionId = nil }
         do {
+            let scopedId = connectionId.isEmpty ? nil : connectionId
             var total = GmailSyncResult(scanned: 0, written: 0, drafted: 0, skipped: 0, failed: 0)
             for round in 1...30 {
-                let result = try await appState.apiClient.gmailSync(maxMessages: 6)
+                let result = try await appState.apiClient.gmailSyncConnection(connectionId: scopedId, maxMessages: 6)
                 total = total.merged(with: result)
                 progressMessage = "同步中（第 \(round) 轮）… 落账单 \(total.written)｜草稿 \(total.drafted)｜剩余 \(result.remaining ?? 0) 封"
                 guard let remaining = result.remaining, remaining > 0, round < 30 else { break }
             }
             await reloadStatusAfterMutation()
+            await appState.refreshBillDrafts(silent: true)
             alertMessage = "同步完成：\(total.summaryText)"
         } catch {
             alertMessage = "同步失败：\(error.localizedDescription)"
         }
     }
 
-    private func disconnect() async {
+    private func disconnect(_ connection: GmailConnectionDTO?) async {
         isDisconnecting = true
         defer { isDisconnecting = false }
         do {
-            try await appState.apiClient.gmailDisconnect()
-            // 乐观更新：断开成功即视为未连接，刷新失败不回滚。
-            status = GmailSyncStatus(connected: false)
-            // 清掉 SDK 里 grantedScopes 残留，否则重连走 addScopes 会因
-            // scopesAlreadyGranted 产不出新的 serverAuthCode。
+            let targetId = (connection?.id.isEmpty == false) ? connection?.id : nil
+            try await appState.apiClient.gmailDisconnectConnection(connectionId: targetId)
+            if let id = connection?.id {
+                connections.removeAll { $0.id == id }
+            } else {
+                connections = []
+            }
             GIDSignIn.sharedInstance.signOut()
             await reloadStatusAfterMutation()
         } catch {
@@ -247,8 +508,6 @@ struct GmailSyncSection: View {
 
     // MARK: - Google Sign-In (View layer only; AppState must not link GoogleSignIn)
 
-    /// serverClientID 必须用 Web client：serverAuthCode 要由服务端拿 Web client secret 换 refresh token。
-    /// 与登录用的 iOS client（Info.plist GIDClientID）同属一个 Google Cloud 项目。
     private static let webServerClientID = "490117963106-31ss52gua36fa8i231ss074ed61rn330.apps.googleusercontent.com"
     private static let gmailReadonlyScope = "https://www.googleapis.com/auth/gmail.readonly"
 
@@ -266,11 +525,6 @@ struct GmailSyncSection: View {
         }
     }
 
-    /// 优先完整 signIn 取 serverAuthCode。仅当现有 currentUser 的 configuration 自带
-    /// 本 Web serverClientID（即它当初就是带 serverClientID 登录的）时才允许走增量
-    /// addScopes——addScopes 用的是 user 登录时缓存的旧配置，而不是 signIn.configuration
-    /// 新赋的值（GIDGoogleUser.m 对 configuration 做了缓存），旧配置缺 serverClientID
-    /// 时结果里不会出现 serverAuthCode。connect() 已先行 signOut，正常路径都走完整 signIn。
     @MainActor
     private static func authorizeGmail(presenting: UIViewController) async throws -> String {
         let signIn = GIDSignIn.sharedInstance
@@ -289,7 +543,7 @@ struct GmailSyncSection: View {
             result = try await currentUser.addScopes([gmailReadonlyScope], presenting: presenting)
         } else {
             if signIn.currentUser != nil {
-                signIn.signOut() // 旧配置产不出 code，必须完整重登。
+                signIn.signOut()
             }
             result = try await signIn.signIn(withPresenting: presenting)
         }
@@ -299,7 +553,6 @@ struct GmailSyncSection: View {
         return code
     }
 
-    /// GoogleSignIn 走 ASWebAuthenticationSession，需要一个 presenting view controller。
     private static func presentingViewController() -> UIViewController? {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let keyWindow = scenes.flatMap(\.windows).first(where: \.isKeyWindow)
@@ -308,5 +561,104 @@ struct GmailSyncSection: View {
             top = presented
         }
         return top
+    }
+}
+
+private struct EditGmailConnectionSheet: View {
+    let connection: GmailConnectionDTO
+    let holders: [CardHolder]
+    let onSave: (String?, Bool, String?, Bool, String, Bool) async throws -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var displayLabel: String
+    @State private var defaultHolderId: String
+    @State private var attributionMode: String
+    @State private var syncEnabled: Bool
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    init(
+        connection: GmailConnectionDTO,
+        holders: [CardHolder],
+        onSave: @escaping (String?, Bool, String?, Bool, String, Bool) async throws -> Void
+    ) {
+        self.connection = connection
+        self.holders = holders
+        self.onSave = onSave
+        _displayLabel = State(initialValue: connection.displayLabel ?? "")
+        _defaultHolderId = State(initialValue: connection.defaultHolderId ?? "")
+        _attributionMode = State(initialValue: connection.attributionMode)
+        _syncEnabled = State(initialValue: connection.syncEnabled)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("邮箱") {
+                    LabeledContent("地址", value: connection.email)
+                    TextField("备注名（如：主账号）", text: $displayLabel)
+                }
+
+                Section("归属规则") {
+                    Picker("默认持卡人", selection: $defaultHolderId) {
+                        Text("不设默认").tag("")
+                        ForEach(holders) { holder in
+                            Text(holder.name).tag(holder.id)
+                        }
+                    }
+
+                    Picker("归属匹配策略", selection: $attributionMode) {
+                        Text("自动匹配优先，失败兜底").tag("auto_then_default")
+                        Text("强绑定默认持卡人").tag("force_default_unless_conflict")
+                    }
+                }
+
+                Section("同步开关") {
+                    Toggle("启用每日自动拉取", isOn: $syncEnabled)
+                }
+
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("编辑邮箱配置")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                        .disabled(isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        Task { await save() }
+                    }
+                    .disabled(isSaving)
+                }
+            }
+        }
+    }
+
+    private func save() async {
+        isSaving = true
+        errorMessage = nil
+        defer { isSaving = false }
+        let trimmedLabel = displayLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            try await onSave(
+                trimmedLabel.isEmpty ? nil : trimmedLabel,
+                trimmedLabel.isEmpty,
+                defaultHolderId.isEmpty ? nil : defaultHolderId,
+                defaultHolderId.isEmpty,
+                attributionMode,
+                syncEnabled
+            )
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }

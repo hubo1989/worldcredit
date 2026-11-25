@@ -13,6 +13,12 @@ import {
   validateDateText,
   validateMinPaymentText,
 } from './bill-editing-shared'
+import {
+  formatDraftAmount,
+  getDraftCurrencySymbol,
+  type AnyBillImportDraft,
+  type BillDraftPayload,
+} from './omnibusApi'
 
 /** 可编辑的 parsed_payload 字段（其余字段原样保留）。 */
 export interface BillDraftFieldValues {
@@ -21,18 +27,23 @@ export interface BillDraftFieldValues {
   bill_month: string
   due_date: string
   statement_date: string
+  currency?: string
 }
 
 type Errors = Partial<Record<keyof BillDraftFieldValues, string>>
 
-function toInputValues(draft: BillImportDraft): BillDraftFieldValues {
-  const p = draft.parsed_payload
+function toInputValues(
+  draft: AnyBillImportDraft,
+  fallbackCurrency?: string,
+): BillDraftFieldValues {
+  const p = draft.parsed_payload as BillDraftPayload
   return {
     bill_amount: isPresent(p.bill_amount) ? String(p.bill_amount) : '',
     min_payment: isPresent(p.min_payment) ? String(p.min_payment) : '',
     bill_month: p.bill_month ?? '',
     due_date: p.due_date ?? '',
     statement_date: p.statement_date ?? '',
+    currency: p.currency || fallbackCurrency || 'CNY',
   }
 }
 
@@ -64,26 +75,29 @@ export function validateDraftFields(values: BillDraftFieldValues): Errors {
   return errors
 }
 
-/** 表单值合并回 parsed_payload：只覆盖这五个字段，其余原样带回去。 */
+/** 表单值合并回 parsed_payload：只覆盖这几个字段，其余原样带回去。 */
 export function mergeDraftPayload(
-  draft: BillImportDraft,
+  draft: AnyBillImportDraft,
   values: BillDraftFieldValues,
 ): BillImportDraft['parsed_payload'] {
-  const next = { ...draft.parsed_payload }
+  const next = { ...draft.parsed_payload } as BillDraftPayload & BillImportDraft['parsed_payload']
   next.bill_amount = Number(values.bill_amount.trim())
   next.bill_month = values.bill_month.trim()
   next.due_date = values.due_date.trim()
   next.statement_date = values.statement_date.trim() || undefined
   const minPayment = values.min_payment.trim()
   next.min_payment = minPayment ? Number(minPayment) : undefined
+  if (values.currency && values.currency !== (draft.parsed_payload as BillDraftPayload).currency) {
+    next.currency = values.currency
+  }
   return next
 }
 
 interface Props {
   open: boolean
-  draft: BillImportDraft | null
+  draft: AnyBillImportDraft | null
   /** 卡选项与列表里的选卡器同源 */
-  cards: Array<{ id: string; label: string }>
+  cards: Array<{ id: string; label: string; currency?: string }>
   onClose: () => void
   /** 保存成功后的回调（父组件负责重新拉取草稿列表） */
   onSaved: () => void
@@ -98,6 +112,7 @@ export function BillDraftEditForm({ open, draft, cards, onClose, onSaved, onSubm
     bill_month: '',
     due_date: '',
     statement_date: '',
+    currency: 'CNY',
   })
   const [errors, setErrors] = useState<Errors>({})
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -110,11 +125,12 @@ export function BillDraftEditForm({ open, draft, cards, onClose, onSaved, onSubm
 
   useEffect(() => {
     if (!open || !draft || loadedId === draft.id) return
-    setValues(toInputValues(draft))
+    const cardCurrency = cards.find(c => c.id === draft.card_id)?.currency
+    setValues(toInputValues(draft, cardCurrency))
     setErrors({})
     setSubmitError(null)
     setLoadedId(draft.id)
-  }, [open, draft, loadedId])
+  }, [open, draft, loadedId, cards])
 
   useEffect(() => {
     if (!open) setLoadedId(null)
@@ -123,7 +139,6 @@ export function BillDraftEditForm({ open, draft, cards, onClose, onSaved, onSubm
   const set = (field: keyof BillDraftFieldValues) => (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value
     setValues(prev => ({ ...prev, [field]: value }))
-    // 编辑即清掉该字段的旧错误，避免提示滞留
     setErrors(prev => (prev[field] ? { ...prev, [field]: undefined } : prev))
   }
 
@@ -149,8 +164,11 @@ export function BillDraftEditForm({ open, draft, cards, onClose, onSaved, onSubm
   if (!open || !draft) return null
 
   const hasErrors = Object.values(errors).some(Boolean)
-  const cardLabel =
-    cards.find(c => c.id === draft.card_id)?.label ?? (draft.card_id ? '未知卡片' : '未绑定卡片')
+  const matchedCard = cards.find(c => c.id === draft.card_id)
+  const cardLabel = matchedCard?.label ?? (draft.card_id ? '未知卡片' : '未绑定卡片')
+  const effectiveCurrency = values.currency || 'CNY'
+  const currencySym = getDraftCurrencySymbol(effectiveCurrency)
+  const subtotals = (draft.parsed_payload as BillDraftPayload).card_subtotals
 
   return (
     <Modal
@@ -182,15 +200,30 @@ export function BillDraftEditForm({ open, draft, cards, onClose, onSaved, onSubm
           disabled
           options={[{ value: draft.card_id ?? '', label: cardLabel }]}
         />
-        <TextField
-          label='账单月份'
-          required
-          type='month'
-          value={values.bill_month}
-          onChange={set('bill_month')}
-          error={Boolean(errors.bill_month)}
-          helperText={errors.bill_month}
-        />
+        <div className='grid grid-cols-2 gap-3'>
+          <TextField
+            label='账单月份'
+            required
+            type='month'
+            value={values.bill_month}
+            onChange={set('bill_month')}
+            error={Boolean(errors.bill_month)}
+            helperText={errors.bill_month}
+          />
+          <SelectField
+            label='币种'
+            value={effectiveCurrency}
+            onChange={e => setValues(prev => ({ ...prev, currency: e.target.value }))}
+            options={[
+              { value: 'CNY', label: '人民币 CNY' },
+              { value: 'USD', label: '美元 USD' },
+              { value: 'HKD', label: '港币 HKD' },
+              { value: 'JPY', label: '日元 JPY' },
+              { value: 'EUR', label: '欧元 EUR' },
+              { value: 'GBP', label: '英镑 GBP' },
+            ]}
+          />
+        </div>
         <TextField
           label='账单金额'
           required
@@ -201,7 +234,7 @@ export function BillDraftEditForm({ open, draft, cards, onClose, onSaved, onSubm
           onChange={set('bill_amount')}
           error={Boolean(errors.bill_amount)}
           helperText={errors.bill_amount}
-          startAdornment={<span>¥</span>}
+          startAdornment={<span>{currencySym}</span>}
         />
         <TextField
           label='最低还款额（选填）'
@@ -212,7 +245,7 @@ export function BillDraftEditForm({ open, draft, cards, onClose, onSaved, onSubm
           onChange={set('min_payment')}
           error={Boolean(errors.min_payment)}
           helperText={errors.min_payment}
-          startAdornment={<span>¥</span>}
+          startAdornment={<span>{currencySym}</span>}
         />
         <TextField
           label='账单日（选填）'
@@ -231,6 +264,23 @@ export function BillDraftEditForm({ open, draft, cards, onClose, onSaved, onSubm
           error={Boolean(errors.due_date)}
           helperText={errors.due_date}
         />
+        {subtotals && subtotals.length > 0 && (
+          <div className='rounded-xl border border-d-border bg-d-bg/60 p-3'>
+            <p className='mb-1 text-[11px] font-semibold text-d-muted'>合并账户分卡小计（只读）</p>
+            <div className='space-y-1'>
+              {subtotals.map((sub, i) => (
+                <div key={i} className='flex items-center justify-between text-[12px]'>
+                  <span className='text-d-text'>
+                    {sub.card_name || '卡'} · 尾号 {sub.card_last4}
+                  </span>
+                  <span className='num-tabular font-semibold text-d-text'>
+                    {formatDraftAmount(sub.amount, sub.currency || effectiveCurrency)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </Modal>
   )

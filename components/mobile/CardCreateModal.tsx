@@ -26,11 +26,22 @@ interface Props {
   onClose: () => void
   onSuccess: () => void
   initialHolderId?: string
+  initialBankName?: string | null
+  initialLast4?: string | null
+  onCreatedCard?: (cardId: string) => void | Promise<void>
 }
 
 type DueType = 'after_billing' | 'fixed'
 
-export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: Props) {
+export function CardCreateModal({
+  open,
+  onClose,
+  onSuccess,
+  initialHolderId,
+  initialBankName,
+  initialLast4,
+  onCreatedCard,
+}: Props) {
   const [banks, setBanks] = useState<BankItem[]>([])
   const [products, setProducts] = useState<CardProduct[]>([])
   const [holders, setHolders] = useState<CardHolder[]>([])
@@ -62,7 +73,7 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
     setLoading(true)
     setIsCreatingHolder(false)
     setNewHolderName('')
-    setLast4('')
+    setLast4(initialLast4 ? sanitizeLast4Input(initialLast4) : '')
     setLimit('')
     setBillingDay('')
     setOverrideEnabled(false)
@@ -73,12 +84,21 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
         setProducts(prodList)
         setHolders(holderList)
 
-        // 默认选第一家银行
+        // 优先按快捷建卡预填银行名匹配，否则选第一家银行
         if (bankList.length > 0) {
-          const firstBank = bankList[0]
-          setSelectedBankId(firstBank.id)
-          const firstBankProds = prodList.filter((p) => p.bank_id === firstBank.id)
-          const next = resolveBankChange(firstBankProds, false, '')
+          const normalizedBankHint = initialBankName?.trim().toLowerCase() || ''
+          const matchedBank = normalizedBankHint
+            ? bankList.find(
+                (b) =>
+                  b.name.toLowerCase().includes(normalizedBankHint) ||
+                  normalizedBankHint.includes(b.name.toLowerCase()) ||
+                  (b.short_name && normalizedBankHint.includes(b.short_name.toLowerCase()))
+              )
+            : undefined
+          const targetBank = matchedBank ?? bankList[0]
+          setSelectedBankId(targetBank.id)
+          const targetBankProds = prodList.filter((p) => p.bank_id === targetBank.id)
+          const next = resolveBankChange(targetBankProds, false, '')
           setSelectedProductId(next.productId)
           setCardName(next.cardName)
           setHasCustomName(false)
@@ -97,7 +117,7 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
         setError(err instanceof Error ? err.message : '加载选项失败')
       })
       .finally(() => setLoading(false))
-  }, [open, initialHolderId])
+  }, [open, initialHolderId, initialBankName, initialLast4])
 
   const availableProducts = selectedBankId
     ? products.filter((p) => p.bank_id === selectedBankId)
@@ -191,7 +211,7 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
 
     // 3. 执行新建，若未自定义名称则提交 undefined，防止冻结产品名快照（Finding 7, 9）
     try {
-      await createCard({
+      const created = await createCard({
         holder_id: finalHolderId,
         bank_id: selectedBankId,
         card_product_id: selectedProductId || undefined,
@@ -208,6 +228,9 @@ export function CardCreateModal({ open, onClose, onSuccess, initialHolderId }: P
         override_due_value: overrideEnabled ? dueCheck.value : undefined,
       })
 
+      if (onCreatedCard && created?.id) {
+        await onCreatedCard(created.id)
+      }
       onSuccess()
       onClose()
     } catch (err) {

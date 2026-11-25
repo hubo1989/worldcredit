@@ -407,9 +407,9 @@ export default function DashboardPage() {
     },
     {
       key: "import",
-      label: "邮箱账单",
+      label: "账单草稿",
       icon: <ImportIcon size={26} />,
-      onClick: () => router.push("/gmail-ledger"),
+      onClick: () => router.push("/bills?drafts=1"),
     },
   ];
 

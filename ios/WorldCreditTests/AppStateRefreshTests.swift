@@ -239,8 +239,9 @@ final class AppStateRefreshTests: XCTestCase {
         XCTAssertNil(state.pendingWebDestination)
 
         state.handleNotificationRoute("/gmail-ledger")
-        XCTAssertEqual(state.selectedTab, 0)
-        XCTAssertEqual(state.pendingWebDestination, .gmailLedger)
+        XCTAssertEqual(state.selectedTab, 1)
+        XCTAssertTrue(state.pendingOpenDraftsInbox)
+        XCTAssertNil(state.pendingWebDestination)
 
         state.handleNotificationRoute("/settings")
         XCTAssertEqual(state.selectedTab, 4)
@@ -258,6 +259,38 @@ final class AppStateRefreshTests: XCTestCase {
         XCTAssertEqual(state.selectedTab, 2)
         state.handleNotificationRoute("//evil.example/settings")
         XCTAssertEqual(state.selectedTab, 2)
+    }
+
+    func testOmnibusDraftRoutesAndIncomingURL() async throws {
+        let fixture = try fixture(loggedIn: true)
+        let state = fixture.state
+
+        state.handleNotificationRoute("/gmail-ledger")
+        XCTAssertEqual(state.selectedTab, 1)
+        XCTAssertTrue(state.pendingOpenDraftsInbox)
+        XCTAssertNil(state.pendingDraftIdToConfirm)
+        XCTAssertNil(state.pendingWebDestination)
+
+        state.pendingOpenDraftsInbox = false
+        state.handleNotificationRoute("/bills?draftId=draft-123")
+        XCTAssertEqual(state.selectedTab, 1)
+        XCTAssertEqual(state.pendingDraftIdToConfirm, "draft-123")
+        XCTAssertFalse(state.pendingOpenDraftsInbox)
+
+        state.pendingDraftIdToConfirm = nil
+        state.handleNotificationRoute("/bills?drafts=1")
+        XCTAssertEqual(state.selectedTab, 1)
+        XCTAssertTrue(state.pendingOpenDraftsInbox)
+
+        state.pendingOpenDraftsInbox = false
+        state.handleIncomingURL(URL(string: "worldcredit://drafts/draft-from-share")!)
+        XCTAssertEqual(state.selectedTab, 1)
+        XCTAssertEqual(state.pendingDraftIdToConfirm, "draft-from-share")
+
+        state.pendingDraftIdToConfirm = nil
+        state.handleIncomingURL(URL(string: "worldcredit://drafts")!)
+        XCTAssertEqual(state.selectedTab, 1)
+        XCTAssertTrue(state.pendingOpenDraftsInbox)
     }
 
     func testReloadDataReadsV2TablesAndLogoutClearsAllState() async throws {

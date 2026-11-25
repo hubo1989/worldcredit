@@ -8,23 +8,13 @@ import Testing
 struct DashboardWebDestinationTests {
     // MARK: - 入口枚举
 
-    @Test("保留的邮箱账单入口 URL 与产品约定的受限枚举完全一致")
-    func destinationURLsMatchAllowlist() {
-        #expect(DashboardWebDestination.gmailLedger.url().absoluteString == "https://app.all-bill.com/gmail-ledger")
-    }
-
-    @Test("Identifiable 与 .sheet(item:) 契约：仅保留 1 个入口且 id 稳定")
+    @Test("Identifiable 与 .sheet(item:) 契约：全部入口已原生化，allowlist 为空")
     func identifiableContract() {
-        let ids = DashboardWebDestination.allCases.map(\.id)
-        #expect(ids == ["gmailLedger"])
+        #expect(DashboardWebDestination.allCases.isEmpty)
+        #expect(DashboardWebRoutePolicy.allowedPaths.isEmpty)
         for item in DashboardWebDestination.allCases {
-            #expect(item.id == item.rawValue)
+            #expect(!item.id.isEmpty)
         }
-    }
-
-    @Test("导航栏标题与保留入口文案一致")
-    func titlesMatchWebCopy() {
-        #expect(DashboardWebDestination.gmailLedger.title == "邮箱账单")
     }
 
     @Test("保留入口均不带 native_action 参数")
@@ -44,31 +34,14 @@ struct DashboardWebDestinationTests {
         }
     }
 
-    // MARK: - 导航决策：允许
+    // MARK: - 导航决策：拒绝（不得加载、也不得开系统浏览器）
 
-    @Test("仅保留的 .gmailLedger 入口 URL 允许在受限 WebView 内加载")
+    @Test("目标站所有非枚举及已原生化 path 均拒绝在受限 WebView 内加载")
     func entryURLsLoadInWebView() {
         for item in DashboardWebDestination.allCases {
             #expect(DashboardWebRoutePolicy.decision(for: item.url()) == .loadInWebView)
         }
     }
-
-    @Test("受限 path 允许大小写不敏感 host、显式 443、尾斜杠与 SPA 查询串")
-    func allowlistTolerances() {
-        let allowed = [
-            "https://app.all-bill.com/gmail-ledger",
-            "https://app.all-bill.com/gmail-ledger/",
-            "https://APP.ALL-BILL.COM/gmail-ledger",
-            "https://app.all-bill.com:443/gmail-ledger",
-            "https://app.all-bill.com/gmail-ledger?tab=all&q=x",
-        ]
-        for text in allowed {
-            let url = try! #require(URL(string: text))
-            #expect(DashboardWebRoutePolicy.decision(for: url) == .loadInWebView, Comment(rawValue: text))
-        }
-    }
-
-    // MARK: - 导航决策：拒绝（不得加载、也不得开系统浏览器）
 
     @Test("URL 内嵌 credentials 一律拒绝")
     func rejectsEmbeddedCredentials() {
@@ -111,10 +84,12 @@ struct DashboardWebDestinationTests {
         }
     }
 
-    @Test("目标站非枚举 path 拒绝（含已原生化的 /benefits、/benefits/calendar、/promos 及路径穿越）")
+    @Test("目标站非枚举 path 拒绝（含已原生化的 /gmail-ledger、/benefits、/benefits/calendar、/promos 及路径穿越）")
     func rejectsUnknownTopLevelPaths() {
         let texts = [
             "https://app.all-bill.com/",
+            "https://app.all-bill.com/gmail-ledger",
+            "https://app.all-bill.com/gmail-ledger/",
             "https://app.all-bill.com/benefits",
             "https://app.all-bill.com/benefits/",
             "https://app.all-bill.com/benefits/calendar",

@@ -110,6 +110,10 @@ struct WorldCreditApp: App {
                     appState.lock()
                 }
             }
+            .onOpenURL { url in
+                if GIDSignIn.sharedInstance.handle(url) { return }
+                appState.handleIncomingURL(url)
+            }
         }
     }
 }

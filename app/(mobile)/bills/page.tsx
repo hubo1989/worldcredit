@@ -18,7 +18,9 @@ import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
 import { CardCreateModal } from '@/components/mobile/CardCreateModal'
 import { AccountMergeWizardModal } from '@/components/mobile/AccountMergeWizardModal'
+import { updateBillImportDraft } from '@/lib/api/billDrafts'
 import { BillDraftsPanel } from '@/components/mobile/BillDraftsPanel'
+import { BillImportDialog, type CardOption } from '@/components/mobile/BillImportDialog'
 import { ManualBillAmountDialog } from '@/components/mobile/ManualBillAmountDialog'
 import { PayableForm } from '@/components/mobile/PayableForm'
 import {
@@ -100,7 +102,15 @@ export default function BillsPage() {
   const [paymentOpen, setPaymentOpen] = useState(false)
   const [selectedBill, setSelectedBill] = useState<BillDashboardItem | null>(null)
   const [billFormOpen, setBillFormOpen] = useState(false)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
+  const [focusDraftId, setFocusDraftId] = useState<string | null>(null)
+  const [draftsRefreshToken, setDraftsRefreshToken] = useState(0)
   const [cardCreateOpen, setCardCreateOpen] = useState(false)
+  const [quickCreatePrefill, setQuickCreatePrefill] = useState<{
+    draftId: string
+    bankName?: string | null
+    last4?: string | null
+  } | null>(null)
   const [mergeWizardOpen, setMergeWizardOpen] = useState(false)
   // 手填金额：只针对「卡」，账单可能还没生成，因此传的是 card，不是 bill
   const [manualTarget, setManualTarget] = useState<CardWithBillsSummary | null>(null)
@@ -236,6 +246,18 @@ export default function BillsPage() {
     loadData()
   }, [loadData])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const draftId = params.get('draftId')
+    if (draftId) {
+      setFocusDraftId(draftId)
+      params.delete('draftId')
+      const query = params.toString()
+      window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`)
+    }
+  }, [])
+
   // 汇率与业务数据解耦：拿不到也不让整页失败，只是合计缺少外币部分。
   useEffect(() => {
     let cancelled = false
@@ -251,6 +273,7 @@ export default function BillsPage() {
     setSyncing(true)
     try {
       const { syncedCardsCount, syncedBillsCount } = await syncGmailLedgerToCardsAndBills(user.id)
+      setDraftsRefreshToken(t => t + 1)
       await loadData()
       if (syncedCardsCount > 0 || syncedBillsCount > 0) {
         setCelebrationNotice({
@@ -258,7 +281,7 @@ export default function BillsPage() {
           message: `邮件账单已归集同步：新增 ${syncedCardsCount} 张卡，更新 ${syncedBillsCount} 笔账单。`,
         })
       } else {
-        setCelebrationNotice({ open: true, message: '所有邮件账单与卡包已是最新状态。' })
+        setCelebrationNotice({ open: true, message: '邮箱与账单草稿箱已刷新至最新状态。' })
       }
     } catch (err) {
       setLoadError('同步失败：' + (err instanceof Error ? err.message : '未知错误'))
@@ -308,7 +331,7 @@ export default function BillsPage() {
           : '登记还款成功，已更新账单结余。',
       })
     } catch (err) {
-      alert('登记还款失败: ' + (err instanceof Error ? err.message : String(err)))
+      setLoadError('登记还款失败: ' + (err instanceof Error ? err.message : String(err)))
     }
   }
 
@@ -388,7 +411,7 @@ export default function BillsPage() {
       })
       await loadData()
     } catch (err) {
-      alert('一键还款失败: ' + (err instanceof Error ? err.message : String(err)))
+      setLoadError('一键还款失败: ' + (err instanceof Error ? err.message : String(err)))
     } finally {
       setPaying(false)
     }
@@ -515,7 +538,7 @@ export default function BillsPage() {
       })
       await loadData()
     } catch (err) {
-      alert(err instanceof Error ? err.message : '登记失败，请重试')
+      setLoadError(err instanceof Error ? err.message : '登记失败，请重试')
     }
   }
 
@@ -569,10 +592,48 @@ export default function BillsPage() {
     setSelectedTag('all')
   }, [])
 
+  const importCardOptions: CardOption[] = useMemo(
+    () =>
+      cardsSummary.map(c => ({
+        id: c.card.id,
+        label: `${c.card.card_product?.bank_name ?? ''} ${getEffectiveCardName(c.card, c.card.card_product)} ${formatCardTail(c.card.card_number_last4)}`.trim(),
+        card: c.card,
+      })),
+    [cardsSummary]
+  )
+
   return (
     <>
-      {/* 邮件导入的待确认草稿：有草稿才渲染，确认后刷新账单列表 */}
-      <BillDraftsPanel onChanged={() => void loadData()} />
+      <div className='px-4 pt-3'>
+        <button
+          type='button'
+          onClick={() => setImportDialogOpen(true)}
+          className='flex min-h-[44px] w-full items-center justify-between rounded-2xl border border-d-accent/40 bg-d-surface px-4 py-2.5 text-left transition-colors active:bg-d-subtle'
+        >
+          <span>
+            <span className='block text-[13px] font-semibold text-d-text'>
+              智能导入账单（PDF / 截图 / 文本）
+            </span>
+            <span className='block text-[11px] text-d-muted'>
+              支持加密月结单自动解密、多币种拆单与草稿核对入账
+            </span>
+          </span>
+          <span className='shrink-0 rounded-xl bg-d-accent px-3 py-1.5 text-[12px] font-semibold text-white'>
+            立即导入
+          </span>
+        </button>
+      </div>
+
+      {/* 全渠道导入待确认草稿：有草稿才渲染，确认后刷新账单列表 */}
+      <BillDraftsPanel
+        onChanged={() => void loadData()}
+        focusDraftId={focusDraftId}
+        refreshToken={draftsRefreshToken}
+        onQuickCreateCard={(prefill) => {
+          setQuickCreatePrefill(prefill)
+          setCardCreateOpen(true)
+        }}
+      />
       <BillsView
         syncing={syncing}
         onSync={handleSync}
@@ -635,9 +696,36 @@ export default function BillsPage() {
 
       <CardCreateModal
         open={cardCreateOpen}
-        onClose={() => setCardCreateOpen(false)}
-        onSuccess={loadData}
+        onClose={() => {
+          setCardCreateOpen(false)
+          setQuickCreatePrefill(null)
+        }}
+        initialBankName={quickCreatePrefill?.bankName}
+        initialLast4={quickCreatePrefill?.last4}
+        onCreatedCard={async (cardId) => {
+          if (quickCreatePrefill?.draftId) {
+            await updateBillImportDraft(quickCreatePrefill.draftId, { card_id: cardId })
+          }
+        }}
+        onSuccess={() => {
+          setQuickCreatePrefill(null)
+          setDraftsRefreshToken(t => t + 1)
+          void loadData()
+        }}
       />
+
+      {user && (
+        <BillImportDialog
+          open={importDialogOpen}
+          onClose={() => setImportDialogOpen(false)}
+          onImportSuccess={() => {
+            setDraftsRefreshToken(t => t + 1)
+            void loadData()
+          }}
+          cards={importCardOptions}
+          userId={user.id}
+        />
+      )}
 
       <AccountMergeWizardModal
         open={mergeWizardOpen}

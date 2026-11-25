@@ -69,6 +69,8 @@ targets:
         product: GoogleSignIn
       - target: WorldCreditWidgets
         embed: true
+      - target: WorldCreditShareExtension
+        embed: true
       - target: WorldCreditWatch
         embed: true
     info:
@@ -85,6 +87,7 @@ targets:
           - CFBundleTypeRole: Editor
             CFBundleURLSchemes:
               - com.googleusercontent.apps.752531640450-l3h029onesb3u51t3s40jok1j5stgnoc
+              - worldcredit
         UIBackgroundModes:
           - remote-notification
     entitlements:
@@ -93,6 +96,8 @@ targets:
         aps-environment: $(APS_ENVIRONMENT)
         com.apple.security.application-groups:
           - group.com.chunfenshijie.worldcredit
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.chunfenshijie.worldcredit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.chunfenshijie.worldcredit
@@ -131,6 +136,39 @@ targets:
         INFOPLIST_FILE: WorldCreditWidgets/Info.plist
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: "1.0.0"
+
+  WorldCreditShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: WorldCreditShareExtension
+    info:
+      path: WorldCreditShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: 导入账单
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsFileWithMaxCount: 1
+              NSExtensionActivationSupportsImageWithMaxCount: 3
+              NSExtensionActivationSupportsText: true
+    entitlements:
+      path: WorldCreditShareExtension/WorldCreditShareExtension.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.chunfenshijie.worldcredit
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.chunfenshijie.worldcredit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chunfenshijie.worldcredit.share
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: WorldCreditShareExtension/Info.plist
+        CURRENT_PROJECT_VERSION: "20261029.1"
+        MARKETING_VERSION: "1.0.0"
+        SKIP_INSTALL: YES
 
   WorldCreditWatch:
     type: application

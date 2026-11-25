@@ -483,13 +483,28 @@ public final class ApiClient: @unchecked Sendable {
         // Decode errors first: an error must win even if data has the wrong shape.
         let failure = try JSONDecoder().decode(RPCErrorEnvelope.self, from: data)
         if let error = failure.error {
-            throw NSError(domain: "ApiClient", code: 500, userInfo: [NSLocalizedDescriptionKey: error])
+            throw makeRPCError(statusCode: 500, message: error, envelope: failure)
         }
         return data
     }
 
-    private struct RPCErrorEnvelope: Decodable { let error: String? }
+    private struct RPCErrorEnvelope: Decodable {
+        let error: String?
+        let code: String?
+        let details: AnyCodable?
+    }
     private struct RPCEnvelope<Value: Decodable>: Decodable { let data: Value }
+
+    private func makeRPCError(statusCode: Int, message: String, envelope: RPCErrorEnvelope?) -> NSError {
+        var userInfo: [String: Any] = [NSLocalizedDescriptionKey: message]
+        if let code = envelope?.code {
+            userInfo["rpc_code"] = code
+        }
+        if let details = envelope?.details {
+            userInfo["rpc_details"] = details.value
+        }
+        return NSError(domain: "ApiClient", code: statusCode, userInfo: userInfo)
+    }
 
     // MARK: - Phase 1 Online RPC Wrappers
 
@@ -836,8 +851,11 @@ public final class ApiClient: @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         guard (200...299).contains(http.statusCode) else {
             let envelope = try? JSONDecoder().decode(RPCErrorEnvelope.self, from: data)
-            throw NSError(domain: "ApiClient", code: http.statusCode,
-                          userInfo: [NSLocalizedDescriptionKey: envelope?.error ?? "请求失败 (\(http.statusCode))"])
+            throw makeRPCError(
+                statusCode: http.statusCode,
+                message: envelope?.error ?? "请求失败 (\(http.statusCode))",
+                envelope: envelope
+            )
         }
     }
 
@@ -947,6 +965,316 @@ public final class ApiClient: @unchecked Sendable {
         let (data, response) = try await session.data(for: request)
         try validateHTTP(response, data: data)
         _ = try JSONDecoder().decode(GmailDisconnectResponse.self, from: data)
+    }
+
+    // MARK: - Multi-Gmail & Omnibus Drafts / Password Vault
+
+    public func gmailConnections() async throws -> [GmailConnectionDTO] {
+        let request = try authenticatedRequest(path: "api/gmail/connections", method: "GET")
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response, data: data)
+        return try JSONDecoder().decode([GmailConnectionDTO].self, from: data)
+    }
+
+    public func gmailConnectAccount(
+        serverAuthCode: String,
+        defaultHolderId: String? = nil,
+        displayLabel: String? = nil
+    ) async throws -> GmailConnectResponse {
+        var request = try authenticatedRequest(path: "api/gmail/connect", method: "POST")
+        var body: [String: Any] = ["serverAuthCode": serverAuthCode]
+        if let defaultHolderId, !defaultHolderId.isEmpty {
+            body["defaultHolderId"] = defaultHolderId
+        }
+        if let displayLabel, !displayLabel.isEmpty {
+            body["displayLabel"] = displayLabel
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response, data: data)
+        return try JSONDecoder().decode(GmailConnectResponse.self, from: data)
+    }
+
+    public func updateGmailConnection(
+        connectionId: String,
+        displayLabel: String? = nil,
+        clearDisplayLabel: Bool = false,
+        defaultHolderId: String? = nil,
+        clearDefaultHolderId: Bool = false,
+        attributionMode: String? = nil,
+        syncEnabled: Bool? = nil
+    ) async throws -> GmailConnectionDTO {
+        var patch: [String: Any] = [:]
+        if clearDisplayLabel {
+            patch["display_label"] = NSNull()
+        } else if let displayLabel {
+            patch["display_label"] = displayLabel
+        }
+        if clearDefaultHolderId {
+            patch["default_holder_id"] = NSNull()
+        } else if let defaultHolderId {
+            patch["default_holder_id"] = defaultHolderId
+        }
+        if let attributionMode {
+            patch["attribution_mode"] = attributionMode
+        }
+        if let syncEnabled {
+            patch["sync_enabled"] = syncEnabled
+        }
+        return try await rpc(
+            module: "gmail",
+            function: "updateGmailConnection",
+            args: [AnyCodable(connectionId), AnyCodable(patch)]
+        )
+    }
+
+    public func gmailSyncConnection(connectionId: String?, maxMessages: Int? = nil) async throws -> GmailSyncResult {
+        var request = try authenticatedRequest(path: "api/gmail/sync", method: "POST", timeoutInterval: 120)
+        var body: [String: Any] = [:]
+        if let connectionId, !connectionId.isEmpty {
+            body["connectionId"] = connectionId
+        }
+        if let maxMessages {
+            body["maxMessages"] = maxMessages
+        }
+        if !body.isEmpty {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response, data: data)
+        return try JSONDecoder().decode(GmailSyncResult.self, from: data)
+    }
+
+    public func gmailDisconnectConnection(connectionId: String?) async throws {
+        var request = try authenticatedRequest(path: "api/gmail/disconnect", method: "POST")
+        if let connectionId, !connectionId.isEmpty {
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["connectionId": connectionId])
+        }
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response, data: data)
+        _ = try JSONDecoder().decode(GmailDisconnectResponse.self, from: data)
+    }
+
+    public func uploadDraftAttachment(
+        recordId: String,
+        fileData: Data,
+        fileName: String,
+        mimeType: String
+    ) async throws -> UploadedAttachmentDTO {
+        guard let token = self.token, !token.isEmpty else {
+            throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
+        }
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/attachments/upload"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        func appendField(_ name: String, _ value: String) {
+            body.append(Data("--\(boundary)\r\n".utf8))
+            body.append(Data("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".utf8))
+            body.append(Data("\(value)\r\n".utf8))
+        }
+        appendField("record_type", "draft")
+        appendField("record_id", recordId)
+
+        let safeName = fileName.replacingOccurrences(of: "\"", with: "_")
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"\(safeName)\"\r\n".utf8))
+        body.append(Data("Content-Type: \(mimeType)\r\n\r\n".utf8))
+        body.append(fileData)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        request.httpBody = body
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response, data: data)
+        struct UploadEnvelope: Decodable {
+            let data: UploadedAttachmentDTO?
+            let error: String?
+        }
+        let decoded = try JSONDecoder().decode(UploadEnvelope.self, from: data)
+        if let err = decoded.error {
+            throw NSError(domain: "ApiClient", code: 400, userInfo: [NSLocalizedDescriptionKey: err])
+        }
+        guard let item = decoded.data else {
+            throw NSError(domain: "ApiClient", code: 500, userInfo: [NSLocalizedDescriptionKey: "上传响应缺少附件信息"])
+        }
+        return item
+    }
+
+    public func fetchAttachmentData(attachmentId: String) async throws -> (Data, String?) {
+        guard let token = self.token, !token.isEmpty else {
+            throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
+        }
+        let segmentAllowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+        let encodedId = attachmentId.addingPercentEncoding(withAllowedCharacters: segmentAllowed) ?? attachmentId
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            throw NSError(domain: "ApiClient", code: 400, userInfo: [NSLocalizedDescriptionKey: "无效的附件地址"])
+        }
+        let trimmedPath = components.percentEncodedPath.hasSuffix("/")
+            ? String(components.percentEncodedPath.dropLast())
+            : components.percentEncodedPath
+        components.percentEncodedPath = "\(trimmedPath)/api/attachments/\(encodedId)"
+        guard let url = components.url else {
+            throw NSError(domain: "ApiClient", code: 400, userInfo: [NSLocalizedDescriptionKey: "无效的附件地址"])
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 60
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response, data: data)
+        let mime = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type")
+        return (data, mime)
+    }
+
+    public func fetchBillImportDrafts() async throws -> [BillImportDraftDTO] {
+        try await rpc(module: "billDrafts", function: "getBillImportDrafts", args: [])
+    }
+
+    public func fetchBillImportDraft(id: String) async throws -> BillImportDraftDTO {
+        try await rpc(module: "billDrafts", function: "getBillImportDraftById", args: [AnyCodable(id)])
+    }
+
+    public func importAndParseBill(_ input: ImportAndParseBillRequest) async throws -> ImportAndParseBillResponse {
+        let payload = try encodeToAnyCodable(input)
+        return try await rpc(module: "billDrafts", function: "importAndParseBill", args: [payload])
+    }
+
+    public func unlockEncryptedDraft(draftId: String, input: UnlockDraftRequest) async throws -> UnlockDraftResponse {
+        let payload = try encodeToAnyCodable(input)
+        return try await rpc(module: "billDrafts", function: "unlockEncryptedDraft", args: [AnyCodable(draftId), payload])
+    }
+
+    public func retryParseDraft(draftId: String, manualMode: Bool = false) async throws -> BillImportDraftDTO {
+        let opts: [String: Any] = manualMode ? ["manual_mode": true] : [:]
+        return try await rpc(
+            module: "billDrafts",
+            function: "retryParseDraft",
+            args: manualMode ? [AnyCodable(draftId), AnyCodable(opts)] : [AnyCodable(draftId)]
+        )
+    }
+
+    public func updateBillImportDraft(
+        draftId: String,
+        cardId: String? = nil,
+        clearCardId: Bool = false,
+        holderId: String? = nil,
+        parsedPayload: BillDraftPayloadDTO? = nil
+    ) async throws -> BillImportDraftDTO {
+        var patch: [String: Any] = [:]
+        if clearCardId {
+            patch["card_id"] = NSNull()
+        } else if let cardId {
+            patch["card_id"] = cardId
+        }
+        if let holderId {
+            patch["holder_id"] = holderId
+        }
+        if let parsedPayload {
+            let encoded = try encodeToAnyCodable(parsedPayload)
+            patch["parsed_payload"] = encoded.value
+        }
+        return try await rpc(
+            module: "billDrafts",
+            function: "updateBillImportDraft",
+            args: [AnyCodable(draftId), AnyCodable(patch)]
+        )
+    }
+
+    public func confirmBillImportDraft(
+        draftId: String,
+        conflictResolution: String? = nil
+    ) async throws -> Bill {
+        if let conflictResolution {
+            return try await rpc(
+                module: "billDrafts",
+                function: "confirmBillImportDraft",
+                args: [AnyCodable(draftId), AnyCodable(["conflict_resolution": conflictResolution])]
+            )
+        }
+        return try await rpc(
+            module: "billDrafts",
+            function: "confirmBillImportDraft",
+            args: [AnyCodable(draftId)]
+        )
+    }
+
+    public func discardBillImportDraft(draftId: String) async throws {
+        try await rpcVoid(module: "billDrafts", function: "discardBillImportDraft", args: [AnyCodable(draftId)])
+    }
+
+    public func batchDiscardBillDrafts(draftIds: [String]) async throws -> Int {
+        struct Res: Decodable { let discardedCount: Int; enum CodingKeys: String, CodingKey { case discardedCount = "discarded_count" } }
+        let res: Res = try await rpc(module: "billDrafts", function: "batchDiscardBillDrafts", args: [AnyCodable(draftIds)])
+        return res.discardedCount
+    }
+
+    public func listPasswordRules() async throws -> [StatementPasswordRuleDTO] {
+        try await rpc(module: "passwordVault", function: "listPasswordRules", args: [])
+    }
+
+    public func createPasswordRule(
+        label: String,
+        password: String,
+        holderId: String? = nil,
+        bankId: String? = nil,
+        bankKeyword: String? = nil,
+        hint: String? = nil
+    ) async throws -> StatementPasswordRuleDTO {
+        var body: [String: Any] = ["label": label, "password": password]
+        if let holderId, !holderId.isEmpty { body["holder_id"] = holderId }
+        if let bankId, !bankId.isEmpty { body["bank_id"] = bankId }
+        if let bankKeyword, !bankKeyword.isEmpty { body["bank_keyword"] = bankKeyword }
+        if let hint, !hint.isEmpty { body["hint"] = hint }
+        return try await rpc(module: "passwordVault", function: "createPasswordRule", args: [AnyCodable(body)])
+    }
+
+    public func updatePasswordRule(
+        ruleId: String,
+        label: String? = nil,
+        password: String? = nil,
+        holderId: String? = nil,
+        clearHolderId: Bool = false,
+        bankId: String? = nil,
+        clearBankId: Bool = false,
+        bankKeyword: String? = nil,
+        hint: String? = nil
+    ) async throws -> StatementPasswordRuleDTO {
+        var patch: [String: Any] = [:]
+        if let label { patch["label"] = label }
+        if let password, !password.isEmpty { patch["password"] = password }
+        if clearHolderId { patch["holder_id"] = NSNull() } else if let holderId { patch["holder_id"] = holderId }
+        if clearBankId { patch["bank_id"] = NSNull() } else if let bankId { patch["bank_id"] = bankId }
+        if let bankKeyword { patch["bank_keyword"] = bankKeyword }
+        if let hint { patch["hint"] = hint }
+        return try await rpc(module: "passwordVault", function: "updatePasswordRule", args: [AnyCodable(ruleId), AnyCodable(patch)])
+    }
+
+    public func deletePasswordRule(ruleId: String) async throws {
+        try await rpcVoid(module: "passwordVault", function: "deletePasswordRule", args: [AnyCodable(ruleId)])
+    }
+
+    public func fetchImportPreferences() async throws -> UserImportPreferencesDTO {
+        try await rpc(module: "preferences", function: "getUserImportPreferences", args: [])
+    }
+
+    public func updateImportPreferences(autoCommitTrustedEmail: Bool) async throws -> UserImportPreferencesDTO {
+        try await rpc(
+            module: "preferences",
+            function: "updateUserImportPreferences",
+            args: [AnyCodable(["auto_commit_trusted_email": autoCommitTrustedEmail])]
+        )
+    }
+
+    public func updateHolderAliases(holderId: String, aliases: [String]) async throws {
+        try await rpcVoid(
+            module: "holders",
+            function: "updateMyHolderAliases",
+            args: [AnyCodable(holderId), AnyCodable(aliases)]
+        )
     }
 
     // MARK: - Keychain Helpers
