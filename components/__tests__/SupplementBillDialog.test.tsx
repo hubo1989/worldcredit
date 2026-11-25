@@ -163,6 +163,50 @@ describe('SupplementBillDialog 与超期检测客户端逻辑', () => {
         '2026-10'
       )
     ).toBe('2026-10-05')
+
+    // 优先级：card.override_due_* -> card_product.payment_due_* -> account.due_*
+    const overrideCard = {
+      ...baseCard,
+      override_due_type: 'fixed' as const,
+      override_due_value: 8,
+    }
+    const accountWithFixedDue: Pick<CreditAccount, 'billing_day' | 'due_type' | 'due_value'> = {
+      billing_day: 12,
+      due_type: 'fixed',
+      due_value: 18,
+    }
+    expect(
+      computeSuggestedDueDate(
+        overrideCard,
+        { payment_due_type: 'after_billing', payment_due_value: 20 },
+        '2026-10',
+        accountWithFixedDue
+      )
+    ).toBe('2026-11-08')
+    expect(
+      computeSuggestedDueDate(
+        baseCard,
+        { payment_due_type: 'after_billing', payment_due_value: 15 },
+        '2026-10',
+        accountWithFixedDue
+      )
+    ).toBe('2026-11-15')
+    expect(
+      computeSuggestedDueDate(
+        baseCard,
+        null,
+        '2026-10',
+        accountWithFixedDue
+      )
+    ).toBe('2026-11-18')
+    expect(
+      computeSuggestedDueDate(
+        baseCard,
+        null,
+        '2026-10',
+        { billing_day: 10, due_type: 'after_billing', due_value: 25 }
+      )
+    ).toBe('2026-11-25')
   })
 
   it('自动预填卡/缺失账期/日期，改月份自动重算未手改日期，拦下非法日历日', async () => {

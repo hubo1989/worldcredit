@@ -47,7 +47,9 @@ export interface BillBadgeView {
  * overdue → danger；partial → warn；unpaid → warn；其余（unissued/已结清）→ success。
  */
 export function billBadgeView(
-  item: CardWithBillsSummary & { missingStatement?: { missingBillMonth: string } | null }
+  item: Omit<CardWithBillsSummary, 'missingStatement'> & {
+    missingStatement?: { missingBillMonth: string } | null
+  }
 ): BillBadgeView {
   if (item.status === 'overdue') return { text: '逾期', tone: 'danger' }
   if (item.status === 'partial') return { text: '部分还款', tone: 'warn' }

@@ -169,7 +169,8 @@ export function SupplementBillDialog({
         computeSuggestedDueDate(
           defaultCard.card,
           defaultCard.card.card_product,
-          resolvedMonth
+          resolvedMonth,
+          defaultCard.account
         )
       )
     } else {
@@ -191,7 +192,8 @@ export function SupplementBillDialog({
         computeSuggestedDueDate(
           selectedItem.card,
           selectedItem.card.card_product,
-          normalized
+          normalized,
+          selectedItem.account
         )
       )
     }
@@ -287,7 +289,12 @@ export function SupplementBillDialog({
     setDueDateDirty(false)
     setStatementDate(actualStatementDateInMonth(effectiveBillingDay, normalized))
     setDueDate(
-      computeSuggestedDueDate(selectedItem.card, selectedItem.card.card_product, normalized)
+      computeSuggestedDueDate(
+        selectedItem.card,
+        selectedItem.card.card_product,
+        normalized,
+        selectedItem.account
+      )
     )
   }
 

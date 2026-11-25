@@ -7,7 +7,6 @@ import type { Bill, CardProduct, CreditAccount, CreditCard } from '@/lib/types'
 import {
   formatCardTail,
   getEffectiveCardName,
-  getEffectiveDueConfig,
   getLocalTodayString,
 } from '@/lib/utils'
 
@@ -41,7 +40,7 @@ export interface MissingStatementSummary {
   pendingDraftStatus: 'parsing' | 'needs_password' | 'parse_failed' | 'ready' | null
 }
 
-export type CardWithMissingStatement = CardWithBillsSummary & {
+export type CardWithMissingStatement = Omit<CardWithBillsSummary, 'missingStatement'> & {
   missingStatement?: MissingStatementSummary | null
 }
 
@@ -183,30 +182,40 @@ export function computeSuggestedDueDate(
     'billing_day' | 'override_billing_day' | 'override_due_type' | 'override_due_value'
   >,
   cardProduct: Pick<CardProduct, 'payment_due_type' | 'payment_due_value'> | null | undefined,
-  billMonth: string
+  billMonth: string,
+  account?: Pick<CreditAccount, 'billing_day' | 'due_type' | 'due_value'> | null
 ): string {
   const normalized = normalizeYearMonth(billMonth) ?? billMonth
-  const fallbackProduct: Pick<CardProduct, 'payment_due_type' | 'payment_due_value'> =
-    cardProduct ?? { payment_due_type: 'after_billing', payment_due_value: 20 }
-  const { type, value } = getEffectiveDueConfig(
-    card as CreditCard,
-    fallbackProduct as CardProduct
+  const effectiveBillingDay = clampBillingDay(
+    card.override_billing_day ?? card.billing_day ?? account?.billing_day ?? 1
   )
-  const effectiveBillingDay = card.override_billing_day ?? card.billing_day
+  let dueType: 'fixed' | 'after_billing' | 'fixed_before_billing' = 'after_billing'
+  let dueValue = 20
 
-  if (type === 'fixed') {
+  if (card.override_due_type != null && card.override_due_value != null) {
+    dueType = card.override_due_type
+    dueValue = card.override_due_value
+  } else if (cardProduct?.payment_due_type != null && cardProduct?.payment_due_value != null) {
+    dueType = cardProduct.payment_due_type
+    dueValue = cardProduct.payment_due_value
+  } else if (account?.due_type != null && account?.due_value != null) {
+    dueType = account.due_type
+    dueValue = account.due_value
+  }
+
+  if (dueType === 'fixed') {
     const nextMonth = addYearMonth(normalized, 1)
     const [ny, nm] = nextMonth.split('-').map(Number)
-    const day = Math.min(Math.max(Math.trunc(value), 1), daysInCivilMonth(ny, nm))
+    const day = Math.min(Math.max(Math.trunc(dueValue), 1), daysInCivilMonth(ny, nm))
     return `${nextMonth}-${String(day).padStart(2, '0')}`
   }
-  if (type === 'fixed_before_billing') {
+  if (dueType === 'fixed_before_billing') {
     const [y, m] = normalized.split('-').map(Number)
-    const day = Math.min(Math.max(Math.trunc(value), 1), daysInCivilMonth(y, m))
+    const day = Math.min(Math.max(Math.trunc(dueValue), 1), daysInCivilMonth(y, m))
     return `${normalized}-${String(day).padStart(2, '0')}`
   }
   const statementDate = actualStatementDateInMonth(effectiveBillingDay, normalized)
-  return addCivilDays(statementDate, Math.trunc(value))
+  return addCivilDays(statementDate, Math.max(0, Math.trunc(dueValue)))
 }
 
 function toCivilDay(raw: string | null | undefined, timeZone: string): string | null {
@@ -448,7 +457,8 @@ export function detectMissingStatementsFromSummary(
     const suggestedDueDate = computeSuggestedDueDate(
       carrier.card,
       carrier.card.card_product,
-      missingBillMonth
+      missingBillMonth,
+      unit.account
     )
 
     const summary: MissingStatementSummary = {
