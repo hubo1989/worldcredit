@@ -189,4 +189,101 @@ struct BillsGroupingDateRulesTests {
         ])[0]
         #expect(overridden.missingStatementDays(latestBillMonth: "2026-09", today: day("2026-10-24")) == 4)
     }
+
+    @Test("detectMissingStatements excludes inactive/loan/archived, deduplicates merged accounts, and supports created_at baseline")
+    func detectMissingStatementsRules() throws {
+        let product = CardProduct(
+            id: "p1", bankName: "招商银行", cardName: "经典白",
+            currency: "CNY", paymentDueType: .afterBilling, paymentDueValue: 20
+        )
+        let mergedAccount = CreditAccount(
+            id: "acc-merged",
+            holderId: "h1",
+            bankName: "招商银行",
+            currency: "CNY",
+            statementMode: "merged",
+            quotaMode: "shared",
+            billingDay: 10,
+            primaryCardId: "c-cancelled",
+            status: "active"
+        )
+        let archivedAccount = CreditAccount(
+            id: "acc-archived",
+            holderId: "h1",
+            bankName: "民生银行",
+            currency: "CNY",
+            statementMode: "independent",
+            billingDay: 5,
+            status: "archived"
+        )
+
+        func cardDisplay(
+            id: String,
+            billingDay: Int = 10,
+            status: String = "active",
+            cardType: String = "credit",
+            accountId: String? = nil,
+            last4: String? = "8888",
+            createdAt: String = "2026-01-01T00:00:00Z"
+        ) -> CardDisplayItem {
+            let c = CreditCard(
+                id: id, holderId: "h1", cardProductId: "p1",
+                billingDay: billingDay, cardNumberLast4: last4,
+                status: status, cardType: cardType,
+                createdAt: createdAt, accountId: accountId
+            )
+            return CardDisplayItem(
+                card: c, product: product, bank: nil, holder: nil,
+                latestBill: nil, remainingAmount: 0,
+                interestFreeDaysToday: 30, nextDueDate: day("2026-12-01")
+            )
+        }
+
+        let cancelledPrimary = cardDisplay(id: "c-cancelled", status: "cancelled", accountId: "acc-merged", last4: "1111")
+        let subActive1 = cardDisplay(id: "c-sub-1", status: "active", accountId: "acc-merged", last4: "2222", createdAt: "2026-02-01T00:00:00Z")
+        let subActive2 = cardDisplay(id: "c-sub-2", status: "active", accountId: "acc-merged", last4: "3333", createdAt: "2026-03-01T00:00:00Z")
+        let loanCard = cardDisplay(id: "c-loan", billingDay: 5, cardType: "loan")
+        let frozenCard = cardDisplay(id: "c-frozen", billingDay: 5, status: "frozen")
+        let archivedCard = cardDisplay(id: "c-archived", billingDay: 5, accountId: "acc-archived")
+        let neverBilledToday = cardDisplay(id: "c-new-today", billingDay: 10, createdAt: "2026-11-15T00:00:00Z")
+        let neverBilledOverdue = cardDisplay(id: "c-new-overdue", billingDay: 10, createdAt: "2026-11-05T00:00:00Z")
+
+        let cards = [
+            cancelledPrimary, subActive1, subActive2,
+            loanCard, frozenCard, archivedCard,
+            neverBilledToday, neverBilledOverdue,
+        ]
+        let bills = [
+            makeItem(cardId: "c-cancelled", billingDay: 10, billId: "b-merged", billMonth: "2026-09", status: "paid", remaining: 0),
+            makeItem(cardId: "c-loan", billingDay: 5, cardType: "loan", billId: "b-loan", billMonth: "2026-09"),
+            makeItem(cardId: "c-frozen", billingDay: 5, billId: "b-frozen", billMonth: "2026-09"),
+            makeItem(cardId: "c-archived", billingDay: 5, billId: "b-arch", billMonth: "2026-09"),
+        ]
+
+        let detected = BillsGrouping.detectMissingStatements(
+            cards: cards,
+            bills: bills,
+            accounts: [mergedAccount, archivedAccount],
+            today: day("2026-11-15"),
+            graceDays: 3
+        )
+        #expect(detected.map(\.anchorCardId) == ["c-sub-1", "c-new-overdue"])
+        #expect(detected[0].isMerged == true)
+        #expect(detected[0].missingBillMonth == "2026-10")
+        #expect(detected[1].missingBillMonth == "2026-11")
+
+        // BillsPresentation supports .missingStatement filter
+        let pres = BillsPresentation(
+            bills: bills,
+            cards: cards,
+            payables: [],
+            rates: nil,
+            filter: BillsPresentationFilter(entity: .cards, statuses: [.missingStatement]),
+            today: day("2026-11-15"),
+            accounts: [mergedAccount, archivedAccount],
+            graceDays: 3
+        )
+        #expect(pres.detectedMissingStatements.count == 2)
+        #expect(pres.unbilledCards.map(\.id) == ["c-new-overdue"])
+    }
 }

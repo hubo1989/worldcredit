@@ -14,6 +14,7 @@ public enum BillsEntityFilter: String, CaseIterable, Identifiable, Sendable {
 public enum BillStatusFilter: String, CaseIterable, Identifiable, Sendable {
     case unpaid = "待还"
     case overdue = "已逾期"
+    case missingStatement = "超期未出账"
     case unissued = "未出账"
     case paid = "已还款"
 

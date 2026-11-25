@@ -679,6 +679,117 @@ public final class ApiClient: @unchecked Sendable {
         ))
     }
 
+    public struct SupplementMissingBillSubtotalInput: Encodable, Sendable {
+        public let cardId: String?
+        public let cardTail: String
+        public let subtotalAmount: Double
+        public let currency: String?
+
+        enum CodingKeys: String, CodingKey {
+            case cardId = "card_id"
+            case cardTail = "card_tail"
+            case subtotalAmount = "subtotal_amount"
+            case currency
+        }
+
+        public init(
+            cardId: String? = nil,
+            cardTail: String,
+            subtotalAmount: Double,
+            currency: String? = nil
+        ) {
+            self.cardId = cardId
+            self.cardTail = cardTail
+            self.subtotalAmount = subtotalAmount
+            self.currency = currency
+        }
+    }
+
+    public struct SupplementMissingBillInput: Encodable, Sendable {
+        public let id: String?
+        public let cardId: String
+        public let billMonth: String
+        public let billAmount: Double
+        public let minPayment: Double?
+        public let dueDate: String
+        public let statementDate: String?
+        public let statementStart: String?
+        public let statementEnd: String?
+        public let pinDueDate: Bool?
+        public let pinStatementDate: Bool?
+        public let pinMinPayment: Bool?
+        public let markAsPaid: Bool?
+        public let subtotals: [SupplementMissingBillSubtotalInput]?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case cardId = "card_id"
+            case billMonth = "bill_month"
+            case billAmount = "bill_amount"
+            case minPayment = "min_payment"
+            case dueDate = "due_date"
+            case statementDate = "statement_date"
+            case statementStart = "statement_start"
+            case statementEnd = "statement_end"
+            case pinDueDate = "pin_due_date"
+            case pinStatementDate = "pin_statement_date"
+            case pinMinPayment = "pin_min_payment"
+            case markAsPaid = "mark_as_paid"
+            case subtotals
+        }
+
+        public init(
+            id: String? = UUID().uuidString.lowercased(),
+            cardId: String,
+            billMonth: String,
+            billAmount: Double,
+            minPayment: Double? = nil,
+            dueDate: String,
+            statementDate: String? = nil,
+            statementStart: String? = nil,
+            statementEnd: String? = nil,
+            pinDueDate: Bool? = nil,
+            pinStatementDate: Bool? = nil,
+            pinMinPayment: Bool? = nil,
+            markAsPaid: Bool? = nil,
+            subtotals: [SupplementMissingBillSubtotalInput]? = nil
+        ) {
+            self.id = id
+            self.cardId = cardId
+            self.billMonth = billMonth
+            self.billAmount = billAmount
+            self.minPayment = minPayment
+            self.dueDate = dueDate
+            self.statementDate = statementDate
+            self.statementStart = statementStart
+            self.statementEnd = statementEnd
+            self.pinDueDate = pinDueDate
+            self.pinStatementDate = pinStatementDate
+            self.pinMinPayment = pinMinPayment
+            self.markAsPaid = markAsPaid
+            self.subtotals = subtotals
+        }
+    }
+
+    public struct SupplementMissingBillResult: Decodable, Sendable {
+        public let bill: Bill
+        public let action: String
+        public let isZeroBill: Bool
+        public let paymentCreated: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case bill, action
+            case isZeroBill = "is_zero_bill"
+            case paymentCreated = "payment_created"
+        }
+    }
+
+    @discardableResult
+    public func supplementMissingBill(input: SupplementMissingBillInput) async throws -> SupplementMissingBillResult {
+        let payload = try encodeToAnyCodable(input)
+        return try await rpc(module: "bills", function: "supplementMissingBill", args: [payload])
+    }
+
     public func deleteBill(billId: String) async throws {
         try await rpcVoid(module: "bills", function: "deleteBill", args: [AnyCodable(billId)])
     }

@@ -5,10 +5,19 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   getBillDashboardItems,
+  getCardsWithBillsSummary,
   markBillAsPaid,
   markAllOverdueBillsAsPaid,
   type BillDashboardItem,
 } from "@/lib/api/bills";
+import { SupplementBillDialog } from "@/components/mobile/SupplementBillDialog";
+import { BillImportDialog, type CardOption } from "@/components/mobile/BillImportDialog";
+import {
+  attachMissingStatements,
+  type CardWithMissingStatement,
+  type MissingStatementSummary,
+} from "@/components/mobile/supplementBillApi";
+import { formatCardTail, getEffectiveCardName } from "@/lib/utils";
 import { getHolders } from "@/lib/api/holders";
 import { getAllCardsWithProduct } from "@/lib/api/cards";
 import {
@@ -59,7 +68,7 @@ interface QuickAction {
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const { displayConfig, togglePrivacyMode } = useUserPreferences();
+  const { displayConfig, reminderConfig, togglePrivacyMode } = useUserPreferences();
   const router = useRouter();
 
   /** 折算目标币种：用户偏好 display_config.default_currency（缺省 CNY）。 */
@@ -76,6 +85,10 @@ export default function DashboardPage() {
   const [installmentPlans, setInstallmentPlans] = useState<InstallmentPlanWithSummary[]>([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [cards, setCards] = useState<Array<{ id: string; holder_id: string; account_id?: string | null }>>([]);
+  const [rawCardsSummary, setRawCardsSummary] = useState<CardWithMissingStatement[]>([]);
+  const [supplementTarget, setSupplementTarget] = useState<MissingStatementSummary | null>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importInitialCardId, setImportInitialCardId] = useState<string | null>(null);
   const unreadSyncedRef = useRef(false);
 
   // ---- 交互状态 ----
@@ -127,11 +140,12 @@ export default function DashboardPage() {
     setError(null);
     const shouldSyncUnread = !unreadSyncedRef.current;
     try {
-      // 并行：持卡人 / 卡片（含 account_id 以支持合并账户分期去重） / 账单 / 固定支出 / 未读通知数 / 活跃分期
-      const [holderList, allCards, allBills, payableList, unreadCount, activeInstallments] = await Promise.all([
+      // 并行：持卡人 / 卡片（含 account_id 以支持合并账户分期去重） / 账单 / 卡片账单聚合 / 固定支出 / 未读通知数 / 活跃分期
+      const [holderList, allCards, allBills, summaryList, payableList, unreadCount, activeInstallments] = await Promise.all([
         getHolders(user.id),
         getAllCardsWithProduct(),
         getBillDashboardItems(200, user.id),
+        getCardsWithBillsSummary(user.id).catch(() => [] as CardWithMissingStatement[]),
         getRecurringPayables(user.id).catch((err) => {
           console.warn("[dashboard] Failed to load recurring payables:", err);
           if (!silent) {
@@ -163,6 +177,7 @@ export default function DashboardPage() {
       setHolders(holderList);
       setCards(cardsRes);
       setBills(allBills);
+      setRawCardsSummary(summaryList);
       setPayables(payableList);
       setInstallmentPlans(Array.isArray(activeInstallments) ? activeInstallments : []);
       setUnreadNotificationCount(unreadCount);
@@ -313,6 +328,7 @@ export default function DashboardPage() {
   }, []);
   const closeToast = useCallback(() => setToast((prev) => ({ ...prev, open: false })), []);
   const goToBills = useCallback(() => router.push("/bills"), [router]);
+  const goToMissingBills = useCallback(() => router.push("/bills?status=missing_statement"), [router]);
   const goToPromos = useCallback(() => router.push("/promos"), [router]);
   const goToCashflowForecast = useCallback(() => router.push("/analytics#cashflow"), [router]);
   const goToNotifications = useCallback(() => router.push("/notifications"), [router]);
@@ -363,6 +379,43 @@ export default function DashboardPage() {
 
   const cardsByHolder = useMemo(() => countCardsByHolder(cards), [cards]);
   const totalCardCount = cards.length;
+
+  const cardsWithMissing = useMemo(
+    () =>
+      attachMissingStatements(rawCardsSummary, {
+        graceDays: (reminderConfig as { missing_statement_grace_days?: unknown })
+          ?.missing_statement_grace_days,
+      }),
+    [rawCardsSummary, reminderConfig],
+  );
+
+  const visibleMissingStatements = useMemo(() => {
+    return cardsWithMissing
+      .filter(
+        (c) =>
+          (holderFilter === "all" || c.holder_id === holderFilter) &&
+          !c.suppressMissingStatement &&
+          c.missingStatement,
+      )
+      .map((c) => c.missingStatement!)
+      .sort((a, b) => b.daysPast - a.daysPast);
+  }, [cardsWithMissing, holderFilter]);
+
+  const holderMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const h of holders) map[h.id] = h.name;
+    return map;
+  }, [holders]);
+
+  const importCardOptions: CardOption[] = useMemo(
+    () =>
+      cardsWithMissing.map((c) => ({
+        id: c.card.id,
+        label: `${c.card.card_product?.bank_name ?? ""} ${getEffectiveCardName(c.card, c.card.card_product)} ${formatCardTail(c.card.card_number_last4)}`.trim(),
+        card: c.card,
+      })),
+    [cardsWithMissing],
+  );
 
   // 隐私脱敏：金额整体模糊
   const amountClass = `${blurClass} num-tabular`;
@@ -474,6 +527,9 @@ export default function DashboardPage() {
         urgentReminders={urgentReminders}
         userName={user?.name ?? null}
         userEmail={user?.email ?? null}
+        missingStatements={visibleMissingStatements}
+        onSupplementMissing={setSupplementTarget}
+        onNavMissingBills={goToMissingBills}
       />
 
       {/* 还款确认 / Toast / 加载失败重试：保持原有交互，不随视图重写而丢失 */}
@@ -497,6 +553,46 @@ export default function DashboardPage() {
         onChanged={() => void loadData({ silent: true })}
         initialAction={quickInitialAction}
       />
+
+      <SupplementBillDialog
+        open={supplementTarget !== null}
+        onClose={() => setSupplementTarget(null)}
+        onSuccess={async (res, ctx) => {
+          await loadData({ silent: true });
+          setToast({
+            open: true,
+            message: res.is_zero_bill
+              ? `已确认 ${ctx.billMonth} 期 0 元零账单，缺账提醒已消除`
+              : `已补充 ${ctx.billMonth} 期账单，缺账提醒已消除`,
+            severity: "success",
+          });
+        }}
+        cardsSummary={cardsWithMissing}
+        holderMap={holderMap}
+        initialCardId={supplementTarget?.anchorCardId ?? null}
+        initialBillMonth={supplementTarget?.missingBillMonth ?? null}
+        initialMissingSummary={supplementTarget}
+        onSwitchToImport={(cardId) => {
+          setImportInitialCardId(cardId || null);
+          setImportDialogOpen(true);
+        }}
+        onOpenDraft={(draftId) => router.push(`/bills?draftId=${encodeURIComponent(draftId)}`)}
+        onOpenExistingBill={(billId) => router.push(`/bills/${billId}`)}
+      />
+
+      {user && (
+        <BillImportDialog
+          open={importDialogOpen}
+          onClose={() => {
+            setImportDialogOpen(false);
+            setImportInitialCardId(null);
+          }}
+          onImportSuccess={() => void loadData({ silent: true })}
+          cards={importCardOptions}
+          userId={user.id}
+          initialCardId={importInitialCardId}
+        />
+      )}
 
       {/* 轻量智能选卡与年费 ROI 快捷胶囊入口 */}
       <div className="obsidian-dashboard fixed bottom-[calc(72px+env(safe-area-inset-bottom))] left-1/2 z-[900] flex -translate-x-1/2 items-center gap-2 rounded-full border border-d-border bg-d-surface/95 px-2.5 py-1.5 shadow-lg backdrop-blur">

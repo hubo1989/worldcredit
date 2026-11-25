@@ -69,7 +69,9 @@ public final class AppState {
     public var dashboardHolders: [CardHolder] = []
     /// 公开银行目录；固定支出归属选择用，加载失败时退回卡片上的银行名。
     public var bankOptions: [BankOption] = []
-    public var creditAccountGroups: [CreditAccountGroup] = []
+    public var creditAccountGroups: [CreditAccountGroup] = [] {
+        didSet { invalidateBillsPresentation() }
+    }
     public var promos: [PromoRecord] = []
     public var displayConfig: UserDisplayConfig = UserDisplayConfig()
     public var isolatedSyncChanges: [[String: String]] = []
@@ -138,9 +140,12 @@ public final class AppState {
         let cards = cards
         let payables = payables
         let rates = dashboardRates
+        let accounts = creditAccountGroups.map(\.account)
+        let graceDays = reminderPreferences.missingStatementGraceDays
         return billsPresentationCache.value(for: filter, today: today) {
             BillsPresentation(bills: bills, cards: cards, payables: payables,
-                              rates: rates, filter: filter, today: today)
+                              rates: rates, filter: filter, today: today,
+                              accounts: accounts, graceDays: graceDays)
         }
     }
     /// 固定支出历史还款：按 payable id 缓存，展开时按需加载。
@@ -169,6 +174,8 @@ public final class AppState {
     public var billDraftsError: String?
     public var pendingOpenDraftsInbox: Bool = false
     public var pendingDraftIdToConfirm: String?
+    public var pendingSupplementCardId: String?
+    public var pendingSupplementBillMonth: String?
     public var pendingBenefitsRoute: BenefitsHubRoute?
     public var pendingBenefitsAction: String?
     public var pendingDeepLinkCardId: String?
@@ -179,7 +186,13 @@ public final class AppState {
     public var opportunityReminders: [OpportunityCalendarEventView] = []
     public var opportunityTasks: [OpportunityTaskView] = []
     public var syncRejectedNotices: [SyncRejectedNotice] = []
-    public var reminderPreferences: UserReminderPreferences = UserReminderPreferences()
+    public var reminderPreferences: UserReminderPreferences = UserReminderPreferences() {
+        didSet {
+            if oldValue.missingStatementGraceDays != reminderPreferences.missingStatementGraceDays {
+                invalidateBillsPresentation()
+            }
+        }
+    }
     public var isSavingReminderPreferences: Bool = false
     public var reminderPreferencesError: String?
     @ObservationIgnored private var reminderPrefsRevision: Int = 0
@@ -1425,15 +1438,18 @@ public final class AppState {
             pendingWebDestination = nil
             pendingOpenNotifications = false
             selectedTab = 1
-            if let components = URLComponents(string: trimmed),
-               let draftId = components.queryItems?.first(where: { $0.name == "draftId" })?.value,
-               !draftId.isEmpty {
+            if let draftId = queryValue("draftId") {
                 pendingOpenDraftsInbox = false
                 pendingDraftIdToConfirm = draftId
-            } else if let components = URLComponents(string: trimmed),
-                      components.queryItems?.first(where: { $0.name == "drafts" })?.value == "1" {
+            } else if queryValue("drafts") == "1" {
                 pendingDraftIdToConfirm = nil
                 pendingOpenDraftsInbox = true
+            } else if queryValue("status") == "missing_statement" {
+                selectedEntityFilter = .all
+                selectedStatusFilters = [.missingStatement]
+            } else if actionQuery == "supplement", let cardId = queryValue("cardId") {
+                pendingSupplementCardId = cardId
+                pendingSupplementBillMonth = queryValue("billMonth")
             }
         } else if path == "/cards" || path.hasPrefix("/cards/") || path == "/accounts" || path.hasPrefix("/accounts/") {
             pendingWebDestination = nil
@@ -2136,6 +2152,18 @@ public final class AppState {
         }
         try? await rescheduleLocalNotifications()
         return created
+    }
+
+    @discardableResult
+    public func supplementMissingBill(
+        input: ApiClient.SupplementMissingBillInput
+    ) async throws -> ApiClient.SupplementMissingBillResult {
+        let result = try await performWithSilentRefresh {
+            try await self.apiClient.supplementMissingBill(input: input)
+        }
+        await sync()
+        try? await rescheduleLocalNotifications()
+        return result
     }
 
     public func updateBillFields(billId: String, input: BillFieldsUpdateInput) async throws {

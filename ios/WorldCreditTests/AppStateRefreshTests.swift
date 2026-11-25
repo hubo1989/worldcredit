@@ -250,6 +250,15 @@ final class AppStateRefreshTests: XCTestCase {
         state.handleNotificationRoute("/bills")
         XCTAssertEqual(state.selectedTab, 1)
 
+        state.handleNotificationRoute("/bills?status=missing_statement")
+        XCTAssertEqual(state.selectedTab, 1)
+        XCTAssertEqual(state.selectedStatusFilters, [.missingStatement])
+
+        state.handleNotificationRoute("/bills?action=supplement&cardId=card-9&billMonth=2026-10")
+        XCTAssertEqual(state.selectedTab, 1)
+        XCTAssertEqual(state.pendingSupplementCardId, "card-9")
+        XCTAssertEqual(state.pendingSupplementBillMonth, "2026-10")
+
         state.handleNotificationRoute("/dashboard")
         XCTAssertEqual(state.selectedTab, 0)
 

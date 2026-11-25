@@ -51,6 +51,7 @@ interface Props {
   cards: CardOption[]
   userId: string
   initialSourceType?: SourceType
+  initialCardId?: string | null
 }
 
 const MAX_TEXT_LENGTH = 50_000
@@ -147,9 +148,10 @@ export function BillImportDialog({
   cards,
   userId,
   initialSourceType = 'text',
+  initialCardId = null,
 }: Props) {
   const [activeStep, setActiveStep] = useState(0)
-  const [selectedCardId, setSelectedCardId] = useState('')
+  const [selectedCardId, setSelectedCardId] = useState(initialCardId ?? '')
   const [sourceType, setSourceType] = useState<SourceType>(initialSourceType)
   const [inputText, setInputText] = useState('')
   const [imageFiles, setImageFiles] = useState<File[]>([])
@@ -179,7 +181,7 @@ export function BillImportDialog({
   useEffect(() => {
     if (!open) return
     setActiveStep(0)
-    setSelectedCardId('')
+    setSelectedCardId(initialCardId ?? '')
     setSourceType(initialSourceType)
     setInputText('')
     setImageFiles([])
@@ -203,7 +205,7 @@ export function BillImportDialog({
     setError('')
     setInfoNotice('')
     setConfirmedCount(0)
-  }, [open, initialSourceType])
+  }, [open, initialSourceType, initialCardId])
 
   const currentDraft = drafts[activeDraftIdx] ?? null
 

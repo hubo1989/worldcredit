@@ -46,10 +46,15 @@ export interface BillBadgeView {
  * 卡片状态徽章：与暗色候选稿一致，统一「淡底 + ink 文字」。
  * overdue → danger；partial → warn；unpaid → warn；其余（unissued/已结清）→ success。
  */
-export function billBadgeView(item: CardWithBillsSummary): BillBadgeView {
+export function billBadgeView(
+  item: CardWithBillsSummary & { missingStatement?: { missingBillMonth: string } | null }
+): BillBadgeView {
   if (item.status === 'overdue') return { text: '逾期', tone: 'danger' }
   if (item.status === 'partial') return { text: '部分还款', tone: 'warn' }
   if (item.status === 'unpaid') return { text: '待还款', tone: 'warn' }
+  if (item.missingStatement) {
+    return { text: '超期未出账', tone: 'warn' }
+  }
   return {
     text: item.historyBills.length > 0 ? '本期已结清' : '未出账单',
     tone: 'success',
@@ -79,18 +84,19 @@ export function amountToneClass(item: CardWithBillsSummary): string {
 
 /** 账单页筛选：对象类型 × 状态（多选）× 归属维度 × 标签。 */
 export type BillsEntityType = 'all' | 'cards' | 'payables'
-export type BillStatusKey = 'unpaid' | 'overdue' | 'unissued' | 'paid'
+export type BillStatusKey = 'unpaid' | 'overdue' | 'missing_statement' | 'unissued' | 'paid'
 
 /** 对象类型下可选的状态；切换类型时用它裁剪已选状态。 */
 export function statusOptionsFor(entity: BillsEntityType): BillStatusKey[] {
-  if (entity === 'cards') return ['unpaid', 'overdue', 'unissued']
+  if (entity === 'cards') return ['unpaid', 'overdue', 'missing_statement', 'unissued']
   if (entity === 'payables') return ['unpaid', 'overdue', 'paid']
-  return ['unpaid', 'overdue', 'unissued', 'paid']
+  return ['unpaid', 'overdue', 'missing_statement', 'unissued', 'paid']
 }
 
 export const BILL_STATUS_LABELS: Record<BillStatusKey, string> = {
   unpaid: '待还',
   overdue: '已逾期',
+  missing_statement: '超期未出账',
   unissued: '未出账',
   paid: '已还款',
 }
@@ -125,6 +131,7 @@ interface CardLike {
   holder_id: string | null
   status: 'overdue' | 'unpaid' | 'partial' | 'unissued'
   card: { card_product?: { bank_name?: string } | null }
+  missingStatement?: { missingBillMonth: string } | null
 }
 
 interface PayableLike {
@@ -146,11 +153,12 @@ function matchesTag(
 
 export function filterCardsForView<C extends CardLike>(cards: C[], f: BillsFilterState): C[] {
   if (f.entityType === 'payables') return []
-  return cards.filter(
-    c =>
-      matchesTag(c.holder_id, c.card.card_product?.bank_name, f) &&
-      (f.statuses.length === 0 || f.statuses.includes(cardStatusKey(c.status)))
-  )
+  return cards.filter(c => {
+    if (!matchesTag(c.holder_id, c.card.card_product?.bank_name, f)) return false
+    if (f.statuses.length === 0) return true
+    if (f.statuses.includes(cardStatusKey(c.status))) return true
+    return f.statuses.includes('missing_statement') && Boolean(c.missingStatement)
+  })
 }
 
 export function filterPayablesForView<P extends PayableLike>(
@@ -171,11 +179,18 @@ export function countStatuses<C extends CardLike, P extends PayableLike>(
   payables: P[],
   f: BillsFilterState
 ): Record<BillStatusKey, number> {
-  const counts: Record<BillStatusKey, number> = { unpaid: 0, overdue: 0, unissued: 0, paid: 0 }
+  const counts: Record<BillStatusKey, number> = {
+    unpaid: 0,
+    overdue: 0,
+    missing_statement: 0,
+    unissued: 0,
+    paid: 0,
+  }
   if (f.entityType !== 'payables') {
     for (const c of cards) {
       if (matchesTag(c.holder_id, c.card.card_product?.bank_name, f)) {
         counts[cardStatusKey(c.status)] += 1
+        if (c.missingStatement) counts.missing_statement += 1
       }
     }
   }

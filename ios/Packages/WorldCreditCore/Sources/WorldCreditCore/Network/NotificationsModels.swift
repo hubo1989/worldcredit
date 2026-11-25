@@ -15,6 +15,7 @@ public enum NotificationCategory: Codable, Equatable, Hashable, Sendable {
     case billDueAdvance
     case payableDueAdvance
     case billOverdue
+    case billMissingStatement
     case gracePeriodLongest
     case opportunityExpiry
     case opportunityClaim
@@ -32,6 +33,7 @@ public enum NotificationCategory: Codable, Equatable, Hashable, Sendable {
         case "bill_due_advance": self = .billDueAdvance
         case "payable_due_advance": self = .payableDueAdvance
         case "bill_overdue": self = .billOverdue
+        case "bill_missing_statement": self = .billMissingStatement
         case "grace_period_longest": self = .gracePeriodLongest
         case "opportunity_expiry": self = .opportunityExpiry
         case "opportunity_claim": self = .opportunityClaim
@@ -51,6 +53,7 @@ public enum NotificationCategory: Codable, Equatable, Hashable, Sendable {
         case .billDueAdvance: return "bill_due_advance"
         case .payableDueAdvance: return "payable_due_advance"
         case .billOverdue: return "bill_overdue"
+        case .billMissingStatement: return "bill_missing_statement"
         case .gracePeriodLongest: return "grace_period_longest"
         case .opportunityExpiry: return "opportunity_expiry"
         case .opportunityClaim: return "opportunity_claim"
@@ -70,6 +73,7 @@ public enum NotificationCategory: Codable, Equatable, Hashable, Sendable {
         case .billDueAdvance: return "即将到期"
         case .payableDueAdvance: return "支出提醒"
         case .billOverdue: return "已逾期"
+        case .billMissingStatement: return "未收账单"
         case .gracePeriodLongest: return "最长免息期"
         case .opportunityExpiry: return "权益到期"
         case .opportunityClaim: return "权益领取"
@@ -86,7 +90,7 @@ public enum NotificationCategory: Codable, Equatable, Hashable, Sendable {
         switch self {
         case .billOverdue:
             return .danger
-        case .billDueToday, .payableDueToday, .gracePeriodLongest, .opportunityExpiry:
+        case .billDueToday, .payableDueToday, .billMissingStatement, .gracePeriodLongest, .opportunityExpiry:
             return .gold
         case .billDueAdvance, .payableDueAdvance, .opportunityClaim, .opportunityActivity,
              .opportunityTask, .opportunityReset, .opportunityBooking:
@@ -176,31 +180,75 @@ public struct NotificationGraceCardBreakdown: Codable, Equatable, Sendable, Iden
     }
 }
 
+public struct NotificationMissingStatementBreakdown: Codable, Equatable, Sendable, Identifiable {
+    public let cardId: String
+    public let accountId: String?
+    public let subject: String
+    public let billMonth: String
+    public let expectedStatementDate: String
+    public let daysPast: Int
+    public let isMerged: Bool?
+
+    public var id: String { "\(cardId)-\(billMonth)" }
+
+    public init(
+        cardId: String,
+        accountId: String? = nil,
+        subject: String,
+        billMonth: String,
+        expectedStatementDate: String,
+        daysPast: Int,
+        isMerged: Bool? = nil
+    ) {
+        self.cardId = cardId
+        self.accountId = accountId
+        self.subject = subject
+        self.billMonth = billMonth
+        self.expectedStatementDate = expectedStatementDate
+        self.daysPast = daysPast
+        self.isMerged = isMerged
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case cardId = "card_id"
+        case accountId = "account_id"
+        case subject
+        case billMonth = "bill_month"
+        case expectedStatementDate = "expected_statement_date"
+        case daysPast = "days_past"
+        case isMerged = "is_merged"
+    }
+}
+
 public struct NotificationMetadata: Codable, Equatable, Sendable {
     public let kind: String?
     public let totalsByCurrency: [String: Double]?
     public let bills: [NotificationBillBreakdown]?
     public let payables: [NotificationPayableBreakdown]?
     public let cards: [NotificationGraceCardBreakdown]?
+    public let missingStatements: [NotificationMissingStatementBreakdown]?
 
     public init(
         kind: String? = nil,
         totalsByCurrency: [String: Double]? = nil,
         bills: [NotificationBillBreakdown]? = nil,
         payables: [NotificationPayableBreakdown]? = nil,
-        cards: [NotificationGraceCardBreakdown]? = nil
+        cards: [NotificationGraceCardBreakdown]? = nil,
+        missingStatements: [NotificationMissingStatementBreakdown]? = nil
     ) {
         self.kind = kind
         self.totalsByCurrency = totalsByCurrency
         self.bills = bills
         self.payables = payables
         self.cards = cards
+        self.missingStatements = missingStatements
     }
 
     enum CodingKeys: String, CodingKey {
         case kind
         case totalsByCurrency = "totals_by_currency"
         case bills, payables, cards
+        case missingStatements = "missing_statements"
     }
 }
 
@@ -356,13 +404,14 @@ public struct NotificationBulkDeleteResult: Codable, Equatable, Sendable {
     }
 }
 
-/// 12 项通知细粒度独立开关（缺省全开，兼容存量配置）。
+/// 通知细粒度独立开关（缺省全开，兼容存量配置）。
 public struct NotificationItemSwitches: Codable, Equatable, Sendable {
     public var billDueToday: Bool
     public var payableDueToday: Bool
     public var billDueAdvance: Bool
     public var payableDueAdvance: Bool
     public var billOverdue: Bool
+    public var billMissingStatement: Bool
     public var gracePeriodLongest: Bool
     public var opportunityExpiry: Bool
     public var opportunityClaim: Bool
@@ -377,6 +426,7 @@ public struct NotificationItemSwitches: Codable, Equatable, Sendable {
         billDueAdvance: Bool = true,
         payableDueAdvance: Bool = true,
         billOverdue: Bool = true,
+        billMissingStatement: Bool = true,
         gracePeriodLongest: Bool = true,
         opportunityExpiry: Bool = true,
         opportunityClaim: Bool = true,
@@ -390,6 +440,7 @@ public struct NotificationItemSwitches: Codable, Equatable, Sendable {
         self.billDueAdvance = billDueAdvance
         self.payableDueAdvance = payableDueAdvance
         self.billOverdue = billOverdue
+        self.billMissingStatement = billMissingStatement
         self.gracePeriodLongest = gracePeriodLongest
         self.opportunityExpiry = opportunityExpiry
         self.opportunityClaim = opportunityClaim
@@ -405,6 +456,7 @@ public struct NotificationItemSwitches: Codable, Equatable, Sendable {
         case billDueAdvance = "bill_due_advance"
         case payableDueAdvance = "payable_due_advance"
         case billOverdue = "bill_overdue"
+        case billMissingStatement = "bill_missing_statement"
         case gracePeriodLongest = "grace_period_longest"
         case opportunityExpiry = "opportunity_expiry"
         case opportunityClaim = "opportunity_claim"
@@ -421,6 +473,7 @@ public struct NotificationItemSwitches: Codable, Equatable, Sendable {
         billDueAdvance = try c.decodeIfPresent(Bool.self, forKey: .billDueAdvance) ?? true
         payableDueAdvance = try c.decodeIfPresent(Bool.self, forKey: .payableDueAdvance) ?? true
         billOverdue = try c.decodeIfPresent(Bool.self, forKey: .billOverdue) ?? true
+        billMissingStatement = try c.decodeIfPresent(Bool.self, forKey: .billMissingStatement) ?? true
         gracePeriodLongest = try c.decodeIfPresent(Bool.self, forKey: .gracePeriodLongest) ?? true
         opportunityExpiry = try c.decodeIfPresent(Bool.self, forKey: .opportunityExpiry) ?? true
         opportunityClaim = try c.decodeIfPresent(Bool.self, forKey: .opportunityClaim) ?? true
@@ -501,6 +554,7 @@ public struct UserReminderPreferences: Codable, Equatable, Sendable {
     public var quietHoursEnd: String?
     public var enabledChannels: [String]
     public var customReminderEmail: String?
+    public var missingStatementGraceDays: Int
     public var items: NotificationItemSwitches
     public var opportunities: OpportunityReminderPreferences
 
@@ -510,6 +564,7 @@ public struct UserReminderPreferences: Codable, Equatable, Sendable {
         quietHoursEnd: String? = "08:00",
         enabledChannels: [String] = ["web_push"],
         customReminderEmail: String? = nil,
+        missingStatementGraceDays: Int = 3,
         items: NotificationItemSwitches = NotificationItemSwitches(),
         opportunities: OpportunityReminderPreferences = OpportunityReminderPreferences()
     ) {
@@ -518,6 +573,7 @@ public struct UserReminderPreferences: Codable, Equatable, Sendable {
         self.quietHoursEnd = quietHoursEnd
         self.enabledChannels = enabledChannels
         self.customReminderEmail = customReminderEmail
+        self.missingStatementGraceDays = (0...15).contains(missingStatementGraceDays) ? missingStatementGraceDays : 3
         self.items = items
         self.opportunities = opportunities
     }
@@ -532,6 +588,7 @@ public struct UserReminderPreferences: Codable, Equatable, Sendable {
         case quietHoursEnd = "quiet_hours_end"
         case enabledChannels = "enabled_channels"
         case customReminderEmail = "custom_reminder_email"
+        case missingStatementGraceDays = "missing_statement_grace_days"
         case items
         case opportunities
     }
@@ -542,6 +599,8 @@ public struct UserReminderPreferences: Codable, Equatable, Sendable {
         quietHoursStart = try c.decodeIfPresent(String.self, forKey: .quietHoursStart) ?? "22:00"
         quietHoursEnd = try c.decodeIfPresent(String.self, forKey: .quietHoursEnd) ?? "08:00"
         customReminderEmail = try c.decodeIfPresent(String.self, forKey: .customReminderEmail)
+        let rawGrace = try c.decodeIfPresent(Int.self, forKey: .missingStatementGraceDays)
+        missingStatementGraceDays = (rawGrace.map { (0...15).contains($0) ? $0 : 3 }) ?? 3
         let decodedOpp = try c.decodeIfPresent(OpportunityReminderPreferences.self, forKey: .opportunities)
             ?? OpportunityReminderPreferences()
         opportunities = decodedOpp

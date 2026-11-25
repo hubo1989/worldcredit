@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react'
 import type { BillDashboardItem } from '@/lib/api/bills'
 import { categoryLabel, type PayableWithStatus } from '@/lib/api/payables'
+import type { MissingStatementSummary } from '@/components/mobile/supplementBillApi'
 import { BellIcon } from '@/components/icons/WcIcon'
 import {
   billCurrency,
@@ -57,6 +58,9 @@ export interface DashboardViewProps {
   /** 已登录用户展示口径：姓名缺失时回落到邮箱前缀，避免把所有人显示成同一个人。 */
   userName: string | null
   userEmail: string | null
+  missingStatements?: MissingStatementSummary[]
+  onSupplementMissing?: (item: MissingStatementSummary) => void
+  onNavMissingBills?: () => void
 }
 
 export function DashboardView(vm: DashboardViewProps) {
@@ -67,6 +71,7 @@ export function DashboardView(vm: DashboardViewProps) {
     onNavBills, onNavPromos, onNavCashflowForecast, onNavNotifications, unreadNotificationCount = 0,
     totalCardCount, holders, cardsByHolder,
     quickActions, promoCount, userName, userEmail, urgentReminders, debtBreakdown,
+    missingStatements = [], onSupplementMissing, onNavMissingBills,
   } = vm
 
   const extMetrics = metrics as DashboardMetrics & {
@@ -171,6 +176,54 @@ export function DashboardView(vm: DashboardViewProps) {
           >
             一键全部还款
           </button>
+        </div>
+      )}
+
+      {/* 超期未获得账单提醒横幅（随持卡人筛选联动，位于逾期条下方） */}
+      {missingStatements.length > 0 && (
+        <div className="mx-5 mt-3 flex items-center gap-3 rounded-xl border border-d-gold-deep/40 bg-d-gold-soft p-3">
+          <div className="min-w-0 flex-1">
+            {missingStatements.length === 1 ? (
+              <>
+                <p className="truncate text-xs font-bold text-d-warn-ink">
+                  {missingStatements[0].subject} {missingStatements[0].missingBillMonth} 期账单超期 {missingStatements[0].daysPast} 天未收到
+                </p>
+                <p className="mt-0.5 truncate text-[11px] text-d-muted">
+                  点击手动补充金额或确认本期 0 元无消费
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="truncate text-xs font-bold text-d-warn-ink">
+                  {missingStatements.length} 张卡超期未获得账单
+                </p>
+                <p className="mt-0.5 truncate text-[11px] text-d-muted">
+                  {missingStatements
+                    .slice(0, 2)
+                    .map(h => `${h.subject}（${h.missingBillMonth}）`)
+                    .join('、')}
+                  {missingStatements.length > 2 ? ' 等' : ''}
+                </p>
+              </>
+            )}
+          </div>
+          {missingStatements.length === 1 && onSupplementMissing ? (
+            <button
+              type="button"
+              onClick={() => onSupplementMissing(missingStatements[0])}
+              className="h-11 shrink-0 whitespace-nowrap rounded-xl bg-d-gold px-4 text-xs font-semibold text-d-bg"
+            >
+              去补录
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => (onNavMissingBills ? onNavMissingBills() : onNavBills())}
+              className="h-11 shrink-0 whitespace-nowrap rounded-xl bg-d-gold px-4 text-xs font-semibold text-d-bg"
+            >
+              去处理
+            </button>
+          )}
         </div>
       )}
 

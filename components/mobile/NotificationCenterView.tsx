@@ -34,6 +34,31 @@ const TONE_BADGE_CLASS: Record<'danger' | 'gold' | 'accent' | 'muted', string> =
   muted: 'bg-d-subtle text-d-muted',
 }
 
+interface MissingStatementMetaItem {
+  card_id: string
+  account_id?: string | null
+  subject: string
+  bill_month: string
+  expected_statement_date: string
+  days_past: number
+  is_merged?: boolean
+}
+
+type ExtendedNotificationMetadata = NotificationMetadata & {
+  missing_statements?: MissingStatementMetaItem[]
+}
+
+const CATEGORY_META_MAP = NOTIFICATION_CATEGORY_META as Record<
+  string,
+  { label: string; tone: 'danger' | 'gold' | 'accent' | 'muted' }
+>
+
+function getCategoryMeta(category: string): { label: string; tone: 'danger' | 'gold' | 'accent' | 'muted' } {
+  if (CATEGORY_META_MAP[category]) return CATEGORY_META_MAP[category]
+  if (category === 'bill_missing_statement') return { label: '未收账单', tone: 'gold' }
+  return NOTIFICATION_CATEGORY_META.system
+}
+
 function formatSentTime(iso: string, full = false): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
@@ -58,10 +83,10 @@ function formatSentTime(iso: string, full = false): string {
 
 const PAGE_SIZE = 50
 
-function parseMetadata(raw: string | null): NotificationMetadata | null {
+function parseMetadata(raw: string | null): ExtendedNotificationMetadata | null {
   if (!raw) return null
   try {
-    const parsed = JSON.parse(raw) as NotificationMetadata
+    const parsed = JSON.parse(raw) as ExtendedNotificationMetadata
     return parsed && typeof parsed === 'object' ? parsed : null
   } catch {
     return null
@@ -256,9 +281,7 @@ export function NotificationCenterView() {
   }
 
   const selectedMeta = selected ? parseMetadata(selected.metadata_json) : null
-  const selectedMetaInfo = selected
-    ? NOTIFICATION_CATEGORY_META[selected.category] ?? NOTIFICATION_CATEGORY_META.system
-    : null
+  const selectedMetaInfo = selected ? getCategoryMeta(selected.category) : null
 
   return (
     <div className='obsidian-dashboard min-h-dvh bg-d-bg px-4 pb-24 pt-4 text-d-text sm:px-5'>
@@ -384,7 +407,7 @@ export function NotificationCenterView() {
       {!loading && items.length > 0 && (
         <div className='flex flex-col gap-3'>
           {items.map(item => {
-            const meta = NOTIFICATION_CATEGORY_META[item.category] ?? NOTIFICATION_CATEGORY_META.system
+            const meta = getCategoryMeta(item.category)
             const isUnread = !item.read_at
             return (
               <div
@@ -590,6 +613,37 @@ export function NotificationCenterView() {
                         </div>
                         <p className='mt-0.5 text-[11px] text-d-muted'>
                           下期账单日 {c.nextBillingDate} · 还款日 {c.nextDueDate}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            {(selectedMeta?.kind === 'bill_missing_statement' ||
+              selectedMeta?.kind === 'bill_missing_statement_summary') &&
+              Array.isArray(selectedMeta.missing_statements) &&
+              selectedMeta.missing_statements.length > 0 && (
+                <div className='rounded-2xl border border-d-gold-deep/40 bg-d-gold-soft/50 p-4'>
+                  <p className='mb-2 text-[13px] font-bold text-d-warn-ink'>
+                    超期未获得账单明细
+                  </p>
+                  <div className='flex flex-col gap-2'>
+                    {selectedMeta.missing_statements.map(ms => (
+                      <div
+                        key={`${ms.card_id}-${ms.bill_month}`}
+                        className='rounded-xl bg-d-surface px-3 py-2.5 text-[13px]'
+                      >
+                        <div className='flex items-center justify-between gap-2'>
+                          <span className='min-w-0 flex-1 truncate font-semibold text-d-text'>
+                            {ms.subject}
+                          </span>
+                          <span className='shrink-0 font-bold text-d-warn-ink'>
+                            已过 {ms.days_past} 天
+                          </span>
+                        </div>
+                        <p className='mt-0.5 text-[11px] text-d-muted'>
+                          缺失账期 {ms.bill_month} · 应出账日 {ms.expected_statement_date}
                         </p>
                       </div>
                     ))}

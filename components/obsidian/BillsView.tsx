@@ -3,7 +3,11 @@
 import { useRouter } from 'next/navigation'
 import { useState, type ReactNode } from 'react'
 import { format } from 'date-fns'
-import type { BillDashboardItem, CardWithBillsSummary } from '@/lib/api/bills'
+import type { BillDashboardItem } from '@/lib/api/bills'
+import type {
+  CardWithMissingStatement,
+  MissingStatementSummary,
+} from '@/components/mobile/supplementBillApi'
 import {
   amountToneClass,
   badgeToneClass,
@@ -17,7 +21,6 @@ import {
   formatCardTail,
   getEffectiveCardName,
   hasManualBillAmount,
-  missingStatementDays,
   nextBillingDateOf,
   payableToSortCard,
   pickDueReference,
@@ -49,7 +52,7 @@ export type BillDimension = 'holder' | 'bank'
 
 export interface BankGroup {
   bankName: string
-  cards: CardWithBillsSummary[]
+  cards: CardWithMissingStatement[]
   sumTotal: number
   sumUnconverted: string[]
   /** 银行维度额度模式：多卡共享额度（额度是一个池，不随卡数叠加） */
@@ -77,7 +80,7 @@ export interface BillsViewProps {
   statusKeys: BillStatusKey[]
   onToggleStatus: (k: BillStatusKey) => void
   onClearStatuses: () => void
-  statusCounts: Record<BillStatusKey, number>
+  statusCounts: Partial<Record<BillStatusKey, number>>
   entityCounts: { cards: number; payables: number }
   tagCounts: { holders: Record<string, number>; banks: Record<string, number>; noBank: number }
   sortMode: BillsSortMode
@@ -102,15 +105,20 @@ export interface BillsViewProps {
   onTogglePayableHistory: (id: string) => void
   onEditPayable: (p: PayableWithStatus) => void
   onPayPayable: (p: PayableWithStatus) => void
-  cards: CardWithBillsSummary[]
-  allCards: CardWithBillsSummary[]
+  cards: CardWithMissingStatement[]
+  allCards: CardWithMissingStatement[]
   holderMap: Record<string, string>
   bankGroups: BankGroup[]
   onOpenPayment: (bill: BillDashboardItem) => void
-  onManualAmount: (item: CardWithBillsSummary) => void
+  onManualAmount: (item: CardWithMissingStatement) => void
   onAddBill: () => void
   onAddCard?: () => void
   onMergeCards?: () => void
+  missingStatements?: MissingStatementSummary[]
+  onSupplementBill?: (item: CardWithMissingStatement, missing: MissingStatementSummary) => void
+  onZeroBillConfirm?: (item: CardWithMissingStatement, missing: MissingStatementSummary) => void
+  onFilterMissingStatements?: () => void
+  onOpenDraft?: (draftId: string) => void
 }
 
 function FilterPill({
@@ -144,13 +152,17 @@ function SectionLabel({ children }: { children: ReactNode }) {
 /** 单张卡聚合卡（新层级：银行名为主标题 + 账户模式标签；持卡人降为次要信息） */
 function BillCard({
   item, allCards, holderName, onOpenPayment, onManualAmount, sortMode,
+  onSupplementBill, onZeroBillConfirm, onOpenDraft,
 }: {
-  item: CardWithBillsSummary
-  allCards: CardWithBillsSummary[]
+  item: CardWithMissingStatement
+  allCards: CardWithMissingStatement[]
   holderName?: string
   onOpenPayment: (bill: BillDashboardItem) => void
-  onManualAmount: (item: CardWithBillsSummary) => void
+  onManualAmount: (item: CardWithMissingStatement) => void
   sortMode: BillsSortMode
+  onSupplementBill?: (item: CardWithMissingStatement, missing: MissingStatementSummary) => void
+  onZeroBillConfirm?: (item: CardWithMissingStatement, missing: MissingStatementSummary) => void
+  onOpenDraft?: (draftId: string) => void
 }) {
   const router = useRouter()
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -172,14 +184,8 @@ function BillCard({
     : nextBillingDateOf(billingDay)
   const manualPinned = item.historyBills.some(hasManualBillAmount)
   const canManual = manualPinned || canManuallySetBillAmount(billingDay)
-  // 已过账单日但本期账单还没进系统：非首次账单的卡才提醒（首次出账时间不可预期）
-  // 归属合并账户的非锚点卡抑制缺账告警（PRD 7.4）
-  const latestBillMonth = item.historyBills.reduce<string | null>((latest, b) => {
-    return b.bill_month && (!latest || b.bill_month > latest) ? b.bill_month : latest
-  }, null)
-  const missingStatement = item.suppressMissingStatement
-    ? null
-    : missingStatementDays(billingDay, latestBillMonth)
+  // 超期未获得账单统一由缺失检测模块计算挂载，非锚点卡强制抑制
+  const missingInfo = item.suppressMissingStatement ? null : (item.missingStatement ?? null)
 
   const unpaidBills = item.historyBills.filter(b => b.computed_status !== 'paid')
   const dueRef = isCleared ? null : pickDueReference(unpaidBills)
@@ -249,14 +255,22 @@ function BillCard({
             )}
           </div>
         </div>
-        <span
-          className={
-            'shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-bold leading-5 ' +
-            badgeToneClass(badge.tone)
-          }
-        >
-          {badge.text}
-        </span>
+        <div className='flex shrink-0 flex-col items-end gap-1'>
+          <span
+            className={
+              'shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-bold leading-5 ' +
+              badgeToneClass(badge.tone) +
+              (badge.text === '超期未出账' ? ' border border-d-gold-deep/40' : '')
+            }
+          >
+            {badge.text}
+          </span>
+          {item.status !== 'unissued' && missingInfo ? (
+            <span className='shrink-0 whitespace-nowrap rounded-md border border-d-gold-deep/40 bg-d-gold-soft px-2 py-0.5 text-[10px] font-semibold leading-4 text-d-warn-ink'>
+              {missingInfo.missingBillMonth} 期未收账单
+            </span>
+          ) : null}
+        </div>
       </div>
 
       {/* 金额行：标签 + 手填入口；金额 + 登记还款 */}
@@ -421,11 +435,57 @@ function BillCard({
         </div>
       )}
 
-      {/* 缺账单提醒放在卡片最末：先看账单数据，再看采集异常 */}
-      {missingStatement && (
-        <p className='mt-3 flex items-center gap-1.5 rounded-[10px] bg-d-subtle p-2.5 text-[11px] font-semibold leading-4 text-[color:var(--warning)]'>
-          已过账单日 {missingStatement} 日，未接收到新的账单，请检查
-        </p>
+      {/* 超期未获得账单提醒与一键补录/0元确认操作区 */}
+      {missingInfo && (
+        <div className='mt-3 rounded-xl border border-d-gold-deep/40 bg-d-gold-soft p-3'>
+          <div className='flex items-start justify-between gap-2'>
+            <div className='min-w-0 flex-1'>
+              <p className='text-[12px] font-bold leading-4 text-d-warn-ink'>
+                {missingInfo.missingBillMonth} 期账单已过账单日 {missingInfo.daysPast} 天仍未收到
+              </p>
+              {missingInfo.pendingDraftId ? (
+                <button
+                  type='button'
+                  onClick={e => {
+                    e.stopPropagation()
+                    onOpenDraft?.(missingInfo.pendingDraftId!)
+                  }}
+                  className='mt-1 text-left text-[11px] font-semibold text-d-accent-light underline underline-offset-2'
+                >
+                  草稿箱有待确认草稿 · 去核对
+                </button>
+              ) : null}
+            </div>
+          </div>
+          {(onSupplementBill || onZeroBillConfirm) && (
+            <div className='mt-2.5 flex items-center gap-2'>
+              {onSupplementBill && (
+                <button
+                  type='button'
+                  onClick={e => {
+                    e.stopPropagation()
+                    onSupplementBill(item, missingInfo)
+                  }}
+                  className='min-h-[44px] flex-1 rounded-xl bg-d-accent px-3 text-xs font-semibold text-white'
+                >
+                  补充账单
+                </button>
+              )}
+              {onZeroBillConfirm && (
+                <button
+                  type='button'
+                  onClick={e => {
+                    e.stopPropagation()
+                    onZeroBillConfirm(item, missingInfo)
+                  }}
+                  className='min-h-[44px] shrink-0 rounded-xl border border-d-gold-deep/50 bg-d-surface px-3.5 text-xs font-semibold text-d-warn-ink'
+                >
+                  0 元无消费
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
@@ -443,7 +503,18 @@ export function BillsView(vm: BillsViewProps) {
     payablePayments, payableHistoryErrors, payableHistoryLoading,
     expandedPayableIds, onTogglePayableHistory,
     onEditPayable, onPayPayable,
+    missingStatements, onSupplementBill, onZeroBillConfirm, onFilterMissingStatements, onOpenDraft,
   } = vm
+
+  const missingBannerItems =
+    missingStatements ??
+    cards
+      .filter(c => !c.suppressMissingStatement && c.missingStatement)
+      .map(c => c.missingStatement!)
+  const maxMissingDaysPast = missingBannerItems.reduce(
+    (max, m) => Math.max(max, m.daysPast),
+    0
+  )
 
   const renderCards = () => {
     if (dimension === 'bank') {
@@ -480,6 +551,9 @@ export function BillsView(vm: BillsViewProps) {
                     onOpenPayment={onOpenPayment}
                     onManualAmount={onManualAmount}
                     sortMode={sortMode}
+                    onSupplementBill={onSupplementBill}
+                    onZeroBillConfirm={onZeroBillConfirm}
+                    onOpenDraft={onOpenDraft}
                   />
                 ))}
               </div>
@@ -522,6 +596,9 @@ export function BillsView(vm: BillsViewProps) {
             onOpenPayment={onOpenPayment}
             onManualAmount={onManualAmount}
             sortMode={sortMode}
+            onSupplementBill={onSupplementBill}
+            onZeroBillConfirm={onZeroBillConfirm}
+            onOpenDraft={onOpenDraft}
           />
         ),
       })),
@@ -624,6 +701,44 @@ export function BillsView(vm: BillsViewProps) {
           </div>
         )}
 
+        {/* 超期未获得账单汇总警示条（始终让位于红色还款逾期横幅） */}
+        {missingBannerItems.length > 0 && entityType !== 'payables' && (
+          <div className='flex items-center gap-2.5 rounded-[14px] border border-d-gold-deep/40 bg-d-gold-soft p-3'>
+            <AlertIcon size={18} className='shrink-0 text-d-warn-ink' />
+            <div className='min-w-0 flex-1'>
+              <p className='truncate text-[12px] font-bold leading-4 text-d-warn-ink'>
+                有 {missingBannerItems.length} 张卡（账户）已过账单日仍未获得账单
+              </p>
+              <p className='mt-0.5 truncate text-[11px] leading-4 text-d-muted'>
+                {missingBannerItems.length === 1
+                  ? `${missingBannerItems[0].subject} · ${missingBannerItems[0].missingBillMonth} 期已过 ${missingBannerItems[0].daysPast} 天`
+                  : `最长已过 ${maxMissingDaysPast} 天，建议及时补录或确认 0 元账单`}
+              </p>
+            </div>
+            {missingBannerItems.length === 1 && onSupplementBill ? (
+              <button
+                type='button'
+                onClick={() => {
+                  const hit = missingBannerItems[0]
+                  const targetCard = allCards.find(c => c.card.id === hit.anchorCardId)
+                  if (targetCard) onSupplementBill(targetCard, hit)
+                }}
+                className='h-11 shrink-0 whitespace-nowrap rounded-xl bg-d-gold px-3.5 text-xs font-semibold text-d-bg'
+              >
+                立即补录
+              </button>
+            ) : onFilterMissingStatements ? (
+              <button
+                type='button'
+                onClick={onFilterMissingStatements}
+                className='h-11 shrink-0 whitespace-nowrap rounded-xl bg-d-gold px-3.5 text-xs font-semibold text-d-bg'
+              >
+                查看全部
+              </button>
+            ) : null}
+          </div>
+        )}
+
         {/* 筛选栏：收起态摘要 */}
         <div className='flex h-10 items-center gap-2.5 rounded-xl border border-d-border bg-d-surface px-3.5'>
           <button
@@ -684,16 +799,19 @@ export function BillsView(vm: BillsViewProps) {
               <FilterPill selected={statusKeys.length === 0} onClick={onClearStatuses}>
                 全部状态
               </FilterPill>
-              {statusOptionsFor(entityType).map(k => (
-                <FilterPill
-                  key={k}
-                  selected={statusKeys.includes(k)}
-                  onClick={() => onToggleStatus(k)}
-                  warn={k === 'overdue' && statusCounts.overdue > 0 && !statusKeys.includes(k)}
-                >
-                  {BILL_STATUS_LABELS[k]} ({statusCounts[k]})
-                </FilterPill>
-              ))}
+              {statusOptionsFor(entityType).map(k => {
+                const count = statusCounts[k] ?? 0
+                return (
+                  <FilterPill
+                    key={k}
+                    selected={statusKeys.includes(k)}
+                    onClick={() => onToggleStatus(k)}
+                    warn={(k === 'overdue' || k === 'missing_statement') && count > 0 && !statusKeys.includes(k)}
+                  >
+                    {BILL_STATUS_LABELS[k]} ({count})
+                  </FilterPill>
+                )
+              })}
             </div>
 
             <SectionLabel>分组维度</SectionLabel>

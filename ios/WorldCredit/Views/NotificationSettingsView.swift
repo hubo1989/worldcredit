@@ -68,10 +68,16 @@ struct NotificationSettingsView: View {
                 Toggle("账单还款日前提前提醒", isOn: itemBinding(\.billDueAdvance))
                 Toggle("固定支出提前提醒", isOn: itemBinding(\.payableDueAdvance))
                 Toggle("逾期账单提醒", isOn: itemBinding(\.billOverdue))
+                Toggle("超期未获得账单提醒", isOn: itemBinding(\.billMissingStatement))
+                Picker("账单延迟宽限天数", selection: missingStatementGraceDaysBinding) {
+                    ForEach(0...15, id: \.self) { days in
+                        Text(days == 3 ? "\(days) 天（推荐）" : "\(days) 天").tag(days)
+                    }
+                }
             } header: {
                 Text("账单与固定支出通知")
             } footer: {
-                Text("支持独立关闭或开启任意通知项；最长免息期会在账单日次日主动提醒。")
+                Text("支持独立关闭或开启任意通知项；超过账单日宽限期（默认 3 天）仍未收到账单时将每日提醒手动补充。")
             }
 
             Section {
@@ -219,6 +225,17 @@ struct NotificationSettingsView: View {
         .task {
             await appState.loadReminderPreferences()
         }
+    }
+
+    private var missingStatementGraceDaysBinding: Binding<Int> {
+        Binding(
+            get: { appState.reminderPreferences.missingStatementGraceDays },
+            set: { newValue in
+                var next = appState.reminderPreferences
+                next.missingStatementGraceDays = min(max(newValue, 0), 15)
+                persist(next)
+            }
+        )
     }
 
     private func itemBinding(
