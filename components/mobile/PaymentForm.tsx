@@ -50,7 +50,7 @@ export function PaymentForm({
   const normalizedDisplayCur = normalizeCurrencyOrDefault(displayCurrency, 'CNY')
   const billSym = currencySymbol(normalizedBillCur)
 
-  const [amount, setAmount] = useState(totalAmount.toString())
+  const [amount, setAmount] = useState(totalAmount > 0 ? totalAmount.toString() : '')
   const [paidAt, setPaidAt] = useState(new Date().toISOString().slice(0, 10))
   const [note, setNote] = useState('')
   const [settledCurrency, setSettledCurrency] = useState(normalizedDisplayCur)
@@ -124,8 +124,11 @@ export function PaymentForm({
 
   const handleSubmit = async () => {
     setError(null)
-    const num = parseFloat(amount)
-    if (!num || num <= 0) return
+    const num = Number(amount)
+    if (!amount.trim() || !Number.isFinite(num) || num <= 0) {
+      setError('请输入有效的还款金额')
+      return
+    }
 
     let fxFields: PaymentFxLockFields = {}
     if (showFxLock && (settledAmountText.trim() || lockedRateText.trim())) {
@@ -174,7 +177,7 @@ export function PaymentForm({
           <Button
             onClick={handleSubmit}
             loading={submitting}
-            disabled={!amount || parseFloat(amount) <= 0}
+            disabled={submitting}
           >
             {submitting ? '登记中...' : '确认已还款'}
           </Button>

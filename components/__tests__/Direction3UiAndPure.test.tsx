@@ -26,6 +26,7 @@ import {
   parseCsvBillItems,
   parseCsvMatrix,
   parsePastedBillItems,
+  buildSafeCsv,
   sanitizeCsvCell,
   signedItemAmount,
   validateFxLockInput,
@@ -455,5 +456,64 @@ describe('Direction 3 UI components', () => {
     expect(screen.getByText('¥300')).toBeInTheDocument()
     expect(screen.getByText('¥3,500')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '查看 30/60/90 天预测 ›' })).toBeInTheDocument()
+  })
+
+  it('Direction3 复核回归：12 月账单 1/15 跨年进位、7-11 商户不误判为日期、行内去重与 BOM 首行修复', () => {
+    const rows = parsePastedBillItems('1/15 7-11 便利店 25.00\n1/15 7-11 便利店 25.00', {
+      billMonth: '2026-12',
+      defaultCurrency: 'CNY',
+    })
+    expect(rows).toHaveLength(2)
+    expect(rows[0].item.transaction_date).toBe('2027-01-15')
+    expect(rows[0].item.description).toContain('7-11')
+    expect(rows[0].isDuplicate).toBe(false)
+    expect(rows[0].checked).toBe(true)
+    expect(rows[1].isDuplicate).toBe(true)
+    expect(rows[1].checked).toBe(false)
+
+    const csv = buildSafeCsv(['商户', '金额'], [{ 商户: '星巴克', 金额: 38 }])
+    expect(csv.startsWith('\uFEFF商户,金额\n')).toBe(true)
+  })
+
+  it('BillRepaymentHealthCard & PaymentForm 复核回归：月底钳制、日利率无效提示、非法金额拦截', async () => {
+    const user = userEvent.setup()
+    render(
+      <BillRepaymentHealthCard
+        bill={{
+          bill_month: '2026-01',
+          bill_amount: 2000,
+          min_payment: 200,
+          statement_date: '2026-01-31',
+          due_date: '2026-02-20',
+        }}
+        cardType='credit'
+        currency='CNY'
+        items={[]}
+        payments={[]}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: '还款利息试算' }))
+    expect(screen.getByText(/截至 2026-02-28/)).toBeInTheDocument()
+    const rateInput = screen.getByLabelText('测算日利率 (%)')
+    await user.clear(rateInput)
+    await user.type(rateInput, '2')
+    expect(screen.getByText(/输入无效（需在 0–1% 之间），已按默认 0\.05% 试算/)).toBeInTheDocument()
+
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    render(
+      <PaymentForm
+        open={true}
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+        totalAmount={0}
+        billCurrency='CNY'
+      />,
+    )
+    const amountInput = screen.getByLabelText(/还款金额/)
+    await user.clear(amountInput)
+    await user.type(amountInput, '-5')
+    await user.click(screen.getByRole('button', { name: '确认已还款' }))
+    expect(screen.getByText('请输入有效的还款金额')).toBeInTheDocument()
+    expect(onSubmit).not.toHaveBeenCalled()
   })
 })

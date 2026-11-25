@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState, useCallback, use } from 'react'
+import { useEffect, useState, useCallback, useRef, use } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { createPayment, updateBillStatus, getBillDetail, getPaymentTotal } from '@/lib/api/bills'
+import { updateBillStatus, getBillDetail, getPaymentTotal } from '@/lib/api/bills'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillEditForm } from '@/components/mobile/BillEditForm'
 import { BillPaymentsManage } from '@/components/mobile/BillPaymentsManage'
@@ -16,7 +16,7 @@ import { useAuth } from '@/lib/auth'
 import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
 import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
 import { currencySymbol, fetchRates, type FxRates } from '@/lib/fx'
-import { createPaymentWithFx, getBillItems } from '@/lib/direction3/rpc'
+import { getBillItems, submitBillPayment } from '@/lib/direction3/rpc'
 import type { BillItem, PaymentFxLockFields, PaymentWithFx } from '@/lib/direction3/types'
 import {
   computePaymentDrivenStatus,
@@ -106,6 +106,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   // deleteBill 服务端 admin only；member 隐藏删除入口，权限以服务端为准
   const isAdmin = user?.role === 'admin'
 
+  const itemsLoadSeqRef = useRef(0)
   const load = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent === true
     try {
@@ -124,13 +125,23 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
       setBill({ ...(detail.bill as Bill), card, payments: detail.payments as PaymentWithFx[] })
       const embeddedItems = (detail as { items?: BillItem[] }).items
       if (Array.isArray(embeddedItems)) {
+        itemsLoadSeqRef.current += 1
         setBillItems(embeddedItems)
       } else {
+        const seq = ++itemsLoadSeqRef.current
         setItemsLoading(true)
         getBillItems(id)
-          .then((rows) => setBillItems(Array.isArray(rows) ? rows : []))
-          .catch(() => setBillItems([]))
-          .finally(() => setItemsLoading(false))
+          .then((rows) => {
+            if (seq === itemsLoadSeqRef.current) {
+              setBillItems(Array.isArray(rows) ? rows : [])
+            }
+          })
+          .catch(() => {
+            // 瞬时失败保留当前已展示明细，避免闪烁清空
+          })
+          .finally(() => {
+            if (seq === itemsLoadSeqRef.current) setItemsLoading(false)
+          })
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载账单失败')
@@ -159,28 +170,17 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     data: { amount: number; paid_at: string; note?: string } & PaymentFxLockFields,
   ) => {
     if (!bill) return
-    const hasFxLock =
-      data.settled_currency != null && data.settled_amount != null && data.locked_fx_rate != null
-    if (hasFxLock) {
-      await createPaymentWithFx({
-        bill_id: bill.id,
-        amount: data.amount,
-        paid_at: data.paid_at,
-        channel: '手动还款',
-        note: data.note,
-        settled_currency: data.settled_currency,
-        settled_amount: data.settled_amount,
-        locked_fx_rate: data.locked_fx_rate,
-      })
-    } else {
-      await createPayment({
-        bill_id: bill.id,
-        amount: data.amount,
-        paid_at: data.paid_at,
-        channel: '手动还款',
-        note: data.note,
-      })
-    }
+    await submitBillPayment({
+      bill_id: bill.id,
+      amount: data.amount,
+      paid_at: data.paid_at,
+      channel: '手动还款',
+      note: data.note,
+      billCurrency: card?.card_product?.currency ?? bill.account?.currency,
+      settled_currency: data.settled_currency,
+      settled_amount: data.settled_amount,
+      locked_fx_rate: data.locked_fx_rate,
+    })
     // 重算状态
     const totalPaid = await getPaymentTotal(bill.id)
     const amount = Number(bill.bill_amount)
@@ -447,15 +447,16 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                     {format(new Date(p.paid_at), 'yyyy-MM-dd')}
                     {p.channel ? ' · ' + p.channel : ''}
                   </p>
-                  {p.settled_currency && p.settled_amount != null && p.locked_fx_rate != null ? (
+                  {p.settled_currency != null && p.settled_amount != null && p.locked_fx_rate != null && (
                     <p className='mt-0.5 inline-flex rounded bg-d-success-soft px-1.5 py-0.5 text-[10px] font-semibold text-d-success-ink'>
                       已锁汇率 1 {billCurrency} = {Number(p.locked_fx_rate).toFixed(4)} {p.settled_currency} · 实付 {currencySymbol(p.settled_currency)}{Number(p.settled_amount).toLocaleString()}
                     </p>
-                  ) : billCurrency !== displayCurrency ? (
+                  )}
+                  {!(p.settled_currency != null && p.settled_amount != null && p.locked_fx_rate != null) && billCurrency !== displayCurrency && (
                     <p className='mt-0.5 text-[10px] text-d-muted'>
                       参考汇率折算 · 点击编辑可锁定实际汇率
                     </p>
-                  ) : null}
+                  )}
                 </div>
                 {p.note && (
                   <p className='max-w-[140px] truncate text-right text-[12px] leading-4 text-d-muted'>

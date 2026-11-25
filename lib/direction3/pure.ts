@@ -494,6 +494,8 @@ function normalizeParsedDate(rawDate: string | undefined, billMonth?: string): s
     const txMonth = Number(mStr)
     if (Number(billMonthStr) === 1 && txMonth === 12) {
       year -= 1
+    } else if (Number(billMonthStr) === 12 && txMonth === 1) {
+      year += 1
     }
     return `${year}-${mStr.padStart(2, '0')}-${dStr.padStart(2, '0')}`
   }
@@ -528,13 +530,17 @@ export function parsePastedBillItems(
     .map((l) => l.trim())
     .filter(Boolean)
 
+  const seenFingerprints = new Set<string>()
   const rows: ParsedImportPreviewRow[] = []
   lines.forEach((line, idx) => {
-    const tokens = line.includes('\t')
-      ? line.split('\t').map((s) => s.trim())
-      : line.includes(',')
-        ? line.split(',').map((s) => s.trim())
-        : line.split(/\s{2,}/).map((s) => s.trim())
+    let tokens: string[]
+    if (line.includes('\t')) {
+      tokens = line.split('\t').map((s) => s.trim())
+    } else if (line.includes(',')) {
+      tokens = line.split(',').map((s) => s.trim())
+    } else {
+      tokens = line.split(/\s{2,}/).map((s) => s.trim())
+    }
 
     let parts = tokens.filter(Boolean)
     if (parts.length < 2) {
@@ -548,7 +554,9 @@ export function parsePastedBillItems(
 
     for (let i = 0; i < parts.length; i++) {
       const token = parts[i]
-      if (!dateStr && /^(\d{4}[/-])?\d{1,2}[/-]\d{1,2}$/.test(token)) {
+      const isFullDate = /^\d{4}[/-]\d{1,2}[/-]\d{1,2}$/.test(token)
+      const isLeadingShortDate = i === 0 && /^\d{1,2}[/-]\d{1,2}$/.test(token)
+      if (!dateStr && (isFullDate || isLeadingShortDate)) {
         dateStr = token
         continue
       }
@@ -584,7 +592,8 @@ export function parsePastedBillItems(
       item_type: item.item_type ?? 'purchase',
       amount: item.amount,
     })
-    const isDuplicate = existingFingerprints.has(fp)
+    const isDuplicate = existingFingerprints.has(fp) || seenFingerprints.has(fp)
+    seenFingerprints.add(fp)
     rows.push({
       tempId: `txt-${idx}-${fp}`,
       item,
@@ -689,6 +698,7 @@ export function parseCsvBillItems(
   },
 ): ParsedImportPreviewRow[] {
   const existingFingerprints = new Set((options.existingItems ?? []).map(buildItemFingerprint))
+  const seenFingerprints = new Set<string>()
   const startRow = options.hasHeader ? 1 : 0
   const rows: ParsedImportPreviewRow[] = []
 
@@ -739,7 +749,8 @@ export function parseCsvBillItems(
       item_type: item.item_type ?? 'purchase',
       amount: item.amount,
     })
-    const isDuplicate = existingFingerprints.has(fp)
+    const isDuplicate = existingFingerprints.has(fp) || seenFingerprints.has(fp)
+    seenFingerprints.add(fp)
     rows.push({
       tempId: `csv-${i}-${fp}`,
       item,
@@ -874,7 +885,7 @@ export function buildSafeCsv(
   const BOM = '\uFEFF'
   const headerRow = headers.map(sanitizeCsvCell).join(',')
   const dataRows = rows.map((row) => headers.map((h) => sanitizeCsvCell(row[h])).join(','))
-  return [BOM, headerRow, ...dataRows].join('\n')
+  return `${BOM}${[headerRow, ...dataRows].join('\n')}`
 }
 
 export function sanitizeFilenameSegment(raw: string): string {

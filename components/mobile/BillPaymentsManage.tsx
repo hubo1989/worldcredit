@@ -69,6 +69,12 @@ function toInputValues(p: PaymentWithFx, defaultSettledCurrency: string) {
   }
 }
 
+function currencyFromSymbolOrCode(symbolOrCode: string): string {
+  if (symbolOrCode === '$') return 'USD'
+  if (symbolOrCode === 'HK$') return 'HKD'
+  return normalizeCurrencyOrDefault(symbolOrCode, 'CNY')
+}
+
 /**
  * 还款记录管理（spec 画板 candidate.ios.bill-editing-payments / -payment-edit）。
  */
@@ -88,13 +94,7 @@ export function BillPaymentsManage({
   const doDelete = onDeletePaymentFn ?? deletePayment
   const normalizedBillCur = billCurrency
     ? normalizeCurrencyOrDefault(billCurrency, 'CNY')
-    : currency === '$'
-      ? 'USD'
-      : currency === 'HK$'
-        ? 'HKD'
-        : /^[A-Z]{3}$/i.test(currency)
-          ? currency.toUpperCase()
-          : 'CNY'
+    : currencyFromSymbolOrCode(currency)
   const normalizedDisplayCur = normalizeCurrencyOrDefault(displayCurrency, 'CNY')
   const displaySym = /^[A-Z]{3}$/i.test(currency) ? currencySymbol(currency) : currency
 
@@ -476,8 +476,8 @@ export function BillPaymentsManage({
                     setValues((prev) => ({
                       ...prev,
                       settled_currency: nextCur,
-                      settled_amount: nextCur === normalizedBillCur ? '' : prev.settled_amount,
-                      locked_fx_rate: nextCur === normalizedBillCur ? '' : prev.locked_fx_rate,
+                      settled_amount: '',
+                      locked_fx_rate: '',
                     }))
                   }}
                   options={SETTLED_CURRENCIES.map((c) => ({

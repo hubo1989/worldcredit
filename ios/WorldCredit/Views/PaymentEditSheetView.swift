@@ -27,6 +27,10 @@ struct PaymentEditSheetView: View {
 
     private static let shanghaiZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
 
+    private static let settledCurrencies = ["CNY", "USD", "HKD", "EUR", "GBP", "JPY", "SGD"]
+    private enum FxField: Hashable { case amount, rate }
+    @FocusState private var fxFocus: FxField?
+
     private static let yyyymmddFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -147,9 +151,15 @@ struct PaymentEditSheetView: View {
                 if item.currency.uppercased() != "CNY" || payment.settledCurrency != nil {
                     Section("实际购汇/扣款汇率锁定") {
                         Picker("实际结算币种", selection: $settledCurrency) {
-                            Text("CNY").tag("CNY")
-                            Text("USD").tag("USD")
-                            Text("HKD").tag("HKD")
+                            ForEach(Self.settledCurrencies, id: \.self) { cur in
+                                Text(cur).tag(cur)
+                            }
+                        }
+                        .onChange(of: settledCurrency) { _, _ in
+                            // 币种变更后清空原有金额与汇率，避免跨币种数值错配
+                            fxFocus = nil
+                            settledAmountText = ""
+                            lockedRateText = ""
                         }
                         if settledCurrency.uppercased() != item.currency.uppercased() {
                             HStack {
@@ -158,7 +168,9 @@ struct PaymentEditSheetView: View {
                                 TextField("选填", text: $settledAmountText)
                                     .keyboardType(.decimalPad)
                                     .multilineTextAlignment(.trailing)
+                                    .focused($fxFocus, equals: .amount)
                                     .onChange(of: settledAmountText) { _, val in
+                                        guard fxFocus == .amount else { return }
                                         if let s = Double(val), s > 0, let amt = parsedAmount, amt > 0 {
                                             fxCleared = false
                                             lockedRateText = String(format: "%.4f", s / amt)
@@ -171,7 +183,9 @@ struct PaymentEditSheetView: View {
                                 TextField("如 7.2500", text: $lockedRateText)
                                     .keyboardType(.decimalPad)
                                     .multilineTextAlignment(.trailing)
+                                    .focused($fxFocus, equals: .rate)
                                     .onChange(of: lockedRateText) { _, val in
+                                        guard fxFocus == .rate else { return }
                                         if let r = Double(val), r > 0, let amt = parsedAmount, amt > 0 {
                                             fxCleared = false
                                             settledAmountText = String(format: "%.2f", amt * r)
@@ -180,6 +194,7 @@ struct PaymentEditSheetView: View {
                             }
                             if !settledAmountText.isEmpty || !lockedRateText.isEmpty {
                                 Button("清除锁定汇率", role: .destructive) {
+                                    fxFocus = nil
                                     fxCleared = true
                                     settledAmountText = ""
                                     lockedRateText = ""

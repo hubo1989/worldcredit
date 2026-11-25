@@ -109,11 +109,21 @@ export function BillItemImportModal({
     setError(null)
     const file = e.target.files?.[0]
     if (!file) return
+    const MAX_CSV_BYTES = 2 * 1024 * 1024
+    const MAX_CSV_ROWS = 2000
+    if (file.size > MAX_CSV_BYTES) {
+      setError('CSV 文件超过 2MB 上限，请拆分后分批导入')
+      return
+    }
     try {
       const content = await file.text()
       const matrix = parseCsvMatrix(content)
       if (matrix.length === 0) {
         setError('CSV 文件为空')
+        return
+      }
+      if (matrix.length > MAX_CSV_ROWS) {
+        setError(`CSV 行数过多（${matrix.length} 行），请拆分至 ${MAX_CSV_ROWS} 行以内后导入`)
         return
       }
       setCsvMatrix(matrix)
