@@ -1,5 +1,6 @@
 import { getSystemSettingsWithSecrets } from './admin.server'
 import { fetchPage, rootDomain } from '../site-fetch'
+import { runBillImportCore } from './bill-import-core.server'
 import {
   parseAnnualFeeCycleType,
   validateAnnualFeeWaiverRulesInput,
@@ -123,16 +124,8 @@ function unwrapAnswer(obj: Record<string, unknown>): Record<string, unknown> {
 }
 
 // 智能填充（AiFillBox）的抽取 prompt。原先放在客户端组件里，现随密钥一起留在服务端。
-const BILL_TEXT_SYSTEM_PROMPT = `你是信用卡账单解析助手。从用户粘贴的账单邮件或短信文本中提取以下字段，严格以 JSON 返回，不要任何多余文字：
-{
-  "bill_amount": 数字或null,
-  "min_payment": 数字或null,
-  "due_date": "YYYY-MM-DD"或null,
-  "bill_month": "YYYY-MM"或null,
-  "statement_date": "YYYY-MM-DD"或null
-}
-注意：金额可能是"6480"、"6,480.00"、"¥6480元"，统一转为数字。无法确定的字段返回 null。`
-
+// 账单文本（bill_text）已改为委托 lib/email-core 解析内核（HUB-154 §3.3），
+// 与导入通道共用同一套字段口径，因此这里只剩卡面文本的 prompt。
 const CARD_TEXT_SYSTEM_PROMPT = `你是信用卡产品信息解析助手。从用户粘贴的卡面或官网文本中提取以下字段，严格以 JSON 返回，不要任何多余文字：
 {
   "bank_name": 字符串或null,
@@ -252,19 +245,38 @@ export async function aiComplete(params: AiCompleteRequest) {
   const model = settings.ai_model || 'gpt-4o'
   const apiKey = settings.ai_api_key
 
+  // 账单文本（bill_text）委托给共享解析内核（HUB-154 §3.3）：与导入通道共用
+  // 同一套字段口径（currency / due_date_status / holder_hint …），避免「智能填充」
+  // 与「导入解析」对同一段文本给出两套字段。内核自己决定走 AI 还是离线兜底，
+  // 因此这里不再提前要求 API Key。
+  if (params.type === 'bill_text') {
+    const text = typeof params.data.text === 'string' ? params.data.text : ''
+    if (!text.trim()) throw new Error('请先粘贴需要解析的文本')
+    const core = await runBillImportCore({
+      userId: '',
+      sourceType: 'text',
+      rawText: text,
+      attachments: [],
+      pdfPassword: null,
+    })
+    const statement = core.statements[0]
+    if (statement) return statement as unknown as Record<string, unknown>
+    throw new Error(core.nonBillReason || core.error || '未能从文本中识别出账单要素')
+  }
+
   if (!apiKey) {
     throw new Error('未配置 AI API Key，请在系统设置中配置')
   }
 
-  // 智能填充：从粘贴的账单/卡面文本里抽字段。密钥留在服务端，前端只发文本。
-  if (params.type === 'bill_text' || params.type === 'card_text') {
+  // 智能填充：从粘贴的卡面文本里抽字段。密钥留在服务端，前端只发文本。
+  if (params.type === 'card_text') {
     const text = typeof params.data.text === 'string' ? params.data.text : ''
     if (!text.trim()) throw new Error('请先粘贴需要解析的文本')
     const content = await chatCompletion({
       baseURL,
       model: model as string,
       apiKey: apiKey as string,
-      systemPrompt: params.type === 'bill_text' ? BILL_TEXT_SYSTEM_PROMPT : CARD_TEXT_SYSTEM_PROMPT,
+      systemPrompt: CARD_TEXT_SYSTEM_PROMPT,
       userPrompt: text,
       jsonObject: true,
     })

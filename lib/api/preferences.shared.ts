@@ -17,6 +17,37 @@ export const DEFAULT_DISPLAY_CONFIG: UserDisplayConfig = {
   default_currency: 'CNY',
 }
 
+/**
+ * 邮件自动入账安全偏好（HUB-154 §2.2 / 0035）。
+ *
+ * 与 display_config / reminder_config 物理隔离：这三块由不同方向并行演进，
+ * 混在一个 JSON blob 里会让两边的写入互相覆盖。列缺失（0035 未落地）时回落默认值。
+ */
+export interface UserImportConfig {
+  /** 命中 5 项硬闸门且归属受信的自动邮件是否直写 bills；false = 一律停草稿。 */
+  auto_commit_trusted_email: boolean
+}
+
+export const DEFAULT_IMPORT_CONFIG: UserImportConfig = {
+  auto_commit_trusted_email: true,
+}
+
+export function normalizeImportConfig(raw: unknown): UserImportConfig {
+  const parsed =
+    typeof raw === 'string'
+      ? (() => {
+          try {
+            return JSON.parse(raw) as Partial<UserImportConfig>
+          } catch {
+            return {}
+          }
+        })()
+      : ((raw && typeof raw === 'object' ? raw : {}) as Partial<UserImportConfig>)
+  return {
+    auto_commit_trusted_email: parsed.auto_commit_trusted_email !== false,
+  }
+}
+
 export const DEFAULT_REMINDER_CONFIG: UserReminderConfig = {
   remind_days_before: [3, 1, 0],
   quiet_hours_start: '22:00',

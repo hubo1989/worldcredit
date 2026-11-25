@@ -1,8 +1,21 @@
 // app/api/auth/gmail/start/route.ts — 连接 Gmail（增量授权 gmail.readonly）。
 // 必须已登录：这是给当前会话用户挂邮箱授权，不是登录入口。
+//
+// HUB-156 扩展（HUB-154 §3.3(3)）：接受 ?defaultHolderId=&label=，经短期签名
+// HttpOnly Cookie 透传到 /api/auth/gmail/callback（Google 会跳转离开本站，
+// 这两个值没法随 state 走）。
 import { readSession } from '@/lib/session'
 import { issueOAuthState } from '@/lib/oauth-state'
 import { gmailRedirectUri, resolveAuthOrigin } from '@/lib/auth-origin'
+import {
+  hasGmailConnectContext,
+  issueGmailConnectContextCookie,
+} from '@/lib/api/gmail-oauth-context'
+import {
+  buildMemberContext,
+  assertHolderAccess,
+  MemberScopeError,
+} from '@/lib/api/member-scope'
 
 export async function GET(request: Request) {
   const url = new URL(request.url)
@@ -23,6 +36,29 @@ export async function GET(request: Request) {
     return Response.json({ error: 'Google OAuth not configured' }, { status: 500 })
   }
 
+  const holderIdRaw = url.searchParams.get('defaultHolderId')
+  const labelRaw = url.searchParams.get('label')
+  const connectContext = {
+    defaultHolderId: holderIdRaw && holderIdRaw.trim() ? holderIdRaw.trim() : null,
+    label: labelRaw && labelRaw.trim() ? labelRaw.trim().slice(0, 40) : null,
+  }
+
+  // member 只能把邮箱映射到自己名下的持卡人（fail-closed，AC-12）。
+  if (connectContext.defaultHolderId && session.role === 'member') {
+    try {
+      const ctx = await buildMemberContext(session)
+      assertHolderAccess(connectContext.defaultHolderId, ctx)
+    } catch (err) {
+      if (err instanceof MemberScopeError) {
+        return Response.redirect(
+          `${origin}/settings?gmail=error&reason=holder_forbidden`,
+          302,
+        )
+      }
+      throw err
+    }
+  }
+
   const { state, cookie: stateCookie } = await issueOAuthState()
   const params = new URLSearchParams({
     client_id: clientId,
@@ -41,5 +77,8 @@ export async function GET(request: Request) {
   const headers = new Headers()
   headers.set('Location', `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`)
   headers.append('Set-Cookie', stateCookie)
+  if (hasGmailConnectContext(connectContext)) {
+    headers.append('Set-Cookie', await issueGmailConnectContextCookie(connectContext))
+  }
   return new Response(null, { status: 302, headers })
 }

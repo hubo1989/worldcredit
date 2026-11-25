@@ -1,5 +1,11 @@
-// lib/api/gmail-ledger.ts
-import { query, queryOne, execute } from '../db'
+// lib/api/gmail-ledger.ts — 历史邮箱账本（只读 + 已封板的写入口）。
+//
+// HUB-154 §3.3(4) 单轨收口：`gmail_ledger_entries` 不再承载任何人工写操作，
+// markPayment / updateLedgerAmount 保留注册表条目但直接抛 409 CONFLICT，
+// 把用户引导到统一草稿箱；历史数据经 migrateLegacyLedgerToDrafts 转入草稿。
+import { query } from '../db'
+import { RpcDomainError } from './errors'
+import { migrateLegacyLedgerToDrafts as migrateLegacyLedgerToDraftsImpl } from './billDrafts.server'
 
 export interface GmailLedgerEntry {
   id: string
@@ -374,57 +380,33 @@ export async function getGmailLedgerSummary(createdBy?: string): Promise<GmailLe
 }
 
 /**
- * 补录账单金额。
+ * 补录账单金额 —— 已封板（HUB-154 §3.3(4) / AC-09）。
  *
- * 有些银行邮件（尤其 Amex 的 "statement is ready" / AutoPay 提醒）正文里根本没有
- * 金额和到期日，解析出来就是 0。这类条目不能靠 markPayment 修——那只改还款字段，
- * 金额仍为 0，UI 依旧当作"未定价"。这里单独提供补录金额的写入口，
- * 金额与到期日一起写，补完即进入常规账单列表。
+ * 邮箱账本已收口到 `bill_import_drafts`：金额补录必须在草稿里改，确认后才会
+ * 落到 `bills`。保留本函数与 registry 条目只为让旧客户端拿到可读的 409，
+ * 而不是「接口不存在」。
  */
-export async function updateLedgerAmount(ledgerId: string, updates: {
+export async function updateLedgerAmount(ledgerId: string, _updates: {
   statement_amount: number
   minimum_payment?: number | null
   due_date?: string | null
   statement_date?: string | null
 }): Promise<GmailLedgerEntry> {
-  const amount = Number(updates.statement_amount)
-  if (!Number.isFinite(amount) || amount <= 0) {
-    throw new Error('金额必须是大于 0 的数字')
-  }
-  const ts = new Date().toISOString()
-  const fields = ['statement_amount = ?']
-  const params: unknown[] = [amount]
-  if (updates.minimum_payment !== undefined) {
-    fields.push('minimum_payment = ?')
-    params.push(updates.minimum_payment)
-  }
-  if (updates.due_date !== undefined) {
-    fields.push('due_date = ?')
-    params.push(updates.due_date || null)
-  }
-  if (updates.statement_date !== undefined) {
-    fields.push('statement_date = ?')
-    params.push(updates.statement_date || null)
-  }
-  // 补录前金额缺失，还款状态重新按"未还款"起算，避免带着 0 元的旧状态。
-  // manually_priced 标记这条金额来自人工补录，读取时免于被"附属卡明细"规则过滤。
-  fields.push('remaining_amount = ?', 'payment_status = ?', 'completed = 0',
-              'manually_priced = 1',
-              'last_payment_update = ?', 'updated_at = ?')
-  params.push(amount, '未还款', ts, ts, ledgerId)
-
-  const { error } = await execute('UPDATE gmail_ledger_entries SET ' + fields.join(', ') + ' WHERE ledger_id = ?', params)
-  if (error) throw new Error(error.message)
-
-  const { data: updated } = await queryOne<GmailLedgerEntry>(
-    'SELECT * FROM gmail_ledger_entries WHERE ledger_id = ?', [ledgerId]
+  void ledgerId
+  void _updates
+  throw new RpcDomainError(
+    'CONFLICT',
+    '邮箱账单流水已收口至统一草稿箱与主账单，请前往草稿箱处理',
+    { reason: 'LEGACY_LEDGER_SEALED' },
   )
-  if (!updated) throw new Error('记录不存在')
-  return updated
 }
 
-/** 标记还款 */
-export async function markPayment(ledgerId: string, updates: {
+/**
+ * 标记还款 —— 已封板（HUB-154 §3.3(4) / AC-09）。
+ * 还款状态现在由草稿确认入账时的历史还款继承（legacy_ledger → payments）承担，
+ * 账本页不再提供独立写入口。
+ */
+export async function markPayment(ledgerId: string, _updates: {
   paid_amount?: number
   remaining_amount?: number
   completed?: boolean
@@ -432,26 +414,20 @@ export async function markPayment(ledgerId: string, updates: {
   payment_note?: string
   payment_date?: string
 }): Promise<GmailLedgerEntry> {
-  const ts = new Date().toISOString()
-  const fields: string[] = []
-  const params: unknown[] = []
-  if (updates.paid_amount !== undefined) { fields.push('paid_amount = ?'); params.push(updates.paid_amount) }
-  if (updates.remaining_amount !== undefined) { fields.push('remaining_amount = ?'); params.push(updates.remaining_amount) }
-  if (updates.completed !== undefined) { fields.push('completed = ?'); params.push(updates.completed ? 1 : 0) }
-  if (updates.payment_status !== undefined) { fields.push('payment_status = ?'); params.push(updates.payment_status) }
-  if (updates.payment_note !== undefined) { fields.push('payment_note = ?'); params.push(updates.payment_note) }
-  if (updates.payment_date !== undefined) { fields.push('payment_date = ?'); params.push(updates.payment_date) }
-  fields.push('last_payment_update = ?', 'updated_at = ?')
-  params.push(ts, ts, ledgerId)
-
-  const { error } = await execute(`UPDATE gmail_ledger_entries SET ${fields.join(', ')} WHERE ledger_id = ?`, params)
-  if (error) throw new Error(error.message)
-
-  const { data: updated } = await queryOne<GmailLedgerEntry>(
-    'SELECT * FROM gmail_ledger_entries WHERE ledger_id = ?', [ledgerId]
+  void ledgerId
+  void _updates
+  throw new RpcDomainError(
+    'CONFLICT',
+    '邮箱账单流水已收口至统一草稿箱与主账单，请前往草稿箱处理',
+    { reason: 'LEGACY_LEDGER_SEALED' },
   )
-  if (!updated) throw new Error('记录不存在')
-  return updated
+}
+
+/** 历史账本 → 草稿箱（幂等，可重复调用）。实现在 billDrafts.server.ts。 */
+export async function migrateLegacyLedgerToDrafts(
+  userId?: string,
+): Promise<{ migrated: number; skipped: number }> {
+  return migrateLegacyLedgerToDraftsImpl(userId)
 }
 
 /** 获取银行列表 */

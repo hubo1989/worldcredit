@@ -2,6 +2,8 @@
 import { query, queryOne, execute, uuid, now, batch } from '../db'
 import type { CardHolder, CreditCard, Bill, CardProduct } from '../types'
 import { normalizeAliases } from '../utils'
+import { MemberScopeError } from './member-scope'
+import { RpcDomainError } from './errors'
 
 export interface HolderStats {
   cardCount: number
@@ -199,9 +201,12 @@ export async function createHolder(holder: CreateHolderInput): Promise<CardHolde
   const id = uuid()
   const ts = now()
   const createdBy = holder.created_by || ''
+  // aliases 必须序列化落库：D1 的 TEXT 列不会替我们把数组转成 JSON 字符串，
+  // 直接绑定数组会被驱动拒绝（历史上因此一直存不进去）。
+  const aliasesJson = JSON.stringify(normalizeAliases(holder.aliases))
   const { error } = await execute(
-    'INSERT INTO card_holders (id, created_by, managed_by, name, phone, email, avatar_color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, createdBy, createdBy, trimmedName, holder.phone || null, holder.email || null, holder.avatar_color || '#7aadff', ts]
+    'INSERT INTO card_holders (id, created_by, managed_by, name, phone, email, avatar_color, aliases, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, createdBy, createdBy, trimmedName, holder.phone || null, holder.email || null, holder.avatar_color || '#7aadff', aliasesJson, ts]
   )
   if (error) throw new Error(error.message)
   await syncHolderAuthUser(id, holder.email)
@@ -217,18 +222,68 @@ export async function updateHolder(id: string, updates: Partial<CardHolder>): Pr
     email: updates.email,
     avatar_color: updates.avatar_color,
   }
+  const extraFields: string[] = []
+  const extraParams: unknown[] = []
   for (const [key, value] of Object.entries(fieldMap)) {
     if (value !== undefined) {
       fields.push(`${key} = ?`)
       params.push(value)
     }
   }
-  if (fields.length === 0) throw new Error('没有需要更新的字段')
-  params.push(id)
-  const { error } = await execute(`UPDATE card_holders SET ${fields.join(', ')} WHERE id = ?`, params)
+  if (updates.aliases !== undefined) {
+    extraFields.push('aliases = ?')
+    extraParams.push(JSON.stringify(normalizeAliases(updates.aliases)))
+  }
+  if (fields.length === 0 && extraFields.length === 0) {
+    throw new Error('没有需要更新的字段')
+  }
+  const allFields = [...fields, ...extraFields]
+  const allParams = [...params, ...extraParams, id]
+  const { error } = await execute(
+    `UPDATE card_holders SET ${allFields.join(', ')} WHERE id = ?`,
+    allParams,
+  )
   if (error) throw new Error(error.message)
   if (updates.email !== undefined) await syncHolderAuthUser(id, updates.email)
   return getHolder(id)
+}
+
+/**
+ * 成员自助维护「本人持卡人档案」的匹配别名（HUB-154 §3.3(4)）。
+ *
+ * 归属判定走 auth_user_id（成员 ↔ 持卡人的绑定列），与 getHolders() 的可见性
+ * 谓词同源；admin 可以改任何档案。别名只影响解析归属，不涉及金额，所以
+ * 成员自助是安全的。
+ */
+export async function updateMyHolderAliases(
+  holderId: string,
+  aliases: unknown,
+  userId?: string,
+): Promise<CardHolder> {
+  if (!userId) throw new MemberScopeError('未登录，无法修改持卡人别名')
+  if (typeof holderId !== 'string' || !holderId) {
+    throw new RpcDomainError('VALIDATION_FAILED', '缺少持卡人 ID')
+  }
+  if (!Array.isArray(aliases)) {
+    throw new RpcDomainError('VALIDATION_FAILED', '别名必须是字符串数组')
+  }
+  const { data } = await queryOne<{ id: string; created_by: string; auth_user_id: string | null }>(
+    'SELECT id, created_by, auth_user_id FROM card_holders WHERE id = ?',
+    [holderId],
+  )
+  if (!data) throw new RpcDomainError('NOT_FOUND', '持卡人不存在')
+  const owns = data.auth_user_id === userId || data.created_by === userId
+  if (!owns) throw new MemberScopeError('无权修改其他成员的持卡人别名')
+
+  const normalized = normalizeAliases(aliases)
+  if (normalized.length > 20) {
+    throw new RpcDomainError('VALIDATION_FAILED', '别名最多 20 个')
+  }
+  await execute('UPDATE card_holders SET aliases = ? WHERE id = ?', [
+    JSON.stringify(normalized),
+    holderId,
+  ])
+  return getHolder(holderId)
 }
 
 export async function deleteHolder(id: string): Promise<void> {
