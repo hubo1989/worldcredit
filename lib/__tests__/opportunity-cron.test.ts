@@ -112,6 +112,7 @@ function jobs(): Array<{ id: string; status: string; delivery_key: string; event
 beforeEach(async () => {
   db = createOpportunityDb()
   await seedOpportunityFixtures(db)
+  db.exec("UPDATE users SET email = 'hubo1989@gmail.com' WHERE email = 'admin-a@example.test'")
   setDb(db as unknown as D1Database)
 })
 
@@ -121,10 +122,11 @@ afterEach(() => {
 })
 
 describe('routeOpportunityCron', () => {
-  it('*/15 只权益；0 9 只账单；未知表达式不处理', () => {
+  it('*/15 只扫权益；每小时和旧版定时表达式均路由账单', () => {
     expect(routeOpportunityCron('*/15 * * * *')).toBe('opportunities')
     expect(routeOpportunityCron('0 9 * * *')).toBe('bills')
-    expect(routeOpportunityCron('0 * * * *')).toBeNull()
+    expect(routeOpportunityCron('0 * * * *')).toBe('bills')
+    expect(routeOpportunityCron('5 * * * *')).toBeNull()
   })
 })
 
@@ -145,14 +147,33 @@ describe('scanOpportunityNotifications', () => {
     expect(jobs().every((j) => j.status === 'sent')).toBe(true)
   })
 
-  it('payload 带稳定 wc-op tag 与站内白名单 URL', async () => {
+  it('redacts lock-screen pushes and ignores a stale persisted admin role', async () => {
     await seedExpiringWorld()
+    await addSubscription(f.users.adminA, 'https://push.example/a')
+    await db.prepare(`INSERT INTO user_preferences (user_id, display_config)
+       VALUES (?, '{"privacy_mode":true}')`).bind(f.users.adminA).run()
+    const { sender, calls } = stubSender()
+    await scanOpportunityNotifications({ db: db as unknown as D1Database, now: CLOCK, sender })
+    expect(calls.map(call => call.payload)).toEqual([
+      expect.objectContaining({ title: '权益提醒', body: '打开 WorldCredit 查看详情。' }),
+    ])
+
+    const tomorrow = new Date('2026-10-16T01:00:00Z')
+    await seedExpiringWorld('2026-10-17')
+    await db.prepare("UPDATE users SET email = 'former-admin@example.test' WHERE id = ?")
+      .bind(f.users.adminA).run()
+    await scanOpportunityNotifications({ db: db as unknown as D1Database, now: tomorrow, sender })
+    expect(calls).toHaveLength(1)
+  })
+
+  it('payload 带稳定 wc-op tag 与站内白名单 URL', async () => {
+    const { account } = await seedExpiringWorld()
     await addSubscription(f.users.adminA, 'https://push.example/a')
     const { sender, calls } = stubSender()
     await scanOpportunityNotifications({ db: db as unknown as D1Database, now: CLOCK, sender })
     const payload = calls[0].payload
     expect(payload.tag.startsWith('wc-op:')).toBe(true)
-    expect(payload.url).toBe('/benefits')
+    expect(payload.url).toBe(`/benefits?account_id=${account.id}`)
     // tag 与 delivery_key 对应
     const job = jobs()[0]
     expect(payload.tag).toBe(`wc-op:${job.delivery_key}`)
@@ -241,7 +262,6 @@ describe('scanOpportunityNotifications', () => {
       clock = new Date(clock.getTime() + 15 * 60_000)
     }
     const job = jobs()[0]
-    expect(['failed', 'pending']).toContain(job.status)
-    if (job.attempt_count >= 4) expect(job.status).toBe('failed')
+    expect(job).toMatchObject({ status: 'failed', attempt_count: 4 })
   })
 })

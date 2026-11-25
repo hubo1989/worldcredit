@@ -94,6 +94,7 @@ function jobRow() {
 beforeEach(async () => {
   db = createOpportunityDb()
   await seedOpportunityFixtures(db)
+  db.exec("UPDATE users SET email = 'hubo1989@gmail.com' WHERE email = 'admin-a@example.test'")
   setDb(db as unknown as D1Database)
 })
 

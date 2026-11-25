@@ -280,6 +280,12 @@ function isValidRowId(tbl: SyncTable, rowId: unknown): rowId is string {
   return composite ? parseCompositeRowId(rowId) !== null : rowId.trim().length > 0;
 }
 
+function normalizeRowId(tbl: SyncTable, rowId: string): string {
+  if (!Array.isArray(SYNCABLE_TABLES[tbl].pk)) return rowId;
+  const parsedTuple = parseCompositeRowId(rowId);
+  return parsedTuple ? JSON.stringify(parsedTuple) : rowId;
+}
+
 function isEntityTarget(value: unknown): value is EntityTarget {
   return isRecord(value) && isSyncTable(value.tbl) && isValidRowId(value.tbl, value.row_id);
 }
@@ -344,10 +350,12 @@ export async function POST(request: Request) {
       console.warn(`[sync/pull] Ignoring change with malformed row_id: ${change.tbl}`);
       continue;
     }
-    entities.set(`${change.tbl}:${change.row_id}`, { tbl: change.tbl, row_id: change.row_id });
+    const rowId = normalizeRowId(change.tbl, change.row_id);
+    entities.set(`${change.tbl}:${rowId}`, { tbl: change.tbl, row_id: rowId });
   }
   for (const target of reconcile) {
-    entities.set(`${target.tbl}:${target.row_id}`, { tbl: target.tbl, row_id: target.row_id });
+    const rowId = normalizeRowId(target.tbl, target.row_id);
+    entities.set(`${target.tbl}:${rowId}`, { tbl: target.tbl, row_id: rowId });
   }
 
   const targetsByTable = new Map<SyncTable, string[]>();

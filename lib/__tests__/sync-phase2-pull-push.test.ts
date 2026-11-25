@@ -630,6 +630,21 @@ describe("Phase 2 /api/sync/pull", () => {
     );
     expect(oversized.status).toBe(400);
   });
+
+  it("normalizes non-compact composite keys in reconcile before lookup", async () => {
+    const nonCompact = `[ "${l.accounts.self}", "${f.cards.selfMain}" ]`;
+    const data = await pull({
+      cursor: 5_000_000,
+      reconcile: [{ tbl: "opportunity_account_cards", row_id: nonCompact }],
+    });
+    expect(data.changes).toEqual([
+      expect.objectContaining({
+        tbl: "opportunity_account_cards",
+        row_id: JSON.stringify([l.accounts.self, f.cards.selfMain]),
+        op: "upsert",
+      }),
+    ]);
+  });
 });
 
 describe("Phase 2 /api/sync/push", () => {

@@ -1,6 +1,6 @@
 // APNs operations for the main app Worker, including stale device cleanup.
 import { getDb } from "./db";
-import { broadcastApnsToUser, broadcastSilentSync } from "./apns-broadcast";
+import { broadcastApnsToUser, broadcastSilentSync, type ApnsBroadcastResult } from "./apns-broadcast";
 import {
   sendApnsNotification as sendNotification,
   type ApnsConfig,
@@ -31,23 +31,38 @@ export async function sendApnsNotification(
   return result;
 }
 
-/**
- * 向指定用户的所有有效 iOS 设备广播推送。
- */
+type ApnsSummary = Pick<ApnsBroadcastResult, "total" | "sent" | "failed">;
+type ApnsSummaryWithOutcomes = ApnsSummary & Pick<ApnsBroadcastResult, "outcomes">;
+
+/** Broadcast to a user's iOS devices. Delivery tracking callers can request per-token results. */
+export function sendApnsToUser(
+  userId: string,
+  options: SendPushOptions,
+  config: ApnsConfig,
+  prefetchedTokens: string[] | undefined,
+  includeOutcomes: true,
+): Promise<ApnsSummaryWithOutcomes>;
+export function sendApnsToUser(
+  userId: string,
+  options: SendPushOptions,
+  config: ApnsConfig,
+  prefetchedTokens?: string[],
+): Promise<ApnsSummary>;
 export async function sendApnsToUser(
   userId: string,
   options: SendPushOptions,
   config: ApnsConfig,
   prefetchedTokens?: string[],
-): Promise<{ total: number; sent: number; failed: number }> {
-  const { total, sent, failed } = await broadcastApnsToUser(
+  includeOutcomes = false,
+): Promise<ApnsSummary | ApnsSummaryWithOutcomes> {
+  const { total, sent, failed, outcomes } = await broadcastApnsToUser(
     getDb(),
     userId,
     options,
     config,
     prefetchedTokens,
   );
-  return { total, sent, failed };
+  return includeOutcomes ? { total, sent, failed, outcomes } : { total, sent, failed };
 }
 
 /**
