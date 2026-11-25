@@ -262,16 +262,32 @@ struct BillsView: View {
                 }
             }
             .sheet(item: $payingItem) { item in
-                RecordPaymentView(item: item) { amount, date, channel, note in
-                    try await appState.recordPayment(
-                        billId: item.bill.id,
-                        amount: amount,
-                        paidAt: date,
-                        channel: channel,
-                        note: note
-                    )
-                    await appState.reloadData()
-                }
+                RecordPaymentView(
+                    item: item,
+                    onPay: { amount, date, channel, note in
+                        try await appState.recordPayment(
+                            billId: item.bill.id,
+                            amount: amount,
+                            paidAt: date,
+                            channel: channel,
+                            note: note
+                        )
+                        await appState.reloadData()
+                    },
+                    onPayWithFx: { amount, date, channel, note, settledCur, settledAmt, lockedRate in
+                        try await appState.recordPayment(
+                            billId: item.bill.id,
+                            amount: amount,
+                            paidAt: date,
+                            channel: channel,
+                            note: note,
+                            settledCurrency: settledCur,
+                            settledAmount: settledAmt,
+                            lockedFxRate: lockedRate
+                        )
+                        await appState.reloadData()
+                    }
+                )
             }
             .sheet(item: $viewingHistoryItem) { item in
                 PaymentHistoryView(item: item) {

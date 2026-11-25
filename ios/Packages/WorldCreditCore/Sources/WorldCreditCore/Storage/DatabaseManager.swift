@@ -625,6 +625,15 @@ public final class DatabaseManager: @unchecked Sendable {
             """)
         }
 
+        // HUB-171: 方向 2（HUB-164）已占用 v3，本迁移严格命名为 v4_payment_fx_lock，仅增量扩展 payments。
+        migrator.registerMigration("v4_payment_fx_lock") { db in
+            try db.execute(sql: """
+            ALTER TABLE payments ADD COLUMN settled_currency TEXT;
+            ALTER TABLE payments ADD COLUMN settled_amount REAL;
+            ALTER TABLE payments ADD COLUMN locked_fx_rate REAL;
+            """)
+        }
+
         // 方向 4 增量迁移：与方向 2 (v3) / 方向 3 (v4_payment_fx_lock) 保持命名正交且顺序递增
         migrator.registerMigration("v5_direction4_card_rules_and_roi") { db in
             try db.execute(sql: """

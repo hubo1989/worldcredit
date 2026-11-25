@@ -8,6 +8,7 @@ import { CardDefinitionModal } from '@/components/mobile/CardDefinitionModal'
 import { CardAccountModal } from '@/components/mobile/CardAccountModal'
 import { CardAnnualFeeSection } from '@/components/mobile/CardAnnualFeeSection'
 import { CardRoiSummaryCard } from '@/components/mobile/CardRoiSummaryCard'
+import { InstallmentPlansSection } from '@/components/mobile/InstallmentPlansSection'
 import { ChevronLeftIcon, ClockIcon } from '@/components/icons/WcIcon'
 import { currencySymbol } from '@/lib/fx'
 import type { CardProductWithRules, CreditCardWithAnnualFee } from '@/lib/recommendations-ui/types'
@@ -420,6 +421,14 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
           <BillTrendChart bills={bills.slice(0, 6)} />
         )}
       </Section>
+
+      {card.card_type !== 'loan' && (
+        <InstallmentPlansSection
+          cardId={card.id}
+          currency={currency}
+          defaultDueDay={dueDayOfMonth ?? 15}
+        />
+      )}
       {/* 可用机会（Task 12）：统一 DTO 最多 3 条，完整列表进入 /promos */}
 
       {/* 权益进度（如无数据则省略） */}

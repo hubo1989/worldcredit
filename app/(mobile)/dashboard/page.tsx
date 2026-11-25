@@ -10,7 +10,7 @@ import {
   type BillDashboardItem,
 } from "@/lib/api/bills";
 import { getHolders } from "@/lib/api/holders";
-import { getCardsBasicByHolders } from "@/lib/api/cards";
+import { getAllCardsWithProduct } from "@/lib/api/cards";
 import {
   getRecurringPayables,
   payRecurringPayable,
@@ -36,6 +36,9 @@ import { QuickActionSheet } from "@/components/mobile/QuickActionSheet";
 import { consumeNativeQuickActionUrl, type NativeQuickAction } from "@/lib/native-action";
 import { DashboardView } from "@/components/obsidian/DashboardView";
 import { DashboardOverlays } from "@/components/obsidian/DashboardOverlays";
+import { computeThreePartDebtBreakdown } from "@/lib/direction3/pure";
+import { getInstallmentPlans } from "@/lib/direction3/rpc";
+import type { InstallmentPlanWithSummary } from "@/lib/direction3/types";
 import {
   EyeIcon,
   EyeOffIcon,
@@ -70,8 +73,9 @@ export default function DashboardPage() {
   const [holders, setHolders] = useState<CardHolder[]>([]);
   const [bills, setBills] = useState<BillDashboardItem[]>([]);
   const [payables, setPayables] = useState<PayableWithStatus[]>([]);
+  const [installmentPlans, setInstallmentPlans] = useState<InstallmentPlanWithSummary[]>([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
-  const [cards, setCards] = useState<Array<{ id: string; holder_id: string }>>([]);
+  const [cards, setCards] = useState<Array<{ id: string; holder_id: string; account_id?: string | null }>>([]);
   const unreadSyncedRef = useRef(false);
 
   // ---- 交互状态 ----
@@ -123,9 +127,10 @@ export default function DashboardPage() {
     setError(null);
     const shouldSyncUnread = !unreadSyncedRef.current;
     try {
-      // 并行：持卡人 / 账单 / 固定支出 / 未读通知数（仅首载同步当日通知）；卡片依赖持卡人 id
-      const [holderList, allBills, payableList, unreadCount] = await Promise.all([
+      // 并行：持卡人 / 卡片（含 account_id 以支持合并账户分期去重） / 账单 / 固定支出 / 未读通知数 / 活跃分期
+      const [holderList, allCards, allBills, payableList, unreadCount, activeInstallments] = await Promise.all([
         getHolders(user.id),
+        getAllCardsWithProduct(),
         getBillDashboardItems(200, user.id),
         getRecurringPayables(user.id).catch((err) => {
           console.warn("[dashboard] Failed to load recurring payables:", err);
@@ -147,15 +152,19 @@ export default function DashboardPage() {
             console.warn("[dashboard] Failed to load unread notification count:", err);
             return 0;
           }),
+        getInstallmentPlans({ status: "active" }).catch(() => [] as InstallmentPlanWithSummary[]),
       ]);
       holderList.sort((a, b) => a.created_at.localeCompare(b.created_at));
-      const holderIds = holderList.map((h) => h.id);
-      const cardsRes = holderIds.length > 0 ? await getCardsBasicByHolders(holderIds) : [];
+      const holderIdSet = new Set(holderList.map((h) => h.id));
+      const cardsRes = allCards
+        .filter((c) => holderIdSet.has(c.holder_id))
+        .map((c) => ({ id: c.id, holder_id: c.holder_id, account_id: c.account_id ?? null }));
 
       setHolders(holderList);
       setCards(cardsRes);
       setBills(allBills);
       setPayables(payableList);
+      setInstallmentPlans(Array.isArray(activeInstallments) ? activeInstallments : []);
       setUnreadNotificationCount(unreadCount);
     } catch (err) {
       console.error("Dashboard load failed:", err);
@@ -305,6 +314,7 @@ export default function DashboardPage() {
   const closeToast = useCallback(() => setToast((prev) => ({ ...prev, open: false })), []);
   const goToBills = useCallback(() => router.push("/bills"), [router]);
   const goToPromos = useCallback(() => router.push("/promos"), [router]);
+  const goToCashflowForecast = useCallback(() => router.push("/analytics#cashflow"), [router]);
   const goToNotifications = useCallback(() => router.push("/notifications"), [router]);
 
   // 当前选中持卡人下的账单
@@ -328,6 +338,27 @@ export default function DashboardPage() {
   const metrics = useMemo(
     () => computeMetrics(visibleBills, futureRange, displayCurrency, fxRates, visiblePayables),
     [visibleBills, futureRange, displayCurrency, fxRates, visiblePayables],
+  );
+
+  const visibleInstallmentPlans = useMemo(() => {
+    if (holderFilter === "all") return installmentPlans;
+    const cardIds = new Set(visibleCards.map((c) => c.id));
+    return installmentPlans.filter(
+      (p) => p.holder_id === holderFilter || cardIds.has(p.card_id),
+    );
+  }, [installmentPlans, holderFilter, visibleCards]);
+
+  const debtBreakdown = useMemo(
+    () =>
+      computeThreePartDebtBreakdown({
+        bills: visibleBills,
+        cards,
+        payables: visiblePayables,
+        installmentPlans: visibleInstallmentPlans,
+        targetCurrency: displayCurrency,
+        rates: fxRates,
+      }),
+    [visibleBills, cards, visiblePayables, visibleInstallmentPlans, displayCurrency, fxRates],
   );
 
   const cardsByHolder = useMemo(() => countCardsByHolder(cards), [cards]);
@@ -431,7 +462,9 @@ export default function DashboardPage() {
         onPayAllOpen={openPayAllConfirm}
         onNavBills={goToBills}
         onNavPromos={goToPromos}
+        onNavCashflowForecast={goToCashflowForecast}
         onNavNotifications={goToNotifications}
+        debtBreakdown={debtBreakdown}
         unreadNotificationCount={unreadNotificationCount}
         totalCardCount={totalCardCount}
         holders={holders}

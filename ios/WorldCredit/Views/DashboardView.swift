@@ -65,12 +65,27 @@ struct DashboardView: View {
             .refreshable { await appState.refreshDashboard() }
             .task { await appState.loadInitialDataIfNeeded() }
             .sheet(item: $payingItem) { item in
-                PaymentSheetView(item: item) { amount, date, channel, note in
-                    try await appState.recordPayment(
-                        billId: item.bill.id, amount: amount,
-                        paidAt: date, channel: channel, note: note
-                    )
-                }
+                PaymentSheetView(
+                    item: item,
+                    onPay: { amount, date, channel, note in
+                        try await appState.recordPayment(
+                            billId: item.bill.id, amount: amount,
+                            paidAt: date, channel: channel, note: note
+                        )
+                    },
+                    onPayWithFx: { amount, date, channel, note, settledCur, settledAmt, lockedRate in
+                        try await appState.recordPayment(
+                            billId: item.bill.id,
+                            amount: amount,
+                            paidAt: date,
+                            channel: channel,
+                            note: note,
+                            settledCurrency: settledCur,
+                            settledAmount: settledAmt,
+                            lockedFxRate: lockedRate
+                        )
+                    }
+                )
             }
             .sheet(isPresented: $showingCreateBillSheet) {
                 BillCreateSheetView()
