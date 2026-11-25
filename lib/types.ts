@@ -47,6 +47,24 @@ export interface CardProduct {
   bank_quota_mode?: 'independent' | 'shared'
   /** 所属银行的账单模式（从 banks.statement_mode 联查带出） */
   bank_statement_mode?: 'independent' | 'merged'
+  /** 0043：外币手续费率（0.015 = 1.5%），未配置为 null */
+  ftf_rate?: number | null
+  /** 0043：免外币手续费的币种代码 JSON 数组（如 ["USD","HKD"]） */
+  fx_free_currencies_json?: string | null
+  /** 0043：分类回报规则 RewardRulesV1（JSON 字符串，未配置为 null） */
+  reward_rules_json?: string | null
+  /** 0043：年费周期类型 */
+  annual_fee_cycle_type?:
+    | 'none'
+    | 'anniversary_issued'
+    | 'anniversary_activated'
+    | 'calendar_year'
+    | 'custom_date'
+    | null
+  /** 0043：免年费规则模板 AnnualFeeWaiverRuleV1（JSON 字符串） */
+  annual_fee_waiver_rules_json?: string | null
+  /** 0043：管理员最后一次保存结构化规则的时间；非空时任何回填脚本都不得覆盖 */
+  rules_updated_at?: string | null
   is_active: boolean
   created_at: string
 }
@@ -189,6 +207,24 @@ export interface CreditCard {
   issued_on?: string | null
   /** 激活日（civil date，未知为 null） */
   activated_on?: string | null
+  /** 0044：年费周期类型 */
+  annual_fee_cycle_type?:
+    | 'none'
+    | 'anniversary_issued'
+    | 'anniversary_activated'
+    | 'calendar_year'
+    | 'custom_date'
+    | null
+  /** 0044：下次年费扣费日（YYYY-MM-DD，未知为 null，绝不编造） */
+  next_annual_fee_date?: string | null
+  /** 0044：年费状态 */
+  annual_fee_status?: 'not_applicable' | 'in_progress' | 'waived' | 'paid' | 'unknown' | null
+  /** 0044：免年费达标进度 WaiverProgressV1（JSON 字符串） */
+  waiver_progress_json?: string | null
+  /** 0044：本周期实付年费（用户补录） */
+  actual_fee_paid?: number | null
+  /** 0044：手动补录的年度返现价值（原卡币种） */
+  manual_reward_value?: number | null
   created_at: string
 }
 
@@ -316,6 +352,10 @@ export interface PromoUsage {
   card_id?: string
   used_at: string
   note?: string
+  /** 0044：本次优惠实得返现金额 */
+  cashback_amount?: number | null
+  /** 0044：返现币种（三字母代码） */
+  cashback_currency?: string | null
   created_at: string
 }
 
@@ -437,6 +477,7 @@ export type NotificationCategory =
   | 'payable_due_advance'
   | 'bill_overdue'
   | 'grace_period_longest'
+  | 'annual_fee_decision'
   | 'opportunity_expiry'
   | 'opportunity_claim'
   | 'opportunity_activity'
@@ -452,6 +493,7 @@ export interface NotificationItemSwitches {
   payable_due_advance: boolean
   bill_overdue: boolean
   grace_period_longest: boolean
+  annual_fee_decision: boolean
   opportunity_expiry: boolean
   opportunity_claim: boolean
   opportunity_activity: boolean

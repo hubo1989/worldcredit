@@ -185,6 +185,10 @@ export interface PromoUsageRow {
   card_id: string | null
   used_at: string
   note: string | null
+  /** 0044：实得返现金额（主币种单位） */
+  cashback_amount?: number | null
+  /** 0044：返现币种 */
+  cashback_currency?: string | null
   created_at: string
 }
 
@@ -291,6 +295,10 @@ export interface OpportunityDefinitionRow {
   revision: number
   created_by: string | null // null only for legacy-wrapped definitions
   created_at: string
+  /** 0044：目录级单次自用估值（最小货币单位） */
+  estimated_unit_value_minor?: number | null
+  /** 0044：估值币种 */
+  estimated_value_currency?: string | null
 }
 
 export interface OpportunityRuleVersionRow {
@@ -323,6 +331,10 @@ export interface OpportunityAccountRow {
   revision: number
   created_by: string
   created_at: string
+  /** 0044：持卡人个人自用估值（优先于目录默认估值） */
+  estimated_unit_value_minor?: number | null
+  /** 0044：估值币种 */
+  estimated_value_currency?: string | null
 }
 
 export interface OpportunityAccountCardRow {

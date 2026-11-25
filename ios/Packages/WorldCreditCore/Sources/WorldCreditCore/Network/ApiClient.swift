@@ -91,15 +91,32 @@ public struct MutationPayload: Codable, Sendable {
     }
 }
 
+public struct MutationPushDetails: Codable, Sendable, Equatable {
+    public var existingBillId: String?
+    public var existingCardId: String?
+
+    public init(existingBillId: String? = nil, existingCardId: String? = nil) {
+        self.existingBillId = existingBillId
+        self.existingCardId = existingCardId
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case existingBillId = "existing_bill_id"
+        case existingCardId = "existing_card_id"
+    }
+}
+
 public struct MutationPushResult: Codable, Sendable {
     public var id: String
     public var ok: Bool
     public var error: String?
+    public var code: String?
     public var permanent: Bool?
     public var alreadyProcessed: Bool?
+    public var details: MutationPushDetails?
 
     enum CodingKeys: String, CodingKey {
-        case id, ok, error, permanent
+        case id, ok, error, code, permanent, details
         case alreadyProcessed = "already_processed"
     }
 }
@@ -498,6 +515,7 @@ public final class ApiClient: @unchecked Sendable {
     }
 
     public struct CreateBillInput: Codable, Sendable, Equatable {
+        public var id: String?
         public var cardId: String
         public var accountId: String?
         public var billMonth: String
@@ -511,6 +529,7 @@ public final class ApiClient: @unchecked Sendable {
         public var subtotals: [CreateBillSubtotalInput]?
 
         public init(
+            id: String? = nil,
             cardId: String,
             billMonth: String,
             dueDate: String,
@@ -523,6 +542,7 @@ public final class ApiClient: @unchecked Sendable {
             status: String = "unpaid",
             subtotals: [CreateBillSubtotalInput]? = nil
         ) {
+            self.id = id
             self.cardId = cardId
             self.accountId = accountId
             self.billMonth = billMonth
@@ -537,6 +557,7 @@ public final class ApiClient: @unchecked Sendable {
         }
 
         enum CodingKeys: String, CodingKey {
+            case id
             case cardId = "card_id"
             case accountId = "account_id"
             case billMonth = "bill_month"
@@ -655,7 +676,11 @@ public final class ApiClient: @unchecked Sendable {
         channel: String? = nil,
         note: String? = nil,
         clearChannel: Bool = false,
-        clearNote: Bool = false
+        clearNote: Bool = false,
+        settledCurrency: String? = nil,
+        settledAmount: Double? = nil,
+        lockedFxRate: Double? = nil,
+        clearFxLock: Bool = false
     ) async throws -> Payment {
         var patch: [String: Any] = [:]
         if let amount { patch["amount"] = amount }
@@ -669,6 +694,15 @@ public final class ApiClient: @unchecked Sendable {
             patch["note"] = NSNull()
         } else if let note {
             patch["note"] = note
+        }
+        if clearFxLock {
+            patch["settled_currency"] = NSNull()
+            patch["settled_amount"] = NSNull()
+            patch["locked_fx_rate"] = NSNull()
+        } else if let settledCurrency, let settledAmount, let lockedFxRate {
+            patch["settled_currency"] = settledCurrency
+            patch["settled_amount"] = settledAmount
+            patch["locked_fx_rate"] = lockedFxRate
         }
         return try await rpc(
             module: "payments",

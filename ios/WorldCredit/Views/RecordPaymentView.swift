@@ -6,12 +6,16 @@ struct RecordPaymentView: View {
 
     let item: BillDisplayItem
     let onPay: (Double, String, String, String?) async throws -> Void
+    var onPayWithFx: ((Double, String, String, String?, String?, Double?, Double?) async throws -> Void)? = nil
 
     @State private var payType: PayType = .full
     @State private var customAmountText: String = ""
     @State private var paidAt: Date = Date()
     @State private var channel: String = "微信支付"
     @State private var note: String = ""
+    @State private var settledCurrency: String = "CNY"
+    @State private var settledAmountText: String = ""
+    @State private var lockedRateText: String = ""
     @State private var isSubmitting: Bool = false
     @State private var errorMessage: String?
 
@@ -23,7 +27,14 @@ struct RecordPaymentView: View {
         var id: String { rawValue }
     }
 
+    private static let settledCurrencies = ["CNY", "USD", "HKD", "EUR", "GBP", "JPY", "SGD"]
+    private enum FxField: Hashable { case amount, rate }
+    @FocusState private var fxFocus: FxField?
+
     private var billCurrency: String { item.currency }
+    private var showFxLockSection: Bool {
+        billCurrency.uppercased() != settledCurrency.uppercased()
+    }
 
     private func money(_ amount: Double) -> String {
         DashboardMoney.format(amount, currency: billCurrency)
@@ -58,6 +69,22 @@ struct RecordPaymentView: View {
                 return "待还金额为 0"
             }
         }
+        if let err = fxValidationError {
+            return err
+        }
+        return nil
+    }
+
+    private var fxValidationError: String? {
+        guard showFxLockSection else { return nil }
+        let sTrim = settledAmountText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rTrim = lockedRateText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if sTrim.isEmpty && rTrim.isEmpty { return nil }
+        guard let sAmt = Double(sTrim), sAmt > 0 else { return "实付结算金额必须大于 0" }
+        guard let rate = Double(rTrim), rate > 0 else { return "锁定汇率必须大于 0" }
+        if abs(effectiveAmount * rate - sAmt) > 0.05 {
+            return "实付金额与「原币 × 锁定汇率」偏差超过 0.05"
+        }
         return nil
     }
 
@@ -90,6 +117,9 @@ struct RecordPaymentView: View {
                 VStack(spacing: 16) {
                     statementSummaryCard
                     amountSection
+                    if billCurrency.uppercased() != "CNY" {
+                        fxLockSection
+                    }
                     paymentInfoSection
                     afterPaymentPreviewCard
                     semanticsDisclaimer
@@ -272,6 +302,75 @@ struct RecordPaymentView: View {
         )
     }
 
+    // MARK: - FX Lock Section
+    private var fxLockSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("实际购汇/扣款汇率锁定（选填）")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(WCColors.textPrimary)
+
+            Picker("结算币种", selection: $settledCurrency) {
+                ForEach(Self.settledCurrencies, id: \.self) { cur in
+                    Text(cur).tag(cur)
+                }
+            }
+            .pickerStyle(.menu)
+            .onChange(of: settledCurrency) { _, _ in
+                fxFocus = nil
+                settledAmountText = ""
+                lockedRateText = ""
+            }
+
+            if showFxLockSection {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("实付金额 (\(settledCurrency))")
+                            .font(.caption)
+                            .foregroundStyle(WCColors.textSecondary)
+                        TextField("选填", text: $settledAmountText)
+                            .keyboardType(.decimalPad)
+                            .padding(10)
+                            .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 8))
+                            .focused($fxFocus, equals: .amount)
+                            .onChange(of: settledAmountText) { _, val in
+                                guard fxFocus == .amount else { return }
+                                if let s = Double(val), s > 0, effectiveAmount > 0 {
+                                    lockedRateText = String(format: "%.4f", s / effectiveAmount)
+                                } else if val.trimmingCharacters(in: .whitespaces).isEmpty {
+                                    lockedRateText = ""
+                                }
+                            }
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("锁定汇率 (1 \(billCurrency)=)")
+                            .font(.caption)
+                            .foregroundStyle(WCColors.textSecondary)
+                        TextField("如 7.2500", text: $lockedRateText)
+                            .keyboardType(.decimalPad)
+                            .padding(10)
+                            .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 8))
+                            .focused($fxFocus, equals: .rate)
+                            .onChange(of: lockedRateText) { _, val in
+                                guard fxFocus == .rate else { return }
+                                if let r = Double(val), r > 0, effectiveAmount > 0 {
+                                    settledAmountText = String(format: "%.2f", effectiveAmount * r)
+                                } else if val.trimmingCharacters(in: .whitespaces).isEmpty {
+                                    settledAmountText = ""
+                                }
+                            }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(WCColors.surface, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(WCColors.border, lineWidth: 1)
+        )
+    }
+
     // MARK: - Payment Info Section
     private var paymentInfoSection: some View {
         VStack(spacing: 12) {
@@ -407,8 +506,27 @@ struct RecordPaymentView: View {
         f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
         let dateStr = f.string(from: paidAt)
 
+        let sTrim = settledAmountText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rTrim = lockedRateText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasFxLock = showFxLockSection && !sTrim.isEmpty && !rTrim.isEmpty
+        let settledCurArg = hasFxLock ? settledCurrency : nil
+        let settledAmtArg = hasFxLock ? Double(sTrim) : nil
+        let lockedRateArg = hasFxLock ? Double(rTrim) : nil
+
         do {
-            try await onPay(effectiveAmount, dateStr, channel, note.isEmpty ? nil : note)
+            if let onPayWithFx {
+                try await onPayWithFx(
+                    effectiveAmount,
+                    dateStr,
+                    channel,
+                    note.isEmpty ? nil : note,
+                    settledCurArg,
+                    settledAmtArg,
+                    lockedRateArg
+                )
+            } else {
+                try await onPay(effectiveAmount, dateStr, channel, note.isEmpty ? nil : note)
+            }
             dismiss()
         } catch {
             errorMessage = "还款失败：\(error.localizedDescription)"

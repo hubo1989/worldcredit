@@ -23,9 +23,11 @@ import * as cardsServer from './cards.server'
 import * as dashboardServer from './dashboard.server'
 import * as devicesServer from './devices.server'
 import * as emailBillsServer from './emailBills.server'
+import * as exportsServer from './exports.server'
 import * as gmailServer from './gmail.server'
 import * as gmailLedgerServer from './gmail-ledger.server'
 import * as holdersServer from './holders.server'
+import * as installmentsServer from './installments.server'
 import * as notificationsServer from './notifications.server'
 import * as payablesServer from './payables.server'
 // payments.ts 直接持有 db 访问（历史文件无 .server 拆分），registry 是
@@ -33,6 +35,7 @@ import * as payablesServer from './payables.server'
 import * as paymentsServer from './payments'
 import * as preferencesServer from './preferences.server'
 import * as promosServer from './promos.server'
+import * as recommendationsServer from './recommendations.server'
 import * as opportunitiesServer from './opportunities.server'
 import { getTodayAvailableCount } from '../opportunities/queries.server'
 import * as pushServer from './push.server'
@@ -46,6 +49,7 @@ import {
   assertBillListAccess,
   assertCardAccess,
   assertDraftAccess,
+  assertInstallmentAccess,
   assertHolderAccess,
   assertHolderIdsAccess,
   assertLedgerAccess,
@@ -53,6 +57,8 @@ import {
   assertPayableAccess,
   filterCardsByHolder,
   filterHolders,
+  guardFamilyExport,
+  guardRecommendationScope,
   MemberScopeError,
   type MemberContext,
 } from './member-scope'
@@ -127,6 +133,8 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     getEmailParseLogHolders: { impl: adminServer.getEmailParseLogHolders, admin: true },
     discardEmailParseLog: { impl: adminServer.discardEmailParseLog, admin: true },
     createCardFromEmailParseLog: { impl: adminServer.createCardFromEmailParseLog, admin: true },
+    // 方向 4：AI 生成卡产品结构化规则草稿（只预览，写库由 updateCardProduct 人工确认）
+    previewCardProductRules: { impl: aiServer.aiPreviewCardProductRules, admin: true },
   },
   ai: {
     aiComplete: { impl: aiServer.aiComplete },
@@ -166,7 +174,62 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     getAnalyticsSummary: { impl: analyticsServer.getAnalyticsSummary, memberGuard: (args, ctx) => applyAnalyticsScope(args[0], ctx) },
     getMonthlyDebtTrend: { impl: analyticsServer.getMonthlyDebtTrend, memberGuard: (args, ctx) => applyAnalyticsScope(args[0], ctx) },
     getCategoryBreakdown: { impl: analyticsServer.getCategoryBreakdown, memberGuard: (args, ctx) => applyAnalyticsScope(args[0], ctx) },
+    getCategoryBreakdownReport: { impl: analyticsServer.getCategoryBreakdownReport, memberGuard: (args, ctx) => applyAnalyticsScope(args[0], ctx) },
+    getCategoryDrilldownItems: { impl: analyticsServer.getCategoryDrilldownItems, memberGuard: (args, ctx) => applyAnalyticsScope(args[0], ctx) },
+    // 现金流预测：第 2 个参数由 bindUser 注入会话用户 id（固定支出隐私过滤依赖它）。
+    getCashflowForecast: {
+      impl: analyticsServer.getCashflowForecast,
+      bindUser: 1,
+      memberGuard: (args, ctx) => applyAnalyticsScope(args[0], ctx),
+    },
     getAnalyticsByHolder: { impl: analyticsServer.getAnalyticsByHolder, memberGuard: guardHolder(0) },
+  },
+  installments: {
+    getInstallmentPlans: {
+      impl: installmentsServer.getInstallmentPlans,
+      // 允许不传筛选（服务端默认 {}），但仍必须把成员锁在自己的持卡人上。
+      memberGuard: async (args, ctx) => {
+        if (args[0] === undefined || args[0] === null) args[0] = {}
+        await applyAnalyticsScope(args[0], ctx)
+      },
+    },
+    createInstallmentPlan: {
+      impl: installmentsServer.createInstallmentPlan,
+      memberGuard: guardObjField(0, 'card_id', assertCardAccess),
+    },
+    updateInstallmentPlan: {
+      impl: installmentsServer.updateInstallmentPlan,
+      memberGuard: async (args, ctx) => assertInstallmentAccess(args[0], ctx),
+    },
+    advanceInstallmentPeriod: {
+      impl: installmentsServer.advanceInstallmentPeriod,
+      memberGuard: async (args, ctx) => assertInstallmentAccess(args[0], ctx),
+    },
+    settleInstallmentEarly: {
+      impl: installmentsServer.settleInstallmentEarly,
+      memberGuard: async (args, ctx) => assertInstallmentAccess(args[0], ctx),
+    },
+    deleteInstallmentPlan: {
+      impl: installmentsServer.deleteInstallmentPlan,
+      memberGuard: async (args, ctx) => assertInstallmentAccess(args[0], ctx),
+    },
+    getInstallmentSchedule: {
+      impl: installmentsServer.getInstallmentSchedule,
+      memberGuard: async (args, ctx) => assertInstallmentAccess(args[0], ctx),
+    },
+  },
+  exports: {
+    // 全家庭报表导出：第 2 个参数由 bindUser 注入会话用户 id。
+    exportFamilyCsvRows: {
+      impl: exportsServer.exportFamilyCsvRows,
+      bindUser: 1,
+      memberGuard: async (args, ctx) => guardFamilyExport(args[0], ctx),
+    },
+    getStatementReport: {
+      impl: exportsServer.getStatementReport,
+      bindUser: 1,
+      memberGuard: async (args, ctx) => guardFamilyExport(args[0], ctx),
+    },
   },
   attachments: {
     getAttachments: {
@@ -262,6 +325,40 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
     updateCard: { impl: cardsServer.updateCard, memberGuard: guardCard(0) },
     updateCardHolder: { impl: cardsServer.updateCardHolder, bindUser: 0 },
     getDueDateReasonReport: { impl: cardsServer.getDueDateReasonReport, bindUser: 0 },
+  },
+  // 方向 4（HUB-177）：消费前 Top 3 推荐 + 单卡/全家庭年费 ROI。
+  // 成员侧由 guardRecommendationScope 拦截 'all' / 他人 holder_id（403）；
+  // 单卡入口沿用 guardCard，绝不让成员读到他人卡片的 ROI 明细。
+  recommendations: {
+    getCardRecommendations: {
+      impl: recommendationsServer.getCardRecommendations,
+      prependActor: true,
+      memberGuard: (args, ctx) => guardRecommendationScope(args, ctx),
+    },
+    getCardAnnualFeeRoi: {
+      impl: recommendationsServer.getCardAnnualFeeRoi,
+      prependActor: true,
+      memberGuard: guardCard(0),
+    },
+    getFamilyAnnualFeeRoi: {
+      impl: recommendationsServer.getFamilyAnnualFeeRoi,
+      prependActor: true,
+      memberGuard: (args, ctx) => guardRecommendationScope(args, ctx),
+    },
+    getCardCycleSpendEstimate: {
+      impl: recommendationsServer.getCardCycleSpendEstimate,
+      prependActor: true,
+      memberGuard: guardCard(0),
+    },
+    updateOpportunityValuation: {
+      impl: recommendationsServer.updateOpportunityValuation,
+      prependActor: true,
+    },
+    upsertPromoUsageCashback: {
+      impl: recommendationsServer.upsertPromoUsageCashback,
+      prependActor: true,
+      memberGuard: guardObjField(0, 'card_id', assertCardAccess),
+    },
   },
   dashboard: {
     getOpportunityTodayCount: { impl: getTodayAvailableCount, prependActor: true },

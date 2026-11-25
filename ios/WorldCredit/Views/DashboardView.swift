@@ -64,12 +64,27 @@ struct DashboardView: View {
             .refreshable { await appState.refreshDashboard() }
             .task { await appState.loadInitialDataIfNeeded() }
             .sheet(item: $payingItem) { item in
-                PaymentSheetView(item: item) { amount, date, channel, note in
-                    try await appState.recordPayment(
-                        billId: item.bill.id, amount: amount,
-                        paidAt: date, channel: channel, note: note
-                    )
-                }
+                PaymentSheetView(
+                    item: item,
+                    onPay: { amount, date, channel, note in
+                        try await appState.recordPayment(
+                            billId: item.bill.id, amount: amount,
+                            paidAt: date, channel: channel, note: note
+                        )
+                    },
+                    onPayWithFx: { amount, date, channel, note, settledCur, settledAmt, lockedRate in
+                        try await appState.recordPayment(
+                            billId: item.bill.id,
+                            amount: amount,
+                            paidAt: date,
+                            channel: channel,
+                            note: note,
+                            settledCurrency: settledCur,
+                            settledAmount: settledAmt,
+                            lockedFxRate: lockedRate
+                        )
+                    }
+                )
             }
             .sheet(isPresented: $showingCreateBillSheet) {
                 BillCreateSheetView()
@@ -563,11 +578,11 @@ struct DashboardView: View {
                     HStack {
                         Text("权益待办").font(.headline)
                         Spacer()
-                        Button("全部 ›") { appState.openWebDestination(.benefitCalendar) }
+                        Button("全部 ›") { appState.openBenefits(.calendar()) }
                             .font(.caption.bold())
                     }
                     ForEach(appState.dashboardReminders) { reminder in
-                        Button { appState.openWebDestination(.benefitCalendar) } label: {
+                        Button { appState.openBenefits(.calendar(eventKey: reminder.eventKey)) } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(reminder.title).font(.subheadline.bold())
                                     .lineLimit(1)
@@ -635,7 +650,7 @@ struct DashboardView: View {
             }
             quickAction("权益", systemImage: "gift") {
                 HapticManager.impactLight()
-                appState.openWebDestination(.benefits)
+                appState.openBenefits(.ledger(accountId: nil))
             }
             quickAction("邮箱账单", systemImage: "envelope") {
                 HapticManager.impactLight()

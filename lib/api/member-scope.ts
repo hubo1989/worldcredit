@@ -100,6 +100,59 @@ export async function assertDraftAccess(draftId: unknown, ctx: MemberContext): P
   memberAssert(!!data && data.created_by === ctx.userId, '无权操作其他用户的导入草稿')
 }
 
+/** 交易明细归属：bill_items → bills → credit_cards.holder_id（fail closed）。 */
+export async function assertBillItemAccess(itemId: unknown, ctx: MemberContext): Promise<void> {
+  memberAssert(typeof itemId === 'string', '参数必须是账单明细 ID')
+  const { data } = await queryOne<{ holder_id: string }>(
+    `SELECT cc.holder_id FROM bill_items bi
+     JOIN bills b ON b.id = bi.bill_id
+     JOIN credit_cards cc ON cc.id = b.card_id
+     WHERE bi.id = ?`,
+    [itemId],
+  )
+  memberAssert(!!data && ctx.holderIds.includes(data.holder_id), '无权访问其他成员的账单明细')
+}
+
+/** 分期计划归属：installment_plans → credit_cards.holder_id（fail closed）。 */
+export async function assertInstallmentAccess(planId: unknown, ctx: MemberContext): Promise<void> {
+  memberAssert(typeof planId === 'string', '参数必须是分期计划 ID')
+  const { data } = await queryOne<{ holder_id: string }>(
+    `SELECT cc.holder_id FROM installment_plans ip
+     JOIN credit_cards cc ON cc.id = ip.card_id
+     WHERE ip.id = ?`,
+    [planId],
+  )
+  memberAssert(!!data && ctx.holderIds.includes(data.holder_id), '无权访问其他成员的分期计划')
+}
+
+/**
+ * 全家庭报表导出的成员隔离（AC-5.2）：
+ * - `scope === 'family'` 一律 403（成员没有「全家庭」视野）；
+ * - 传了非本人 `holder_id` 一律 403；
+ * - 未传 holder_id 时仅当成员只绑定一个持卡人档案才自动补全，否则要求显式选择。
+ * 就地改写入参对象，导出服务后续只认 `holder_id`。
+ */
+export function guardFamilyExport(request: unknown, ctx: MemberContext): void {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) {
+    throw new MemberScopeError('参数必须是导出请求对象')
+  }
+  const req = request as { scope?: unknown; holder_id?: unknown }
+  if (req.scope === 'family') {
+    throw new MemberScopeError('无权导出全家庭对账单')
+  }
+  if (ctx.holderIds.length === 0) {
+    throw new MemberScopeError('当前账号未绑定持卡人档案')
+  }
+  if (typeof req.holder_id === 'string' && req.holder_id) {
+    assertHolderAccess(req.holder_id, ctx)
+    return
+  }
+  if (ctx.holderIds.length !== 1) {
+    throw new MemberScopeError('请选择你自己的持卡人档案后重试')
+  }
+  req.holder_id = ctx.holderIds[0]
+}
+
 /**
  * Ledger rows are account-scoped: gmail_ledger_entries.created_by stores the
  * user id that ingested the statement mail. A member may only touch their own
@@ -152,6 +205,38 @@ export async function applyAnalyticsScope(filters: unknown, ctx: MemberContext):
     memberAssert(ctx.holderIds.length === 1, '请选择你自己的持卡人档案后重试')
     f.holder_id = ctx.holderIds[0]
   }
+}
+
+/**
+ * 推荐/ROI 作用域守卫（HUB-175 §5、AC-4.1）。
+ *
+ * 成员只能看自己名下的持卡人：
+ * - 未绑定任何持卡人档案的成员直接拒绝；
+ * - 显式传 'all' 或非本人 holder_id 立即 403（MemberScopeError）；
+ * - 未传 holder_id 时自动锁定到本人的持卡人范围（服务端 SQL 仍会二次过滤）。
+ *
+ * 注意 memberGuard 在 prependActor 之前运行，因此客户端第 1 个入参恒为 args[0]。
+ */
+export async function guardRecommendationScope(args: unknown[], ctx: MemberContext): Promise<void> {
+  const input = args[0]
+  // 无入参（例如 getFamilyAnnualFeeRoi() 不带 filters）：交给服务端按本人范围收敛
+  if (input === undefined || input === null) return
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    throw new MemberScopeError('参数缺少推荐输入对象')
+  }
+  const payload = input as Record<string, unknown>
+  if (ctx.holderIds.length === 0) {
+    throw new MemberScopeError('当前账号未绑定持卡人档案')
+  }
+  const holderId = payload.holder_id
+  if (holderId === undefined || holderId === null || holderId === '') {
+    // 未显式指定：交给服务端 SQL 的 holderScopePredicate 收敛到本人范围
+    return
+  }
+  if (holderId === 'all' || typeof holderId !== 'string') {
+    throw new MemberScopeError('无权查看其他成员的卡片推荐')
+  }
+  assertHolderAccess(holderId, ctx)
 }
 
 /** Response filter for card rows keyed by holder_id. */

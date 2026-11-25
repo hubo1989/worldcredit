@@ -1,16 +1,23 @@
 'use client'
 
-import { useEffect, useState, useCallback, use } from 'react'
+import { useEffect, useState, useCallback, useRef, use } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { createPayment, updateBillStatus, getBillDetail, getPaymentTotal } from '@/lib/api/bills'
+import { updateBillStatus, getBillDetail, getPaymentTotal } from '@/lib/api/bills'
 import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillEditForm } from '@/components/mobile/BillEditForm'
 import { BillPaymentsManage } from '@/components/mobile/BillPaymentsManage'
+import { BillItemsSection } from '@/components/mobile/BillItemsSection'
+import { BillRepaymentHealthCard } from '@/components/mobile/BillRepaymentHealthCard'
 import { CardDefinitionModal } from '@/components/mobile/CardDefinitionModal'
 import { CardAccountModal } from '@/components/mobile/CardAccountModal'
 import type { CreditCardWithProduct } from '@/lib/api/cards'
 import { useAuth } from '@/lib/auth'
+import { useUserPreferences } from '@/lib/hooks/useUserPreferences'
+import { resolveDisplayCurrency } from '@/lib/api/preferences.shared'
+import { currencySymbol, fetchRates, type FxRates } from '@/lib/fx'
+import { getBillItems, submitBillPayment } from '@/lib/direction3/rpc'
+import type { BillItem, PaymentFxLockFields, PaymentWithFx } from '@/lib/direction3/types'
 import {
   computePaymentDrivenStatus,
   getEffectiveCreditLimit,
@@ -21,13 +28,15 @@ import {
   calculateCardGracePeriod,
 } from '@/lib/utils'
 import { ChevronLeftIcon, ChevronRightIcon, ClockIcon } from '@/components/icons/WcIcon'
-import type { Bill, Payment, CardHolder } from '@/lib/types'
+import type { Bill, CardHolder } from '@/lib/types'
 
 type BillDetail = Bill & {
+  account?: { currency?: string }
+  member_cards?: Array<{ id: string; card_number_last4?: string; name_override?: string }>
   card?: CreditCardWithProduct & {
     card_holders?: CardHolder
   }
-  payments: Payment[]
+  payments: PaymentWithFx[]
 }
 
 /** 计算已还 / 剩余 / 状态 / 是否未出账 */
@@ -81,6 +90,9 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const router = useRouter()
 
   const [bill, setBill] = useState<BillDetail | null>(null)
+  const [billItems, setBillItems] = useState<BillItem[]>([])
+  const [itemsLoading, setItemsLoading] = useState(false)
+  const [fxRates, setFxRates] = useState<FxRates | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [paymentOpen, setPaymentOpen] = useState(false)
@@ -89,9 +101,12 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const [cardDefModalOpen, setCardDefModalOpen] = useState(false)
   const [cardAccountModalOpen, setCardAccountModalOpen] = useState(false)
   const { user } = useAuth()
+  const { displayConfig } = useUserPreferences()
+  const displayCurrency = resolveDisplayCurrency(displayConfig)
   // deleteBill 服务端 admin only；member 隐藏删除入口，权限以服务端为准
   const isAdmin = user?.role === 'admin'
 
+  const itemsLoadSeqRef = useRef(0)
   const load = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent === true
     try {
@@ -107,7 +122,27 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
             card_holders: rawCard.card_holder,
           } as CreditCardWithProduct)
         : undefined
-      setBill({ ...(detail.bill as Bill), card, payments: detail.payments })
+      setBill({ ...(detail.bill as Bill), card, payments: detail.payments as PaymentWithFx[] })
+      const embeddedItems = (detail as { items?: BillItem[] }).items
+      if (Array.isArray(embeddedItems)) {
+        itemsLoadSeqRef.current += 1
+        setBillItems(embeddedItems)
+      } else {
+        const seq = ++itemsLoadSeqRef.current
+        setItemsLoading(true)
+        getBillItems(id)
+          .then((rows) => {
+            if (seq === itemsLoadSeqRef.current) {
+              setBillItems(Array.isArray(rows) ? rows : [])
+            }
+          })
+          .catch(() => {
+            // 瞬时失败保留当前已展示明细，避免闪烁清空
+          })
+          .finally(() => {
+            if (seq === itemsLoadSeqRef.current) setItemsLoading(false)
+          })
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载账单失败')
     } finally {
@@ -117,14 +152,34 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
 
   useEffect(() => { load() }, [load])
 
-  const handlePayment = async (data: { amount: number; paid_at: string; note?: string }) => {
+  useEffect(() => {
+    let cancelled = false
+    fetchRates()
+      .then((rates) => {
+        if (!cancelled) setFxRates(rates)
+      })
+      .catch(() => {
+        if (!cancelled) setFxRates(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const handlePayment = async (
+    data: { amount: number; paid_at: string; note?: string } & PaymentFxLockFields,
+  ) => {
     if (!bill) return
-    await createPayment({
+    await submitBillPayment({
       bill_id: bill.id,
       amount: data.amount,
       paid_at: data.paid_at,
       channel: '手动还款',
       note: data.note,
+      billCurrency: card?.card_product?.currency ?? bill.account?.currency,
+      settled_currency: data.settled_currency,
+      settled_amount: data.settled_amount,
+      locked_fx_rate: data.locked_fx_rate,
     })
     // 重算状态
     const totalPaid = await getPaymentTotal(bill.id)
@@ -173,6 +228,8 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const cardName = card ? getEffectiveCardName(card, product) : '信用卡'
   const holderName = holder?.name
   const last4 = formatCardTail(card?.card_number_last4)
+  const billCurrency = product?.currency || bill.account?.currency || 'CNY'
+  const sym = currencySymbol(billCurrency)
 
   const { paid, remaining, status, isUnissued } = computeBillProgress(bill)
   const minPayment = bill.min_payment != null ? Number(bill.min_payment) : null
@@ -232,7 +289,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
           <StatusBadgeDark status={status} />
         </div>
         <p className='num-tabular mt-2 text-[28px] font-bold leading-none text-d-text'>
-          ¥{billAmount.toLocaleString()}
+          {sym}{billAmount.toLocaleString()}
         </p>
         <button
           type='button'
@@ -245,12 +302,34 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
 
       {/* 金额四格 */}
       <Grid4
+        currencySym={sym}
         items={[
           { label: '应还', value: billAmount, cls: 'text-d-text' },
           { label: '最低', value: minPayment, cls: 'text-d-text' },
           { label: '已还', value: paid, cls: 'text-d-success-ink' },
           { label: '剩余', value: remaining, cls: 'text-d-danger-ink' },
         ]}
+      />
+
+      {/* 还款健康与滚动利息预估 */}
+      <BillRepaymentHealthCard
+        bill={bill}
+        cardType={card?.card_type}
+        currency={billCurrency}
+        items={billItems}
+        payments={bill.payments}
+      />
+
+      {/* 交易明细（轻量可选层） */}
+      <BillItemsSection
+        billId={bill.id}
+        billMonth={bill.bill_month}
+        billCurrency={billCurrency}
+        effectiveAmount={billAmount}
+        items={billItems}
+        loading={itemsLoading}
+        onChanged={() => load({ silent: true })}
+        memberCards={bill.member_cards}
       />
 
       {/* 区块 2：关联卡片（不含持卡人/尾号/账单日） */}
@@ -304,7 +383,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
             label='信用额度'
             value={
               effLimit !== null && effLimit !== undefined
-                ? `¥${Number(effLimit).toLocaleString()}`
+                ? `${sym}${Number(effLimit).toLocaleString()}`
                 : '—'
             }
           />
@@ -360,14 +439,24 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                 key={p.id}
                 className={'flex items-center justify-between py-2' + (i > 0 ? ' border-t border-d-border' : '')}
               >
-                <div>
+                <div className='min-w-0 flex-1'>
                   <p className='num-tabular text-[15px] font-bold text-d-success-ink'>
-                    +¥{Number(p.amount).toLocaleString()}
+                    +{sym}{Number(p.amount).toLocaleString()}
                   </p>
                   <p className='mt-0.5 text-[12px] leading-4 text-d-muted'>
                     {format(new Date(p.paid_at), 'yyyy-MM-dd')}
                     {p.channel ? ' · ' + p.channel : ''}
                   </p>
+                  {p.settled_currency != null && p.settled_amount != null && p.locked_fx_rate != null && (
+                    <p className='mt-0.5 inline-flex rounded bg-d-success-soft px-1.5 py-0.5 text-[10px] font-semibold text-d-success-ink'>
+                      已锁汇率 1 {billCurrency} = {Number(p.locked_fx_rate).toFixed(4)} {p.settled_currency} · 实付 {currencySymbol(p.settled_currency)}{Number(p.settled_amount).toLocaleString()}
+                    </p>
+                  )}
+                  {!(p.settled_currency != null && p.settled_amount != null && p.locked_fx_rate != null) && billCurrency !== displayCurrency && (
+                    <p className='mt-0.5 text-[10px] text-d-muted'>
+                      参考汇率折算 · 点击编辑可锁定实际汇率
+                    </p>
+                  )}
                 </div>
                 {p.note && (
                   <p className='max-w-[140px] truncate text-right text-[12px] leading-4 text-d-muted'>
@@ -377,7 +466,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
                 <button
                   type='button'
                   onClick={() => setPaymentsManageOpen(true)}
-                  className='shrink-0 text-[12px] font-semibold text-d-accent-light underline underline-offset-2'
+                  className='ml-2 shrink-0 text-[12px] font-semibold text-d-accent-light underline underline-offset-2'
                 >
                   管理
                 </button>
@@ -413,6 +502,9 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         totalAmount={remaining || billAmount}
         billMonth={bill.bill_month}
         billId={bill.id}
+        billCurrency={billCurrency}
+        displayCurrency={displayCurrency}
+        fxRates={fxRates}
       />
 
       {/* spec 13 编辑表单：金额/日期走 override，状态重算，admin 可删除 */}
@@ -421,7 +513,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         bill={bill}
         identityLabel={`${bankName} ${cardName}${last4 ? ` · 尾号 ${last4}` : ''} · ${bill.bill_month} 期`}
         totalPaid={paid}
-        currency='¥'
+        currency={sym}
         canDelete={isAdmin}
         onClose={() => setEditOpen(false)}
         onSaved={() => load({ silent: true })}
@@ -435,7 +527,10 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         open={paymentsManageOpen}
         payments={bill.payments}
         effectiveAmount={billAmount}
-        currency='¥'
+        currency={sym}
+        billCurrency={billCurrency}
+        displayCurrency={displayCurrency}
+        fxRates={fxRates}
         onClose={() => setPaymentsManageOpen(false)}
         onChanged={load}
       />
@@ -500,14 +595,14 @@ function Section({ title, action, children }: { title: string; action?: React.Re
   )
 }
 
-function Grid4({ items }: { items: { label: string; value: number | null; cls: string }[] }) {
+function Grid4({ currencySym, items }: { currencySym: string; items: { label: string; value: number | null; cls: string }[] }) {
   return (
     <div className='mb-2.5 grid grid-cols-4 gap-0.5 rounded-2xl border border-d-border bg-d-surface p-2'>
       {items.map(it => (
         <div key={it.label} className='text-center'>
           <p className='mb-0.5 text-[12px] leading-4 text-d-muted'>{it.label}</p>
           <p className={'num-tabular text-[15px] font-bold ' + it.cls}>
-            {it.value != null ? '¥' + Number(it.value).toLocaleString() : '—'}
+            {it.value != null ? currencySym + Number(it.value).toLocaleString() : '—'}
           </p>
         </div>
       ))}

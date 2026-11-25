@@ -19,7 +19,7 @@ struct WatchHomeView: View {
                             .font(.system(size: 13, weight: .medium))
                             .lineLimit(1)
 
-                        Text("¥\(String(format: "%.2f", nextBill.remainingAmount))")
+                        Text(DashboardMoney.format(nextBill.remainingAmount, currency: nextBill.currency))
                             .font(.system(size: 20, weight: .bold, design: .rounded))
                             .foregroundStyle(nextBill.isOverdue() ? .red : .primary)
 
@@ -45,7 +45,7 @@ struct WatchHomeView: View {
                         isPresented: $showingConfirmAlert,
                         titleVisibility: .visible
                     ) {
-                        Button("全额还款 ¥\(String(format: "%.2f", nextBill.remainingAmount))") {
+                        Button("全额还款 \(DashboardMoney.format(nextBill.remainingAmount, currency: nextBill.currency))") {
                             store.markAsPaid(bill: nextBill)
                         }
                         Button("取消", role: .cancel) {}
@@ -72,7 +72,7 @@ struct WatchHomeView: View {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.red)
                                 .font(.caption2)
-                            Text("\(snap.overdueCount) 笔已逾期 (¥\(String(format: "%.0f", snap.overdueAmount)))")
+                            Text("\(snap.overdueCount) 笔已逾期 (\(snap.formattedOverdueAmount(compact: true)))")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundStyle(.red)
                         }
@@ -87,10 +87,17 @@ struct WatchHomeView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Text("¥\(String(format: "%.0f", snap.totalDebt))")
+                        Text(snap.formattedTotalDebt(compact: true))
                             .font(.caption.bold())
                     }
                     .padding(.horizontal, 4)
+                    if let breakdown = snap.debtBreakdownText(compact: true) {
+                        Text(snap.unconvertedCurrencies.isEmpty ? "多币种折算(\(snap.displayCurrency))：\(breakdown)" : "缺汇率，按原币分项展示")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .padding(.horizontal, 4)
+                    }
                 }
 
                 // 快捷导航按钮

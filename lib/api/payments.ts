@@ -11,6 +11,8 @@ import {
 import { RpcDomainError } from './errors'
 import type { MemberContext } from './member-scope'
 import { MemberScopeError } from './member-scope'
+import { validateAndNormalizeFxLock, type PaymentFxLock } from './direction3.shared'
+import { currencySymbol } from '../fx'
 
 export async function getPaymentsByBill(billId: string): Promise<Payment[]> {
   const { data, error } = await query<Payment>(
@@ -73,6 +75,12 @@ export interface UpdatePaymentPatch {
   paid_at?: string
   channel?: string | null
   note?: string | null
+  /** 实付币种（3 位码）；与账单币种不同时才有意义。 */
+  settled_currency?: string | null
+  /** 实付金额（实付币种）。 */
+  settled_amount?: number | null
+  /** 锁定汇率：账单金额 × 汇率 = 实付金额（容差 0.05）。 */
+  locked_fx_rate?: number | null
 }
 
 /**
@@ -84,7 +92,10 @@ export interface UpdatePaymentPatch {
  * （生效金额 + 0.01），超限给可读中文错误而不是裸 ABORT。
  * 不改 idempotency_key（幂等键是原始入账通道的契约，编辑不动它）。
  */
-export async function updatePayment(paymentId: string, patch: UpdatePaymentPatch): Promise<Payment> {
+export async function updatePayment(
+  paymentId: string,
+  patch: UpdatePaymentPatch,
+): Promise<Payment & PaymentFxLock> {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
     throw new RpcDomainError('VALIDATION_FAILED', '缺少合法的编辑参数')
   }
@@ -92,7 +103,10 @@ export async function updatePayment(paymentId: string, patch: UpdatePaymentPatch
     patch.amount !== undefined ||
     patch.paid_at !== undefined ||
     patch.channel !== undefined ||
-    patch.note !== undefined
+    patch.note !== undefined ||
+    patch.settled_currency !== undefined ||
+    patch.settled_amount !== undefined ||
+    patch.locked_fx_rate !== undefined
   if (!hasAnyField) {
     throw new RpcDomainError('VALIDATION_FAILED', '没有可更新的字段')
   }
@@ -128,6 +142,33 @@ export async function updatePayment(paymentId: string, patch: UpdatePaymentPatch
   if (!bill) throw new RpcDomainError('NOT_FOUND', '还款记录所属的账单不存在')
 
   const nextAmount = patch.amount !== undefined ? patch.amount : payment.amount
+  // 账单币种决定「实付币种相同 → 无需锁定」的归一，以及超额提示里的货币符号。
+  const { data: currencyRow, error: currencyErr } = await queryOne<{ currency: string | null }>(
+    `SELECT cp.currency FROM bills b
+     JOIN credit_cards cc ON cc.id = b.card_id
+     LEFT JOIN card_products cp ON cp.id = cc.card_product_id
+     WHERE b.id = ?`,
+    [payment.bill_id],
+  )
+  if (currencyErr) throw new Error(currencyErr.message)
+  const billCurrency = currencyRow?.currency || 'CNY'
+
+  // 汇率锁定三列：只有客户端真的传了（含显式 null 清空）才写，避免只改备注时抹掉历史锁定。
+  const hasFxFields =
+    patch.settled_currency !== undefined ||
+    patch.settled_amount !== undefined ||
+    patch.locked_fx_rate !== undefined
+  const fxLock = hasFxFields
+    ? validateAndNormalizeFxLock(
+        {
+          settled_currency: patch.settled_currency ?? null,
+          settled_amount: patch.settled_amount ?? null,
+          locked_fx_rate: patch.locked_fx_rate ?? null,
+        },
+        nextAmount,
+        billCurrency,
+      )
+    : null
 
   // 生效金额上界镜像 0022 触发器：Σpayments 不得超过 COALESCE(override, bill_amount) + 0.01。
   // 仅在金额实际调大时才可能新触犯上界——存量超缴数据（触发器只挂 BEFORE INSERT，
@@ -146,7 +187,7 @@ export async function updatePayment(paymentId: string, patch: UpdatePaymentPatch
       const maxForThisPayment = Math.max(0, effectiveAmount + 0.01 - otherPaid)
       throw new RpcDomainError(
         'CONFLICT',
-        `编辑后金额超过该账单剩余可还额度（本笔最多 ¥${maxForThisPayment.toFixed(2)}）`,
+        `编辑后金额超过该账单剩余可还额度（本笔最多 ${currencySymbol(billCurrency)}${maxForThisPayment.toFixed(2)}）`,
       )
     }
   }
@@ -170,6 +211,10 @@ export async function updatePayment(paymentId: string, patch: UpdatePaymentPatch
     sets.push('note = ?')
     params.push(patch.note)
   }
+  if (fxLock) {
+    sets.push('settled_currency = ?', 'settled_amount = ?', 'locked_fx_rate = ?')
+    params.push(fxLock.settled_currency, fxLock.settled_amount, fxLock.locked_fx_rate)
+  }
   statements.push({
     sql: `UPDATE payments SET ${sets.join(', ')} WHERE id = ?`,
     params: [...params, paymentId],
@@ -186,7 +231,7 @@ export async function updatePayment(paymentId: string, patch: UpdatePaymentPatch
     throw new Error(error.message)
   }
 
-  const updated = await queryOne<Payment>('SELECT * FROM payments WHERE id = ?', [paymentId])
+  const updated = await queryOne<Payment & PaymentFxLock>('SELECT * FROM payments WHERE id = ?', [paymentId])
   if (!updated.data) throw new Error('还款记录更新失败')
   return updated.data
 }

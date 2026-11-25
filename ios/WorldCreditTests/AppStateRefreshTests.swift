@@ -210,11 +210,27 @@ final class AppStateRefreshTests: XCTestCase {
 
         state.handleNotificationRoute("/benefits")
         XCTAssertEqual(state.selectedTab, 3)
+        XCTAssertEqual(state.pendingBenefitsRoute, .ledger(accountId: nil))
+        XCTAssertNil(state.pendingWebDestination)
+
+        state.handleNotificationRoute("/benefits/acc-9")
+        XCTAssertEqual(state.selectedTab, 3)
+        XCTAssertEqual(state.pendingBenefitsRoute, .ledger(accountId: "acc-9"))
         XCTAssertNil(state.pendingWebDestination)
 
         state.handleNotificationRoute("/benefits/calendar")
         XCTAssertEqual(state.selectedTab, 3)
-        XCTAssertEqual(state.pendingWebDestination, .benefitCalendar)
+        XCTAssertEqual(state.pendingBenefitsRoute, .calendar())
+        XCTAssertNil(state.pendingWebDestination)
+
+        state.handleNotificationRoute("/benefits/tasks")
+        XCTAssertEqual(state.selectedTab, 3)
+        XCTAssertEqual(state.pendingBenefitsRoute, .tasks())
+        XCTAssertNil(state.pendingWebDestination)
+
+        state.handleNotificationRoute("/gmail-ledger")
+        XCTAssertEqual(state.selectedTab, 0)
+        XCTAssertEqual(state.pendingWebDestination, .gmailLedger)
 
         state.handleNotificationRoute("/settings")
         XCTAssertEqual(state.selectedTab, 4)
@@ -326,5 +342,40 @@ final class AppStateRefreshTests: XCTestCase {
         XCTAssertEqual(counts.2, 0)
         XCTAssertEqual(counts.3, 0)
         XCTAssertEqual(counts.4, 0)
+    }
+
+    func testPhase2WorkerDeepLinkRetainsAccountAndClaimAction() throws {
+        let state = try fixture(loggedIn: true).state
+
+        state.handleNotificationRoute("/benefits?account_id=acc_1")
+        XCTAssertEqual(state.selectedTab, 3)
+        XCTAssertNil(state.pendingWebDestination)
+        XCTAssertEqual(state.pendingBenefitsRoute, .ledger(accountId: "acc_1"))
+        XCTAssertNil(state.pendingBenefitsAction)
+
+        state.handleNotificationRoute("/benefits?account_id=acc_1&action=claim")
+        XCTAssertEqual(state.selectedTab, 3)
+        XCTAssertNil(state.pendingWebDestination)
+        XCTAssertEqual(state.pendingBenefitsRoute, .ledger(accountId: "acc_1"))
+        XCTAssertEqual(state.pendingBenefitsAction, "claim")
+    }
+
+    func testPhase2WorkerCalendarAndTaskRoutesRetainDistinctTargets() throws {
+        let state = try fixture(loggedIn: true).state
+
+        for (first, second) in [
+            ("/benefits/calendar?event_key=ev_1", "/benefits/calendar?event_key=ev_2"),
+            ("/benefits/tasks?task_cycle_id=tc_1", "/benefits/tasks?task_cycle_id=tc_2"),
+        ] {
+            state.handleNotificationRoute(first)
+            let original = state.pendingBenefitsRoute
+            state.handleNotificationRoute(second)
+            XCTAssertEqual(state.selectedTab, 3)
+            XCTAssertNil(state.pendingWebDestination)
+            XCTAssertNotEqual(state.pendingBenefitsRoute, original, second)
+        }
+        state.handleNotificationRoute("/promos")
+        XCTAssertEqual(state.pendingBenefitsRoute, .promos)
+        XCTAssertNil(state.pendingWebDestination)
     }
 }
