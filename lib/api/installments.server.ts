@@ -72,6 +72,7 @@ export interface CreateInstallmentInput {
   currency?: string
   principal_amount: number
   total_periods: number
+  paid_periods?: number
   fee_mode?: InstallmentFeeMode
   fee_charge_mode?: 'per_period' | 'upfront'
   fee_rate_per_period?: number | null
@@ -89,6 +90,8 @@ export interface UpdateInstallmentPatch {
   note?: string | null
   plan_type?: InstallmentPlanType
   due_day?: number
+  paid_periods?: number
+  due_month_offset?: 0 | 1
   billing_mode?: InstallmentBillingMode
   fee_rate_per_period?: number | null
   custom_period_fee?: number | null
@@ -244,6 +247,10 @@ export async function createInstallmentPlan(
   }
   const dueMonthOffset =
     input.due_month_offset === 1 ? 1 : (0 as 0 | 1)
+  const paidPeriods = input.paid_periods ?? 0
+  if (!Number.isInteger(paidPeriods) || paidPeriods < 0 || paidPeriods > totalPeriods) {
+    throw new RpcDomainError('VALIDATION_FAILED', '已还期数必须是 0 到总期数之间的整数')
+  }
 
   const { data: card, error: cardError } = await queryOne<{ id: string; currency: string | null }>(
     `SELECT cc.id, cp.currency FROM credit_cards cc
@@ -262,7 +269,7 @@ export async function createInstallmentPlan(
        principal_amount, total_periods, paid_periods, fee_mode, fee_charge_mode,
        fee_rate_per_period, custom_period_fee, apr, start_month, due_day,
        due_month_offset, billing_mode, status, note, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
     [
       id,
       cardId,
@@ -273,6 +280,7 @@ export async function createInstallmentPlan(
       currency || card.currency || 'CNY',
       round2(principal),
       totalPeriods,
+      paidPeriods,
       feeMode,
       feeChargeMode,
       feeRate,
@@ -340,6 +348,21 @@ export async function updateInstallmentPlan(
   if (patch.custom_period_fee !== undefined) {
     sets.push('custom_period_fee = ?')
     params.push(assertOptionalNonNegative(patch.custom_period_fee, '每期手续费'))
+  }
+  if (patch.paid_periods !== undefined) {
+    const paid = patch.paid_periods
+    if (!Number.isInteger(paid) || paid < 0 || paid > plan.total_periods) {
+      throw new RpcDomainError('VALIDATION_FAILED', '已还期数必须是 0 到总期数之间的整数')
+    }
+    sets.push('paid_periods = ?')
+    params.push(paid)
+  }
+  if (patch.due_month_offset !== undefined) {
+    if (patch.due_month_offset !== 0 && patch.due_month_offset !== 1) {
+      throw new RpcDomainError('VALIDATION_FAILED', '还款月份偏移必须是 0 或 1')
+    }
+    sets.push('due_month_offset = ?')
+    params.push(patch.due_month_offset)
   }
 
   if (sets.length === 0) {

@@ -6,11 +6,11 @@
 
 import {
   addMonthsToPayablePeriod,
-  payableDueDate,
   diffInCalendarDays,
 } from '../utils'
 import { convert, type FxRates, type FxSum } from '../fx'
-import { RpcDomainError } from './errors'
+import { generateInstallmentSchedule as generateFinanceInstallmentSchedule } from '../finance/installments'
+import { validateAndNormalizeFxLock as validateFinanceFxLock } from '../finance/payment-fx'
 
 // ── 消费分类 ────────────────────────────────────────────────────────────────
 
@@ -136,60 +136,18 @@ function formatDate(date: Date): string {
  * 3. equal_installment_apr：等额本息，月利率 r = apr / 12，末期本金清零。
  */
 export function generateInstallmentSchedule(plan: InstallmentPlanLike): InstallmentPeriod[] {
-  const principal = Number(plan.principal_amount) || 0
-  const total = Math.max(1, Math.trunc(Number(plan.total_periods) || 0))
-  const principals: number[] = []
-  const fees: number[] = []
-
-  if (plan.fee_mode === 'equal_installment_apr') {
-    const apr = Number(plan.apr) || 0
-    const monthlyRate = apr / 12
-    if (monthlyRate <= 0) {
-      for (let i = 0; i < total; i++) principals.push(round2(principal / total))
-      principals[total - 1] = round2(principal - principals.slice(0, -1).reduce((a, b) => a + b, 0))
-      for (let i = 0; i < total; i++) fees.push(0)
-    } else {
-      const factor = Math.pow(1 + monthlyRate, total)
-      const annuity = round2((principal * monthlyRate * factor) / (factor - 1))
-      let remaining = principal
-      for (let i = 1; i <= total; i++) {
-        const fee = round2(remaining * monthlyRate)
-        fees.push(fee)
-        if (i === total) {
-          principals.push(round2(remaining))
-        } else {
-          const current = round2(Math.min(remaining, Math.max(0, annuity - fee)))
-          principals.push(current)
-          remaining = round2(remaining - current)
-        }
-      }
-    }
-  } else {
-    for (let i = 0; i < total; i++) principals.push(round2(principal / total))
-    principals[total - 1] = round2(principal - principals.slice(0, -1).reduce((a, b) => a + b, 0))
-    if (plan.fee_mode === 'interest_free') {
-      for (let i = 0; i < total; i++) fees.push(0)
-    } else {
-      const perPeriodFee =
-        plan.custom_period_fee != null && plan.custom_period_fee > 0
-          ? round2(plan.custom_period_fee)
-          : round2(principal * (Number(plan.fee_rate_per_period) || 0))
-      const upfront = plan.fee_charge_mode === 'upfront'
-      for (let i = 0; i < total; i++) fees.push(upfront ? (i === 0 ? perPeriodFee : 0) : perPeriodFee)
-    }
-  }
-
-  return principals.map((currentPrincipal, index) => {
-    const billMonth = addMonthsToPayablePeriod(plan.start_month, index)
-    const dueMonth = addMonthsToPayablePeriod(billMonth, plan.due_month_offset ?? 0)
-    return {
-      period_index: index + 1,
-      bill_month: billMonth,
-      due_date: formatDate(payableDueDate(plan.due_day, dueMonth)),
-      principal: currentPrincipal,
-      fee: fees[index] ?? 0,
-      total: round2(currentPrincipal + (fees[index] ?? 0)),
-    }
+  return generateFinanceInstallmentSchedule({
+    principal_amount: plan.principal_amount,
+    total_periods: plan.total_periods,
+    fee_mode: plan.fee_mode,
+    start_month: plan.start_month,
+    due_day: plan.due_day,
+    paid_periods: plan.paid_periods,
+    fee_charge_mode: plan.fee_charge_mode ?? undefined,
+    fee_rate_per_period: plan.fee_rate_per_period,
+    custom_period_fee: plan.custom_period_fee,
+    apr: plan.apr,
+    due_month_offset: plan.due_month_offset === 1 ? 1 : 0,
   })
 }
 
@@ -227,65 +185,16 @@ export interface PaymentFxLock {
   locked_fx_rate: number | null
 }
 
-const CURRENCY_CODE_RE = /^[A-Za-z]{3}$/
-
 /**
- * 汇率锁定三列的归一与容差校验：
- * - 三列全空 → 全 null（该笔还款按账单原币计入）；
- * - 目标币种与账单币种相同 → 也归一为全 null（无需锁定，避免 1:1 假汇率）；
- * - 任一非空 → 强制三列齐全、正数、合法 3 位币种码，
- *   且 |amount × locked_fx_rate − settled_amount| ≤ 0.05。
+ * 汇率锁定三列的归一与容差校验，复用 lib/finance/payment-fx 的整数分内核：
+ * 0.05 边界（500 USD × 7 = 3,499.95 CNY）带浮点容差通过，且与 Web / RPC 口径一致。
  */
 export function validateAndNormalizeFxLock(
   input: PaymentFxLockInput | null | undefined,
   amount: number,
   billCurrency: string,
 ): PaymentFxLock {
-  const settledCurrency =
-    typeof input?.settled_currency === 'string' && input.settled_currency.trim()
-      ? input.settled_currency.trim().toUpperCase()
-      : null
-  const settledAmount =
-    input?.settled_amount === null || input?.settled_amount === undefined
-      ? null
-      : Number(input.settled_amount)
-  const lockedRate =
-    input?.locked_fx_rate === null || input?.locked_fx_rate === undefined
-      ? null
-      : Number(input.locked_fx_rate)
-
-  if (!settledCurrency && settledAmount === null && lockedRate === null) {
-    return { settled_currency: null, settled_amount: null, locked_fx_rate: null }
-  }
-  if (settledCurrency && settledCurrency === billCurrency.toUpperCase()) {
-    return { settled_currency: null, settled_amount: null, locked_fx_rate: null }
-  }
-  if (
-    !settledCurrency ||
-    !CURRENCY_CODE_RE.test(settledCurrency) ||
-    settledAmount === null ||
-    !Number.isFinite(settledAmount) ||
-    settledAmount <= 0 ||
-    lockedRate === null ||
-    !Number.isFinite(lockedRate) ||
-    lockedRate <= 0
-  ) {
-    throw new RpcDomainError(
-      'VALIDATION_FAILED',
-      '汇率锁定需要同时填写实付币种、实付金额与锁定汇率，且三者均须为正数',
-    )
-  }
-  if (Math.abs(amount * lockedRate - settledAmount) > 0.05) {
-    throw new RpcDomainError(
-      'VALIDATION_FAILED',
-      '锁定汇率与实付金额不一致（账单金额 × 汇率应等于实付金额）',
-    )
-  }
-  return {
-    settled_currency: settledCurrency,
-    settled_amount: round2(settledAmount),
-    locked_fx_rate: round6(lockedRate),
-  }
+  return validateFinanceFxLock(input, amount, billCurrency)
 }
 
 /** 历史成本折算的输入：账单原币 + 可选锁定三列。 */
