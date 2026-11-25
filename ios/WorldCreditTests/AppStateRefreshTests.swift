@@ -204,6 +204,16 @@ final class AppStateRefreshTests: XCTestCase {
         state.handleNotificationRoute("/cards")
         XCTAssertEqual(state.selectedTab, 2)
 
+        state.handleNotificationRoute("/cards/card-99?section=roi")
+        XCTAssertEqual(state.selectedTab, 2)
+        XCTAssertEqual(state.pendingDeepLinkCardId, "card-99")
+        XCTAssertEqual(state.pendingDeepLinkCardSection, "roi")
+
+        state.handleNotificationRoute("/cards/roi")
+        XCTAssertEqual(state.selectedTab, 2)
+        XCTAssertNil(state.pendingDeepLinkCardId)
+        XCTAssertEqual(state.pendingDeepLinkCardSection, "roi_board")
+
         state.handleNotificationRoute("/promos")
         XCTAssertEqual(state.selectedTab, 3)
         XCTAssertNil(state.pendingWebDestination)

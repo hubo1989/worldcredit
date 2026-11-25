@@ -2,6 +2,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
@@ -166,18 +167,26 @@ export default function AnalyticsPage() {
 
   return (
     <div className='px-4 pb-24 pt-3'>
-      <div className='mb-4 flex items-center justify-between'>
+      <div className='mb-4 flex items-center justify-between gap-2'>
         <h1 className='text-[22px] font-semibold leading-7 tracking-tight text-d-text'>
           消费与负债分析
         </h1>
-        <button
-          type='button'
-          onClick={() => setExportOpen(true)}
-          aria-label='导出数据'
-          className='flex h-11 w-11 items-center justify-center rounded-xl border border-d-border bg-d-surface text-d-text active:bg-d-subtle'
-        >
-          <DownloadIcon size={20} />
-        </button>
+        <div className='flex items-center gap-2'>
+          <Link
+            href='/cards/roi'
+            className='flex min-h-[44px] items-center whitespace-nowrap rounded-full border border-d-border bg-d-surface px-3.5 text-[12px] font-semibold text-d-gold'
+          >
+            年费 ROI 复盘 ›
+          </Link>
+          <button
+            type='button'
+            onClick={() => setExportOpen(true)}
+            aria-label='导出数据'
+            className='flex h-11 w-11 items-center justify-center rounded-xl border border-d-border bg-d-surface text-d-text active:bg-d-subtle'
+          >
+            <DownloadIcon size={20} />
+          </button>
+        </div>
       </div>
 
       {/* Filters */}

@@ -634,6 +634,31 @@ public final class DatabaseManager: @unchecked Sendable {
             """)
         }
 
+        // 方向 4 增量迁移：与方向 2 (v3) / 方向 3 (v4_payment_fx_lock) 保持命名正交且顺序递增
+        migrator.registerMigration("v5_direction4_card_rules_and_roi") { db in
+            try db.execute(sql: """
+            ALTER TABLE card_products ADD COLUMN ftf_rate REAL;
+            ALTER TABLE card_products ADD COLUMN fx_free_currencies_json TEXT;
+            ALTER TABLE card_products ADD COLUMN reward_rules_json TEXT;
+            ALTER TABLE card_products ADD COLUMN annual_fee_cycle_type TEXT;
+            ALTER TABLE card_products ADD COLUMN annual_fee_waiver_rules_json TEXT;
+            ALTER TABLE card_products ADD COLUMN rules_updated_at TEXT;
+
+            ALTER TABLE credit_cards ADD COLUMN annual_fee_cycle_type TEXT;
+            ALTER TABLE credit_cards ADD COLUMN next_annual_fee_date TEXT;
+            ALTER TABLE credit_cards ADD COLUMN annual_fee_status TEXT;
+            ALTER TABLE credit_cards ADD COLUMN waiver_progress_json TEXT;
+            ALTER TABLE credit_cards ADD COLUMN actual_fee_paid REAL;
+            ALTER TABLE credit_cards ADD COLUMN manual_reward_value REAL;
+
+            CREATE INDEX IF NOT EXISTS idx_credit_cards_next_annual_fee
+                ON credit_cards(status, card_type, next_annual_fee_date)
+                WHERE next_annual_fee_date IS NOT NULL;
+
+            UPDATE sync_meta SET value = '0' WHERE key = 'sync_cursor';
+            """)
+        }
+
         return migrator
     }
 }
