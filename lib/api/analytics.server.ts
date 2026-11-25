@@ -1018,6 +1018,7 @@ export async function getCashflowForecast(
         | 'yearly',
       cycle_months: payable.cycle_months ?? undefined,
       due_month: payable.due_month ?? undefined,
+      anchor_period: payable.anchor_period ?? undefined,
     }
     let period = payablePeriodOf(baseDateObj, cycle)
     for (let step = 0; step < 6; step++) {
