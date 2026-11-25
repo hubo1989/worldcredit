@@ -563,11 +563,11 @@ struct DashboardView: View {
                     HStack {
                         Text("权益待办").font(.headline)
                         Spacer()
-                        Button("全部 ›") { appState.openBenefits(.calendar) }
+                        Button("全部 ›") { appState.openBenefits(.calendar()) }
                             .font(.caption.bold())
                     }
                     ForEach(appState.dashboardReminders) { reminder in
-                        Button { appState.openBenefits(.calendar) } label: {
+                        Button { appState.openBenefits(.calendar(eventKey: reminder.eventKey)) } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(reminder.title).font(.subheadline.bold())
                                     .lineLimit(1)

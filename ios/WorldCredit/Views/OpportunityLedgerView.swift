@@ -1,9 +1,16 @@
 import SwiftUI
 import WorldCreditCore
 
+struct LedgerDeepLinkTarget: Hashable, Identifiable {
+    let accountId: String
+    let action: String?
+    var id: String { "\(accountId):\(action ?? "")" }
+}
+
 struct OpportunityLedgerView: View {
     @Environment(AppState.self) private var appState
     @Binding var deepLinkedAccountId: String?
+    @Binding var deepLinkedAction: String?
 
     @State private var searchText: String = ""
     @State private var selectedHolderId: String?
@@ -17,7 +24,7 @@ struct OpportunityLedgerView: View {
     @State private var claimTarget: OpportunityLedgerItem?
     @State private var bookingTarget: OpportunityLedgerItem?
     @State private var accountSetupPresented: Bool = false
-    @State private var navigatedAccountRoute: String?
+    @State private var navigatedAccountRoute: LedgerDeepLinkTarget?
     @State private var actionError: String?
 
     var body: some View {
@@ -96,8 +103,8 @@ struct OpportunityLedgerView: View {
         .onChange(of: selectedCardId) { _, _ in Task { await reloadFiltered() } }
         .onChange(of: selectedStatus) { _, _ in Task { await reloadFiltered() } }
         .onChange(of: appState.opportunityLedger) { _, _ in Task { await reloadFiltered() } }
-        .navigationDestination(item: $navigatedAccountRoute) { accountId in
-            OpportunityDetailView(accountId: accountId)
+        .navigationDestination(item: $navigatedAccountRoute) { target in
+            OpportunityDetailView(accountId: target.accountId, initialAction: target.action)
         }
         .sheet(item: $usageTarget) { item in
             OpportunityUsageEditorSheet(item: item, editingUsage: nil) {
@@ -123,8 +130,10 @@ struct OpportunityLedgerView: View {
 
     private func consumeDeepLink() {
         guard let targetId = deepLinkedAccountId, !targetId.isEmpty else { return }
+        let action = deepLinkedAction
         deepLinkedAccountId = nil
-        navigatedAccountRoute = targetId
+        deepLinkedAction = nil
+        navigatedAccountRoute = LedgerDeepLinkTarget(accountId: targetId, action: action)
     }
 
     private func reloadFiltered() async {
@@ -310,7 +319,7 @@ struct OpportunityLedgerView: View {
                     .accessibilityIdentifier("benefits.row.recordClaim.\(item.account.id)")
                 } else if item.availability.action == .fixData {
                     Button("去核对") {
-                        navigatedAccountRoute = item.account.id
+                        navigatedAccountRoute = LedgerDeepLinkTarget(accountId: item.account.id, action: nil)
                     }
                     .font(.caption.bold())
                     .buttonStyle(.bordered)

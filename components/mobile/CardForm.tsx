@@ -194,13 +194,9 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
     : products
 
   useEffect(() => {
-    if (initial && products.length > 0) {
-      const match = products.find(p => p.id === initial.card_product_id)
-      if (match) {
-        setSelectedBank(match.bank_name)
-      }
+    if (initial) {
       setProductId(initial.card_product_id)
-      setCardName(initial.name_override || match?.card_name || '')
+      setCardName(initial.name_override || '')
       setHasCustomName(!!initial.name_override)
       setLast4(initial.card_number_last4 ?? '')
       const eff = getEffectiveCreditLimit(initial)
@@ -214,7 +210,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
       setOverrideDueType(normalizeDueType(initial.override_due_type))
       setOverrideDueValue(initial.override_due_value?.toString() ?? '')
       setAccountModeOverride(initial.account_mode_override ?? 'auto')
-    } else if (!initial) {
+    } else {
       setSelectedBank('')
       setProductId('')
       setCardName('')
@@ -231,7 +227,20 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
       setOverrideDueValue('')
       setAccountModeOverride('auto')
     }
-  }, [initial, open, products])
+  }, [initial, open])
+
+  // 卡产品异步加载完成后仅补全银行与默认卡名，避免覆盖用户已编辑的额度/还款规则
+  useEffect(() => {
+    if (initial && products.length > 0) {
+      const match = products.find(p => p.id === initial.card_product_id)
+      if (match) {
+        setSelectedBank(match.bank_name)
+        if (!initial.name_override) {
+          setCardName(prev => (hasCustomName ? prev : match.card_name))
+        }
+      }
+    }
+  }, [initial, open, products, hasCustomName])
 
   const handleBankChange = (bank: string) => {
     setSelectedBank(bank)

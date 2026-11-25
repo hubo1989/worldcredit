@@ -4,6 +4,7 @@ import WorldCreditCore
 struct OpportunityDetailView: View {
     @Environment(AppState.self) private var appState
     let accountId: String
+    let initialAction: String?
 
     @State private var detail: OpportunityLedgerItem?
     @State private var cycles: [OpportunityCycleRecord] = []
@@ -11,6 +12,7 @@ struct OpportunityDetailView: View {
     @State private var fulfillments: [OpportunityFulfillmentRecord] = []
     @State private var remoteEvents: [OpportunityUsageHistoryEventDTO] = []
 
+    @State private var pendingInitialAction: String?
     @State private var showingUsageCreate = false
     @State private var editingUsage: OpportunityUsageRecord?
     @State private var voidingUsage: OpportunityUsageRecord?
@@ -21,6 +23,12 @@ struct OpportunityDetailView: View {
     @State private var showingEligibility = false
     @State private var showingOpeningBalance = false
     @State private var actionError: String?
+
+    init(accountId: String, initialAction: String? = nil) {
+        self.accountId = accountId
+        self.initialAction = initialAction
+        _pendingInitialAction = State(initialValue: initialAction)
+    }
 
     var body: some View {
         ScrollView {
@@ -155,6 +163,10 @@ struct OpportunityDetailView: View {
                 cycles = loaded.cycles
                 usages = loaded.usages
                 fulfillments = loaded.fulfillments
+                if pendingInitialAction == "claim" {
+                    pendingInitialAction = nil
+                    showingClaim = true
+                }
             }
             if let remote = try? await appState.fetchOpportunityUsageHistory(accountId: accountId) {
                 remoteEvents = remote.events

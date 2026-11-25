@@ -929,6 +929,7 @@ public struct OpportunityWriteService: Sendable {
         nameOverride: String?
     ) async throws -> CreditCard {
         let mutId = UUID().uuidString.lowercased()
+        let clientCardId = UUID().uuidString.lowercased()
         let tempId = "opt_\(mutId)"
         let now = nowISO()
 
@@ -948,6 +949,7 @@ public struct OpportunityWriteService: Sendable {
             try card.insert(db)
 
             var payload: [String: Any] = [
+                "id": clientCardId,
                 "card_product_id": cardProductId,
                 "holder_id": holderId,
                 "credit_limit": creditLimit,
@@ -972,6 +974,8 @@ public struct OpportunityWriteService: Sendable {
     @discardableResult
     public func createBillOffline(input: ApiClient.CreateBillInput) async throws -> Bill {
         let mutId = UUID().uuidString.lowercased()
+        let clientBillId = input.id.flatMap { UUID(uuidString: $0) != nil ? $0.lowercased() : nil }
+            ?? UUID().uuidString.lowercased()
         let tempId = "opt_\(mutId)"
         let now = nowISO()
 
@@ -993,11 +997,12 @@ public struct OpportunityWriteService: Sendable {
             try bill.insert(db)
 
             let data = try JSONEncoder().encode(input)
-            let obj = try JSONSerialization.jsonObject(with: data)
+            var payload = (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            payload["id"] = clientBillId
             try MutationOutbox(
                 id: mutId,
                 name: "bills.createBill",
-                argsJson: try encodeArgs([AnyCodable(obj)]),
+                argsJson: try encodeArgs([AnyCodable(payload)]),
                 createdAt: now
             ).insert(db)
             return bill

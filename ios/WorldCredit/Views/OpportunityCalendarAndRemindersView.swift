@@ -3,6 +3,7 @@ import WorldCreditCore
 
 struct OpportunityCalendarAndRemindersView: View {
     @Environment(AppState.self) private var appState
+    @Binding var deepLinkedEventKey: String?
 
     enum SubTab: String, CaseIterable, Identifiable {
         case reminders = "待办提醒"
@@ -16,60 +17,84 @@ struct OpportunityCalendarAndRemindersView: View {
     @State private var selectedMonthAnchor: Date = Date()
     @State private var calendarEvents: [OpportunityCalendarEventView] = []
     @State private var reminders: [OpportunityCalendarEventView] = []
+    @State private var highlightedEventKey: String?
     @State private var actionError: String?
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 12) {
-                Picker("日历子视图", selection: $subTab) {
-                    ForEach(SubTab.allCases) { tab in
-                        Text(tab.rawValue).tag(tab)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 12) {
+                    Picker("日历子视图", selection: $subTab) {
+                        ForEach(SubTab.allCases) { tab in
+                            Text(tab.rawValue).tag(tab)
+                        }
                     }
-                }
-                .pickerStyle(.segmented)
+                    .pickerStyle(.segmented)
 
-                if !appState.dashboardHolders.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            filterChip("全部持卡人", selected: selectedHolderId == nil) {
-                                selectedHolderId = nil
-                            }
-                            ForEach(appState.dashboardHolders) { holder in
-                                filterChip(holder.name, selected: selectedHolderId == holder.id) {
-                                    selectedHolderId = holder.id
+                    if !appState.dashboardHolders.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                filterChip("全部持卡人", selected: selectedHolderId == nil) {
+                                    selectedHolderId = nil
+                                }
+                                ForEach(appState.dashboardHolders) { holder in
+                                    filterChip(holder.name, selected: selectedHolderId == holder.id) {
+                                        selectedHolderId = holder.id
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                if let err = actionError {
-                    Text(err).font(.caption).foregroundStyle(.red)
-                }
+                    if let err = actionError {
+                        Text(err).font(.caption).foregroundStyle(.red)
+                    }
 
-                switch subTab {
-                case .reminders:
-                    remindersListSection
-                case .calendarList:
-                    calendarListSection
-                case .calendarMonth:
-                    calendarMonthSection
+                    switch subTab {
+                    case .reminders:
+                        remindersListSection
+                    case .calendarList:
+                        calendarListSection
+                    case .calendarMonth:
+                        calendarMonthSection
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 28)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 28)
+            .refreshable {
+                _ = await appState.sync()
+                await reloadData()
+            }
+            .task {
+                await reloadData()
+                consumeDeepLinkedEvent(with: proxy)
+            }
+            .onChange(of: selectedHolderId) { _, _ in Task { await reloadData() } }
+            .onChange(of: selectedMonthAnchor) { _, _ in Task { await reloadData() } }
+            .onChange(of: appState.opportunityReminders) { _, _ in Task { await reloadData() } }
+            .onChange(of: deepLinkedEventKey) { _, _ in
+                consumeDeepLinkedEvent(with: proxy)
+            }
         }
-        .refreshable {
-            _ = await appState.sync()
-            await reloadData()
+    }
+
+    private func consumeDeepLinkedEvent(with proxy: ScrollViewProxy) {
+        guard let targetKey = deepLinkedEventKey, !targetKey.isEmpty else { return }
+        deepLinkedEventKey = nil
+        highlightedEventKey = targetKey
+        if !reminders.contains(where: { $0.eventKey == targetKey }),
+           calendarEvents.contains(where: { $0.eventKey == targetKey }) {
+            subTab = .calendarList
+        } else {
+            subTab = .reminders
         }
-        .task {
-            await reloadData()
+        DispatchQueue.main.async {
+            withAnimation {
+                proxy.scrollTo(targetKey, anchor: .center)
+            }
         }
-        .onChange(of: selectedHolderId) { _, _ in Task { await reloadData() } }
-        .onChange(of: selectedMonthAnchor) { _, _ in Task { await reloadData() } }
-        .onChange(of: appState.opportunityReminders) { _, _ in Task { await reloadData() } }
     }
 
     private func reloadData() async {
@@ -304,6 +329,12 @@ struct OpportunityCalendarAndRemindersView: View {
         }
         .padding(14)
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(highlightedEventKey == event.eventKey ? WCColors.primaryAccent : .clear, lineWidth: 2)
+        )
+        .id(event.eventKey)
+        .accessibilityIdentifier("benefits.calendar.event.\(event.eventKey)")
     }
 
     private func performReminderAction(_ event: OpportunityCalendarEventView, action: String, untilAt: String?) {

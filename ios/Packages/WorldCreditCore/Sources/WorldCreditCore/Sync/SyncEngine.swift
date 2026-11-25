@@ -330,7 +330,7 @@ public final class SyncEngine: @unchecked Sendable {
                     // has not changed since our last cursor or the app exits before pull.
                     let additions: [SyncReconcileTarget]
                     do {
-                        additions = try self.targetsForRejectedMutation(item, in: db)
+                        additions = try self.targetsForRejectedMutation(item, result: res, in: db)
                     } catch {
                         // 解析失败（mutation 名/args 形状漂移）只标记该条并继续其余条目，
                         // 绝不能抛出导致整个事务回滚：服务端已幂等记录永久拒绝，
@@ -676,7 +676,11 @@ public final class SyncEngine: @unchecked Sendable {
         }
     }
 
-    private func targetsForRejectedMutation(_ item: MutationOutbox, in db: Database) throws -> [SyncReconcileTarget] {
+    private func targetsForRejectedMutation(
+        _ item: MutationOutbox,
+        result: MutationPushResult? = nil,
+        in db: Database
+    ) throws -> [SyncReconcileTarget] {
         let args = try JSONDecoder().decode([AnyCodable].self, from: Data(item.argsJson.utf8))
         switch item.name {
         case "bills.recordPayment":
@@ -695,7 +699,17 @@ public final class SyncEngine: @unchecked Sendable {
                 throw SyncError.invalidMutation(item.id)
             }
             return [.init(tbl: "credit_cards", rowId: id)]
-        case "cards.createCard", "bills.createBill":
+        case "cards.createCard":
+            if let existingCardId = result?.details?.existingCardId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !existingCardId.isEmpty {
+                return [.init(tbl: "credit_cards", rowId: existingCardId)]
+            }
+            return []
+        case "bills.createBill":
+            if let existingBillId = result?.details?.existingBillId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !existingBillId.isEmpty {
+                return [.init(tbl: "bills", rowId: existingBillId)]
+            }
             return []
         case "payments.updatePayment":
             guard let paymentId = args.first?.value as? String, !paymentId.trimmingCharacters(in: .whitespaces).isEmpty else {

@@ -231,4 +231,129 @@ struct SyncPhase2EngineTests {
             #expect(try MutationOutbox.fetchCount(db) == 0)
         }
     }
+
+    @Test("Offline createCard and createBill persist valid client UUID and preserve it across replays", arguments: ["cards.createCard", "bills.createBill"])
+    func offlineCreatePersistsClientUUIDAcrossReplays(_ name: String) async throws {
+        let manager = try makeDB()
+        let writer = OpportunityWriteService(dbManager: manager)
+        if name == "cards.createCard" {
+            try await writer.createCardOffline(
+                bankId: "b1",
+                cardProductId: "p1",
+                holderId: "h1",
+                cardNumberLast4: "9999",
+                creditLimit: 1000,
+                billingDay: 5,
+                nameOverride: nil
+            )
+        } else {
+            try await writer.createBillOffline(
+                input: .init(cardId: "c1", billMonth: "2026-10", dueDate: "2026-10-28", billAmount: 888)
+            )
+        }
+
+        var seenPayloadIDs: [String] = []
+        let net = MockNetwork()
+        net.handler = { request in
+            let body = try #require(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
+            let mutations = try #require(body["mutations"] as? [[String: Any]])
+            let mutation = try #require(mutations.first)
+            let args = try #require(mutation["args"] as? [[String: Any]])
+            let payload = try #require(args.first)
+            let id = try #require(mutation["id"] as? String)
+            #expect(mutation["name"] as? String == name)
+            let payloadID = try #require(payload["id"] as? String)
+            #expect(UUID(uuidString: payloadID) != nil)
+            seenPayloadIDs.append(payloadID)
+
+            let ok = seenPayloadIDs.count >= 2
+            let result: [String: Any] = ok
+                ? ["id": id, "ok": true]
+                : ["id": id, "ok": false, "permanent": false, "error": "temporary outage"]
+            return (
+                try JSONSerialization.data(withJSONObject: ["results": [result]]),
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            )
+        }
+
+        let client = ApiClient(baseURL: URL(string: "https://example.test")!, session: net, token: "t1", useKeychain: false)
+        let engine = SyncEngine(dbManager: manager, apiClient: client)
+
+        // First push fails transiently -> clears retry backoff -> second push replays identical client UUID
+        try await engine.push()
+        _ = try await manager.dbWriter.write { db in
+            try SyncMeta.filter(Column("key").like("sync_retry_after_%")).deleteAll(db)
+        }
+        try await engine.push()
+
+        #expect(seenPayloadIDs.count == 2)
+        #expect(seenPayloadIDs[0] == seenPayloadIDs[1])
+    }
+
+    @Test("Permanent CONFLICT with details.existing_bill_id triggers targeted bill reconcile and hydrates winning row")
+    func offlineBillConflictReconcilesWinningServerBill() async throws {
+        let manager = try makeDB()
+        let pending = try await OpportunityWriteService(dbManager: manager).createBillOffline(
+            input: .init(cardId: "c1", billMonth: "2026-10", dueDate: "2026-10-28", billAmount: 888)
+        )
+
+        var reconciledTargets: [[String: String]] = []
+        let net = MockNetwork()
+        net.handler = { request in
+            let body = try #require(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
+            let response: [String: Any]
+            if request.url?.path == "/api/sync/push" {
+                let mutations = try #require(body["mutations"] as? [[String: Any]])
+                let id = try #require(mutations.first?["id"] as? String)
+                response = ["results": [[
+                    "id": id,
+                    "ok": false,
+                    "permanent": true,
+                    "code": "CONFLICT",
+                    "error": "同卡同月账单已存在",
+                    "details": ["existing_bill_id": "winning-bill"],
+                ]]]
+            } else {
+                reconciledTargets = body["reconcile"] as? [[String: String]] ?? []
+                response = [
+                    "cursor": 1,
+                    "has_more": false,
+                    "server_time": "2026-10-20T00:00:00Z",
+                    "changes": [[
+                        "tbl": "bills",
+                        "row_id": "winning-bill",
+                        "op": "upsert",
+                        "row": [
+                            "id": "winning-bill",
+                            "card_id": "c1",
+                            "bill_month": "2026-10",
+                            "due_date": "2026-10-28",
+                            "bill_amount": 1200.0,
+                            "min_payment": 120.0,
+                            "status": "unpaid",
+                            "created_at": "2026-10-20T00:00:00Z",
+                        ],
+                    ]],
+                ]
+            }
+            return (
+                try JSONSerialization.data(withJSONObject: response),
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            )
+        }
+
+        let client = ApiClient(baseURL: URL(string: "https://example.test")!, session: net, token: "t1", useKeychain: false)
+        let engine = SyncEngine(dbManager: manager, apiClient: client)
+        try await engine.sync()
+
+        #expect(reconciledTargets.contains(["tbl": "bills", "row_id": "winning-bill"]))
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            #expect(try Bill.fetchOne(db, id: pending.id) == nil)
+            let winner = try #require(try Bill.fetchOne(db, id: "winning-bill"))
+            #expect(winner.billAmount == 1200.0)
+            #expect(try SyncMeta.fetchOne(db, key: "sync_reconcile_targets")?.value == "[]")
+        }
+        let notices = await engine.fetchRejectedNotices()
+        #expect(notices.first?.code == "CONFLICT")
+    }
 }

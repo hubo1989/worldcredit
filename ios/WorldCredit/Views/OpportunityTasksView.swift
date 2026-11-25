@@ -3,52 +3,60 @@ import WorldCreditCore
 
 struct OpportunityTasksView: View {
     @Environment(AppState.self) private var appState
+    @Binding var deepLinkedTaskCycleId: String?
 
     @State private var selectedHolderId: String?
     @State private var tasks: [OpportunityTaskView] = []
+    @State private var highlightedTaskCycleId: String?
     @State private var editingProgressTask: OpportunityTaskView?
     @State private var rewardTask: OpportunityTaskView?
     @State private var claimTarget: OpportunityLedgerItem?
     @State private var actionError: String?
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 14) {
-                if !appState.dashboardHolders.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            filterChip("全部持卡人", selected: selectedHolderId == nil) {
-                                selectedHolderId = nil
-                            }
-                            ForEach(appState.dashboardHolders) { holder in
-                                filterChip(holder.name, selected: selectedHolderId == holder.id) {
-                                    selectedHolderId = holder.id
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 14) {
+                    if !appState.dashboardHolders.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                filterChip("全部持卡人", selected: selectedHolderId == nil) {
+                                    selectedHolderId = nil
+                                }
+                                ForEach(appState.dashboardHolders) { holder in
+                                    filterChip(holder.name, selected: selectedHolderId == holder.id) {
+                                        selectedHolderId = holder.id
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                if let err = actionError {
-                    Text(err).font(.caption).foregroundStyle(.red)
-                }
+                    if let err = actionError {
+                        Text(err).font(.caption).foregroundStyle(.red)
+                    }
 
-                claimableSection
-                tasksSection
+                    claimableSection
+                    tasksSection
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 28)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 28)
+            .refreshable {
+                _ = await appState.sync()
+                await reloadData()
+            }
+            .task {
+                await reloadData()
+                consumeDeepLinkedTask(with: proxy)
+            }
+            .onChange(of: selectedHolderId) { _, _ in Task { await reloadData() } }
+            .onChange(of: appState.opportunityTasks) { _, _ in Task { await reloadData() } }
+            .onChange(of: deepLinkedTaskCycleId) { _, _ in
+                consumeDeepLinkedTask(with: proxy)
+            }
         }
-        .refreshable {
-            _ = await appState.sync()
-            await reloadData()
-        }
-        .task {
-            await reloadData()
-        }
-        .onChange(of: selectedHolderId) { _, _ in Task { await reloadData() } }
-        .onChange(of: appState.opportunityTasks) { _, _ in Task { await reloadData() } }
         .sheet(item: $editingProgressTask) { taskView in
             ManualProgressEditorSheet(taskView: taskView) {
                 await reloadData()
@@ -62,6 +70,17 @@ struct OpportunityTasksView: View {
         .sheet(item: $claimTarget) { item in
             OpportunityClaimSheet(item: item) {
                 await reloadData()
+            }
+        }
+    }
+
+    private func consumeDeepLinkedTask(with proxy: ScrollViewProxy) {
+        guard let targetCycleId = deepLinkedTaskCycleId, !targetCycleId.isEmpty else { return }
+        deepLinkedTaskCycleId = nil
+        highlightedTaskCycleId = targetCycleId
+        DispatchQueue.main.async {
+            withAnimation {
+                proxy.scrollTo(targetCycleId, anchor: .center)
             }
         }
     }
@@ -218,6 +237,12 @@ struct OpportunityTasksView: View {
         }
         .padding(14)
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(highlightedTaskCycleId == view.cycle.id ? WCColors.primaryAccent : .clear, lineWidth: 2)
+        )
+        .id(view.cycle.id)
+        .accessibilityIdentifier("benefits.tasks.cycle.\(view.cycle.id)")
     }
 
     private func metricLabel(_ m: OpportunityDomainEngine.EvaluatedTaskMetric, currency: String) -> String {

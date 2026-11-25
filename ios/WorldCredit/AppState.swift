@@ -8,8 +8,8 @@ import WorldCreditCore
 
 public enum BenefitsHubRoute: Equatable, Sendable {
     case ledger(accountId: String? = nil)
-    case calendar
-    case tasks
+    case calendar(eventKey: String? = nil)
+    case tasks(taskCycleId: String? = nil)
     case promos
 }
 
@@ -164,6 +164,7 @@ public final class AppState {
     public var pendingOpenNotifications: Bool = false
     public var pendingWebDestination: DashboardWebDestination?
     public var pendingBenefitsRoute: BenefitsHubRoute?
+    public var pendingBenefitsAction: String?
     public var opportunityLedger: [OpportunityLedgerItem] = []
     public var opportunityLedgerCounts: [String: Int] = [:]
     public var opportunityCalendarEvents: [OpportunityCalendarEventView] = []
@@ -908,6 +909,7 @@ public final class AppState {
         pendingOpenNotifications = false
         pendingWebDestination = nil
         pendingBenefitsRoute = nil
+        pendingBenefitsAction = nil
         opportunityLedger = []
         opportunityLedgerCounts = [:]
         opportunityCalendarEvents = []
@@ -1354,12 +1356,27 @@ public final class AppState {
     public func handleNotificationRoute(_ rawUrl: String) {
         let trimmed = rawUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("/"), !trimmed.hasPrefix("//") else { return }
+        let components = URLComponents(string: trimmed)
         let noQuery = trimmed
             .split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first
             .map(String.init) ?? trimmed
         let path = noQuery
             .split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first
             .map(String.init) ?? noQuery
+        let queryItems = components?.queryItems ?? []
+        func queryValue(_ name: String) -> String? {
+            guard let raw = queryItems.first(where: { $0.name == name })?.value?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !raw.isEmpty else {
+                return nil
+            }
+            return raw
+        }
+
+        let accountIdQuery = queryValue("account_id")
+        let actionQuery = queryValue("action")
+        let eventKeyQuery = queryValue("event_key")
+        let taskCycleIdQuery = queryValue("task_cycle_id")
 
         if path == "/dashboard" || path == "/" {
             pendingWebDestination = nil
@@ -1382,17 +1399,23 @@ public final class AppState {
             pendingOpenNotifications = false
             selectedTab = 4
         } else if path == "/promos" {
-            openBenefits(.promos)
-        } else if path == "/benefits/calendar" {
-            openBenefits(.calendar)
+            openBenefits(.promos, action: nil)
+        } else if path == "/benefits/calendar" || path.hasPrefix("/benefits/calendar/") {
+            openBenefits(.calendar(eventKey: eventKeyQuery), action: actionQuery)
         } else if path == "/benefits/tasks" || path.hasPrefix("/benefits/tasks/") {
-            openBenefits(.tasks)
+            let suffix = path.hasPrefix("/benefits/tasks/")
+                ? String(path.dropFirst("/benefits/tasks/".count))
+                    .split(separator: "/").first.map(String.init)
+                : nil
+            let resolvedCycleId = taskCycleIdQuery ?? ((suffix?.isEmpty == false) ? suffix : nil)
+            openBenefits(.tasks(taskCycleId: resolvedCycleId), action: actionQuery)
         } else if path == "/benefits" {
-            openBenefits(.ledger(accountId: nil))
+            openBenefits(.ledger(accountId: accountIdQuery), action: actionQuery)
         } else if path.hasPrefix("/benefits/") {
             let suffix = String(path.dropFirst("/benefits/".count))
                 .split(separator: "/").first.map(String.init)
-            openBenefits(.ledger(accountId: (suffix?.isEmpty == false) ? suffix : nil))
+            let resolvedAccountId = accountIdQuery ?? ((suffix?.isEmpty == false) ? suffix : nil)
+            openBenefits(.ledger(accountId: resolvedAccountId), action: actionQuery)
         } else if path == "/gmail-ledger" {
             pendingOpenNotifications = false
             selectedTab = 0
@@ -1404,10 +1427,11 @@ public final class AppState {
         }
     }
 
-    public func openBenefits(_ route: BenefitsHubRoute) {
+    public func openBenefits(_ route: BenefitsHubRoute, action: String? = nil) {
         pendingWebDestination = nil
         pendingOpenNotifications = false
         selectedTab = 3
+        pendingBenefitsAction = action
         pendingBenefitsRoute = route
     }
 
@@ -1813,6 +1837,7 @@ public final class AppState {
         pendingOpenNotifications = false
         pendingWebDestination = nil
         pendingBenefitsRoute = nil
+        pendingBenefitsAction = nil
         opportunityLedger = []
         opportunityLedgerCounts = [:]
         opportunityCalendarEvents = []

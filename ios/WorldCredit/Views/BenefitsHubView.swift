@@ -26,6 +26,9 @@ struct BenefitsHubView: View {
 
     @State private var selectedSegment: Segment = .ledger
     @State private var deepLinkedAccountId: String?
+    @State private var deepLinkedAccountAction: String?
+    @State private var deepLinkedEventKey: String?
+    @State private var deepLinkedTaskCycleId: String?
 
     var body: some View {
         NavigationStack {
@@ -44,11 +47,18 @@ struct BenefitsHubView: View {
                 Group {
                     switch selectedSegment {
                     case .ledger:
-                        OpportunityLedgerView(deepLinkedAccountId: $deepLinkedAccountId)
+                        OpportunityLedgerView(
+                            deepLinkedAccountId: $deepLinkedAccountId,
+                            deepLinkedAction: $deepLinkedAccountAction
+                        )
                     case .calendar:
-                        OpportunityCalendarAndRemindersView()
+                        OpportunityCalendarAndRemindersView(
+                            deepLinkedEventKey: $deepLinkedEventKey
+                        )
                     case .tasks:
-                        OpportunityTasksView()
+                        OpportunityTasksView(
+                            deepLinkedTaskCycleId: $deepLinkedTaskCycleId
+                        )
                     case .promos:
                         PromosView()
                     }
@@ -73,15 +83,20 @@ struct BenefitsHubView: View {
 
     private func consumePendingRoute() {
         guard let route = appState.pendingBenefitsRoute else { return }
+        let action = appState.pendingBenefitsAction
         appState.pendingBenefitsRoute = nil
+        appState.pendingBenefitsAction = nil
         switch route {
         case .ledger(let accountId):
             selectedSegment = .ledger
             deepLinkedAccountId = accountId
-        case .calendar:
+            deepLinkedAccountAction = (accountId != nil) ? action : nil
+        case .calendar(let eventKey):
             selectedSegment = .calendar
-        case .tasks:
+            deepLinkedEventKey = eventKey
+        case .tasks(let taskCycleId):
             selectedSegment = .tasks
+            deepLinkedTaskCycleId = taskCycleId
         case .promos:
             selectedSegment = .promos
         }
