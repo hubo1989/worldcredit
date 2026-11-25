@@ -930,12 +930,11 @@ public struct OpportunityWriteService: Sendable {
     ) async throws -> CreditCard {
         let mutId = UUID().uuidString.lowercased()
         let clientCardId = UUID().uuidString.lowercased()
-        let tempId = "opt_\(mutId)"
         let now = nowISO()
 
         return try await dbManager.dbWriter.write { db in
             let card = CreditCard(
-                id: tempId,
+                id: clientCardId,
                 holderId: holderId,
                 cardProductId: cardProductId,
                 billingDay: billingDay,
@@ -976,12 +975,11 @@ public struct OpportunityWriteService: Sendable {
         let mutId = UUID().uuidString.lowercased()
         let clientBillId = input.id.flatMap { UUID(uuidString: $0) != nil ? $0.lowercased() : nil }
             ?? UUID().uuidString.lowercased()
-        let tempId = "opt_\(mutId)"
         let now = nowISO()
 
         return try await dbManager.dbWriter.write { db in
             let bill = Bill(
-                id: tempId,
+                id: clientBillId,
                 cardId: input.cardId,
                 billMonth: input.billMonth,
                 statementStart: input.statementStart,

@@ -197,19 +197,21 @@ struct SyncPhase2EngineTests {
         #expect(notices.first?.code == "QUOTA_EXCEEDED")
     }
 
-    @Test("Offline createCard and createBill push success cleans up temporary opt_ rows cleanly")
+    @Test("Offline createCard and createBill share client UUIDs and hydrate cleanly on sync")
     func offlineCreateCardAndBillCleanupOnSuccess() async throws {
         let dbManager = try makeDB()
         let writeService = OpportunityWriteService(dbManager: dbManager)
 
-        let tempCard = try await writeService.createCardOffline(
+        let card = try await writeService.createCardOffline(
             bankId: "b1", cardProductId: "p1", holderId: "h1", cardNumberLast4: "9999", creditLimit: 20000, billingDay: 10, nameOverride: nil
         )
-        let tempBill = try await writeService.createBillOffline(
+        let bill = try await writeService.createBillOffline(
             input: ApiClient.CreateBillInput(cardId: "c1", billMonth: "2026-10", dueDate: "2026-10-28", billAmount: 888)
         )
-        #expect(tempCard.id.hasPrefix("opt_"))
-        #expect(tempBill.id.hasPrefix("opt_"))
+        #expect(!card.id.hasPrefix("opt_"))
+        #expect(!bill.id.hasPrefix("opt_"))
+        #expect(UUID(uuidString: card.id) != nil)
+        #expect(UUID(uuidString: bill.id) != nil)
 
         let net = MockNetwork()
         let client = ApiClient(baseURL: URL(string: "https://example.test")!, session: net, token: "t1", useKeychain: false)
@@ -226,9 +228,137 @@ struct SyncPhase2EngineTests {
         try await syncEngine.push()
 
         try await dbManager.dbWriter.read { (db: Database) throws -> Void in
-            #expect(try CreditCard.fetchOne(db, id: tempCard.id) == nil)
-            #expect(try Bill.fetchOne(db, id: tempBill.id) == nil)
+            #expect(try CreditCard.fetchOne(db, id: card.id)?.id == card.id)
+            #expect(try Bill.fetchOne(db, id: bill.id)?.id == bill.id)
             #expect(try MutationOutbox.fetchCount(db) == 0)
+        }
+    }
+
+    @Test("Offline createCard followed by offline createBill uses the exact same lowercase UUID card_id in outbox and sync")
+    func offlineCreateCardThenBillSharesClientUUID() async throws {
+        let manager = try makeDB()
+        let writer = OpportunityWriteService(dbManager: manager)
+
+        let card = try await writer.createCardOffline(
+            bankId: "b1",
+            cardProductId: "p1",
+            holderId: "h1",
+            cardNumberLast4: "8888",
+            creditLimit: 30000,
+            billingDay: 12,
+            nameOverride: "新白金"
+        )
+        #expect(!card.id.hasPrefix("opt_"))
+        #expect(card.id == card.id.lowercased())
+        #expect(UUID(uuidString: card.id) != nil)
+
+        let bill = try await writer.createBillOffline(
+            input: .init(cardId: card.id, billMonth: "2026-11", dueDate: "2026-11-28", billAmount: 1500)
+        )
+        #expect(!bill.id.hasPrefix("opt_"))
+        #expect(bill.id == bill.id.lowercased())
+        #expect(UUID(uuidString: bill.id) != nil)
+        #expect(bill.cardId == card.id)
+
+        // Verify outbox payloads use the exact same lowercase UUID without opt_
+        let outbox = try await manager.dbWriter.read { db in
+            try MutationOutbox.order(sql: "rowid ASC").fetchAll(db)
+        }
+        #expect(outbox.count == 2)
+        let cardArgs = try #require(JSONSerialization.jsonObject(with: Data(outbox[0].argsJson.utf8)) as? [[String: Any]])
+        let billArgs = try #require(JSONSerialization.jsonObject(with: Data(outbox[1].argsJson.utf8)) as? [[String: Any]])
+        #expect(cardArgs.first?["id"] as? String == card.id)
+        #expect(billArgs.first?["id"] as? String == bill.id)
+        #expect(billArgs.first?["card_id"] as? String == card.id)
+
+        // Replay push + pull confirming server receives card.id before/with bill.card_id == card.id
+        var serverCardIDs = Set(["c1"])
+        let net = MockNetwork()
+        net.handler = { req in
+            let body = try #require(JSONSerialization.jsonObject(with: req.httpBody!) as? [String: Any])
+            if req.url?.path == "/api/sync/push" {
+                let muts = try #require(body["mutations"] as? [[String: Any]])
+                var results: [[String: Any]] = []
+                for mut in muts {
+                    let id = try #require(mut["id"] as? String)
+                    let name = try #require(mut["name"] as? String)
+                    let args = try #require(mut["args"] as? [[String: Any]])
+                    let payload = try #require(args.first)
+                    if name == "cards.createCard" {
+                        let cid = try #require(payload["id"] as? String)
+                        serverCardIDs.insert(cid)
+                        results.append(["id": id, "ok": true])
+                    } else if name == "bills.createBill" {
+                        let refCardID = try #require(payload["card_id"] as? String)
+                        let ok = serverCardIDs.contains(refCardID)
+                        results.append(ok
+                            ? ["id": id, "ok": true]
+                            : ["id": id, "ok": false, "permanent": true, "code": "NOT_FOUND", "error": "关联的卡片不存在"]
+                        )
+                    }
+                }
+                return (
+                    try JSONSerialization.data(withJSONObject: ["results": results]),
+                    HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                )
+            }
+            return (
+                try JSONSerialization.data(withJSONObject: [
+                    "cursor": 1,
+                    "has_more": false,
+                    "server_time": "2026-11-25T00:00:00Z",
+                    "changes": [
+                        [
+                            "tbl": "credit_cards",
+                            "row_id": card.id,
+                            "op": "upsert",
+                            "row": [
+                                "id": card.id,
+                                "holder_id": "h1",
+                                "card_product_id": "p1",
+                                "card_number_last4": "8888",
+                                "credit_limit": 30000.0,
+                                "billing_day": 12,
+                                "status": "active",
+                                "card_type": "credit",
+                                "name_override": "新白金",
+                                "created_at": "2026-11-25T00:00:00Z",
+                            ],
+                        ],
+                        [
+                            "tbl": "bills",
+                            "row_id": bill.id,
+                            "op": "upsert",
+                            "row": [
+                                "id": bill.id,
+                                "card_id": card.id,
+                                "bill_month": "2026-11",
+                                "due_date": "2026-11-28",
+                                "bill_amount": 1500.0,
+                                "min_payment": 0.0,
+                                "status": "unpaid",
+                                "created_at": "2026-11-25T00:00:00Z",
+                            ],
+                        ],
+                    ],
+                ]),
+                HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            )
+        }
+
+        let client = ApiClient(baseURL: URL(string: "https://example.test")!, session: net, token: "t1", useKeychain: false)
+        let engine = SyncEngine(dbManager: manager, apiClient: client)
+        try await engine.sync()
+
+        let notices = await engine.fetchRejectedNotices()
+        #expect(notices.isEmpty)
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            let allCards = try CreditCard.filter(Column("card_number_last4") == "8888").fetchAll(db)
+            let allBills = try Bill.filter(Column("card_id") == card.id).fetchAll(db)
+            #expect(allCards.count == 1)
+            #expect(allCards.first?.id == card.id)
+            #expect(allBills.count == 1)
+            #expect(allBills.first?.id == bill.id)
         }
     }
 

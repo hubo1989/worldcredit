@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Modal } from '@/components/obsidian/overlays'
 import { Button, Toggle } from '@/components/obsidian/controls'
 import { TextField, SelectField } from '@/components/obsidian/fields'
@@ -193,7 +193,13 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
     ? products.filter(p => p.bank_name === selectedBank)
     : products
 
+  // 记录已为哪张编辑卡完成过「产品目录 -> 银行」首次回填，避免改卡名或目录更新时把用户手动切换的银行弹回原卡银行
+  const initializedBankKeyRef = useRef<string | null>(null)
+
   useEffect(() => {
+    if (!open || !initial) {
+      initializedBankKeyRef.current = null
+    }
     if (initial) {
       setProductId(initial.card_product_id)
       setCardName(initial.name_override || '')
@@ -229,18 +235,19 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
     }
   }, [initial, open])
 
-  // 卡产品异步加载完成后仅补全银行与默认卡名，避免覆盖用户已编辑的额度/还款规则
+  // 仅在弹窗打开/编辑对象变化后产品目录首次就绪时初始化一次银行与默认卡名，保留用户手动切换的银行与已输入的卡名
   useEffect(() => {
-    if (initial && products.length > 0) {
-      const match = products.find(p => p.id === initial.card_product_id)
-      if (match) {
-        setSelectedBank(match.bank_name)
-        if (!initial.name_override) {
-          setCardName(prev => (hasCustomName ? prev : match.card_name))
-        }
+    if (!open || !initial || products.length === 0) return
+    if (initializedBankKeyRef.current === initial.id) return
+    initializedBankKeyRef.current = initial.id
+    const match = products.find(p => p.id === initial.card_product_id)
+    if (match) {
+      setSelectedBank(match.bank_name)
+      if (!initial.name_override) {
+        setCardName(prev => (prev.trim() ? prev : match.card_name))
       }
     }
-  }, [initial, open, products, hasCustomName])
+  }, [initial, open, products])
 
   const handleBankChange = (bank: string) => {
     setSelectedBank(bank)

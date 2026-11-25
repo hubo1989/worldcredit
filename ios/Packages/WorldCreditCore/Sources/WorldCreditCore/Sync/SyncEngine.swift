@@ -844,13 +844,23 @@ public final class SyncEngine: @unchecked Sendable {
     private func rollbackMutation(_ mutation: MutationOutbox, in db: Database) throws {
         let tempId = "opt_\(mutation.id)"
 
-        // 1. Delete optimistic newly-created temporary rows
+        // 1. Delete optimistic newly-created rows on permanent rejection
         switch mutation.name {
         case "cards.createCard":
+            if let data = mutation.argsJson.data(using: .utf8),
+               let args = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]],
+               let cardId = args.first?["id"] as? String, !cardId.isEmpty {
+                try CreditCard.deleteOne(db, id: cardId)
+            }
             try CreditCard.deleteOne(db, id: tempId)
             try CreditAccount.deleteOne(db, id: "opt_acc_\(mutation.id)")
             return
         case "bills.createBill":
+            if let data = mutation.argsJson.data(using: .utf8),
+               let args = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]],
+               let billId = args.first?["id"] as? String, !billId.isEmpty {
+                try Bill.deleteOne(db, id: billId)
+            }
             try Bill.deleteOne(db, id: tempId)
             return
         case "bills.recordPayment":
