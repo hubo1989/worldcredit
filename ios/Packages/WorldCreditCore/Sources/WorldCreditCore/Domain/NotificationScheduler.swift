@@ -20,6 +20,58 @@ public final class NotificationScheduler: Sendable {
         self.center = center
     }
 
+    public struct EffectiveFireTime: Equatable, Sendable {
+        public let hour: Int
+        public let minute: Int
+        public let dayOffset: Int
+
+        public init(hour: Int, minute: Int, dayOffset: Int) {
+            self.hour = hour
+            self.minute = minute
+            self.dayOffset = dayOffset
+        }
+    }
+
+    /// 解析每日推送时间并在命中免打扰区间时顺延至免打扰结束时刻（支持跨午夜区间，如 22:00–08:00）。
+    public static func resolveEffectiveFireTime(
+        localTime: String?,
+        quietStart: String?,
+        quietEnd: String?
+    ) -> EffectiveFireTime {
+        let parsedLocal = parseHHMM(localTime) ?? (hour: 9, minute: 0)
+        guard let start = parseHHMM(quietStart), let end = parseHHMM(quietEnd) else {
+            return EffectiveFireTime(hour: parsedLocal.hour, minute: parsedLocal.minute, dayOffset: 0)
+        }
+        let tMin = parsedLocal.hour * 60 + parsedLocal.minute
+        let sMin = start.hour * 60 + start.minute
+        let eMin = end.hour * 60 + end.minute
+        if sMin == eMin {
+            return EffectiveFireTime(hour: parsedLocal.hour, minute: parsedLocal.minute, dayOffset: 0)
+        }
+        if sMin > eMin {
+            if tMin >= sMin {
+                return EffectiveFireTime(hour: end.hour, minute: end.minute, dayOffset: 1)
+            }
+            if tMin < eMin {
+                return EffectiveFireTime(hour: end.hour, minute: end.minute, dayOffset: 0)
+            }
+        } else if tMin >= sMin && tMin < eMin {
+            return EffectiveFireTime(hour: end.hour, minute: end.minute, dayOffset: 0)
+        }
+        return EffectiveFireTime(hour: parsedLocal.hour, minute: parsedLocal.minute, dayOffset: 0)
+    }
+
+    private static func parseHHMM(_ raw: String?) -> (hour: Int, minute: Int)? {
+        guard let raw else { return nil }
+        let parts = raw.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ":")
+        guard parts.count == 2,
+              let hour = Int(parts[0]), (0...23).contains(hour),
+              let minute = Int(parts[1]), (0...59).contains(minute) else {
+            return nil
+        }
+        return (hour, minute)
+    }
+
     /// 重新排布待还账单、固定支出与最长免息期卡牌的本地提醒（按实际触发时间取最早 64 条）。
     public func rescheduleAll(
         today: Date = Date(),
@@ -31,6 +83,28 @@ public final class NotificationScheduler: Sendable {
         payables: [PayableItem] = [],
         preferences: UserReminderPreferences? = nil
     ) async throws {
+        if let preferences, !preferences.webPushChannelEnabled {
+            center.removeAllPendingNotificationRequests()
+            return
+        }
+
+        let resolvedTimeZone: TimeZone = {
+            if let tzId = preferences?.opportunities.timeZone,
+               !tzId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let tz = TimeZone(identifier: tzId) {
+                return tz
+            }
+            return calendar.timeZone
+        }()
+        var effectiveCalendar = calendar
+        effectiveCalendar.timeZone = resolvedTimeZone
+
+        let effectiveFire = Self.resolveEffectiveFireTime(
+            localTime: preferences?.opportunities.localTime,
+            quietStart: preferences?.quietHoursStart,
+            quietEnd: preferences?.quietHoursEnd
+        )
+
         let billDueToday = preferences?.items.billDueToday ?? true
         let billDueAdvance = preferences?.items.billDueAdvance ?? true
         let payableDueToday = preferences?.items.payableDueToday ?? true
@@ -45,7 +119,7 @@ public final class NotificationScheduler: Sendable {
 
         // Bills, cards, reference data and payment totals must come from one read snapshot.
         let snapshot: (
-            billsWithCards: [(Bill, CreditCard, Bank?, Double)],
+            billsWithCards: [(Bill, CreditCard, CardProduct?, Bank?, Double)],
             graceCards: [(CreditCard, CardProduct, Bank?)]
         ) = try await dbManager.dbWriter.read { db in
             let bills = try Bill.filter(Column("status") != "paid").fetchAll(db)
@@ -54,17 +128,17 @@ public final class NotificationScheduler: Sendable {
             for row in totals {
                 paidByBill[row["bill_id"]] = row["total_paid"]
             }
-            var billRows: [(Bill, CreditCard, Bank?, Double)] = []
+            var billRows: [(Bill, CreditCard, CardProduct?, Bank?, Double)] = []
             for bill in bills {
                 guard let card = try CreditCard.fetchOne(db, id: bill.cardId) else { continue }
+                let product = try CardProduct.fetchOne(db, id: card.cardProductId)
                 let bank: Bank?
-                if let product = try CardProduct.fetchOne(db, id: card.cardProductId),
-                   let bankId = product.bankId {
+                if let product, let bankId = product.bankId {
                     bank = try Bank.fetchOne(db, id: bankId)
                 } else {
                     bank = nil
                 }
-                billRows.append((bill, card, bank, paidByBill[bill.id] ?? 0))
+                billRows.append((bill, card, product, bank, paidByBill[bill.id] ?? 0))
             }
 
             var graceRows: [(CreditCard, CardProduct, Bank?)] = []
@@ -89,15 +163,18 @@ public final class NotificationScheduler: Sendable {
         let df = DateFormatter()
         df.locale = Locale(identifier: "en_US_POSIX")
         df.dateFormat = "yyyy-MM-dd"
-        df.timeZone = calendar.timeZone
+        df.timeZone = resolvedTimeZone
         var candidates: [(fireDate: Date, request: UNNotificationRequest)] = []
 
-        func makeNineAMComponents(for date: Date) -> DateComponents {
-            var comp = calendar.dateComponents([.year, .month, .day], from: date)
-            comp.calendar = calendar
-            comp.timeZone = calendar.timeZone
-            comp.hour = 9
-            comp.minute = 0
+        func makeFireComponents(for date: Date) -> DateComponents {
+            let shiftedDate = effectiveFire.dayOffset == 0
+                ? date
+                : (effectiveCalendar.date(byAdding: .day, value: effectiveFire.dayOffset, to: date) ?? date)
+            var comp = effectiveCalendar.dateComponents([.year, .month, .day], from: shiftedDate)
+            comp.calendar = effectiveCalendar
+            comp.timeZone = resolvedTimeZone
+            comp.hour = effectiveFire.hour
+            comp.minute = effectiveFire.minute
             comp.second = 0
             return comp
         }
@@ -107,29 +184,31 @@ public final class NotificationScheduler: Sendable {
             if billDueToday { billOffsets.append(0) }
             if billDueAdvance { billOffsets.append(contentsOf: advanceDays) }
 
-            for (bill, card, bank, totalPaid) in snapshot.billsWithCards {
+            for (bill, card, product, bank, totalPaid) in snapshot.billsWithCards {
                 let effectiveDueDate = bill.effectiveDueDate
                 guard let dueDate = df.date(from: effectiveDueDate) else { continue }
                 let remaining = bill.effectiveAmount - totalPaid
                 guard remaining > 0.01 else { continue }
                 let cardName = card.nameOverride ?? bank?.shortName ?? bank?.name ?? "信用卡"
                 let last4 = card.cardNumberLast4.map { "(\($0))" } ?? ""
+                let billCurrency = product?.currency ?? "CNY"
+                let amountLabel = DashboardMoney.format(remaining, currency: billCurrency)
 
                 for daysBefore in billOffsets {
-                    guard let day = calendar.date(byAdding: .day, value: -daysBefore, to: dueDate) else { continue }
-                    let comp = makeNineAMComponents(for: day)
-                    guard let fireDate = calendar.date(from: comp), fireDate > today else { continue }
+                    guard let day = effectiveCalendar.date(byAdding: .day, value: -daysBefore, to: dueDate) else { continue }
+                    let comp = makeFireComponents(for: day)
+                    guard let fireDate = effectiveCalendar.date(from: comp), fireDate > today else { continue }
 
                     let content = UNMutableNotificationContent()
                     let identifier: String
                     if daysBefore == 0 {
                         identifier = "bill-due-\(bill.id)"
                         content.title = "还款日提醒"
-                        content.body = "\(cardName)\(last4) 今日到期，剩余应还 ¥\(String(format: "%.2f", remaining))"
+                        content.body = "\(cardName)\(last4) 今日到期，剩余应还 \(amountLabel)"
                     } else {
                         identifier = "bill-\(daysBefore)d-\(bill.id)"
                         content.title = "还款提醒"
-                        content.body = "\(cardName)\(last4) 将在 \(daysBefore) 天后（\(effectiveDueDate)）到期，剩余应还 ¥\(String(format: "%.2f", remaining))"
+                        content.body = "\(cardName)\(last4) 将在 \(daysBefore) 天后（\(effectiveDueDate)）到期，剩余应还 \(amountLabel)"
                     }
                     content.sound = .default
                     let trigger = UNCalendarNotificationTrigger(dateMatching: comp, repeats: false)
@@ -149,9 +228,9 @@ public final class NotificationScheduler: Sendable {
                 let amountLabel = DashboardMoney.format(payable.remainingAmount, currency: payable.currency)
 
                 for daysBefore in payableOffsets {
-                    guard let day = calendar.date(byAdding: .day, value: -daysBefore, to: dueDate) else { continue }
-                    let comp = makeNineAMComponents(for: day)
-                    guard let fireDate = calendar.date(from: comp), fireDate > today else { continue }
+                    guard let day = effectiveCalendar.date(byAdding: .day, value: -daysBefore, to: dueDate) else { continue }
+                    let comp = makeFireComponents(for: day)
+                    guard let fireDate = effectiveCalendar.date(from: comp), fireDate > today else { continue }
 
                     let content = UNMutableNotificationContent()
                     let identifier: String
@@ -172,9 +251,9 @@ public final class NotificationScheduler: Sendable {
         }
 
         if gracePeriodLongest {
-            var todayFirstOfMonthComp = calendar.dateComponents([.year, .month], from: today)
+            var todayFirstOfMonthComp = effectiveCalendar.dateComponents([.year, .month], from: today)
             todayFirstOfMonthComp.day = 1
-            let todayFirstOfMonth = calendar.date(from: todayFirstOfMonthComp) ?? today
+            let todayFirstOfMonth = effectiveCalendar.date(from: todayFirstOfMonthComp) ?? today
 
             for (card, product, bank) in snapshot.graceCards {
                 let rawBillingDay = card.overrideBillingDay ?? card.billingDay
@@ -185,19 +264,19 @@ public final class NotificationScheduler: Sendable {
                 var matchedFireDate: Date?
                 var matchedComp: DateComponents?
                 for monthOffset in 0...2 {
-                    guard let monthStart = calendar.date(byAdding: .month, value: monthOffset, to: todayFirstOfMonth),
-                          let monthRange = calendar.range(of: .day, in: .month, for: monthStart) else { continue }
-                    var billingComp = calendar.dateComponents([.year, .month], from: monthStart)
+                    guard let monthStart = effectiveCalendar.date(byAdding: .month, value: monthOffset, to: todayFirstOfMonth),
+                          let monthRange = effectiveCalendar.range(of: .day, in: .month, for: monthStart) else { continue }
+                    var billingComp = effectiveCalendar.dateComponents([.year, .month], from: monthStart)
                     billingComp.day = min(clampedBillingDay, monthRange.count)
                     billingComp.hour = 9
                     billingComp.minute = 0
                     billingComp.second = 0
-                    billingComp.calendar = calendar
-                    billingComp.timeZone = calendar.timeZone
-                    guard let billingDate = calendar.date(from: billingComp),
-                          let dayAfter = calendar.date(byAdding: .day, value: 1, to: billingDate) else { continue }
-                    let fireComp = makeNineAMComponents(for: dayAfter)
-                    guard let fireDate = calendar.date(from: fireComp), fireDate > today else { continue }
+                    billingComp.calendar = effectiveCalendar
+                    billingComp.timeZone = resolvedTimeZone
+                    guard let billingDate = effectiveCalendar.date(from: billingComp),
+                          let dayAfter = effectiveCalendar.date(byAdding: .day, value: 1, to: billingDate) else { continue }
+                    let fireComp = makeFireComponents(for: dayAfter)
+                    guard let fireDate = effectiveCalendar.date(from: fireComp), fireDate > today else { continue }
                     matchedFireDate = fireDate
                     matchedComp = fireComp
                     break
@@ -207,7 +286,7 @@ public final class NotificationScheduler: Sendable {
                 let grace = BillingDateCalculator.calculateCardGracePeriod(
                     card: card,
                     cardProduct: product,
-                    today: calendar.startOfDay(for: fireDate)
+                    today: effectiveCalendar.startOfDay(for: fireDate)
                 )
                 let content = UNMutableNotificationContent()
                 content.title = "今日最长免息期：\(cardName)\(last4)"

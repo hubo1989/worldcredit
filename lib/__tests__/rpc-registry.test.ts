@@ -115,6 +115,10 @@ describe("RPC registry contract", () => {
     ["gmail-ledger", "getGmailLedgerBanks"],
     ["sync-gmail", "syncGmailLedgerToCardsAndBills"],
     ["holders", "createHolder"],
+    // 方向 4：消费前推荐与年费 ROI 必须绑定本人持卡人范围
+    ["recommendations", "getCardRecommendations"],
+    ["recommendations", "getFamilyAnnualFeeRoi"],
+    ["recommendations", "getCardAnnualFeeRoi"],
   ];
 
   const ADMIN_ONLY: Array<[string, string]> = [
@@ -129,6 +133,8 @@ describe("RPC registry contract", () => {
     ["benefits", "updateBenefit"],
     ["benefits", "deleteBenefit"],
     ["benefits", "autoEnrichCardBenefits"],
+    // 方向 4：卡产品结构化规则 AI 草稿会调用外部模型，仅管理员可用
+    ["admin", "previewCardProductRules"],
   ];
 
   it("lets members perform everyday writes, each behind an ownership guard", () => {

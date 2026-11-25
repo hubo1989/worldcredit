@@ -38,20 +38,43 @@ public final class WatchStore: NSObject, Sendable {
     }
 
     public func markAsPaid(bill: WatchBillItem) {
-        // 1. 本地乐观更新快照
+        // 1. 本地乐观更新快照（按原币种与已下发汇率重算分币种合计，绝不跨币种硬减）
         guard let current = snapshot else { return }
         let updatedBills = current.bills.filter { $0.id != bill.id }
-        let newTotalDebt = max(0.0, current.totalDebt - bill.remainingAmount)
-        let isOverdue = bill.isOverdue()
-        let newOverdueCount = isOverdue ? max(0, current.overdueCount - 1) : current.overdueCount
-        let newOverdueAmount = isOverdue ? max(0.0, current.overdueAmount - bill.remainingAmount) : current.overdueAmount
+        let debtSum = DashboardFx.sumByCurrency(
+            updatedBills.map { ($0.remainingAmount, $0.currency) },
+            target: current.displayCurrency,
+            rates: current.rates
+        )
+        let overdueBills = updatedBills.filter { $0.isOverdue() }
+        let overdueSum = DashboardFx.sumByCurrency(
+            overdueBills.map { ($0.remainingAmount, $0.currency) },
+            target: current.displayCurrency,
+            rates: current.rates
+        )
+        let newUnconverted = Array(
+            Set(debtSum.unconvertedCurrencies).union(overdueSum.unconvertedCurrencies)
+        ).sorted()
+        let hasMixed = debtSum.mixed
+            || overdueSum.mixed
+            || debtSum.byCurrency.count > 1
+            || current.creditLimitByCurrency.count > 1
 
         let updatedSnapshot = WatchSnapshot(
             generatedAt: ISO8601DateFormatter().string(from: Date()),
-            totalDebt: newTotalDebt,
-            overdueCount: newOverdueCount,
-            overdueAmount: newOverdueAmount,
+            displayCurrency: current.displayCurrency,
+            totalDebt: debtSum.total,
+            debtByCurrency: debtSum.byCurrency,
+            overdueCount: overdueBills.count,
+            overdueAmount: overdueSum.total,
+            overdueByCurrency: overdueSum.byCurrency,
             totalCreditLimit: current.totalCreditLimit,
+            creditLimitByCurrency: current.creditLimitByCurrency,
+            unconvertedCurrencies: newUnconverted,
+            missingLimitCurrencies: current.missingLimitCurrencies,
+            ratesAvailable: current.ratesAvailable,
+            mixed: hasMixed,
+            rates: current.rates,
             bills: updatedBills,
             cards: current.cards,
             calendarEvents: current.calendarEvents.filter { $0.id != "due-\(bill.id)" }

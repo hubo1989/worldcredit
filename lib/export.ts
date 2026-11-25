@@ -6,9 +6,19 @@ import { getPaymentsByHolder } from './api/payments'
 import { getBenefitUsagesByHolder } from './api/benefitUsages'
 import { getPromoUsagesByHolder } from './api/promoUsages'
 import { getAnalyticsByHolder } from './api/analytics'
+import { callRpc } from './api/rpc-client'
+import type { FamilyStatementReport } from './api/exports.server'
+import type * as ExportsServer from './api/exports.server'
 import { formatCardTail } from './utils'
 
 export type ExportType = 'bills' | 'payments' | 'benefit_usages' | 'promo_usages' | 'opportunity_usages'
+
+/**
+ * 服务端聚合新增的两类表（交易明细 / 分期计划）。
+ * 既有 ExportType 的键集合保持不变：components/mobile/ExportDialog.tsx 用
+ * `Record<ExportType, string>` 枚举选项，扩键会破坏它的类型契约（该文件归 HUB-171）。
+ */
+export type ExtendedExportType = ExportType | 'bill_items' | 'installments'
 
 export interface ExportFilters {
   holderId?: string
@@ -23,6 +33,23 @@ export interface CsvRow {
 }
 
 /**
+ * 单元格转义 + 防公式注入。
+ *
+ * 既有实现只拦首字符，`' =1+1'`（前导空格后接公式符）能绕过；这里按「任意前导
+ * 空白（含 \t \r \n 空格）后接 = + - @」以及独立的 \t / \r 控制字符拦截，
+ * 命中即前置单引号中和，Excel / Numbers / Google Sheets 打开都不会执行公式。
+ */
+export function sanitizeCsvCell(field: string | number | null | undefined): string {
+  if (field === null || field === undefined) return ''
+  let str = String(field)
+  if (/^[\t\r\n ]*[=+\-@]|^[\t\r]/.test(str)) str = `'${str}`
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`
+  }
+  return str
+}
+
+/**
  * Build CSV string from headers and rows with UTF-8 BOM.
  * Handles proper CSV escaping for special characters.
  */
@@ -30,25 +57,12 @@ export function buildCsv(headers: string[], rows: CsvRow[]): string {
   // UTF-8 BOM for Excel compatibility
   const BOM = '﻿'
 
-  // Escape CSV field according to RFC 4180 + neutralize spreadsheet formula
-  // prefixes (=, +, -, @, tab) so user text can never execute as a formula.
-  const escapeField = (field: string | number | null | undefined): string => {
-    if (field === null || field === undefined) return ''
-    let str = String(field)
-    if (/^[=+\-@\t\r]/.test(str)) str = `'${str}`
-    // If field contains comma, quote, or newline, wrap in quotes and escape internal quotes
-    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
-      return `"${str.replace(/"/g, '""')}"`
-    }
-    return str
-  }
-
   // Build header row
-  const headerRow = headers.map(escapeField).join(',')
+  const headerRow = headers.map(sanitizeCsvCell).join(',')
 
   // Build data rows
   const dataRows = rows.map(row =>
-    headers.map(header => escapeField(row[header])).join(',')
+    headers.map(header => sanitizeCsvCell(row[header])).join(',')
   )
 
   return [BOM, headerRow, ...dataRows].join('\n')
@@ -76,10 +90,12 @@ export function downloadCsv(filename: string, content: string): void {
 /**
  * Generate export filename based on type and date range.
  */
-export function generateFilename(type: ExportType, startDate: string, endDate: string): string {
-  const typeLabel: Record<ExportType, string> = {
+export function generateFilename(type: ExtendedExportType, startDate: string, endDate: string): string {
+  const typeLabel: Record<ExtendedExportType, string> = {
     bills: '账单',
     payments: '还款',
+    bill_items: '交易明细',
+    installments: '分期计划',
     benefit_usages: '权益使用',
     promo_usages: '优惠使用',
     opportunity_usages: '机会台账使用',
@@ -96,7 +112,7 @@ export function generateFilename(type: ExportType, startDate: string, endDate: s
  * Fetch export data based on type and filters.
  */
 export async function getExportData(
-  type: ExportType,
+  type: ExtendedExportType,
   filters: ExportFilters
 ): Promise<CsvRow[]> {
   const { holderId, cardId, bankName, startDate, endDate } = filters
@@ -106,6 +122,26 @@ export async function getExportData(
   }
 
   switch (type) {
+    case 'bill_items':
+    case 'installments': {
+      // 交易明细与分期计划走服务端聚合（成员隔离在 exports.* 的 memberGuard 里强制），
+      // 客户端只负责下载；行结构由服务端表头决定。
+      const now = new Date()
+      const fallbackPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+      const result = await callRpc<typeof ExportsServer.exportFamilyCsvRows>(
+        'exports',
+        'exportFamilyCsvRows',
+        {
+        scope: 'holder',
+        holder_id: holderId,
+        mode: 'monthly',
+        period: startDate ? startDate.slice(0, 7) : fallbackPeriod,
+        table: type,
+        card_id: cardId,
+        },
+      )
+      return result.rows
+    }
     case 'bills':
       return exportBills(holderId, cardId, bankName, startDate, endDate)
     case 'payments':
@@ -397,4 +433,185 @@ function addOneDay(date: string): string {
   const [y, m, d] = date.split('-').map(Number)
   const next = new Date(Date.UTC(y, m - 1, d + 1))
   return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`
+}
+
+/** 文件名清洗：去掉路径分隔符与控制字符，避免下载时被截断或注入。 */
+export function sanitizeFilename(name: string): string {
+  const cleaned = Array.from(name)
+    .map(char => (char.charCodeAt(0) < 32 ? '_' : char))
+    .join('')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .trim()
+  return cleaned.length > 0 ? cleaned.slice(0, 180) : 'worldcredit-export.csv'
+}
+
+/**
+ * 月报 / 年报多段结构化 CSV：分币种总览 → 持卡人小计 → 账单 → 还款 → 交易明细
+ * → 分期 → 固定支出 → 分类汇总。所有单元格经 sanitizeCsvCell（UTF-8 BOM +
+ * 防公式注入），与 exports.getStatementReport 返回的同一份数据源。
+ */
+export function statementReportToCsv(report: FamilyStatementReport): string {
+  const BOM = '﻿'
+  const lines: string[] = []
+  const row = (cells: Array<string | number | null | undefined>): string =>
+    cells.map(cell => sanitizeCsvCell(cell)).join(',')
+
+  lines.push(row([`worldcredit ${report.scope === 'family' ? '全家庭' : '持卡人'}对账单`]))
+  lines.push(row([`报表期间,${report.period},${report.period_start} ~ ${report.period_end}`]))
+  lines.push(row([`展示币种,${report.display_currency}`]))
+  lines.push('')
+
+  lines.push('# 分币种总览')
+  lines.push(row(['币种', '账单', '已还', '未还']))
+  for (const [currency, totals] of Object.entries(report.totals_by_currency)) {
+    lines.push(row([currency, totals.billed.toFixed(2), totals.paid.toFixed(2), totals.outstanding.toFixed(2)]))
+  }
+  lines.push(
+    row([
+      `折算合计（${report.display_currency}）`,
+      report.converted_totals.billed.toFixed(2),
+      report.converted_totals.paid.toFixed(2),
+      report.converted_totals.outstanding.toFixed(2),
+    ]),
+  )
+  if (!report.converted_totals.fx_converted) {
+    lines.push(
+      row([
+        '未折算币种',
+        report.converted_totals.fx_unconverted_currencies.join(' ') || '',
+      ]),
+    )
+  }
+  lines.push('')
+
+  lines.push('# 持卡人小计')
+  lines.push(row(['持卡人', '账单数', '账单总额', '已还', '未还']))
+  for (const holder of report.holders) {
+    lines.push(
+      row([
+        holder.holder_name,
+        holder.bill_count,
+        holder.total_billed.toFixed(2),
+        holder.total_paid.toFixed(2),
+        holder.outstanding.toFixed(2),
+      ]),
+    )
+  }
+  lines.push('')
+
+  lines.push('# 账单')
+  lines.push(row(['账单月份', '持卡人', '银行', '卡片', '卡号末四位', '账单金额', '币种', '最低还款', '还款截止日', '状态']))
+  for (const bill of report.bills) {
+    lines.push(
+      row([
+        bill.bill_month,
+        bill.holder_name,
+        bill.bank_name,
+        bill.card_name,
+        bill.card_tail,
+        Number(bill.bill_amount).toFixed(2),
+        bill.currency,
+        bill.min_payment != null ? Number(bill.min_payment).toFixed(2) : '',
+        bill.due_date,
+        bill.status,
+      ]),
+    )
+  }
+  lines.push('')
+
+  lines.push('# 还款')
+  lines.push(row(['还款日期', '持卡人', '银行', '卡片', '卡号末四位', '账单月份', '还款金额', '账单币种', '实付币种', '实付金额', '锁定汇率', '渠道', '备注']))
+  for (const payment of report.payments) {
+    lines.push(
+      row([
+        payment.paid_at,
+        payment.holder_name,
+        payment.bank_name,
+        payment.card_name,
+        payment.card_tail,
+        payment.bill_month,
+        payment.amount.toFixed(2),
+        payment.currency,
+        payment.settled_currency,
+        payment.settled_amount != null ? payment.settled_amount.toFixed(2) : '',
+        payment.locked_fx_rate,
+        payment.channel,
+        payment.note,
+      ]),
+    )
+  }
+  lines.push('')
+
+  lines.push('# 交易明细')
+  lines.push(row(['交易日期', '持卡人', '银行', '卡片', '卡号末四位', '账单月份', '描述', '商户', '分类', '类型', '金额', '币种']))
+  for (const item of report.bill_items) {
+    lines.push(
+      row([
+        item.transaction_date,
+        item.holder_name,
+        item.bank_name,
+        item.card_name,
+        item.card_tail,
+        item.bill_month,
+        item.description,
+        item.merchant_name,
+        item.category,
+        item.item_type,
+        item.amount.toFixed(2),
+        item.currency,
+      ]),
+    )
+  }
+  lines.push('')
+
+  lines.push('# 分期计划')
+  lines.push(row(['持卡人', '银行', '卡片', '标题', '本金', '币种', '总期数', '已还期数', '剩余本金', '状态', '下期还款日', '下期应还']))
+  for (const plan of report.installments) {
+    lines.push(
+      row([
+        plan.holder_name,
+        plan.bank_name,
+        plan.card_name,
+        plan.title,
+        plan.principal_amount.toFixed(2),
+        plan.currency,
+        plan.total_periods,
+        plan.paid_periods,
+        plan.remaining_principal.toFixed(2),
+        plan.status,
+        plan.next_due_date,
+        plan.next_amount != null ? plan.next_amount.toFixed(2) : '',
+      ]),
+    )
+  }
+  lines.push('')
+
+  lines.push('# 固定支出')
+  lines.push(row(['名称', '分类', '金额', '币种', '当期', '到期日', '已付', '剩余', '状态']))
+  for (const payable of report.payables) {
+    lines.push(
+      row([
+        payable.name,
+        payable.category,
+        payable.amount.toFixed(2),
+        payable.currency,
+        payable.period,
+        payable.due_date,
+        payable.paid_amount.toFixed(2),
+        payable.remaining.toFixed(2),
+        payable.status,
+      ]),
+    )
+  }
+  lines.push('')
+
+  lines.push('# 消费分类汇总')
+  lines.push(row(['分类', '金额', '占比%', '笔数']))
+  for (const item of report.category_breakdown) {
+    lines.push(
+      row([item.category, item.amount.toFixed(2), item.percentage.toFixed(2), item.item_count ?? 0]),
+    )
+  }
+
+  return [BOM, ...lines].join('\n')
 }

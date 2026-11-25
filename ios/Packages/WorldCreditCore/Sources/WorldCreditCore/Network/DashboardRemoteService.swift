@@ -32,6 +32,30 @@ public struct DashboardReminder: Codable, Equatable, Identifiable, Sendable {
         public let actionHint: String
         public let needsReview: Bool
 
+        public init(
+            eventKey: String,
+            kind: String,
+            accountId: String?,
+            cycleId: String?,
+            title: String,
+            localDateOn: String,
+            timeZone: String,
+            deadlineBefore: String?,
+            actionHint: String,
+            needsReview: Bool
+        ) {
+            self.eventKey = eventKey
+            self.kind = kind
+            self.accountId = accountId
+            self.cycleId = cycleId
+            self.title = title
+            self.localDateOn = localDateOn
+            self.timeZone = timeZone
+            self.deadlineBefore = deadlineBefore
+            self.actionHint = actionHint
+            self.needsReview = needsReview
+        }
+
         enum CodingKeys: String, CodingKey {
             case kind, title
             case eventKey = "event_key", accountId = "account_id", cycleId = "cycle_id"
@@ -46,6 +70,18 @@ public struct DashboardReminder: Codable, Equatable, Identifiable, Sendable {
         public let snoozeUntil: String?
         public let revision: Int
 
+        public init(
+            readSteps: [String] = [],
+            dismissedAt: String? = nil,
+            snoozeUntil: String? = nil,
+            revision: Int = 0
+        ) {
+            self.readSteps = readSteps
+            self.dismissedAt = dismissedAt
+            self.snoozeUntil = snoozeUntil
+            self.revision = revision
+        }
+
         enum CodingKeys: String, CodingKey {
             case revision
             case readSteps = "read_steps", dismissedAt = "dismissed_at", snoozeUntil = "snooze_until"
@@ -54,6 +90,12 @@ public struct DashboardReminder: Codable, Equatable, Identifiable, Sendable {
 
     public let event: Event
     public let state: State
+
+    public init(event: Event, state: State) {
+        self.event = event
+        self.state = state
+    }
+
     public var id: String { event.eventKey }
     public var eventKey: String { event.eventKey }
     public var title: String { event.title }

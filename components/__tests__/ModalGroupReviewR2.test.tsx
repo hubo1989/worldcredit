@@ -896,6 +896,81 @@ describe('CardForm 组件交互与回归验证 (#1, #2, #5)', () => {
     expect(submitted.override_due_type).toBe('fixed')
     expect(submitted.override_due_value).toBe(15)
   })
+
+  it('CardForm: 编辑卡切换银行并选中新卡种后修改卡名，银行下拉框不回弹且与提交 card_product_id 一致', async () => {
+    mockedGetCardProducts.mockResolvedValue([
+      {
+        id: 'cp-cmb-1',
+        bank_id: 'b1',
+        bank_name: '招商银行',
+        card_name: '经典白金卡',
+        currency: 'CNY',
+        card_type: 'credit',
+      } as unknown as CardProduct,
+      {
+        id: 'cp-icbc-1',
+        bank_id: 'b2',
+        bank_name: '工商银行',
+        card_name: '牡丹白金卡',
+        currency: 'CNY',
+        card_type: 'credit',
+      } as unknown as CardProduct,
+    ])
+
+    const initialCard: CreditCard = {
+      id: 'card-1',
+      holder_id: 'holder-1',
+      card_product_id: 'cp-cmb-1',
+      card_number_last4: '1234',
+      credit_limit: 50000,
+      billing_day: 15,
+      status: 'active',
+      card_type: 'credit',
+      created_at: '2026-01-01T00:00:00Z',
+    }
+    const handleSubmit = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <CardForm
+        open={true}
+        onClose={vi.fn()}
+        onSubmit={handleSubmit}
+        holderId="holder-1"
+        initial={initialCard}
+      />
+    )
+
+    await screen.findByRole('button', { name: '经典白金卡' })
+
+    const bankSelect = screen.getByLabelText(/发卡银行/) as unknown as HTMLSelectElement
+    expect(bankSelect.value).toBe('招商银行')
+
+    // 切换银行到工商银行并选择卡产品
+    fireEvent.change(bankSelect, { target: { value: '工商银行' } })
+    expect(bankSelect.value).toBe('工商银行')
+    const icbcBtn = await screen.findByRole('button', { name: '牡丹白金卡' })
+    fireEvent.click(icbcBtn)
+
+    // 修改自定义卡名，确认银行不会回弹回招商银行
+    const nameInput = screen.getByLabelText(/卡片名称/) as unknown as HTMLInputElement
+    fireEvent.change(nameInput, { target: { value: '主刷工行卡' } })
+    expect(bankSelect.value).toBe('工商银行')
+
+    const saveBtn = screen.getByRole('button', { name: '保存' })
+    await waitFor(() => {
+      expect(saveBtn).not.toBeDisabled()
+    })
+    fireEvent.click(saveBtn)
+
+    await waitFor(() => {
+      expect(handleSubmit).toHaveBeenCalledTimes(1)
+    })
+
+    const submitted = handleSubmit.mock.calls[0][0]
+    expect(bankSelect.value).toBe('工商银行')
+    expect(submitted.card_product_id).toBe('cp-icbc-1')
+    expect(submitted.name_override).toBe('主刷工行卡')
+  })
 })
 
 describe('CardDefinitionModal 规则关闭与重开回归验证 (#1, #7)', () => {

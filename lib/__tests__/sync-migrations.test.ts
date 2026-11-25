@@ -4,6 +4,8 @@ import { createOpportunityDb } from "./helpers/sqlite-d1";
 describe("0019_offline_sync_tables: trigger verification on full schema", () => {
   it("captures catalog insertions in sync_changes with owner_id = null", async () => {
     const db = createOpportunityDb();
+    const baseline = await db.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM sync_changes")
+      .first<{ seq: number }>();
 
     await db.exec(`
       INSERT INTO banks (id, name) VALUES ('b_test', '测试银行');
@@ -12,7 +14,8 @@ describe("0019_offline_sync_tables: trigger verification on full schema", () => 
     `);
 
     const changes = (
-      await db.prepare("SELECT owner_id, tbl, row_id, op FROM sync_changes ORDER BY seq").all()
+      await db.prepare("SELECT owner_id, tbl, row_id, op FROM sync_changes WHERE seq > ? ORDER BY seq")
+        .bind(baseline?.seq ?? 0).all()
     ).results;
 
     expect(changes).toEqual([

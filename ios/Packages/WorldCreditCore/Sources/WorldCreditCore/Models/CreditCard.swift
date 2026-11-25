@@ -23,6 +23,12 @@ public struct CreditCard: Codable, FetchableRecord, TableRecord, PersistableReco
     public var accountModeOverride: String?
     public var issuedOn: String?
     public var activatedOn: String?
+    public var annualFeeCycleType: String?
+    public var nextAnnualFeeDate: String?
+    public var annualFeeStatus: String?
+    public var waiverProgressJson: String?
+    public var actualFeePaid: Double?
+    public var manualRewardValue: Double?
     public var createdAt: String
 
     public var effectiveCreditLimit: Double {
@@ -49,7 +55,13 @@ public struct CreditCard: Codable, FetchableRecord, TableRecord, PersistableReco
         accountId: String? = nil,
         creditLimitOverride: Double? = nil,
         issuedOn: String? = nil,
-        activatedOn: String? = nil
+        activatedOn: String? = nil,
+        annualFeeCycleType: String? = nil,
+        nextAnnualFeeDate: String? = nil,
+        annualFeeStatus: String? = nil,
+        waiverProgressJson: String? = nil,
+        actualFeePaid: Double? = nil,
+        manualRewardValue: Double? = nil
     ) {
         self.id = id
         self.holderId = holderId
@@ -70,6 +82,12 @@ public struct CreditCard: Codable, FetchableRecord, TableRecord, PersistableReco
         self.accountModeOverride = accountModeOverride
         self.issuedOn = issuedOn
         self.activatedOn = activatedOn
+        self.annualFeeCycleType = annualFeeCycleType
+        self.nextAnnualFeeDate = nextAnnualFeeDate
+        self.annualFeeStatus = annualFeeStatus
+        self.waiverProgressJson = waiverProgressJson
+        self.actualFeePaid = actualFeePaid
+        self.manualRewardValue = manualRewardValue
         self.createdAt = createdAt
     }
 
@@ -94,6 +112,12 @@ public struct CreditCard: Codable, FetchableRecord, TableRecord, PersistableReco
         accountModeOverride = try row.decodeIfPresent(String.self, forKey: .accountModeOverride)
         issuedOn = try row.decodeIfPresent(String.self, forKey: .issuedOn)
         activatedOn = try row.decodeIfPresent(String.self, forKey: .activatedOn)
+        annualFeeCycleType = try row.decodeIfPresent(String.self, forKey: .annualFeeCycleType)
+        nextAnnualFeeDate = try row.decodeIfPresent(String.self, forKey: .nextAnnualFeeDate)
+        annualFeeStatus = try row.decodeIfPresent(String.self, forKey: .annualFeeStatus)
+        waiverProgressJson = try row.decodeIfPresent(String.self, forKey: .waiverProgressJson)
+        actualFeePaid = try row.decodeIfPresent(Double.self, forKey: .actualFeePaid)
+        manualRewardValue = try row.decodeIfPresent(Double.self, forKey: .manualRewardValue)
         createdAt = try row.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
     }
 
@@ -117,6 +141,12 @@ public struct CreditCard: Codable, FetchableRecord, TableRecord, PersistableReco
         case accountModeOverride = "account_mode_override"
         case issuedOn = "issued_on"
         case activatedOn = "activated_on"
+        case annualFeeCycleType = "annual_fee_cycle_type"
+        case nextAnnualFeeDate = "next_annual_fee_date"
+        case annualFeeStatus = "annual_fee_status"
+        case waiverProgressJson = "waiver_progress_json"
+        case actualFeePaid = "actual_fee_paid"
+        case manualRewardValue = "manual_reward_value"
         case createdAt = "created_at"
     }
 }

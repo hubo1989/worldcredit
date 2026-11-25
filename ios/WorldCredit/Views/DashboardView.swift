@@ -11,6 +11,7 @@ struct DashboardView: View {
     @State private var showPushNotificationsCenter = false
     @State private var showingCreateBillSheet = false
     @State private var showingCreateCardSheet = false
+    @State private var showingRecommendationSheet = false
 
     private let futureOptions = [7, 14, 30]
 
@@ -64,18 +65,36 @@ struct DashboardView: View {
             .refreshable { await appState.refreshDashboard() }
             .task { await appState.loadInitialDataIfNeeded() }
             .sheet(item: $payingItem) { item in
-                PaymentSheetView(item: item) { amount, date, channel, note in
-                    try await appState.recordPayment(
-                        billId: item.bill.id, amount: amount,
-                        paidAt: date, channel: channel, note: note
-                    )
-                }
+                PaymentSheetView(
+                    item: item,
+                    onPay: { amount, date, channel, note in
+                        try await appState.recordPayment(
+                            billId: item.bill.id, amount: amount,
+                            paidAt: date, channel: channel, note: note
+                        )
+                    },
+                    onPayWithFx: { amount, date, channel, note, settledCur, settledAmt, lockedRate in
+                        try await appState.recordPayment(
+                            billId: item.bill.id,
+                            amount: amount,
+                            paidAt: date,
+                            channel: channel,
+                            note: note,
+                            settledCurrency: settledCur,
+                            settledAmount: settledAmt,
+                            lockedFxRate: lockedRate
+                        )
+                    }
+                )
             }
             .sheet(isPresented: $showingCreateBillSheet) {
                 BillCreateSheetView()
             }
             .sheet(isPresented: $showingCreateCardSheet) {
                 CardCreateSheetView()
+            }
+            .sheet(isPresented: $showingRecommendationSheet) {
+                CardRecommendationSheetView()
             }
             .confirmationDialog(
                 "一键结清 \(metrics.overdueBills.count) 笔逾期账单？",
@@ -563,11 +582,11 @@ struct DashboardView: View {
                     HStack {
                         Text("权益待办").font(.headline)
                         Spacer()
-                        Button("全部 ›") { appState.openWebDestination(.benefitCalendar) }
+                        Button("全部 ›") { appState.openBenefits(.calendar()) }
                             .font(.caption.bold())
                     }
                     ForEach(appState.dashboardReminders) { reminder in
-                        Button { appState.openWebDestination(.benefitCalendar) } label: {
+                        Button { appState.openBenefits(.calendar(eventKey: reminder.eventKey)) } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(reminder.title).font(.subheadline.bold())
                                     .lineLimit(1)
@@ -624,23 +643,50 @@ struct DashboardView: View {
     // MARK: - 金刚区
 
     private var quickActionsRow: some View {
-        HStack(spacing: 10) {
-            quickAction("记一笔", systemImage: "square.and.pencil") {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                quickAction("记一笔", systemImage: "square.and.pencil") {
+                    HapticManager.impactLight()
+                    showingCreateBillSheet = true
+                }
+                quickAction("优惠", systemImage: "percent") {
+                    HapticManager.selection()
+                    appState.selectedTab = 3
+                }
+                quickAction("权益", systemImage: "gift") {
+                    HapticManager.impactLight()
+                    appState.openBenefits(.ledger(accountId: nil))
+                }
+                quickAction("邮箱账单", systemImage: "envelope") {
+                    HapticManager.impactLight()
+                    appState.openWebDestination(.gmailLedger)
+                }
+            }
+
+            Button {
                 HapticManager.impactLight()
-                showingCreateBillSheet = true
+                showingRecommendationSheet = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "wand.and.stars")
+                        .foregroundStyle(WCColors.primaryAccent)
+                    Text("消费前选卡助手")
+                        .font(.subheadline.bold())
+                    Spacer()
+                    Text("Top 3 净回报")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Color(uiColor: .secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
             }
-            quickAction("优惠", systemImage: "percent") {
-                HapticManager.selection()
-                appState.selectedTab = 3
-            }
-            quickAction("权益", systemImage: "gift") {
-                HapticManager.impactLight()
-                appState.openWebDestination(.benefits)
-            }
-            quickAction("邮箱账单", systemImage: "envelope") {
-                HapticManager.impactLight()
-                appState.openWebDestination(.gmailLedger)
-            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("dashboard.quick.recommend")
         }
     }
 

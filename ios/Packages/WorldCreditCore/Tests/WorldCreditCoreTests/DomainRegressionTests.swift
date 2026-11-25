@@ -259,7 +259,7 @@ struct DomainRegressionTests {
         }
         try await NotificationScheduler(dbManager: manager, center: center).rescheduleAll(today: instant("2026-10-22T16:30:00Z"))
         #expect(center.requests.count == 2)
-        #expect(center.requests.allSatisfy { $0.content.body.contains("80.00") })
+        #expect(center.requests.allSatisfy { $0.content.body.contains("¥80") && !$0.content.body.contains("¥50") })
     }
 
     @Test("DB read failure does not erase already scheduled notifications")

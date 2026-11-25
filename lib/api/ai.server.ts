@@ -1,6 +1,16 @@
 import { getSystemSettingsWithSecrets } from './admin.server'
 import { fetchPage, rootDomain } from '../site-fetch'
 import { runBillImportCore } from './bill-import-core.server'
+import {
+  parseAnnualFeeCycleType,
+  validateAnnualFeeWaiverRulesInput,
+  validateRewardRulesInput,
+} from '../recommendations/rules'
+import type {
+  AnnualFeeWaiverRuleV1,
+  CardProductStructuredRulesDraft,
+  RewardRulesV1,
+} from '../recommendations/types'
 
 export interface AiCompleteRequest {
   type: 'bank' | 'card_product' | 'bill_text' | 'card_text'
@@ -1023,6 +1033,137 @@ export async function suggestPromosFromWeb(input: {
     })
   }
   return suggestions
+}
+
+// ============================================
+// 卡产品结构化规则草稿（管理端预览，绝不写库）
+// ============================================
+
+const CARD_RULES_SYSTEM_PROMPT = `你是信用卡回报规则结构化助手。根据银行名称、卡产品名称、回报文字说明与年费减免说明，
+输出该卡的结构化规则 JSON。必须严格返回一个 JSON 对象，不要任何解释文字：
+{
+  "ftf_rate": 1.5,
+  "fx_free_currencies": ["USD", "HKD"],
+  "reward_rules": {
+    "schema_version": 1,
+    "reward_kind": "cashback",
+    "base_rate_pct": 1.0,
+    "category_rules": [
+      { "category": "dining", "rate_pct": 4.5, "raw_label": "餐饮 3X 积分（约 4.5%）", "currency_scope": "all" }
+    ],
+    "notes": null
+  },
+  "annual_fee_cycle_type": "anniversary_issued",
+  "annual_fee_waiver_rules": {
+    "schema_version": 1,
+    "waiver_type": "spend_amount",
+    "target_amount": 20000,
+    "target_currency": "CNY",
+    "per_txn_min_amount": null,
+    "notes": "刷满 6 次免次年"
+  }
+}
+要求：
+- category 只能是 dining / shopping / travel / transport / utilities / entertainment / medical / education / other。
+- rate_pct 是等效返现率百分比（4.5 表示 4.5%），>= 0；不确定就填 0，绝不编造。
+- annual_fee_cycle_type 只能是 none / anniversary_issued / anniversary_activated / calendar_year / custom_date。
+- waiver_type 只能是 none / first_year_free / spend_amount / spend_count / spend_amount_or_count / points_redeem。
+- 拿不准的字段填 null，宁可留空也不要猜。`
+
+function tryValidateRewardRules(raw: unknown): RewardRulesV1 | null {
+  if (!raw) return null
+  try {
+    return validateRewardRulesInput(raw)
+  } catch {
+    return null
+  }
+}
+
+function tryValidateWaiverRules(raw: unknown): AnnualFeeWaiverRuleV1 | null {
+  if (!raw) return null
+  try {
+    return validateAnnualFeeWaiverRulesInput(raw)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 生成卡产品结构化规则草稿（只预览，写库由 admin.updateCardProduct 人工确认后执行）。
+ *
+ * AI 不可用 / 返回不合法时返回一份「空草稿」并写明原因，绝不把模型幻觉当成规则。
+ */
+export async function aiPreviewCardProductRules(input: {
+  bank_name: string
+  card_name: string
+  country?: string
+  currency?: string
+  rewards_summary?: string
+  annual_fee_waiver?: string
+}): Promise<CardProductStructuredRulesDraft> {
+  const emptyDraft = (notes: string): CardProductStructuredRulesDraft => ({
+    ftf_rate: null,
+    fx_free_currencies: [],
+    reward_rules: null,
+    annual_fee_cycle_type: null,
+    annual_fee_waiver_rules: null,
+    provenance: 'model',
+    notes,
+  })
+
+  const settings = await getSystemSettingsWithSecrets()
+  const baseURL = (typeof settings.ai_base_url === 'string' && settings.ai_base_url) || 'https://api.openai.com/v1'
+  const model = settings.ai_model || 'gpt-4o'
+  const apiKey = settings.ai_api_key
+  if (!apiKey) {
+    return emptyDraft('未配置 AI API Key，请在系统设置中配置后重试，或手工填写规则')
+  }
+
+  let content: string
+  try {
+    const searchContext = await getSearchContext(`${input.bank_name} ${input.card_name} 信用卡 年费 积分 外币手续费`)
+    content = await chatCompletion({
+      baseURL,
+      model: model as string,
+      apiKey: apiKey as string,
+      systemPrompt: CARD_RULES_SYSTEM_PROMPT,
+      userPrompt: `银行：${input.bank_name}\n卡片：${input.card_name}\n国家/地区：${input.country ?? '-'}\n币种：${input.currency ?? '-'}\n回报说明：${
+        input.rewards_summary || '-'
+      }\n年费减免说明：${input.annual_fee_waiver || '-'}${searchContext}`,
+      jsonObject: true,
+    })
+  } catch (err) {
+    return emptyDraft(`AI 生成失败：${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  const parsed = parseJsonObject(content)
+  if (!parsed) return emptyDraft('AI 返回格式错误，请手工填写规则')
+
+  let ftfRate: number | null = null
+  if (typeof parsed.ftf_rate === 'number' && Number.isFinite(parsed.ftf_rate) && parsed.ftf_rate >= 0) {
+    ftfRate = parsed.ftf_rate
+  }
+  let fxFree: string[] = []
+  if (Array.isArray(parsed.fx_free_currencies)) {
+    fxFree = parsed.fx_free_currencies.filter(
+      (item): item is string => typeof item === 'string' && /^[A-Z]{3}$/.test(item)
+    )
+  }
+
+  const rewardRules = tryValidateRewardRules(parsed.reward_rules)
+  const waiverRules = tryValidateWaiverRules(parsed.annual_fee_waiver_rules)
+
+  const cycleType = parseAnnualFeeCycleType(parsed.annual_fee_cycle_type)
+  const incomplete = !rewardRules && ftfRate === null && !waiverRules
+  return {
+    ftf_rate: ftfRate,
+    fx_free_currencies: fxFree,
+    reward_rules: rewardRules,
+    annual_fee_cycle_type: cycleType,
+    annual_fee_waiver_rules: waiverRules,
+    provenance: 'model',
+    notes: incomplete ? 'AI 未能识别出可靠规则，请人工补全' : null,
+  }
 }
 
 /** 把不完整/非法的 URL 安全地归一到 origin；非法则返回 null。 */

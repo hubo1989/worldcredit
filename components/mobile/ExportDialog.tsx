@@ -1,23 +1,22 @@
-// components/mobile/ExportDialog.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { format } from 'date-fns'
 import { Modal } from '@/components/obsidian/overlays'
 import { Button } from '@/components/obsidian/controls'
 import { TextField, SelectField } from '@/components/obsidian/fields'
 import { Alert } from '@/components/obsidian/feedback'
 import { DownloadIcon } from '@/components/icons/WcIcon'
-import { format, startOfMonth, endOfMonth } from 'date-fns'
+import { useAuth } from '@/lib/auth'
+import { downloadCsv } from '@/lib/export'
 import {
-  getExportData,
-  buildCsv,
-  downloadCsv,
-  generateFilename,
-  generateMonthlyReport,
-  generateAnnualReport,
-  type ExportType,
-  type ExportFilters,
-} from '@/lib/export'
+  buildSafeCsv,
+  sanitizeFilenameSegment,
+  statementReportToCsv,
+} from '@/lib/direction3/pure'
+import { exportFamilyCsvRows, getStatementReport } from '@/lib/direction3/rpc'
+import type { FamilyExportType } from '@/lib/direction3/types'
 import type { CardHolder, CreditCard } from '@/lib/types'
 
 interface CardOption {
@@ -32,18 +31,43 @@ interface Props {
   holderId: string
   holders: CardHolder[]
   cards: CardOption[]
+  isAdmin?: boolean
+  displayCurrency?: string
 }
 
 type ExportMode = 'data' | 'monthly_report' | 'annual_report'
+type PeriodPreset = 'current_month' | 'last_month' | 'custom_month' | 'custom_year'
 
-export function ExportDialog({ open, onClose, holderId, holders, cards }: Props) {
+const TYPE_LABELS: Record<FamilyExportType, string> = {
+  bills: '账单',
+  payments: '还款',
+  bill_items: '账单明细',
+  installments: '分期计划',
+  benefit_usages: '权益使用',
+  promo_usages: '优惠使用',
+  opportunity_usages: '机会台账使用',
+}
+
+export function ExportDialog({
+  open,
+  onClose,
+  holderId,
+  holders,
+  cards,
+  isAdmin: isAdminProp,
+  displayCurrency = 'CNY',
+}: Props) {
+  const router = useRouter()
+  const { user } = useAuth()
+  const isAdmin = isAdminProp ?? user?.role === 'admin'
+
   const [mode, setMode] = useState<ExportMode>('data')
-  const [exportType, setExportType] = useState<ExportType>('bills')
-  const [selectedHolderId, setSelectedHolderId] = useState(holderId)
+  const [exportType, setExportType] = useState<FamilyExportType>('bills')
+  const [selectedScope, setSelectedScope] = useState<string>(
+    isAdmin && !holderId ? 'family' : holderId || holders[0]?.id || '',
+  )
   const [selectedCardId, setSelectedCardId] = useState<string>('')
-  const [dateRange, setDateRange] = useState<'current_month' | 'last_month' | 'custom'>('current_month')
-  const [startDate, setStartDate] = useState(format(new Date(), 'yyyy-MM-dd'))
-  const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>('current_month')
   const [reportPeriod, setReportPeriod] = useState(format(new Date(), 'yyyy-MM'))
   const [reportYear, setReportYear] = useState(format(new Date(), 'yyyy'))
 
@@ -52,50 +76,105 @@ export function ExportDialog({ open, onClose, holderId, holders, cards }: Props)
 
   useEffect(() => {
     if (open) {
-      setSelectedHolderId(holderId)
+      if (isAdmin) {
+        setSelectedScope(holderId || 'family')
+      } else {
+        setSelectedScope(holderId || holders[0]?.id || '')
+      }
       setSelectedCardId('')
       setError('')
     }
-  }, [open, holderId])
+  }, [open, holderId, holders, isAdmin])
 
-  const handleDateRangeChange = (value: 'current_month' | 'last_month' | 'custom') => {
-    setDateRange(value)
+  const effectiveScope: 'family' | 'holder' =
+    isAdmin && selectedScope === 'family' ? 'family' : 'holder'
+  const effectiveHolderId =
+    effectiveScope === 'holder' ? selectedScope || holders[0]?.id || undefined : undefined
+
+  const handlePeriodPresetChange = (value: PeriodPreset) => {
+    setPeriodPreset(value)
     const now = new Date()
-
     if (value === 'current_month') {
-      setStartDate(format(startOfMonth(now), 'yyyy-MM-dd'))
-      setEndDate(format(endOfMonth(now), 'yyyy-MM-dd'))
+      setReportPeriod(format(now, 'yyyy-MM'))
     } else if (value === 'last_month') {
       const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      setStartDate(format(startOfMonth(lastMonth), 'yyyy-MM-dd'))
-      setEndDate(format(endOfMonth(lastMonth), 'yyyy-MM-dd'))
+      setReportPeriod(format(lastMonth, 'yyyy-MM'))
+    } else if (value === 'custom_year') {
+      setReportYear(format(now, 'yyyy'))
     }
   }
+
+  const scopePrefix = () => {
+    if (effectiveScope === 'family') return '全家'
+    const h = holders.find((item) => item.id === effectiveHolderId)
+    return h ? sanitizeFilenameSegment(h.name) : '个人'
+  }
+
+  const dataMode: 'monthly' | 'annual' = periodPreset === 'custom_year' ? 'annual' : 'monthly'
+  const dataPeriod = dataMode === 'annual' ? reportYear : reportPeriod
 
   const handleExportData = async () => {
     setLoading(true)
     setError('')
-
     try {
-      const filters: ExportFilters = {
-        holderId: selectedHolderId,
-        cardId: selectedCardId || undefined,
-        startDate,
-        endDate,
-      }
+      const res = await exportFamilyCsvRows({
+        table: exportType,
+        scope: effectiveScope,
+        holder_id: effectiveHolderId,
+        card_id: selectedCardId || undefined,
+        mode: dataMode,
+        period: dataPeriod,
+        display_currency: displayCurrency,
+      })
 
-      const data = await getExportData(exportType, filters)
-
-      if (data.length === 0) {
+      if (!res || res.rows.length === 0) {
         setError('所选时间段内无数据')
         setLoading(false)
         return
       }
 
-      const headers = Object.keys(data[0])
-      const csvContent = buildCsv(headers, data)
-      const filename = generateFilename(exportType, startDate, endDate)
+      const headers = res.headers.length > 0 ? res.headers : Object.keys(res.rows[0])
+      const csvContent = buildSafeCsv(headers, res.rows)
+      const fallbackName = `worldcredit-${scopePrefix()}${TYPE_LABELS[exportType]}-${dataPeriod}.csv`
+      downloadCsv(res.filename || fallbackName, csvContent)
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '导出失败')
+    } finally {
+      setLoading(false)
+    }
+  }
 
+  const handleExportStatementCsv = async (statementMode: 'monthly' | 'annual') => {
+    setLoading(true)
+    setError('')
+    const period = statementMode === 'monthly' ? reportPeriod : reportYear
+    try {
+      const report = await getStatementReport({
+        mode: statementMode,
+        period,
+        scope: effectiveScope,
+        holder_id: effectiveHolderId,
+        card_id: selectedCardId || undefined,
+        display_currency: displayCurrency,
+      })
+
+      const hasCurrencyTotals = Object.keys(report.totals_by_currency ?? {}).length > 0
+      if (
+        !hasCurrencyTotals &&
+        (report.bills?.length ?? 0) === 0 &&
+        (report.payments?.length ?? 0) === 0 &&
+        (report.installments?.length ?? 0) === 0 &&
+        (report.payables?.length ?? 0) === 0
+      ) {
+        setError('所选范围暂无数据')
+        setLoading(false)
+        return
+      }
+
+      const csvContent = statementReportToCsv(report)
+      const label = statementMode === 'monthly' ? '月度对账单' : '年度对账单'
+      const filename = `worldcredit-${scopePrefix()}${label}-${period}.csv`
       downloadCsv(filename, csvContent)
       onClose()
     } catch (err) {
@@ -105,143 +184,71 @@ export function ExportDialog({ open, onClose, holderId, holders, cards }: Props)
     }
   }
 
-  const handleExportMonthlyReport = async () => {
-    setLoading(true)
-    setError('')
-
-    try {
-      const report = await generateMonthlyReport(selectedHolderId, reportPeriod)
-
-      // Convert report to CSV
-      const csvData = [
-        {
-          '指标': '账单月份',
-          '值': report.month,
-        },
-        {
-          '指标': '统计周期',
-          '值': `${report.period_start} 至 ${report.period_end}`,
-        },
-        {
-          '指标': '账单总额',
-          '值': `¥${report.total_billed.toFixed(2)}`,
-        },
-        {
-          '指标': '已还金额',
-          '值': `¥${report.total_paid.toFixed(2)}`,
-        },
-        {
-          '指标': '待还金额',
-          '值': `¥${report.outstanding.toFixed(2)}`,
-        },
-        {
-          '指标': '逾期账单数',
-          '值': report.overdue_count.toString(),
-        },
-      ]
-
-      const csvContent = buildCsv(['指标', '值'], csvData)
-      const filename = `worldcredit-月报-${reportPeriod}.csv`
-
-      downloadCsv(filename, csvContent)
-      onClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '导出失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleExportAnnualReport = async () => {
-    setLoading(true)
-    setError('')
-
-    try {
-      const report = await generateAnnualReport(selectedHolderId, reportYear)
-
-      // Convert report to CSV with monthly breakdown
-      const csvData = [
-        {
-          '指标': '年份',
-          '值': report.year,
-        },
-        {
-          '指标': '全年账单总额',
-          '值': `¥${report.total_billed.toFixed(2)}`,
-        },
-        {
-          '指标': '全年还款总额',
-          '值': `¥${report.total_paid.toFixed(2)}`,
-        },
-        {
-          '指标': '待还金额',
-          '值': `¥${report.outstanding.toFixed(2)}`,
-        },
-        {
-          '指标': '逾期次数',
-          '值': report.overdue_count.toString(),
-        },
-        {
-          '指标': '最高消费月份',
-          '值': report.highest_spending_month,
-        },
-        {
-          '指标': '最高消费金额',
-          '值': `¥${report.highest_spending_amount.toFixed(2)}`,
-        },
-        {}, // Empty row separator
-        ...report.monthly_breakdown.flatMap(m => [
-          { '指标': `${m.month} 账单总额`, '值': `¥${m.total_billed.toFixed(2)}` },
-          { '指标': `${m.month} 已还金额`, '值': `¥${m.total_paid.toFixed(2)}` },
-          { '指标': `${m.month} 待还金额`, '值': `¥${m.outstanding.toFixed(2)}` },
-          {}, // Empty row separator
-        ]),
-      ]
-
-      const csvContent = buildCsv(['指标', '值'], csvData)
-      const filename = `worldcredit-年报-${reportYear}.csv`
-
-      downloadCsv(filename, csvContent)
-      onClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '导出失败')
-    } finally {
-      setLoading(false)
-    }
+  const handleOpenPrintableStatement = () => {
+    const statementMode = mode === 'annual_report' ? 'annual' : 'monthly'
+    const period = statementMode === 'monthly' ? reportPeriod : reportYear
+    const params = new URLSearchParams({
+      mode: statementMode,
+      period,
+      scope: effectiveScope,
+      currency: displayCurrency,
+    })
+    if (effectiveHolderId) params.set('holderId', effectiveHolderId)
+    if (selectedCardId) params.set('cardId', selectedCardId)
+    onClose()
+    router.push(`/analytics/statement?${params.toString()}`)
   }
 
   const handleExport = () => {
     if (mode === 'data') {
-      handleExportData()
+      void handleExportData()
     } else if (mode === 'monthly_report') {
-      handleExportMonthlyReport()
-    } else if (mode === 'annual_report') {
-      handleExportAnnualReport()
+      void handleExportStatementCsv('monthly')
+    } else {
+      void handleExportStatementCsv('annual')
     }
   }
 
-  const getExportTypeLabel = (type: ExportType): string => {
-    const labels: Record<ExportType, string> = {
-      bills: '账单',
-      payments: '还款',
-      benefit_usages: '权益使用',
-      promo_usages: '优惠使用',
-      opportunity_usages: '机会台账使用',
-    }
-    return labels[type]
-  }
+  const holderSelectOptions = [
+    ...(isAdmin ? [{ value: 'family', label: '全部家庭成员（全家庭合并）' }] : []),
+    ...holders.map((h) => ({ value: h.id, label: h.name })),
+  ]
+
+  const filteredCards = cards.filter((c) => {
+    if (effectiveScope === 'family') return true
+    if (!effectiveHolderId) return false
+    return c.card.holder_id === effectiveHolderId
+  })
 
   return (
     <Modal
       open={open}
       onClose={onClose}
+      dismissible={!loading}
       maxWidth='md'
-      title='导出数据'
+      title='导出数据与对账单'
       footer={
         <>
-          <Button variant='ghost' onClick={onClose} disabled={loading}>取消</Button>
+          <Button variant='ghost' onClick={onClose} disabled={loading}>
+            取消
+          </Button>
+          {mode !== 'data' && (
+            <Button
+              variant='secondary'
+              onClick={handleOpenPrintableStatement}
+              disabled={loading}
+            >
+              生成可打印对账单
+            </Button>
+          )}
           <Button onClick={handleExport} loading={loading}>
-            {loading ? '导出中...' : <><DownloadIcon size={16} /> 导出</>}
+            {loading ? (
+              '导出中...'
+            ) : (
+              <>
+                <DownloadIcon size={16} /> 导出 CSV
+              </>
+            )}
           </Button>
         </>
       }
@@ -253,127 +260,120 @@ export function ExportDialog({ open, onClose, holderId, holders, cards }: Props)
       )}
 
       <div className='flex flex-col gap-4'>
-        {/* Export Mode */}
         <SelectField
-          label='导出类型'
+          label='导出模式'
           value={mode}
-          onChange={e => setMode(e.target.value as ExportMode)}
+          onChange={(e) => setMode(e.target.value as ExportMode)}
           options={[
             { value: 'data', label: '明细数据 (CSV)' },
-            { value: 'monthly_report', label: '月报摘要' },
-            { value: 'annual_report', label: '年报摘要' },
+            { value: 'monthly_report', label: '合并月度对账单 (CSV / 打印)' },
+            { value: 'annual_report', label: '合并年度对账单 (CSV / 打印)' },
           ]}
         />
 
-        {/* Holder Selection */}
-        {holders.length > 1 && (
+        {(isAdmin || holders.length > 1) && (
           <SelectField
-            label='持卡人'
-            value={selectedHolderId}
-            onChange={e => setSelectedHolderId(e.target.value)}
-            options={holders.map(h => ({ value: h.id, label: h.name }))}
+            label='导出范围 / 持卡人'
+            value={selectedScope}
+            onChange={(e) => {
+              setSelectedScope(e.target.value)
+              setSelectedCardId('')
+            }}
+            options={holderSelectOptions}
           />
         )}
 
-        {/* Card Filter */}
         <SelectField
           label='卡片筛选 (可选)'
           value={selectedCardId}
-          onChange={e => setSelectedCardId(e.target.value)}
+          onChange={(e) => setSelectedCardId(e.target.value)}
           options={[
             { value: '', label: '全部卡片' },
-            ...cards
-              .filter(c => {
-                if (!selectedHolderId) return false
-                return c.card.holder_id === selectedHolderId
-              })
-              .map(c => ({ value: c.id, label: c.label })),
+            ...filteredCards.map((c) => ({ value: c.id, label: c.label })),
           ]}
         />
 
-        {/* Data Export Options */}
         {mode === 'data' && (
           <>
             <SelectField
               label='数据类型'
               value={exportType}
-              onChange={e => setExportType(e.target.value as ExportType)}
+              onChange={(e) => setExportType(e.target.value as FamilyExportType)}
               options={[
-                { value: 'bills', label: '账单' },
-                { value: 'payments', label: '还款' },
+                { value: 'bills', label: '账单（含原币种与持卡人）' },
+                { value: 'payments', label: '还款（含实际锁定汇率）' },
+                { value: 'bill_items', label: '交易明细 (bill_items)' },
+                { value: 'installments', label: '分期计划 (installments)' },
                 { value: 'benefit_usages', label: '权益使用' },
                 { value: 'promo_usages', label: '优惠使用' },
+                { value: 'opportunity_usages', label: '机会台账使用' },
               ]}
             />
 
             <SelectField
-              label='时间范围'
-              value={dateRange}
-              onChange={e => handleDateRangeChange(e.target.value as 'current_month' | 'last_month' | 'custom')}
+              label='统计周期'
+              value={periodPreset}
+              onChange={(e) => handlePeriodPresetChange(e.target.value as PeriodPreset)}
               options={[
-                { value: 'current_month', label: '本月' },
-                { value: 'last_month', label: '上月' },
-                { value: 'custom', label: '自定义' },
+                { value: 'current_month', label: '本月 (月度)' },
+                { value: 'last_month', label: '上月 (月度)' },
+                { value: 'custom_month', label: '指定月份 (YYYY-MM)' },
+                { value: 'custom_year', label: '指定年份 (YYYY)' },
               ]}
             />
 
-            {dateRange === 'custom' && (
-              <div className='flex gap-3'>
-                <div className='min-w-0 flex-1'>
-                  <TextField
-                    label='开始日期'
-                    type='date'
-                    value={startDate}
-                    onChange={e => setStartDate(e.target.value)}
-                  />
-                </div>
-                <div className='min-w-0 flex-1'>
-                  <TextField
-                    label='结束日期'
-                    type='date'
-                    value={endDate}
-                    onChange={e => setEndDate(e.target.value)}
-                  />
-                </div>
-              </div>
+            {periodPreset === 'custom_month' && (
+              <TextField
+                label='目标月份'
+                type='month'
+                value={reportPeriod}
+                onChange={(e) => setReportPeriod(e.target.value)}
+              />
+            )}
+
+            {periodPreset === 'custom_year' && (
+              <TextField
+                label='目标年份'
+                type='number'
+                value={reportYear}
+                onChange={(e) => setReportYear(e.target.value)}
+                min={2020}
+                max={2035}
+              />
             )}
 
             <Alert severity='info'>
-              将导出 {getExportTypeLabel(exportType)} 数据为 CSV 文件
+              将导出「{scopePrefix()}」{dataPeriod} 的 {TYPE_LABELS[exportType]} CSV（UTF-8 BOM + 公式安全转义）
             </Alert>
           </>
         )}
 
-        {/* Monthly Report Options */}
         {mode === 'monthly_report' && (
           <>
             <TextField
               label='报表月份'
               type='month'
               value={reportPeriod}
-              onChange={e => setReportPeriod(e.target.value)}
+              onChange={(e) => setReportPeriod(e.target.value)}
             />
-
             <Alert severity='info'>
-              将导出 {reportPeriod} 月度摘要报告
+              将按原币种分列并折算导出 {reportPeriod} 月度对账单，或点击「生成可打印对账单」排版打印/存为 PDF
             </Alert>
           </>
         )}
 
-        {/* Annual Report Options */}
         {mode === 'annual_report' && (
           <>
             <TextField
               label='报表年份'
               type='number'
               value={reportYear}
-              onChange={e => setReportYear(e.target.value)}
+              onChange={(e) => setReportYear(e.target.value)}
               min={2020}
-              max={2030}
+              max={2035}
             />
-
             <Alert severity='info'>
-              将导出 {reportYear} 年度摘要报告（含月度分解）
+              将按原币种分列汇总 {reportYear} 年度对账单（含 12 个月度对照与分类汇总）
             </Alert>
           </>
         )}

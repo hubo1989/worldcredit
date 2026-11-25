@@ -7,10 +7,15 @@ struct iPhoneDueEntry: TimelineEntry {
     let bankName: String
     let cardTitle: String
     let amount: Double
+    let billCurrency: String
     let days: Int
     let isOverdue: Bool
     let distanceLabel: String
+    let displayCurrency: String
     let totalDebt: Double
+    let formattedTotalDebt: String
+    let formattedTotalDebtCompact: String
+    let hasUnconvertedCurrencies: Bool
     let overdueCount: Int
     let upcomingBills: [WatchBillItem]
 }
@@ -22,10 +27,15 @@ struct iPhoneDueWidgetProvider: TimelineProvider {
             bankName: "招商银行",
             cardTitle: "经典白",
             amount: 3200,
+            billCurrency: "CNY",
             days: 3,
             isOverdue: false,
             distanceLabel: "3 天后",
+            displayCurrency: "CNY",
             totalDebt: 6800,
+            formattedTotalDebt: DashboardMoney.format(6800, currency: "CNY"),
+            formattedTotalDebtCompact: DashboardMoney.formatCompact(6800, currency: "CNY"),
+            hasUnconvertedCurrencies: false,
             overdueCount: 0,
             upcomingBills: []
         )
@@ -56,16 +66,22 @@ struct iPhoneDueWidgetProvider: TimelineProvider {
 
     private func entry(from snapshot: WatchSnapshot?, for evalDate: Date, timestamp: Date? = nil) -> iPhoneDueEntry {
         let time = timestamp ?? evalDate
+        let currency = snapshot?.displayCurrency ?? "CNY"
         guard let snapshot, let bill = snapshot.nextDueBill else {
             return iPhoneDueEntry(
                 date: time,
                 bankName: "",
                 cardTitle: "暂无待还账单",
                 amount: 0,
+                billCurrency: currency,
                 days: 999,
                 isOverdue: false,
                 distanceLabel: "全部已结清",
+                displayCurrency: currency,
                 totalDebt: 0,
+                formattedTotalDebt: DashboardMoney.format(0, currency: currency),
+                formattedTotalDebtCompact: DashboardMoney.formatCompact(0, currency: currency),
+                hasUnconvertedCurrencies: false,
                 overdueCount: 0,
                 upcomingBills: []
             )
@@ -81,10 +97,15 @@ struct iPhoneDueWidgetProvider: TimelineProvider {
             bankName: bill.bankName,
             cardTitle: bill.cardTitle,
             amount: bill.remainingAmount,
+            billCurrency: bill.currency,
             days: days,
             isOverdue: isOverdue,
             distanceLabel: label,
+            displayCurrency: snapshot.displayCurrency,
             totalDebt: snapshot.totalDebt,
+            formattedTotalDebt: snapshot.formattedTotalDebt(compact: false),
+            formattedTotalDebtCompact: snapshot.formattedTotalDebt(compact: true),
+            hasUnconvertedCurrencies: !snapshot.unconvertedCurrencies.isEmpty,
             overdueCount: snapshot.overdueCount,
             upcomingBills: rest
         )
@@ -132,7 +153,7 @@ struct iPhoneDueWidgetEntryView: View {
                     .font(.caption.bold())
                     .lineLimit(1)
 
-                Text("¥\(String(format: "%.0f", entry.amount))")
+                Text(DashboardMoney.formatCompact(entry.amount, currency: entry.billCurrency))
                     .font(.title2.bold())
                     .foregroundStyle(entry.isOverdue ? .red : .primary)
 
@@ -143,7 +164,7 @@ struct iPhoneDueWidgetEntryView: View {
                         .font(.caption2.bold())
                         .foregroundStyle(entry.isOverdue ? .red : (entry.days <= 3 ? .orange : .secondary))
                     Spacer()
-                    Text("共¥\(String(format: "%.0f", entry.totalDebt))")
+                    Text("共\(entry.formattedTotalDebtCompact)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -172,7 +193,7 @@ struct iPhoneDueWidgetEntryView: View {
                         .font(.headline)
                         .lineLimit(1)
 
-                    Text("¥\(String(format: "%.2f", entry.amount))")
+                    Text(DashboardMoney.format(entry.amount, currency: entry.billCurrency))
                         .font(.title.bold())
                         .foregroundStyle(entry.isOverdue ? .red : .primary)
 
@@ -188,11 +209,12 @@ struct iPhoneDueWidgetEntryView: View {
             // 右半边：汇总与后续
             VStack(alignment: .leading, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("本期待还总额")
+                    Text(entry.hasUnconvertedCurrencies ? "本期待还（缺汇率按原币）" : "本期待还总额")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    Text("¥\(String(format: "%.2f", entry.totalDebt))")
+                    Text(entry.formattedTotalDebt)
                         .font(.subheadline.bold())
+                        .lineLimit(2)
                 }
 
                 if entry.overdueCount > 0 {
@@ -216,7 +238,7 @@ struct iPhoneDueWidgetEntryView: View {
                                     .font(.system(size: 11))
                                     .lineLimit(1)
                                 Spacer()
-                                Text("¥\(String(format: "%.0f", b.remainingAmount))")
+                                Text(DashboardMoney.formatCompact(b.remainingAmount, currency: b.currency))
                                     .font(.system(size: 11, weight: .medium))
                             }
                         }

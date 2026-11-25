@@ -239,19 +239,26 @@ final class WorldCreditUITests: XCTestCase {
         attachScreenshot(app, name: "16-dashboard-after-pay-all")
     }
 
-    /// 快捷入口打开受限业务页，可正常关闭并回到首页。
+    /// 快捷入口打开全原生权益四分段界面（零 WebView），可切换各分段并切回概览。
     func test07DashboardQuickActionOpensAndClosesWebPage() {
         let app = launchScenario()
         let quick = app.buttons["dashboard.quick.权益"]
         XCTAssertTrue(quick.waitForExistence(timeout: 5))
         quick.tap()
 
-        let close = app.buttons["webview.close"]
-        XCTAssertTrue(close.waitForExistence(timeout: 5), "业务页必须提供显式关闭")
-        attachScreenshot(app, name: "17-dashboard-webview")
-        close.tap()
+        let picker = app.segmentedControls["benefits.segmented"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8), "快捷入口应打开原生权益四分段页面")
+        for name in ["权益台账", "权益日历", "达标任务", "优惠活动"] {
+            let section = picker.buttons[name]
+            XCTAssertTrue(section.exists, name)
+            section.tap()
+            XCTAssertTrue(section.isSelected, name)
+            XCTAssertFalse(app.buttons["webview.close"].exists, "原生权益分段不应回退到 WebView：\(name)")
+        }
+        attachScreenshot(app, name: "17-dashboard-benefits-native")
+        tab("概览", in: app)
         XCTAssertTrue(app.buttons["dashboard.quick.权益"].waitForExistence(timeout: 5),
-                      "关闭后应回到首页")
+                      "切回后应回到首页")
     }
 
     /// 账单页排序双 tab：切到「最大免息期」后行内提示换为免息天数，切回恢复距还款日。
