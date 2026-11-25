@@ -8,18 +8,15 @@ import Testing
 struct DashboardWebDestinationTests {
     // MARK: - 入口枚举
 
-    @Test("保留的三个入口 URL 与产品约定的受限枚举完全一致")
+    @Test("保留的邮箱账单入口 URL 与产品约定的受限枚举完全一致")
     func destinationURLsMatchAllowlist() {
-        #expect(DashboardWebDestination.benefits.url().absoluteString == "https://app.all-bill.com/benefits")
-        #expect(DashboardWebDestination.benefitCalendar.url().absoluteString == "https://app.all-bill.com/benefits/calendar")
         #expect(DashboardWebDestination.gmailLedger.url().absoluteString == "https://app.all-bill.com/gmail-ledger")
     }
 
-    @Test("Identifiable 与 .sheet(item:) 契约：仅保留 3 个入口且 id 稳定互不相同")
+    @Test("Identifiable 与 .sheet(item:) 契约：仅保留 1 个入口且 id 稳定")
     func identifiableContract() {
         let ids = DashboardWebDestination.allCases.map(\.id)
-        #expect(ids.count == 3)
-        #expect(Set(ids).count == 3)
+        #expect(ids == ["gmailLedger"])
         for item in DashboardWebDestination.allCases {
             #expect(item.id == item.rawValue)
         }
@@ -27,8 +24,6 @@ struct DashboardWebDestinationTests {
 
     @Test("导航栏标题与保留入口文案一致")
     func titlesMatchWebCopy() {
-        #expect(DashboardWebDestination.benefits.title == "权益")
-        #expect(DashboardWebDestination.benefitCalendar.title == "权益日历")
         #expect(DashboardWebDestination.gmailLedger.title == "邮箱账单")
     }
 
@@ -51,7 +46,7 @@ struct DashboardWebDestinationTests {
 
     // MARK: - 导航决策：允许
 
-    @Test("三个保留入口 URL 均允许在受限 WebView 内加载")
+    @Test("仅保留的 .gmailLedger 入口 URL 允许在受限 WebView 内加载")
     func entryURLsLoadInWebView() {
         for item in DashboardWebDestination.allCases {
             #expect(DashboardWebRoutePolicy.decision(for: item.url()) == .loadInWebView)
@@ -61,13 +56,11 @@ struct DashboardWebDestinationTests {
     @Test("受限 path 允许大小写不敏感 host、显式 443、尾斜杠与 SPA 查询串")
     func allowlistTolerances() {
         let allowed = [
-            "https://app.all-bill.com/benefits",
-            "https://app.all-bill.com/benefits/",
-            "https://APP.ALL-BILL.COM/benefits",
-            "https://app.all-bill.com:443/benefits",
-            "https://app.all-bill.com/benefits?tab=all&q=x",
-            "https://app.all-bill.com/benefits/calendar",
             "https://app.all-bill.com/gmail-ledger",
+            "https://app.all-bill.com/gmail-ledger/",
+            "https://APP.ALL-BILL.COM/gmail-ledger",
+            "https://app.all-bill.com:443/gmail-ledger",
+            "https://app.all-bill.com/gmail-ledger?tab=all&q=x",
         ]
         for text in allowed {
             let url = try! #require(URL(string: text))
@@ -80,9 +73,9 @@ struct DashboardWebDestinationTests {
     @Test("URL 内嵌 credentials 一律拒绝")
     func rejectsEmbeddedCredentials() {
         let texts = [
-            "https://user:pass@app.all-bill.com/benefits",
-            "https://app.all-bill.com@evil.example/benefits",
-            "https://user@app.all-bill.com/benefits",
+            "https://user:pass@app.all-bill.com/gmail-ledger",
+            "https://app.all-bill.com@evil.example/gmail-ledger",
+            "https://user@app.all-bill.com/gmail-ledger",
         ]
         for text in texts {
             let url = try! #require(URL(string: text))
@@ -93,11 +86,11 @@ struct DashboardWebDestinationTests {
     @Test("目标站子域、apex 与形近 host 一律拒绝")
     func rejectsSubdomainAndLookalikeHosts() {
         let texts = [
-            "https://evil.app.all-bill.com/benefits",
-            "https://app.all-bill.com.evil.com/benefits",
-            "https://all-bill.com/benefits",
-            "https://www.all-bill.com/benefits",
-            "https://all-bill.com.example.org/benefits",
+            "https://evil.app.all-bill.com/gmail-ledger",
+            "https://app.all-bill.com.evil.com/gmail-ledger",
+            "https://all-bill.com/gmail-ledger",
+            "https://www.all-bill.com/gmail-ledger",
+            "https://all-bill.com.example.org/gmail-ledger",
         ]
         for text in texts {
             let url = try! #require(URL(string: text))
@@ -108,9 +101,9 @@ struct DashboardWebDestinationTests {
     @Test("目标站非法形态拒绝：http、非 443 端口")
     func rejectsInsecureTargetForms() {
         let texts = [
-            "http://app.all-bill.com/benefits",
-            "https://app.all-bill.com:8443/benefits",
-            "https://app.all-bill.com:80/benefits",
+            "http://app.all-bill.com/gmail-ledger",
+            "https://app.all-bill.com:8443/gmail-ledger",
+            "https://app.all-bill.com:80/gmail-ledger",
         ]
         for text in texts {
             let url = try! #require(URL(string: text))
@@ -118,10 +111,13 @@ struct DashboardWebDestinationTests {
         }
     }
 
-    @Test("目标站非枚举 path 拒绝（含已原生化的 /promos、/dashboard?native_action= 及路径穿越）")
+    @Test("目标站非枚举 path 拒绝（含已原生化的 /benefits、/benefits/calendar、/promos 及路径穿越）")
     func rejectsUnknownTopLevelPaths() {
         let texts = [
             "https://app.all-bill.com/",
+            "https://app.all-bill.com/benefits",
+            "https://app.all-bill.com/benefits/",
+            "https://app.all-bill.com/benefits/calendar",
             "https://app.all-bill.com/promos",
             "https://app.all-bill.com/promos/",
             "https://app.all-bill.com/dashboard",
@@ -132,7 +128,7 @@ struct DashboardWebDestinationTests {
             "https://app.all-bill.com/settings",
             "https://app.all-bill.com/benefits/tasks",
             "https://app.all-bill.com/admin",
-            "https://app.all-bill.com/benefits/../admin",
+            "https://app.all-bill.com/gmail-ledger/../admin",
             "https://app.all-bill.com/api/rpc/bills/getUnpaidBills",
         ]
         for text in texts {

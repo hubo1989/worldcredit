@@ -1,5 +1,10 @@
 import type { UserReminderConfig } from '@/lib/types'
 
+export const DEFAULT_REMINDER_TIME_ZONE = 'Asia/Shanghai'
+export const DEFAULT_REMINDER_LOCAL_TIME = '09:00'
+export const DEFAULT_QUIET_HOURS_START = '22:00'
+export const DEFAULT_QUIET_HOURS_END = '08:00'
+
 export interface CurrencyOption {
   value: string
   label: string
@@ -41,6 +46,22 @@ export function isWebPushChannelEnabled(
   return resolveEffectiveChannels(config).includes('web_push')
 }
 
+export interface TimezoneOption {
+  value: string
+  name: string
+}
+
+export const TIMEZONE_PRESETS: TimezoneOption[] = [
+  { value: 'Asia/Shanghai', name: '中国标准时间' },
+  { value: 'Asia/Hong_Kong', name: '香港时间' },
+  { value: 'Asia/Tokyo', name: '日本标准时间' },
+  { value: 'Asia/Singapore', name: '新加坡时间' },
+  { value: 'America/New_York', name: '美东时间' },
+  { value: 'America/Los_Angeles', name: '美西时间' },
+  { value: 'Europe/London', name: '伦敦时间' },
+  { value: 'Australia/Sydney', name: '悉尼时间' },
+]
+
 /**
  * 动态根据夏令时 (DST) 与当前时间生成时区选项文案。
  */
@@ -60,5 +81,31 @@ export function formatTimezoneOptionLabel(
   } catch {
     return `${tz} (${standardName})`
   }
+}
+
+function parseMinutesOfDay(hhmm: string | undefined): number | null {
+  if (!hhmm) return null
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(hhmm.trim())
+  if (!match) return null
+  return Number(match[1]) * 60 + Number(match[2])
+}
+
+/**
+ * 判断每日推送时间是否落入免打扰时段（支持跨午夜如 22:00–08:00）。
+ */
+export function isTimeInQuietHours(
+  localTime: string | undefined,
+  quietStart: string | undefined,
+  quietEnd: string | undefined
+): boolean {
+  const t = parseMinutesOfDay(localTime)
+  const start = parseMinutesOfDay(quietStart)
+  const end = parseMinutesOfDay(quietEnd)
+  // start === end 约定为「免打扰关闭」，与每日账单链路 isInQuietHours 对齐
+  if (t === null || start === null || end === null || start === end) return false
+  if (start > end) {
+    return t >= start || t < end
+  }
+  return t >= start && t < end
 }
 

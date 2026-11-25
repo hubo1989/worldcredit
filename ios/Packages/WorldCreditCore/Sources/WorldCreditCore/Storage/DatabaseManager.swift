@@ -85,13 +85,23 @@ public final class DatabaseManager: @unchecked Sendable {
     /// 1) 登出后沿用同一 clientId 会让服务端把同一设备跨账号关联（隐私泄漏面）；
     /// 2) mutation_outbox 已清空，不存在需要同一 clientId 续传的未确认操作；
     /// 3) 下次 SyncEngine 启动会自动生成新 id（见 SyncEngine.init）。
-    /// 删除顺序遵循外键约束：bill_card_subtotals → payments → bills → credit_cards →
-    /// credit_accounts → recurring_payable_payments → recurring_payables →
-    /// payable_custom_categories → user_preferences → notification_preferences →
-    /// card_holders → benefits → promos → card_products → banks → mutation_outbox → sync_meta。
+    /// 删除顺序遵循外键约束：12 张权益/通知明细表 → 既有 15 张业务表 →
+    /// mutation_outbox → sync_meta。
     public func clearUserData() async throws {
         try await dbWriter.write { db in
             try db.execute(sql: """
+                DELETE FROM notification_history;
+                DELETE FROM opportunity_reminder_states;
+                DELETE FROM opportunity_user_states;
+                DELETE FROM opportunity_fulfillments;
+                DELETE FROM opportunity_task_cycles;
+                DELETE FROM opportunity_tasks;
+                DELETE FROM opportunity_usages;
+                DELETE FROM opportunity_cycles;
+                DELETE FROM opportunity_account_cards;
+                DELETE FROM opportunity_accounts;
+                DELETE FROM opportunity_rule_versions;
+                DELETE FROM opportunity_definitions;
                 DELETE FROM bill_card_subtotals;
                 DELETE FROM payments;
                 DELETE FROM bills;
@@ -392,6 +402,225 @@ public final class DatabaseManager: @unchecked Sendable {
                 ON payable_custom_categories(user_id, created_at);
 
             -- 3. Reset sync cursor if present so upgraded clients backfill all 15 tables & new columns.
+            UPDATE sync_meta SET value = '0' WHERE key = 'sync_cursor';
+            """)
+        }
+
+        migrator.registerMigration("v3_phase2_opportunities_and_notifications") { db in
+            try db.execute(sql: """
+            -- 1. 权益与任务全离线可同步表 (11 张 opportunity_* + notification_history)
+            CREATE TABLE IF NOT EXISTS opportunity_definitions (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                legacy_benefit_id TEXT UNIQUE,
+                legacy_promo_id TEXT UNIQUE,
+                visibility TEXT NOT NULL,
+                private_holder_id TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                terminated_at TEXT,
+                termination_reason TEXT,
+                revision INTEGER NOT NULL DEFAULT 1,
+                created_by TEXT,
+                created_at TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS opportunity_rule_versions (
+                id TEXT PRIMARY KEY,
+                definition_id TEXT NOT NULL REFERENCES opportunity_definitions(id) ON DELETE CASCADE,
+                version INTEGER NOT NULL,
+                effective_from TEXT NOT NULL,
+                effective_until_before TEXT,
+                rules_json TEXT NOT NULL,
+                verification TEXT NOT NULL DEFAULT 'unverified',
+                source_url TEXT,
+                source_excerpt TEXT,
+                checked_at TEXT,
+                checked_by TEXT,
+                published_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_opp_rule_versions_def ON opportunity_rule_versions(definition_id, version);
+
+            CREATE TABLE IF NOT EXISTS opportunity_accounts (
+                id TEXT PRIMARY KEY,
+                definition_id TEXT NOT NULL REFERENCES opportunity_definitions(id) ON DELETE CASCADE,
+                holder_id TEXT NOT NULL REFERENCES card_holders(id) ON DELETE CASCADE,
+                scope_kind TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                eligibility TEXT NOT NULL DEFAULT 'unknown',
+                eligibility_note TEXT,
+                eligibility_confirmed_by TEXT,
+                eligibility_confirmed_at TEXT,
+                eligible_from_on TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                revision INTEGER NOT NULL DEFAULT 1,
+                created_by TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_opp_accounts_holder ON opportunity_accounts(holder_id, status);
+
+            CREATE TABLE IF NOT EXISTS opportunity_account_cards (
+                account_id TEXT NOT NULL REFERENCES opportunity_accounts(id) ON DELETE CASCADE,
+                definition_id TEXT NOT NULL,
+                holder_id TEXT NOT NULL,
+                card_id TEXT NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
+                retired_at TEXT,
+                PRIMARY KEY(account_id, card_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_opp_account_cards_card ON opportunity_account_cards(card_id, retired_at);
+
+            CREATE TABLE IF NOT EXISTS opportunity_cycles (
+                id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL REFERENCES opportunity_accounts(id) ON DELETE CASCADE,
+                version_id TEXT NOT NULL REFERENCES opportunity_rule_versions(id) ON DELETE CASCADE,
+                version_as_of_on TEXT NOT NULL,
+                cycle_key TEXT NOT NULL,
+                allocation_kind TEXT NOT NULL DEFAULT 'regular',
+                activation_state TEXT NOT NULL DEFAULT 'active',
+                period_start_on TEXT NOT NULL,
+                period_end_before TEXT,
+                usable_start_on TEXT NOT NULL,
+                usable_end_before TEXT,
+                time_zone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+                count_limit INTEGER,
+                amount_limit_minor INTEGER,
+                currency TEXT,
+                workflow_json TEXT NOT NULL DEFAULT '{}',
+                opening_used_count INTEGER NOT NULL DEFAULT 0,
+                opening_used_minor INTEGER NOT NULL DEFAULT 0,
+                used_count INTEGER NOT NULL DEFAULT 0,
+                used_minor INTEGER NOT NULL DEFAULT 0,
+                reserved_count INTEGER NOT NULL DEFAULT 0,
+                reserved_minor INTEGER NOT NULL DEFAULT 0,
+                balance_verified INTEGER NOT NULL DEFAULT 0,
+                verified_by TEXT,
+                verified_at TEXT,
+                opening_as_of_on TEXT,
+                revision INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_opp_cycles_account ON opportunity_cycles(account_id, usable_start_on, usable_end_before);
+
+            CREATE TABLE IF NOT EXISTS opportunity_usages (
+                id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL REFERENCES opportunity_accounts(id) ON DELETE CASCADE,
+                cycle_id TEXT NOT NULL REFERENCES opportunity_cycles(id) ON DELETE CASCADE,
+                card_id TEXT NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
+                used_on TEXT NOT NULL,
+                quantity INTEGER NOT NULL DEFAULT 1,
+                amount_minor INTEGER NOT NULL DEFAULT 0,
+                note TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                revision INTEGER NOT NULL DEFAULT 1,
+                created_by TEXT NOT NULL DEFAULT '',
+                updated_by TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_opp_usages_account ON opportunity_usages(account_id, used_on, id);
+
+            CREATE TABLE IF NOT EXISTS opportunity_tasks (
+                id TEXT PRIMARY KEY,
+                holder_id TEXT NOT NULL REFERENCES card_holders(id) ON DELETE CASCADE,
+                task_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                card_ids_json TEXT NOT NULL DEFAULT '[]',
+                rules_json TEXT NOT NULL,
+                reward_json TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                revision INTEGER NOT NULL DEFAULT 1,
+                created_by TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_opp_tasks_holder ON opportunity_tasks(holder_id, status);
+
+            CREATE TABLE IF NOT EXISTS opportunity_task_cycles (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL REFERENCES opportunity_tasks(id) ON DELETE CASCADE,
+                cycle_key TEXT NOT NULL,
+                rules_snapshot_json TEXT NOT NULL,
+                reward_snapshot_json TEXT NOT NULL,
+                period_start_on TEXT NOT NULL,
+                period_end_before TEXT NOT NULL,
+                deadline_at TEXT NOT NULL,
+                expected_from_on TEXT,
+                expected_until_before TEXT,
+                progress_json TEXT NOT NULL DEFAULT '{}',
+                as_of_on TEXT,
+                revision INTEGER NOT NULL DEFAULT 1,
+                updated_by TEXT,
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_opp_task_cycles_task ON opportunity_task_cycles(task_id, cycle_key);
+
+            CREATE TABLE IF NOT EXISTS opportunity_fulfillments (
+                id TEXT PRIMARY KEY,
+                holder_id TEXT NOT NULL REFERENCES card_holders(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL,
+                account_id TEXT,
+                cycle_id TEXT,
+                task_cycle_id TEXT,
+                reward_key TEXT,
+                source_key TEXT NOT NULL,
+                card_id TEXT,
+                status TEXT NOT NULL,
+                quantity INTEGER NOT NULL DEFAULT 1,
+                amount_minor INTEGER NOT NULL DEFAULT 0,
+                recorded_on TEXT NOT NULL,
+                service_at TEXT,
+                service_time_zone TEXT,
+                external_reference TEXT,
+                entry_json TEXT NOT NULL DEFAULT '{}',
+                settlement TEXT,
+                usage_id TEXT,
+                note TEXT,
+                revision INTEGER NOT NULL DEFAULT 1,
+                created_by TEXT NOT NULL DEFAULT '',
+                updated_by TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_opp_fulfillments_account ON opportunity_fulfillments(account_id, status, service_at);
+
+            CREATE TABLE IF NOT EXISTS opportunity_user_states (
+                user_id TEXT NOT NULL,
+                account_id TEXT NOT NULL REFERENCES opportunity_accounts(id) ON DELETE CASCADE,
+                followed INTEGER NOT NULL DEFAULT 0,
+                revision INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY(user_id, account_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS opportunity_reminder_states (
+                user_id TEXT NOT NULL,
+                event_key TEXT NOT NULL,
+                read_steps_json TEXT NOT NULL DEFAULT '[]',
+                dismissed_at TEXT,
+                snooze_until TEXT,
+                revision INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY(user_id, event_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS notification_history (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                notification_key TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'system',
+                title TEXT NOT NULL,
+                body TEXT,
+                target_url TEXT,
+                metadata_json TEXT,
+                sent_at TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'sent',
+                error TEXT,
+                read_at TEXT,
+                deleted_at TEXT,
+                push_sent_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_notif_history_inbox ON notification_history(user_id, deleted_at, sent_at DESC);
+
+            -- 2. Reset sync cursor if present so upgraded clients backfill all 27 tables cleanly.
             UPDATE sync_meta SET value = '0' WHERE key = 'sync_cursor';
             """)
         }

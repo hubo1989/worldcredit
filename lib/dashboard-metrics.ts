@@ -2,6 +2,11 @@ import type { BillDashboardItem } from './api/bills.server'
 import type { PayableWithStatus } from './api/payables.server'
 import { currencySymbol, sumByCurrency } from './fx'
 import type { FxRates } from './fx'
+import {
+  remainingInstallmentPrincipal,
+  round2,
+  type InstallmentPlanLike,
+} from './api/direction3.shared'
 
 /** Dashboard 页面的纯指标计算与格式化逻辑（从页面抽出，便于 characterization 测试）。 */
 
@@ -44,7 +49,11 @@ export function computeMetrics(
   futureDays: FutureRange,
   targetCurrency: string,
   rates: FxRates | null,
-  payables: PayableWithStatus[] = []
+  payables: PayableWithStatus[] = [],
+  extra: {
+    installments?: InstallmentPlanLike[]
+    loanBills?: BillDashboardItem[]
+  } = {},
 ) {
   // 只统计未还清的账单（§3.4）
   const unpaid = bills.filter(b => b.computed_status !== 'paid')
@@ -78,6 +87,52 @@ export function computeMetrics(
   // 总欠款：当前数据模型仅"普通未还"，分期/贷款暂未接入（§3.2）
   const plainOwedSum = pendingSum
 
+  // 分期未出账剩余本金（按摊销表精确求和，绝不用本金 × 剩余期数比例）
+  const installmentOwedSum = sumByCurrency(
+    (extra.installments ?? []).filter(plan => plan.status === 'active' || plan.status == null),
+    plan => ({
+      amount: round2(remainingInstallmentPrincipal(plan)),
+      currency: plan.currency || targetCurrency,
+    }),
+    targetCurrency,
+    rates,
+  )
+
+  // 贷款口径：loan 卡的未结清账单 + category === 'loan' 的固定支出当期未付余额
+  const loanBillItems = (extra.loanBills ?? []).filter(
+    bill => bill.computed_status !== 'paid' && (bill.remaining_amount || 0) > 0,
+  )
+  const loanPayables = payables.filter(
+    payable => payable.category === 'loan' && payableRemaining(payable) > 0,
+  )
+  const loanOwedSum = sumByCurrency(
+    [
+      ...loanBillItems.map(bill => ({
+        amount: bill.remaining_amount || 0,
+        currency: billCurrency(bill, targetCurrency),
+      })),
+      ...loanPayables.map(payable => ({
+        amount: payableRemaining(payable),
+        currency: payable.currency || targetCurrency,
+      })),
+    ],
+    entry => entry,
+    targetCurrency,
+    rates,
+  )
+
+  // 三项原币合并后统一折算，避免「先折算再相加」在缺汇率时静默丢失口径
+  const totalDebtSum = sumByCurrency(
+    [
+      ...Object.entries(plainOwedSum.by_currency).map(([currency, amount]) => ({ amount, currency })),
+      ...Object.entries(installmentOwedSum.by_currency).map(([currency, amount]) => ({ amount, currency })),
+      ...Object.entries(loanOwedSum.by_currency).map(([currency, amount]) => ({ amount, currency })),
+    ],
+    entry => entry,
+    targetCurrency,
+    rates,
+  )
+
   return {
     totalPending: pendingSum.total,
     overdueAmount: overdueSum.total,
@@ -88,6 +143,9 @@ export function computeMetrics(
     dueTodayPayables,
     dueTodayCount: dueTodayBills.length + dueTodayPayables.length,
     plainOwed: plainOwedSum.total,
+    installmentOwed: round2(installmentOwedSum.total),
+    loanOwed: round2(loanOwedSum.total),
+    totalDebt: round2(totalDebtSum.total),
     unpaidCount: unpaid.length,
     /** 汇率拿到没有：为 false 时下面的合计是不完整的，必须显式标注。 */
     ratesAvailable: rates !== null,
@@ -97,6 +155,9 @@ export function computeMetrics(
       ...overdueSum.unconverted_currencies,
       ...futureSum.unconverted_currencies,
       ...dueTodaySum.unconverted_currencies,
+      ...installmentOwedSum.unconverted_currencies,
+      ...loanOwedSum.unconverted_currencies,
+      ...totalDebtSum.unconverted_currencies,
     ])).sort(),
     fx: {
       pending: pendingSum,
@@ -104,6 +165,9 @@ export function computeMetrics(
       future: futureSum,
       dueToday: dueTodaySum,
       plainOwed: plainOwedSum,
+      installmentOwed: installmentOwedSum,
+      loanOwed: loanOwedSum,
+      totalDebt: totalDebtSum,
     },
     /** 当前口径下是否出现多币种，用于决定要不要展示币种构成。 */
     mixed: pendingSum.mixed,
