@@ -54,6 +54,13 @@ describe('bill item classification and preview', () => {
     expect(rows[2].item).toMatchObject({ currency: 'HKD', item_type: 'refund' })
   })
 
+  it('keeps thousands groups intact and skips an unmatched quote in pasted rows', () => {
+    const rows = parsePastedBillItems('华贸,1,234.50\n"断行,45\n超市,01,234,567.89,购物\n书店,40', { defaultCurrency: 'CNY' })
+    expect(rows.map(row => [row.item.description, row.item.amount])).toEqual([
+      ['华贸', 1234.5], ['超市', 1234567.89], ['书店', 40],
+    ])
+  })
+
   it('handles BOM, quoted line breaks, credit indicators and custom headerless mappings', () => {
     const csv = '\uFEFFDate,Description,Amount,Debit/Credit,Currency,Category\r\n' +
       '2027-01-02,"Coffee, ""East""\nMall",38,Debit,USD,餐饮\r\n01/03,Refund,"(1,234.56)",Credit,,'

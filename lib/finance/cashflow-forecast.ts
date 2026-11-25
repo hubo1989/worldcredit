@@ -91,7 +91,9 @@ function forecastBuckets(baseDate: string, horizonDays: CashflowHorizon) {
   }))
   const endDate = shiftDate(baseDate, horizonDays)
   const months = []
-  for (let month = baseDate.slice(0, 7); month <= endDate.slice(0, 7); month = addMonthsToPayablePeriod(month, 1)) {
+  let month = baseDate.slice(0, 7)
+  // A 90-day horizon can touch at most five calendar months.
+  for (let index = 0; index < 5 && month <= endDate.slice(0, 7); index++, month = addMonthsToPayablePeriod(month, 1)) {
     months.push({
       label: month,
       start_date: month + '-01',

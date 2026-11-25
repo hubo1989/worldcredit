@@ -99,6 +99,20 @@ describe('direction 3 migrations and offline changes', () => {
     })
   })
 
+  it('preserves a historical line item and its masked tail when its optional card reference is stale', async () => {
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      INSERT INTO bill_items (id, bill_id, card_id, card_tail, description, amount)
+      VALUES ('old-orphan-card', 'billA', 'deleted-card', '1111', 'legacy purchase', 9);
+      PRAGMA foreign_keys = ON;
+    `)
+    apply(direction3)
+    expect(await getBillItems('billA')).toMatchObject([
+      { id: 'old-orphan-card', card_id: null, card_tail: '1111', amount: 9 },
+    ])
+    expect(await db.prepare('PRAGMA foreign_key_check').all()).toMatchObject({ results: [] })
+  })
+
   it('enforces signed amounts, standard categories and valid installment fields', async () => {
     apply(direction3)
     const insert = (type: string, amount: number, category: string | null) =>
