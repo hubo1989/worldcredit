@@ -349,3 +349,183 @@ describe("多 Gmail 连接（HUB-156）", () => {
     );
   });
 });
+
+// ─── HUB-158 QA 返工 P1-2 / P1-3 回归 ───────────────────────────────────
+// P1-2：批量同步时每轮必须锁定本轮连接，OAuth 替身记录 refresh_token 以确认
+//        A、B 各用各的授权（修复前两次都落到最老的 A 上）。
+// P1-3：解绑 A 必须清掉新旧格式 raw_r2_key 与对应 R2 对象，且绝不动 B。
+describe("HUB-158 QA 返工 P1-2/P1-3", () => {
+  let db: ReturnType<typeof createOpportunityDb>;
+  let seenRefreshTokens: string[];
+  let deletedKeys: string[];
+  let objects: Map<string, Uint8Array>;
+
+  const trackingBucket = () => ({
+    async delete(key: string) {
+      objects.delete(key);
+      deletedKeys.push(key);
+    },
+    async list(opts: { prefix?: string; cursor?: string } = {}) {
+      const keys = [...objects.keys()].filter(key => !opts.prefix || key.startsWith(opts.prefix));
+      return { objects: keys.map(key => ({ key })), truncated: false };
+    },
+  });
+
+  async function seedConn(id: string, userId: string, email: string) {
+    const enc = await encryptToken("rt-" + id, SECRET);
+    await db
+      .prepare(
+        `INSERT INTO gmail_connections
+           (id, user_id, google_sub, email, refresh_token_enc, scopes, sync_enabled, status)
+         VALUES (?,?,?,?,?,?,1,'active')`,
+      )
+      .bind(id, userId, "sub-" + id, email, enc, "gmail.readonly")
+      .run();
+  }
+
+  beforeEach(async () => {
+    db = createOpportunityDb();
+    ensureHub156Schema(db);
+    setDb(db as unknown as D1Database);
+    await db
+      .prepare(
+        "INSERT INTO users (id, email, password_hash) VALUES ('u_ios_gmail', 'ios@example.com', 'x')",
+      )
+      .run();
+    seenRefreshTokens = [];
+    deletedKeys = [];
+    objects = new Map();
+    setWorkerEnv({
+      SESSION_SECRET: SECRET,
+      GOOGLE_CLIENT_ID: "cid",
+      GOOGLE_CLIENT_SECRET: "cs",
+      ATTACHMENTS: trackingBucket(),
+    });
+  });
+
+  afterEach(() => {
+    __setGmailSyncDeps(null);
+    __setGmailConnectDeps(null);
+    setWorkerEnv({ SESSION_SECRET: SECRET, GOOGLE_CLIENT_ID: "cid", GOOGLE_CLIENT_SECRET: "cs" });
+    setDb(null);
+    db.close();
+  });
+
+  it("P1-2 批量同步 A、B 各使用自己的 OAuth 授权（不再重复用 A）", async () => {
+    await seedConn("gconn_a", "u_ios_gmail", "a@example.com");
+    await seedConn("gconn_b", "u_ios_gmail", "b@example.com");
+
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("oauth2.googleapis.com/token")) {
+        const params = new URLSearchParams(String(init?.body ?? ""));
+        seenRefreshTokens.push(params.get("refresh_token") ?? "");
+        return Response.json({ access_token: "at", expires_in: 3600 });
+      }
+      return Response.json({ messages: [] });
+    }) as unknown as typeof fetch;
+
+    __setGmailSyncDeps({
+      parse: async () => ({ is_bill: false }),
+      fetchImpl,
+      sessionSecret: SECRET,
+    });
+
+    const all = await syncGmailConnection({}, "u_ios_gmail");
+    expect(all.connections.map(item => item.id).sort()).toEqual(["gconn_a", "gconn_b"]);
+    // 修复前为 ['rt-gconn_a','rt-gconn_a']；修复后两条连接各用各的 refresh token。
+    expect(seenRefreshTokens).toHaveLength(2);
+    expect(seenRefreshTokens.slice().sort()).toEqual(["rt-gconn_a", "rt-gconn_b"]);
+  });
+
+  it("P1-3 解绑 A 清理新旧格式 raw_r2_key 与 R2 对象，B 的记录与对象不动", async () => {
+    await seedConn("gconn_a", "u_ios_gmail", "a@example.com");
+    await seedConn("gconn_b", "u_ios_gmail", "b@example.com");
+
+    const legacyA = "gmail-raw/u_ios_gmail/legacy-a.eml"; // 迁移前旧格式：无 connectionId 段
+    const newA = "gmail-raw/u_ios_gmail/gconn_a/new-a.eml";
+    const orphanA = "gmail-raw/u_ios_gmail/gconn_a/orphan-a.eml";
+    const keyB = "gmail-raw/u_ios_gmail/gconn_b/b.eml";
+    objects.set(legacyA, new Uint8Array([1]));
+    objects.set(newA, new Uint8Array([2]));
+    objects.set(orphanA, new Uint8Array([4]));
+    objects.set(keyB, new Uint8Array([3]));
+
+    const insert = db.prepare(
+      `INSERT INTO gmail_sync_messages
+         (id, connection_id, gmail_message_id, user_id, raw_r2_key, status)
+       VALUES (?,?,?,?,?,?)`,
+    );
+    await insert.bind("m_a_legacy", "gconn_a", "gm-a1", "u_ios_gmail", legacyA, "skipped").run();
+    await insert.bind("m_a_new", "gconn_a", "gm-a2", "u_ios_gmail", newA, "skipped").run();
+    await insert.bind("m_b", "gconn_b", "gm-b1", "u_ios_gmail", keyB, "skipped").run();
+
+    const result = await disconnectGmailConnection("gconn_a", "u_ios_gmail");
+    expect(result.ok).toBe(true);
+
+    // 旧格式键（不在新前缀里）与新格式键都已被删。
+    expect(deletedKeys).toContain(legacyA);
+    expect(deletedKeys).toContain(newA);
+    expect(deletedKeys).toContain(orphanA);
+    // B 的对象没被删、仍在库里。
+    expect(deletedKeys).not.toContain(keyB);
+    expect(objects.has(keyB)).toBe(true);
+
+    // A 的审计引用被清空（删连接会触发 connection_id ON DELETE SET NULL，
+    // 因此必须先按 connection_id 清引用再删；修复前引用会永久残留）。
+    const rows = await db
+      .prepare("SELECT gmail_message_id, raw_r2_key FROM gmail_sync_messages")
+      .all<{ gmail_message_id: string; raw_r2_key: string | null }>();
+    const byId = new Map((rows.results ?? []).map(row => [row.gmail_message_id, row.raw_r2_key]));
+    expect(byId.get("gm-a1")).toBeNull();
+    expect(byId.get("gm-a2")).toBeNull();
+    expect(byId.get("gm-b1")).toBe(keyB);
+
+    // 只删了 A 连接，B 仍在。
+    expect((await getGmailConnections("u_ios_gmail")).map(item => item.id)).toEqual(["gconn_b"]);
+  });
+
+  it("P1-3 R2 删除失败时整体抛出，连接与引用都保留以供重试", async () => {
+    await seedConn("gconn_a", "u_ios_gmail", "a@example.com");
+    const keyA = "gmail-raw/u_ios_gmail/gconn_a/a.eml";
+    objects.set(keyA, new Uint8Array([1]));
+    await db
+      .prepare(
+        `INSERT INTO gmail_sync_messages
+           (id, connection_id, gmail_message_id, user_id, raw_r2_key, status)
+         VALUES (?,?,?,?,?,?)`,
+      )
+      .bind("m_a", "gconn_a", "gm-a1", "u_ios_gmail", keyA, "skipped")
+      .run();
+
+    setWorkerEnv({
+      SESSION_SECRET: SECRET,
+      GOOGLE_CLIENT_ID: "cid",
+      GOOGLE_CLIENT_SECRET: "cs",
+      ATTACHMENTS: {
+        async delete() {
+          throw new Error("R2 unavailable");
+        },
+        async list() {
+          return { objects: [], truncated: false };
+        },
+      },
+    });
+
+    await expect(disconnectGmailConnection("gconn_a", "u_ios_gmail")).rejects.toThrow();
+    // 连接未被删、引用未被清空，下次解绑可原样重试。
+    expect((await getGmailConnections("u_ios_gmail")).map(item => item.id)).toEqual(["gconn_a"]);
+    const row = await db
+      .prepare("SELECT raw_r2_key FROM gmail_sync_messages WHERE id = 'm_a'")
+      .first<{ raw_r2_key: string | null }>();
+    expect(row?.raw_r2_key).toBe(keyA);
+
+    setWorkerEnv({ ATTACHMENTS: trackingBucket() });
+    await expect(disconnectGmailConnection("gconn_a", "u_ios_gmail"))
+      .resolves.toEqual({ ok: true, id: "gconn_a" });
+    expect(objects.has(keyA)).toBe(false);
+    const cleaned = await db.prepare("SELECT connection_id, raw_r2_key FROM gmail_sync_messages WHERE id = 'm_a'")
+      .first();
+    expect(cleaned).toEqual({ connection_id: null, raw_r2_key: null });
+  });
+});

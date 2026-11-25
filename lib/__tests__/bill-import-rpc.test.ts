@@ -10,8 +10,16 @@
 // 解密与多模态解析由 HUB-155 的 lib/email-core 提供，这里通过
 // __setPdfDecryptorForTests / __setBillImportCoreParserForTests 注入，只验证编排契约。
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { createOpportunityDb, type SqliteD1 } from './helpers/sqlite-d1'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { PDFDocument } from 'pdf-lib'
+import {
+  createOpportunityDb,
+  createSqliteD1,
+  SQLITE_D1_MIGRATIONS_DIR,
+  type SqliteD1,
+} from './helpers/sqlite-d1'
 import { ensureHub156Schema } from './helpers/hub156-schema'
 import { setDb, setWorkerEnv } from '../db/client'
 import { MemberScopeError } from '../api/member-scope'
@@ -30,6 +38,7 @@ import {
 import {
   __setPdfDecryptorForTests,
   __setBillImportCoreParserForTests,
+  runPdfDecrypt,
   type BillImportCoreParser,
 } from '../api/bill-import-core.server'
 import {
@@ -89,6 +98,23 @@ class FakeBucket {
 }
 
 const SECRET = 'hub156-test-secret'
+
+/**
+ * HUB-158 QA P2-4：只加载 0001–0033 的「迁移前」库。
+ * createOpportunityDb() 默认加载全部迁移（合入 HUB-155 后含 0034–0036），
+ * 会让「迁移前降级」场景误以为列已存在。这里显式按文件名前缀固定迁移上限，
+ * 与真实部署「0034–0036 尚未落地」的库形状一致。
+ */
+function createPreMigrationDb(): SqliteD1 {
+  const bare = createSqliteD1()
+  const files = readdirSync(SQLITE_D1_MIGRATIONS_DIR)
+    .filter(name => name.endsWith('.sql') && name.slice(0, 4) <= '0033')
+    .sort()
+  for (const file of files) {
+    bare.exec(readFileSync(join(SQLITE_D1_MIGRATIONS_DIR, file), 'utf8'))
+  }
+  return bare
+}
 
 let db: SqliteD1
 let bucket: FakeBucket
@@ -233,7 +259,9 @@ describe('billDrafts.importAndParseBill', () => {
     expect(result.drafts[0].parsed_payload.is_bill).toBe(false)
   })
 
-  it('多模态内核缺失时图片导入落 parse_failed，绝不伪造成功', async () => {
+  it('真实内核解析失败时图片导入落 parse_failed，绝不伪造成功', async () => {
+    // 8 字节伪 PNG（只有 magic header）：接入 HUB-155 后会走真实
+    // parseMultimodalStatement，未配置 AI Key 时返回 parse_failed 而非伪造 ready 草稿。
     await bucket.put('draft-files/u1/d1/a.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), {
       httpMetadata: { contentType: 'image/png' },
     })
@@ -251,7 +279,10 @@ describe('billDrafts.importAndParseBill', () => {
     })
     expect(result.outcome).toBe('parse_failed')
     expect(result.drafts[0].parse_status).toBe('parse_failed')
-    expect(result.drafts[0].error_message).toContain('图片')
+    expect(result.drafts[0].error_message).toBeTruthy()
+    // 红线：解析失败绝不产出可入账字段 / 正置信度。
+    expect(result.drafts[0].confidence).toBe(0)
+    expect(result.drafts[0].parsed_payload.bill_amount ?? null).toBeNull()
   })
 
   it('缺少文本与附件 → VALIDATION_FAILED；超长文本 → VALIDATION_FAILED', async () => {
@@ -584,7 +615,8 @@ describe('0034–0036 未落地时的降级', () => {
   let bareDb: SqliteD1
 
   beforeEach(async () => {
-    bareDb = createOpportunityDb()
+    // P2-4：固定只加载 0001–0033，绝不因合入 HUB-155 的迁移而改变本场景前提。
+    bareDb = createPreMigrationDb()
     setDb(bareDb as unknown as D1Database)
     setWorkerEnv({ SESSION_SECRET: SECRET, ATTACHMENTS: new FakeBucket() })
     await bareDb.exec(`
@@ -743,5 +775,207 @@ describe('附件上传与读取的越权边界', () => {
       .prepare('SELECT COUNT(*) AS n FROM record_attachments WHERE id = ?')
       .get(attachmentId) as { n: number }
     expect(Number(row.n)).toBe(1)
+  })
+})
+
+// ─── HUB-158 QA 返工 P1-1：真实多模态内核接线 ──────────────────────────
+// 合入 HUB-155（PR #68）后，lib/email-core 的 parseMultimodalStatement /
+// decryptPDF / 密码本必须真正接入 bill-import-core.server.ts。这里用
+// email-worker/__tests__/fixtures 下的真实加密 PDF 样本 + AI fetch 替身，
+// 验证「不再 parse_failed、模型被调用、needs_password、密码本自动解锁、
+// 双币拆分、原位解锁、确认写账」全链路，杜绝 unsupportedBinary / unsupported 兜底。
+const FIXTURE_PWD = 'fixture-7491'
+function realFixture(name: string): Uint8Array {
+  return new Uint8Array(
+    readFileSync(new URL(`../../email-worker/__tests__/fixtures/statement-${name}.pdf`, import.meta.url)),
+  )
+}
+
+describe('HUB-158 P1-1 真实多模态内核接线', () => {
+  let currentEnvelope: Record<string, unknown>
+  let aiFetch: typeof fetch
+
+  const singleEnvelope = () => ({
+    is_bill: true,
+    email_kind: 'statement',
+    statements: [
+      {
+        currency: 'CNY', bill_amount: 300, bill_month: '2026-10',
+        due_date: '2026-11-10', due_date_status: 'exact', confidence: 0.9, card_last4: '8888',
+      },
+    ],
+  })
+
+  beforeEach(() => {
+    // loadAiConfig 需要一个非空 apiKey，requestBillJson 才会真正发出模型请求。
+    db.exec(`INSERT INTO system_settings (key, value) VALUES ('ai_api_key', '"test-key"')`)
+    currentEnvelope = singleEnvelope()
+    aiFetch = vi.fn<typeof fetch>(async () => new Response(
+      JSON.stringify({ choices: [{ message: { content: JSON.stringify(currentEnvelope) } }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', aiFetch)
+    // 明确确保走真实内核，而非任何残留测试替身。
+    __setPdfDecryptorForTests(null)
+    __setBillImportCoreParserForTests(null)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  async function seedPdf(id: string, recordId: string, bytes: Uint8Array): Promise<string> {
+    const storagePath = `draft-files/u1/${recordId}/statement.pdf`
+    await bucket.put(storagePath, bytes, { httpMetadata: { contentType: 'application/pdf' } })
+    await db.exec(`
+      INSERT INTO record_attachments
+        (id, record_type, record_id, bucket, storage_path, file_name, file_type, file_size,
+         uploaded_by, sha256, created_at)
+      VALUES ('${id}', 'draft', '${recordId}', 'record-attachments', '${storagePath}',
+              'statement.pdf', 'application/pdf', ${bytes.length}, 'u1', 'sha_${id}',
+              '2026-11-01T00:00:00Z');
+    `)
+    return storagePath
+  }
+
+  it('runPdfDecrypt 接真实 decryptPDF：AES-128 正确密码解密、错误密码 wrong_password', async () => {
+    const enc = realFixture('aes-128')
+    const ok = await runPdfDecrypt(enc, FIXTURE_PWD)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect((await PDFDocument.load(ok.bytes)).isEncrypted).toBe(false)
+    expect(await runPdfDecrypt(enc, 'wrong-password')).toEqual({ ok: false, reason: 'wrong_password' })
+  })
+
+  it('通过 iOS 分享导入双币 PDF，幂等重放并按原币确认两笔账单', async () => {
+    currentEnvelope = {
+      ...singleEnvelope(),
+      statements: [
+        ...singleEnvelope().statements,
+        { currency: 'USD', bill_amount: 42, bill_month: '2026-10', due_date: '2026-11-10', due_date_status: 'exact', confidence: 0.8 },
+      ],
+    }
+    const plain = await runPdfDecrypt(realFixture('aes-128'), FIXTURE_PWD)
+    if (!plain.ok) throw new Error('Fixture decrypt failed')
+    await seedPdf('att_dual', 'd_dual', plain.bytes)
+    const input = {
+      user_id: 'u1', source_type: 'share_ios' as const, attachment_ids: ['att_dual'],
+      client_request_id: 'dual-currency', card_id: 'cc_8888',
+    }
+    const result = await importAndParseBill(input)
+    expect(result.outcome).toBe('drafts_created')
+    const [cny, usd] = result.drafts
+    expect(result.drafts.map(draft => [
+      draft.parsed_payload.currency, draft.parsed_payload.bill_amount, draft.card_id, draft.confidence,
+    ])).toEqual([['CNY', 300, 'cc_8888', 0.9], ['USD', 42, null, 0.8]])
+    expect(cny.batch_id).toBeTruthy()
+    expect(usd.batch_id).toBe(cny.batch_id)
+    expect(usd.file_ref).toBe(cny.file_ref)
+    const replay = await importAndParseBill(input)
+    expect(replay.outcome).toBe('duplicate_file')
+    expect(replay.drafts.map(draft => draft.id)).toEqual([cny.id, usd.id])
+    expect(aiFetch).toHaveBeenCalledTimes(1)
+    expect(db.raw.prepare('SELECT id FROM bills').all()).toEqual([])
+
+    await db.exec(`
+      INSERT INTO card_products (id, bank_id, bank_name, card_name, currency, payment_due_type, payment_due_value)
+      VALUES ('cp_usd', 'b_cmb', '招商银行', '美元卡', 'USD', 'after_billing', 20);
+      INSERT INTO credit_cards (id, holder_id, card_product_id, card_number_last4, billing_day)
+      VALUES ('cc_usd', 'h1', 'cp_usd', '7777', 15);
+    `)
+    expect((await confirmBillImportDraft(cny.id, undefined, 'u1')).bill_amount).toBe(300)
+    expect(db.raw.prepare("SELECT record_type FROM record_attachments WHERE id = 'att_dual'").get())
+      .toEqual({ record_type: 'draft' })
+    await updateBillImportDraft(usd.id, { card_id: 'cc_usd' }, 'u1')
+    expect((await confirmBillImportDraft(usd.id, undefined, 'u1')).bill_amount).toBe(42)
+  })
+
+  it('账单截图进入模型的 image_url 通道', async () => {
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aQeQAAAAASUVORK5CYII=', 'base64',
+    )
+    await bucket.put('draft-files/u1/image/statement.png', png)
+    db.exec(`INSERT INTO record_attachments
+      (id, record_type, record_id, bucket, storage_path, file_name, file_type, file_size, uploaded_by)
+      VALUES ('att_img', 'draft', 'd_img', 'record-attachments',
+        'draft-files/u1/image/statement.png', 'statement.png', 'image/png', ${png.length}, 'u1')`)
+    const result = await importAndParseBill({ user_id: 'u1', source_type: 'image', attachment_ids: ['att_img'] })
+    expect(result.outcome).toBe('drafts_created')
+    expect(result.drafts[0].parse_status).toBe('ready')
+    expect(aiFetch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      body: expect.stringContaining('data:image/png;base64,'),
+    }))
+  })
+
+  it('明文 PDF 导入 → ready 草稿 + 模型被调用 + 确认写账', async () => {
+    const plain = await runPdfDecrypt(realFixture('aes-128'), FIXTURE_PWD)
+    await seedPdf('att_plain', 'd_plain', plain.ok ? plain.bytes : new Uint8Array())
+    const result = await importAndParseBill({
+      user_id: 'u1', source_type: 'pdf', attachment_ids: ['att_plain'], card_id: 'cc_8888',
+    })
+    expect(result.outcome).toBe('drafts_created')
+    expect(aiFetch).toHaveBeenCalled()
+    const draft = result.drafts[0]
+    expect(draft.parse_status).toBe('ready')
+    expect(draft.parsed_payload.bill_amount).toBe(300)
+    const bill = await confirmBillImportDraft(draft.id, undefined, 'u1')
+    expect(Number(bill.bill_amount)).toBe(300)
+  })
+
+  it('加密 PDF 无密码、无密码本 → needs_password 草稿', async () => {
+    await seedPdf('att_enc', 'd_enc', realFixture('aes-128'))
+    const result = await importAndParseBill({
+      user_id: 'u1', source_type: 'pdf', attachment_ids: ['att_enc'],
+    })
+    expect(result.outcome).toBe('needs_password')
+    expect(result.drafts[0].parse_status).toBe('needs_password')
+  })
+
+  it('加密 PDF + 密码本规则 → 内核自动解锁（密码本映射）→ ready', async () => {
+    await createPasswordRule({
+      user_id: 'u1', label: '招行月结单', holder_id: 'h1', bank_id: 'b_cmb', password: FIXTURE_PWD,
+    })
+    await seedPdf('att_vault', 'd_vault', realFixture('aes-128'))
+    const result = await importAndParseBill({
+      user_id: 'u1', source_type: 'pdf', attachment_ids: ['att_vault'], card_id: 'cc_8888',
+    })
+    expect(result.outcome).toBe('drafts_created')
+    expect(aiFetch).toHaveBeenCalled()
+    expect(result.drafts[0].parse_status).toBe('ready')
+    expect((await listPasswordRules('u1'))[0].use_count).toBe(1)
+  })
+
+  it('加密 PDF 原位解锁后一次落地两种币种草稿', async () => {
+    currentEnvelope = {
+      ...singleEnvelope(),
+      statements: [
+        { currency: 'USD', bill_amount: 42, bill_month: '2026-10', due_date: '2026-11-10', due_date_status: 'exact' },
+        ...singleEnvelope().statements,
+      ],
+    }
+    const enc = realFixture('aes-128')
+    const storagePath = 'draft-files/u1/draft_real/x.pdf'
+    await bucket.put(storagePath, enc, { httpMetadata: { contentType: 'application/pdf' } })
+    await db.exec(`
+      INSERT INTO bill_import_drafts
+        (id, created_by, card_id, source_type, raw_text, file_ref, parsed_payload, status,
+         parse_status, confidence, created_at)
+      VALUES ('draft_real', 'u1', 'cc_8888', 'pdf', NULL, 'att_real',
+              '{"is_bill":true,"warnings":["已加密"]}', 'draft', 'needs_password', NULL,
+              '2026-11-01T00:00:00Z');
+      INSERT INTO record_attachments
+        (id, record_type, record_id, bucket, storage_path, file_name, file_type, file_size,
+         uploaded_by, sha256, created_at)
+      VALUES ('att_real', 'draft', 'draft_real', 'record-attachments', '${storagePath}',
+              'x.pdf', 'application/pdf', ${enc.length}, 'u1', 'sha_real',
+              '2026-11-01T00:00:00Z');
+    `)
+    const result = await unlockEncryptedDraft('draft_real', { password: FIXTURE_PWD }, 'u1')
+    expect(result.drafts.map(draft => [draft.parse_status, draft.parsed_payload.currency, draft.card_id]))
+      .toEqual([['ready', 'CNY', 'cc_8888'], ['ready', 'USD', null]])
+    expect(new Set(result.drafts.map(draft => draft.batch_id)).size).toBe(1)
+    expect(new Set(result.drafts.map(draft => draft.file_ref))).toEqual(new Set(['att_real']))
+    const stored = bucket.objects.get(storagePath)
+    expect(stored).toBeDefined()
+    expect((await PDFDocument.load(stored!.bytes)).isEncrypted).toBe(false)
   })
 })

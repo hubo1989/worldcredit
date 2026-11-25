@@ -1,16 +1,16 @@
-// lib/api/bill-import-core.server.ts — API 层与共享解析内核（lib/email-core）的接缝。
-//
-// HUB-154 §3.1 规定 `billDrafts.importAndParseBill` 只做「取件 → 委托解析 → 落草稿」，
-// 真正的 PDF 解密/多模态解析由 lib/email-core 提供（HUB-155 交付）。在多模态管道
-// 合入前，这里给出两条真实可用的降级路径，而不是把图片/PDF 伪装成解析成功：
-//   1) 纯文本 + 已配置 AI Key → lib/email-core/ai.parseBillWithAI；
-//   2) 纯文本 + 无 AI Key   → lib/billRecognizer 离线正则，confidence 固定 0.3（HUB-154 §3.3）。
-// 图片 / PDF 在内核缺失时明确返回 parse_failed，绝不产出看似可入账的草稿。
-//
-// HUB-155 合入后只需调用 registerBillImportCoreParser() 指向新管道，API 层无需改动。
+// 将手动导入交给共享账单解析器，并保留无 AI 配置的纯文本兜底。
 
-import { getDb } from '../db/client'
+import { queryOne } from '../db/helpers'
+import { getDb, getWorkerEnv } from '../db/client'
 import { loadAiConfig, parseBillWithAI } from '../email-core/ai'
+import {
+  parseMultimodalStatement,
+  type StatementFile,
+  type StatementParseOutcome,
+} from '../email-core/multimodal'
+import { decryptPDF, hasPdfHeader, type PdfDecryptResult } from '../email-core/pdf'
+import type { ParsedStatementItem } from '../email-core/types'
+import { tableColumns } from './schema-columns.server'
 import { recognizeBillFromText } from '../billRecognizer'
 import type { BillDraftPayload } from './billDrafts.server'
 
@@ -30,6 +30,8 @@ export interface BillImportCoreRequest {
   rawText: string | null
   attachments: BillImportCoreAttachment[]
   pdfPassword: string | null
+  holderId?: string | null
+  cardId?: string | null
   /** 上一次解析失败的原因，供内核决定是否值得重试。 */
   previousError?: string | null
 }
@@ -48,14 +50,6 @@ export interface BillImportCoreResult {
 export type BillImportCoreParser = (req: BillImportCoreRequest) => Promise<BillImportCoreResult>
 
 let coreParserOverride: BillImportCoreParser | null = null
-
-/**
- * 注册 lib/email-core 的多模态管道。生产代码在 HUB-155 合入后于模块加载时调用一次；
- * 测试用 __setBillImportCoreParserForTests 直接注入。
- */
-export function registerBillImportCoreParser(parser: BillImportCoreParser | null): void {
-  coreParserOverride = parser
-}
 
 export function __setBillImportCoreParserForTests(parser: BillImportCoreParser | null): void {
   coreParserOverride = parser
@@ -76,47 +70,26 @@ function emptyResult(parser: BillImportCoreParserKind): BillImportCoreResult {
   }
 }
 
-/** 把 email-core 的 BillParseResult 折算成草稿 payload（字段同名，只做补全）。 */
-function toStatementPayload(parsed: Record<string, unknown>): BillDraftPayload {
-  const payload: BillDraftPayload = {
-    is_bill: parsed.is_bill !== false,
-    email_kind: (parsed.email_kind as BillDraftPayload['email_kind']) ?? null,
-    bank_name: (parsed.bank_name as string | null) ?? null,
-    card_last4: (parsed.card_last4 as string | null) ?? null,
-    currency: (parsed.currency as string | undefined) ?? 'CNY',
-    bill_month: (parsed.bill_month as string | undefined) ?? undefined,
-    statement_start: (parsed.statement_start as string | undefined) ?? undefined,
-    statement_end: (parsed.statement_end as string | undefined) ?? undefined,
-    statement_date: (parsed.statement_date as string | null | undefined) ?? undefined,
-    statement_day: (parsed.statement_day as number | null | undefined) ?? null,
-    bill_amount: (parsed.bill_amount as number | null | undefined) ?? null,
-    min_payment: (parsed.min_payment as number | null | undefined) ?? null,
-    credit_limit: (parsed.credit_limit as number | null | undefined) ?? null,
-    due_date: (parsed.due_date as string | null | undefined) ?? null,
-    due_date_status:
-      (parsed.due_date_status as BillDraftPayload['due_date_status']) ?? 'missing',
-    holder_hint: (parsed.holder_hint as string | null | undefined) ?? null,
-    card_subtotals: parsed.card_subtotals as BillDraftPayload['card_subtotals'],
-    items: parsed.items as BillDraftPayload['items'],
-    warnings: [],
+/** 把 email-core 的解析项折算成草稿 payload（字段同名，只做补全）。 */
+function toStatementPayload(parsed: ParsedStatementItem): BillDraftPayload {
+  return {
+    ...parsed,
+    bank_name: parsed.bank_name ?? null,
+    card_last4: parsed.card_last4 ?? null,
+    bill_month: parsed.bill_month ?? parsed.statement_date?.slice(0, 7) ?? parsed.due_date?.slice(0, 7),
+    statement_date: parsed.statement_date ?? undefined,
+    bill_amount: parsed.bill_amount ?? null,
+    due_date_status: parsed.due_date_status ?? 'missing',
+    items: parsed.items?.map(item => ({ ...item, item_type: item.item_type ?? 'purchase' })),
+    warnings: parsed.warnings ?? [],
   }
-  if (!payload.bill_month && payload.statement_date) {
-    payload.bill_month = payload.statement_date.slice(0, 7)
-  }
-  if (!payload.bill_month && payload.due_date) {
-    payload.bill_month = payload.due_date.slice(0, 7)
-  }
-  return payload
 }
 
 async function parseWithTextLlm(req: BillImportCoreRequest): Promise<BillImportCoreResult> {
   const config = await loadAiConfig(getDb())
   if (!config.apiKey) return emptyResult('none')
 
-  const parsed = (await parseBillWithAI(config, req.rawText ?? '')) as unknown as Record<
-    string,
-    unknown
-  >
+  const parsed = await parseBillWithAI(config, req.rawText ?? '')
   const payload = toStatementPayload(parsed)
   const result = emptyResult('ai_text')
   result.statements = [payload]
@@ -142,19 +115,86 @@ function parseWithOfflineRecognizer(req: BillImportCoreRequest): BillImportCoreR
   return result
 }
 
-/**
- * 图片 / PDF 必须走多模态内核；内核未注册时返回 parse_failed 而不是空草稿，
- * 让上层把「解析不了」与「不是账单」区分开。
- */
-function unsupportedBinary(req: BillImportCoreRequest): BillImportCoreResult {
-  const result = emptyResult('none')
-  result.error = `服务端尚未启用${req.sourceType === 'pdf' ? ' PDF' : '图片'}多模态解析，请改用文本粘贴或先由邮箱通道导入`
+function toStatementFile(att: BillImportCoreAttachment): StatementFile {
+  return {
+    bytes: att.bytes,
+    contentType: att.contentType,
+    filename: att.fileName,
+  }
+}
+
+async function parseWithMultimodalCore(
+  req: BillImportCoreRequest,
+): Promise<BillImportCoreResult> {
+  const db = getDb()
+  const env = getWorkerEnv() as { SESSION_SECRET?: string; IMAGES?: Pick<ImagesBinding, 'input'> }
+  const pdf = req.attachments.find(att => hasPdfHeader(att.bytes) || att.contentType === 'application/pdf')
+  const context = [req.rawText, ...req.attachments.map(att => att.fileName)].filter(Boolean).join('\n')
+
+  const result = emptyResult('core')
+  let outcome: StatementParseOutcome
+  try {
+    // A pre-0034 database still supports manual passwords.
+    const secret = pdf && env.SESSION_SECRET && (await tableColumns('statement_password_vault')).has('user_id')
+      ? env.SESSION_SECRET : undefined
+    const { data: card, error: cardError } = secret && req.cardId
+      ? await queryOne<{ holder_id: string; bank_id: string | null }>(
+        `SELECT cc.holder_id, cp.bank_id FROM credit_cards cc
+         LEFT JOIN card_products cp ON cp.id = cc.card_product_id WHERE cc.id = ?`,
+        [req.cardId],
+      )
+      : { data: null, error: null }
+    if (cardError) throw new Error(cardError.message)
+    const { data: bank, error: bankError } = secret && !card?.bank_id && context
+      ? await queryOne<{ id: string }>(
+        `SELECT id FROM banks WHERE instr(?, lower(name)) > 0
+         OR (trim(COALESCE(short_name, '')) <> '' AND instr(?, lower(short_name)) > 0)
+         ORDER BY length(name) DESC, id LIMIT 1`,
+        [context.toLowerCase(), context.toLowerCase()],
+      )
+      : { data: null, error: null }
+    if (bankError) throw new Error(bankError.message)
+
+    outcome = await parseMultimodalStatement({
+      config: await loadAiConfig(db),
+      userId: req.userId,
+      db,
+      secret,
+      adhocPassword: req.pdfPassword,
+      holderId: req.holderId ?? card?.holder_id,
+      bankId: card?.bank_id ?? bank?.id,
+      context,
+      text: req.rawText,
+      pdf: pdf && toStatementFile(pdf),
+      images: pdf ? undefined : req.attachments.map(toStatementFile),
+      imagesBinding: env.IMAGES,
+    })
+  } catch {
+    result.error = '账单解析失败，请稍后重试'
+    return result
+  }
+
+  if (outcome.status === 'needs_password') {
+    result.needsPassword = true
+    result.passwordHint = outcome.suggestedHint
+    return result
+  }
+  if (outcome.status === 'parse_failed') {
+    result.error = outcome.error
+    return result
+  }
+  result.isBill = outcome.envelope.is_bill
+  if (!result.isBill) {
+    result.nonBillReason = outcome.envelope.non_bill_reason ?? '未识别到可入账的账单要素'
+    return result
+  }
+  result.statements = outcome.envelope.statements.map(toStatementPayload)
   return result
 }
 
 async function defaultParser(req: BillImportCoreRequest): Promise<BillImportCoreResult> {
   if (req.attachments.length > 0 && req.sourceType !== 'text') {
-    return unsupportedBinary(req)
+    return parseWithMultimodalCore(req)
   }
   if (!req.rawText || !req.rawText.trim()) {
     const result = emptyResult('none')
@@ -178,26 +218,12 @@ export async function runBillImportCore(req: BillImportCoreRequest): Promise<Bil
   return parser(req)
 }
 
-// ─── PDF 解密接缝 ────────────────────────────────────────────
-// @pdfsmaller/pdf-decrypt + unpdf 属于 HUB-155 的依赖变更范围，本模块不能引入。
-// 解密算法由内核注册；未注册时明确返回 unsupported，让 unlockEncryptedDraft
-// 抛可读的 400，而不是伪造「解锁成功」。
-
-export type PdfDecryptResult =
-  | { ok: true; bytes: Uint8Array }
-  | { ok: false; reason: 'wrong_password' | 'unsupported' }
-
 export type PdfDecryptor = (
   bytes: Uint8Array,
   password: string,
 ) => Promise<PdfDecryptResult>
 
 let pdfDecryptorOverride: PdfDecryptor | null = null
-
-/** 生产代码在 HUB-155 合入后指向 lib/email-core/pdf.ts 的 decryptPDF。 */
-export function registerPdfDecryptor(decryptor: PdfDecryptor | null): void {
-  pdfDecryptorOverride = decryptor
-}
 
 export function __setPdfDecryptorForTests(decryptor: PdfDecryptor | null): void {
   pdfDecryptorOverride = decryptor
@@ -206,5 +232,5 @@ export function __setPdfDecryptorForTests(decryptor: PdfDecryptor | null): void 
 export async function runPdfDecrypt(bytes: Uint8Array, password: string): Promise<PdfDecryptResult> {
   if (!password) return { ok: false, reason: 'wrong_password' }
   if (pdfDecryptorOverride) return pdfDecryptorOverride(bytes, password)
-  return { ok: false, reason: 'unsupported' }
+  return decryptPDF(bytes, password)
 }

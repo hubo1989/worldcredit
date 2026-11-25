@@ -9,7 +9,7 @@
 //   2) 确认入账时同卡同月已存在账单 → 409 CONFLICT + reason=DUPLICATE_BILL，
 //      绝不静默覆盖，也绝不写 bill_amount_override（spec 13 的钉住列）。
 
-import { query, queryOne, execute, uuid, now } from '../db'
+import { query, queryOne, execute, batch, uuid, now } from '../db'
 import { getWorkerEnv } from '../db/client'
 import type { Bill } from '../types'
 import { createBill } from './bills.server'
@@ -58,6 +58,7 @@ export interface BillDraftItem {
   description: string
   amount: number
   category?: string
+  currency?: string
   item_type: 'purchase' | 'refund' | 'fee' | 'interest'
   confidence?: number
   raw_text?: string
@@ -427,7 +428,7 @@ function sniffAttachmentType(
 async function loadAttachments(
   attachmentIds: string[],
   userId: string,
-  expected: 'pdf' | 'image',
+  expected: 'pdf' | 'image' | 'either',
 ): Promise<LoadedAttachment[]> {
   if (attachmentIds.length === 0) return []
   if (attachmentIds.length > MAX_IMPORT_ATTACHMENTS) {
@@ -468,7 +469,7 @@ async function loadAttachments(
       throw new RpcDomainError('VALIDATION_FAILED', '单个账单文件不能超过 10MB')
     }
     const sniffed = sniffAttachmentType(data.file_type, bytes)
-    if (sniffed !== expected) {
+    if (sniffed === 'unknown' || (expected !== 'either' && sniffed !== expected)) {
       throw new RpcDomainError(
         'VALIDATION_FAILED',
         expected === 'pdf' ? '附件不是合法 PDF' : '附件不是支持的图片格式',
@@ -480,28 +481,43 @@ async function loadAttachments(
       sha256: data.sha256 || (await sha256Hex(bytes)),
     })
   }
+  const pdfCount = out.filter(item => sniffAttachmentType(item.record.file_type, item.bytes) === 'pdf').length
+  if (pdfCount && out.length !== 1) {
+    throw new RpcDomainError('VALIDATION_FAILED', '每次仅能导入一份 PDF')
+  }
   return out
 }
 
 // ─── 导入 + 解析 ─────────────────────────────────────────────
 
-function assertSourceCurrency(payload: BillDraftPayload): BillDraftPayload {
-  const currency = (payload.currency || 'CNY').toUpperCase()
+function normalizeCurrency(payload: BillDraftPayload, defaultCurrency?: string): BillDraftPayload {
+  const currency = (payload.currency || defaultCurrency)?.toUpperCase()
   return { ...payload, currency }
 }
 
-async function insertDraftRow(row: Record<string, unknown>): Promise<void> {
-  const columns = await tableColumns('bill_import_drafts')
-  const pairs = pickExistingColumns(row, columns)
-  const placeholders = pairs.map(() => '?').join(', ')
-  const { error } = await execute(
-    `INSERT INTO bill_import_drafts (${pairs.map(pair => pair.key).join(', ')}) VALUES (${placeholders})`,
-    pairs.map(pair => pair.value),
+async function selectedCardCurrency(cardId: string | null | undefined): Promise<string | undefined> {
+  if (!cardId) return
+  const { data, error } = await queryOne<{ currency: string | null }>(
+    `SELECT COALESCE(ca.currency, cp.currency) AS currency FROM credit_cards cc
+     LEFT JOIN card_products cp ON cp.id = cc.card_product_id
+     LEFT JOIN credit_accounts ca ON ca.id = cc.account_id WHERE cc.id = ?`,
+    [cardId],
   )
   if (error) throw new Error(error.message)
+  return data?.currency?.toUpperCase()
 }
 
-export async function createBillImportDraft(input: {
+function draftInsert(row: Record<string, unknown>, columns: Awaited<ReturnType<typeof tableColumns>>) {
+  const pairs = pickExistingColumns(row, columns)
+  const placeholders = pairs.map(() => '?').join(', ')
+  return {
+    sql: `INSERT INTO bill_import_drafts (${pairs.map(pair => pair.key).join(', ')})`,
+    placeholders,
+    params: pairs.map(pair => pair.value),
+  }
+}
+
+interface CreateDraftInput {
   /** 允许调用方指定确定性 ID（历史账本迁入用 draft_leg_<entryId> 做幂等键）。 */
   id?: string
   created_by: string
@@ -522,12 +538,13 @@ export async function createBillImportDraft(input: {
   source_connection_id?: string | null
   file_sha256?: string | null
   client_request_id?: string | null
-}): Promise<BillImportDraft> {
+}
+
+function draftRow(input: CreateDraftInput) {
   if (!input.created_by) throw new MemberScopeError('未登录，无法创建草稿')
-  const id = input.id || uuid()
   const ts = now()
-  await insertDraftRow({
-    id,
+  return {
+    id: input.id || uuid(),
     created_by: input.created_by,
     card_id: input.card_id ?? null,
     holder_id: input.holder_id ?? null,
@@ -549,8 +566,34 @@ export async function createBillImportDraft(input: {
     client_request_id: input.client_request_id ?? null,
     created_at: ts,
     updated_at: ts,
-  })
-  return getBillImportDraft(id)
+  }
+}
+
+async function createDrafts(inputs: CreateDraftInput[]): Promise<BillImportDraft[]> {
+  const columns = await tableColumns('bill_import_drafts')
+  const rows = inputs.map(draftRow)
+  const { error } = await batch(rows.map(row => {
+    const insert = draftInsert(row, columns)
+    return { sql: `${insert.sql} VALUES (${insert.placeholders})`, params: insert.params }
+  }))
+  if (error) throw new Error(error.message)
+  return Promise.all(rows.map(row => getBillImportDraft(row.id)))
+}
+
+export async function createBillImportDraft(input: CreateDraftInput): Promise<BillImportDraft> {
+  const [draft] = await createDrafts([input])
+  return draft
+}
+
+async function draftsInBatch(draft: BillImportDraft): Promise<BillImportDraft[]> {
+  if (!draft.batch_id) return [draft]
+  const { data, error } = await query<DraftRow>(
+    'SELECT * FROM bill_import_drafts WHERE batch_id = ? AND created_by = ? AND id <> ? ORDER BY created_at, id',
+    [draft.batch_id, draft.created_by, draft.id],
+  )
+  if (error) throw new Error(error.message)
+  const siblings = await Promise.all((data ?? []).map(row => attachPreview(rowToDraft(row))))
+  return [draft, ...siblings]
 }
 
 function extractHolderHint(rawText: string | null): string | null {
@@ -594,29 +637,31 @@ export async function importAndParseBill(
     typeof input.client_request_id === 'string' && input.client_request_id.trim()
       ? input.client_request_id.trim().slice(0, 128)
       : null
-  if (clientRequestId) {
-    const { data } = await queryOne<DraftRow>(
-      "SELECT * FROM bill_import_drafts WHERE created_by = ? AND client_request_id = ? AND status = 'draft' LIMIT 1",
+  const columns = await tableColumns('bill_import_drafts')
+  async function findReplay(): Promise<ImportAndParseBillResult | undefined> {
+    if (!clientRequestId || !columns.has('client_request_id')) return
+    const { data, error } = await queryOne<DraftRow>(
+      'SELECT * FROM bill_import_drafts WHERE created_by = ? AND client_request_id = ?',
       [userId, clientRequestId],
     )
-    if (data) {
-      return {
-        outcome: 'duplicate_file',
-        drafts: [await attachPreview(rowToDraft(data))],
-        deduplicated: true,
-        message: '该请求已导入过，已返回原草稿',
-      }
+    if (error) throw new Error(error.message)
+    if (data) return {
+      outcome: 'duplicate_file',
+      drafts: await draftsInBatch(await attachPreview(rowToDraft(data))),
+      deduplicated: true,
+      message: '该请求已导入过，已返回原草稿',
     }
   }
+  const replay = await findReplay()
+  if (replay) return replay
 
   const expectsBinary = sourceType === 'pdf' || sourceType === 'image' || sourceType === 'share_ios'
   const attachments = expectsBinary
-    ? await loadAttachments(attachmentIds, userId, sourceType === 'pdf' ? 'pdf' : 'image')
+    ? await loadAttachments(attachmentIds, userId, sourceType === 'share_ios' ? 'either' : sourceType)
     : []
 
   // 同文件去重：同用户已有同 sha256 的未处理草稿时不再重复解析（AC-08）。
   if (attachments.length > 0) {
-    const columns = await tableColumns('bill_import_drafts')
     if (hasColumn(columns, 'file_sha256')) {
       const { data } = await queryOne<DraftRow>(
         "SELECT * FROM bill_import_drafts WHERE created_by = ? AND file_sha256 = ? AND status = 'draft' LIMIT 1",
@@ -625,7 +670,7 @@ export async function importAndParseBill(
       if (data) {
         return {
           outcome: 'duplicate_file',
-          drafts: [await attachPreview(rowToDraft(data))],
+          drafts: await draftsInBatch(await attachPreview(rowToDraft(data))),
           deduplicated: true,
           message: '该文件已导入过，已返回原草稿',
         }
@@ -647,6 +692,8 @@ export async function importAndParseBill(
       }),
     ),
     pdfPassword: input.pdf_password ?? null,
+    holderId: input.holder_id,
+    cardId: input.card_id,
   })
 
   const batchId = uuid()
@@ -747,33 +794,42 @@ export async function importAndParseBill(
   }
 
   const statements = core.statements.length > 0 ? core.statements : [basePayload]
-  const drafts: BillImportDraft[] = []
-  for (const statement of statements) {
-    const payload = assertSourceCurrency({ ...basePayload, ...statement })
-    const confidence =
-      typeof statement.confidence === 'number' ? statement.confidence : null
-    drafts.push(
-      await createBillImportDraft({
+  const cardCurrency = statements.length > 1 ? await selectedCardCurrency(input.card_id) : undefined
+  let drafts: BillImportDraft[]
+  try {
+    drafts = await createDrafts(statements.map((statement, index) => {
+      const cardId = statement.card_id ?? (
+        statements.length === 1 || (cardCurrency && statement.currency === cardCurrency)
+          ? input.card_id : null
+      )
+      return {
         created_by: userId,
-        card_id: statement.card_id ?? input.card_id ?? null,
+        card_id: cardId ?? null,
         holder_id: input.holder_id ?? null,
         source_type: sourceType,
-        raw_text: rawText ?? null,
+        raw_text: rawText,
         file_ref: attachments[0]?.record.id ?? null,
-        parsed_payload: {
-          ...payload,
+        parsed_payload: normalizeCurrency({
+          ...basePayload,
+          ...statement,
+          card_id: cardId ?? undefined,
           attachment_ids: attachments.map(item => item.record.id),
-        } as BillDraftPayload,
-        confidence,
+        }, core.parser === 'core' ? undefined : 'CNY'),
+        confidence: statement.confidence ?? null,
         parse_status: 'ready',
         attribution_source: input.holder_id ? 'manual' : 'unknown',
         attribution_trusted: !!input.holder_id,
         batch_id: batchId,
         source_label: attachments[0]?.record.file_name ?? '文本导入',
         file_sha256: attachments[0]?.sha256 ?? null,
-        client_request_id: clientRequestId,
-      }),
-    )
+        // The unique request key identifies the whole batch through its first row.
+        client_request_id: index === 0 ? clientRequestId : null,
+      }
+    }))
+  } catch (error) {
+    const concurrentReplay = await findReplay()
+    if (concurrentReplay) return concurrentReplay
+    throw error
   }
 
   // 原位解锁后立即写密码本（HUB-154 §3.2 unlock 契约的导入侧等价路径）。
@@ -921,17 +977,15 @@ export async function retryParseDraft(
     return updateBillImportDraft(draftId, { parsed_payload: { is_bill: true } }, userId)
   }
 
-  let attachments: LoadedAttachment[] = []
-  if (draft.file_ref) {
-    const expected = draft.source_type === 'pdf' ? 'pdf' : 'image'
-    attachments = await loadAttachments([draft.file_ref], userId ?? draft.created_by, expected)
-  }
+  const attachmentIds = draft.parsed_payload.attachment_ids?.length
+    ? draft.parsed_payload.attachment_ids
+    : draft.file_ref ? [draft.file_ref] : []
+  const expected = draft.source_type === 'pdf' || draft.source_type === 'image' ? draft.source_type : 'either'
+  const attachments = await loadAttachments(attachmentIds, draft.created_by, expected)
 
   const core = await runBillImportCore({
-    userId: userId ?? draft.created_by,
-    sourceType: draft.source_type === 'email' || draft.source_type === 'legacy_ledger' || draft.source_type === 'sms'
-      ? 'text'
-      : draft.source_type,
+    userId: draft.created_by,
+    sourceType: expected !== 'either' ? expected : attachments.length ? 'share_ios' : 'text',
     rawText: draft.raw_text,
     attachments: attachments.map(
       (item): BillImportCoreAttachment => ({
@@ -943,48 +997,91 @@ export async function retryParseDraft(
       }),
     ),
     pdfPassword: opts?.pdf_password ?? null,
+    holderId: draft.holder_id,
+    cardId: draft.card_id,
     previousError: draft.error_message ?? null,
   })
 
   const pairs: Array<{ column: string; value: unknown }> = []
+  const columns = await tableColumns('bill_import_drafts')
+  const existingCurrency = draft.parsed_payload.currency
+  const isPendingDocument = attachments.length > 0 && draft.parse_status !== 'ready' &&
+    columns.has('batch_id') && !existingCurrency
+  const splitting = isPendingDocument && core.statements.length > 1
+  const cardCurrency = splitting ? await selectedCardCurrency(draft.card_id) : undefined
+  const statement = existingCurrency && core.statements.length > 1
+    ? core.statements.find(item => item.currency === existingCurrency)
+    : core.statements.find(item => cardCurrency && item.currency === cardCurrency) ?? core.statements[0]
+  const parseError = core.error || (!statement && core.isBill ? '解析未找到该草稿的币种，请手动核对' : null)
+  const timestamp = now()
+  const batchId = draft.batch_id ?? uuid()
+  const siblings = splitting ? core.statements.filter(item => item !== statement) : []
+  const clearCard = splitting && !!draft.card_id && (!cardCurrency || cardCurrency !== statement?.currency)
+  const statementPayload = (item: BillDraftPayload) => normalizeCurrency({
+    ...draft.parsed_payload,
+    ...item,
+    attachment_ids: attachments.map(file => file.record.id),
+  }, core.parser === 'core' ? undefined : 'CNY')
 
   if (core.needsPassword) {
     pairs.push({ column: 'parse_status', value: 'needs_password' })
     if (core.passwordHint) pairs.push({ column: 'password_hint', value: core.passwordHint })
     pairs.push({ column: 'error_message', value: null })
-  } else if (core.error && core.statements.length === 0) {
+  } else if (parseError && !statement) {
     pairs.push({ column: 'parse_status', value: 'parse_failed' })
-    pairs.push({ column: 'error_message', value: core.error })
+    pairs.push({ column: 'error_message', value: parseError })
   } else {
-    const statements = core.statements
-    if (statements.length > 0) {
-      pairs.push({
-        column: 'parsed_payload',
-        value: JSON.stringify(
-          assertSourceCurrency({
-            ...draft.parsed_payload,
-            ...statements[0],
-            attachment_ids: attachments.map(item => item.record.id),
-          }),
-        ),
-      })
-      pairs.push({
-        column: 'confidence',
-        value:
-          typeof statements[0].confidence === 'number' ? statements[0].confidence : draft.confidence,
-      })
-    }
+    const payload = statement
+      ? statementPayload(clearCard ? { ...statement, card_id: undefined } : statement)
+      : {
+        ...draft.parsed_payload,
+        is_bill: false,
+        warnings: [core.nonBillReason ?? '未识别到可入账的账单要素'],
+      }
+    if (clearCard) pairs.push({ column: 'card_id', value: null })
+    pairs.push({ column: 'parsed_payload', value: JSON.stringify(payload) })
+    pairs.push({ column: 'confidence', value: statement?.confidence ?? null })
     pairs.push({ column: 'parse_status', value: 'ready' })
+    pairs.push({ column: 'password_hint', value: null })
     pairs.push({ column: 'error_message', value: null })
+    if (siblings.length) pairs.push({ column: 'batch_id', value: batchId })
   }
-  pairs.push({ column: 'updated_at', value: now() })
+  pairs.push({ column: 'updated_at', value: timestamp })
 
   const filtered = await filterUpdatePairs('bill_import_drafts', pairs)
   if (!filtered) throw new Error('草稿表缺少可写列')
-  const { error } = await execute(
-    `UPDATE bill_import_drafts SET ${filtered.sets.join(', ')} WHERE id = ?`,
-    [...filtered.params, draftId],
-  )
+  const state = columns.has('parse_status') ? ' AND parse_status = ?' : ''
+  const stateParams = columns.has('parse_status') ? [draft.parse_status] : []
+  const where = `id = ? AND created_by = ? AND status = 'draft'${state}`
+  const whereParams = [draftId, draft.created_by, ...stateParams]
+  const { error } = await batch([
+    ...siblings.map(item => {
+      const insert = draftInsert(draftRow({
+        created_by: draft.created_by,
+        card_id: item.card_id ?? null,
+        holder_id: draft.holder_id,
+        source_type: draft.source_type,
+        raw_text: draft.raw_text,
+        file_ref: draft.file_ref,
+        parsed_payload: statementPayload({ ...item, card_id: item.card_id }),
+        confidence: item.confidence,
+        attribution_source: draft.attribution_source,
+        attribution_trusted: draft.attribution_trusted,
+        source_label: draft.source_label,
+        source_connection_id: draft.source_connection_id,
+        batch_id: batchId,
+        file_sha256: attachments[0]?.sha256,
+      }), columns)
+      return {
+        sql: `${insert.sql} SELECT ${insert.placeholders} WHERE EXISTS (SELECT 1 FROM bill_import_drafts WHERE ${where})`,
+        params: [...insert.params, ...whereParams],
+      }
+    }),
+    {
+      sql: `UPDATE bill_import_drafts SET ${filtered.sets.join(', ')} WHERE ${where}`,
+      params: [...filtered.params, ...whereParams],
+    },
+  ])
   if (error) throw new Error(error.message)
   return getBillImportDraft(draftId)
 }
@@ -1043,8 +1140,8 @@ export async function unlockEncryptedDraft(
     vaultRuleSaved = true
   }
 
-  const updated = await retryParseDraft(draftId, { pdf_password: password }, userId)
-  return { drafts: [updated], vault_rule_saved: vaultRuleSaved }
+  const updated = await retryParseDraft(draftId, undefined, userId)
+  return { drafts: await draftsInBatch(updated), vault_rule_saved: vaultRuleSaved }
 }
 
 // ─── 确认入账 ────────────────────────────────────────────────
@@ -1181,6 +1278,7 @@ export async function confirmBillImportDraft(
     description: item.description,
     amount: item.amount,
     category: item.category,
+    currency: item.currency,
     item_type: item.item_type || 'purchase',
     source: 'llm' as const,
     confidence: item.confidence,
@@ -1244,8 +1342,9 @@ export async function confirmBillImportDraft(
   // 附件挂到正式账单上，草稿箱清空后原件仍可预览（HUB-154 §1.4）。
   if (draft.file_ref) {
     await execute(
-      "UPDATE record_attachments SET record_type = 'bill', record_id = ? WHERE id = ? AND record_type = 'draft'",
-      [billId, draft.file_ref],
+      `UPDATE record_attachments SET record_type = 'bill', record_id = ? WHERE id = ? AND record_type = 'draft'
+       AND NOT EXISTS (SELECT 1 FROM bill_import_drafts WHERE created_by = ? AND file_ref = ? AND status = 'draft')`,
+      [billId, draft.file_ref, draft.created_by, draft.file_ref],
     )
   }
 

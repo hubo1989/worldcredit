@@ -8,7 +8,7 @@
 // 归属：所有多连接写操作都按 user_id 归属校验，非本人 connection 一律
 // MemberScopeError → HTTP 403（AC-05 / AC-12）。
 
-import { query, queryOne, execute } from "../db/helpers";
+import { query, queryOne, execute, batch } from "../db/helpers";
 import { getWorkerEnv } from "../db/client";
 import { syncUserGmail, type GmailSyncSummary } from "../gmail/sync.server";
 import { MemberScopeError } from "./member-scope";
@@ -275,8 +275,8 @@ export async function syncGmailConnection(
     try {
       const summary = await syncUserGmail(userId, {
         maxMessages: opts?.maxMessages,
-        ...(opts?.connectionId ? { connectionId: opts.connectionId } : {}),
-      } as Parameters<typeof syncUserGmail>[1]);
+        connectionId: target.id,
+      });
       merged.scanned += summary.scanned;
       merged.written += summary.written;
       merged.drafted += summary.drafted;
@@ -307,35 +307,74 @@ export async function syncGmailNow(
 }
 
 /**
- * 断开单个邮箱：只删该连接及其专属 R2 前缀
- * `gmail-raw/{userId}/{connectionId}/`，绝不触碰其它邮箱、draft-files/ 与 bill/
- * （HUB-154 §1.4 / AC-05）。gmail_sync_messages 与账单是业务数据，保留。
+ * 先暂停新同步并清理新旧 R2 键，再清引用和删除连接。保留账单与同步审计，
+ * 因为删除连接会通过 ON DELETE SET NULL 解除审计行的关联。
  */
 export async function disconnectGmailConnection(
   connectionId: string,
   userId?: string,
 ): Promise<{ ok: true; id: string }> {
   const target = await loadOwnedConnection(connectionId, userId);
+  const params = [userId, connectionId];
+  const { error: pauseError } = await execute(
+    "UPDATE gmail_connections SET sync_enabled = 0 WHERE user_id = ? AND id = ?",
+    params,
+  );
+  if (pauseError) throw new Error(pauseError.message);
+
+  // The sync engine checks sync_enabled when taking a lease. Allow existing leases
+  // to finish before listing objects they may still be writing.
+  const { data: lease, error: leaseError } = await queryOne(
+    `SELECT 1 FROM gmail_sync_messages WHERE user_id = ? AND connection_id = ?
+       AND status = 'failed' AND error_msg LIKE 'lease:%'
+       AND substr(error_msg, 7, 19) > datetime('now') LIMIT 1`,
+    params,
+  );
+  if (leaseError) throw new Error(leaseError.message);
+  if (lease) throw new RpcDomainError("CONFLICT", "邮箱正在同步，请稍后重试解绑");
+
+  const userPrefix = `gmail-raw/${userId}/`;
+  const connectionPrefix = `${userPrefix}${connectionId}/`;
   const bucket = getWorkerEnv().ATTACHMENTS as R2Bucket | undefined;
+  let lastKey = "";
+  for (;;) {
+    const { data: keys, error } = await query<{ raw_r2_key: string }>(
+      `SELECT DISTINCT raw_r2_key FROM gmail_sync_messages
+       WHERE user_id = ? AND connection_id = ? AND raw_r2_key > ?
+       ORDER BY raw_r2_key LIMIT 100`,
+      [...params, lastKey],
+    );
+    if (error) throw new Error(error.message);
+    if (!keys?.length) break;
+    if (!bucket) throw new Error("附件存储暂不可用，请稍后重试解绑");
+    for (const { raw_r2_key: key } of keys) {
+      // Old keys have a single segment after the user prefix. A connection
+      // may only delete its own directory or one of these legacy keys.
+      if (key.startsWith(connectionPrefix) ||
+          (key.startsWith(userPrefix) && !key.slice(userPrefix.length).includes("/"))) {
+        await bucket.delete(key);
+      }
+      lastKey = key;
+    }
+  }
+
   if (bucket) {
     let cursor: string | undefined;
     do {
-      const listed = await bucket.list({
-        prefix: `gmail-raw/${userId}/${connectionId}/`,
-        cursor,
-      });
+      const listed = await bucket.list({ prefix: connectionPrefix, cursor });
       for (const obj of listed.objects) await bucket.delete(obj.key);
       cursor = listed.truncated ? listed.cursor : undefined;
     } while (cursor);
   }
-  await execute("DELETE FROM gmail_connections WHERE id = ?", [connectionId]);
-  const syncColumns = await tableColumns("gmail_sync_messages");
-  if (syncColumns.has("connection_id")) {
-    await execute(
-      "UPDATE gmail_sync_messages SET raw_r2_key = NULL WHERE user_id = ? AND connection_id = ?",
-      [userId, connectionId],
-    );
-  }
+
+  const { error } = await batch([
+    {
+      sql: "UPDATE gmail_sync_messages SET raw_r2_key = NULL WHERE user_id = ? AND connection_id = ?",
+      params,
+    },
+    { sql: "DELETE FROM gmail_connections WHERE user_id = ? AND id = ?", params },
+  ]);
+  if (error) throw new Error(error.message);
   return { ok: true, id: target.id };
 }
 
