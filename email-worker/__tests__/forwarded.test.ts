@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createOpportunityDb, type SqliteD1 } from '../../lib/__tests__/helpers/sqlite-d1'
 import { parseRawMessage } from '../../lib/email-core/mime'
+import { resolveBillAttribution } from '../../lib/email-core/bills'
 import { processEmailDelivery } from '../src/forwarded'
 import worker from '../src/index'
 import { encryptVaultPassword } from '../../lib/email-core/vault-crypto'
@@ -141,6 +142,19 @@ describe('邮箱转发入账', () => {
     const result = await processEmailDelivery(raw, { db, userId: USER_ID, parseText })
     expect(parseText).toHaveBeenCalledWith(expect.stringContaining('6000'))
     expect(result).toMatchObject({ billIds: [expect.any(String)], draftIds: [] })
+  })
+
+  it('prefers a matching holder email over the configured mailbox default', async () => {
+    sqlite.exec("UPDATE card_holders SET email = 'holder@example.test' WHERE id = 'h2'")
+    const input = {
+      userId: USER_ID, statement: await parseOk(), recipient: 'holder@example.test', defaultHolderId: 'h1',
+    }
+    await expect(resolveBillAttribution(db, input)).resolves.toMatchObject({
+      source: 'holder_email', holderId: 'h2', cardId: 'c2', trusted: true,
+    })
+    await expect(resolveBillAttribution(db, {
+      ...input, attributionMode: 'force_default_unless_conflict',
+    })).resolves.toMatchObject({ source: 'conflict', cardId: null, trusted: false })
   })
 
   it('对直发还款提醒不建账单或草稿', async () => {

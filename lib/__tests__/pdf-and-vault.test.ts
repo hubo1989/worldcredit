@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
+import { decryptLegacyPdf } from '../email-core/pdf-legacy'
 import { decryptPDF, isExtractedPdfTextUsable, prepareStatementPdf } from '../email-core/pdf'
 import { decryptVaultPassword, encryptVaultPassword } from '../email-core/vault-crypto'
 import { parseMultimodalStatement } from '../email-core/multimodal'
@@ -49,6 +50,15 @@ describe('PDF preparation', () => {
     expect(await prepareStatementPdf(bytes, { userId: 'u', adhocPassword: password })).toMatchObject({
       status: 'ready', text: expect.stringContaining('1234.56 USD'), visionBytes: null,
     })
+  })
+
+  it('validates the AES-128 revision 4 password in the legacy fallback itself', async () => {
+    const bytes = encryptedFixture('aes-128')
+    expect(await decryptLegacyPdf(bytes, 'wrong')).toEqual({ ok: false, reason: 'wrong_password' })
+    const unlocked = await decryptLegacyPdf(bytes, password)
+    expect(unlocked.ok).toBe(true)
+    if (!unlocked.ok) throw new Error('legacy fixture failed to unlock')
+    expect((await PDFDocument.load(unlocked.bytes)).isEncrypted).toBe(false)
   })
 
   it('limits the dictionary to eight scoped entries and counts only the match', async () => {

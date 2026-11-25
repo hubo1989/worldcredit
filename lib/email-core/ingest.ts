@@ -262,14 +262,23 @@ export async function ingestStatementEmail(base: EmailIngestOptions): Promise<Em
           : group.multipleDocuments || outcome.envelope.statements.length > 1 ? '一封邮件含多份账单或多个币种，请分别核对'
           : mayAutoCommit(statement, attribution)
         if (!reason && attribution.cardId) {
-          const posted = await upsertBillForCard(base.db, attribution.cardId, statement, { trusted: true, protectExisting: true })
+          const posted = await upsertBillForCard(base.db, attribution.cardId, statement, {
+            trusted: true,
+            protectExisting: true,
+            newStatementItems: statement.items?.length ? { billId: `mail_bill_${groupKey}`, items: statement.items } : undefined,
+          })
           if (posted.action === 'preserved') {
             reason = posted.reason ?? '已有账单存在冲突，请确认'
           } else {
-            const stored = await prepareAttachments({
-              base, files, groupKey, recordId: posted.billId, recordType: 'bill', preparedPdf: outcome.preparedPdf,
-            })
-            if (stored.inserts.length) await base.db.batch(stored.inserts)
+            try {
+              const stored = await prepareAttachments({
+                base, files, groupKey, recordId: posted.billId, recordType: 'bill', preparedPdf: outcome.preparedPdf,
+              })
+              if (stored.inserts.length) await base.db.batch(stored.inserts)
+            } catch {
+              result.reason ??= '账单已入账，附件未保存'
+              console.warn('[statement-email] Failed to store an automatically posted bill attachment')
+            }
             const changed = await syncBillingDayFromBill(base.db, attribution.cardId, statement)
             result.billingDayChanged ||= changed
             await syncCreditLimitFromBill(base.db, attribution.cardId, statement)

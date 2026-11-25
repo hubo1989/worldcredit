@@ -62,13 +62,15 @@ function statement(value: unknown, envelopeKind: unknown): ParsedStatementItem |
     const code = asString(value)?.toUpperCase()
     return code && /^[A-Z]{3}$/.test(code) ? code : undefined
   }
-  const items = Array.isArray(row.items) ? row.items.slice(0, 500).flatMap(value => {
+  const items: ParsedStatementItem['items'] = Array.isArray(row.items) ? row.items.slice(0, 500).flatMap(value => {
     const item = asObject(value)
     const description = asString(item?.description)
     const amount = asNumber(item?.amount)
     if (!description || amount === undefined) return []
+    const kind = item?.item_type
+    const item_type = kind === 'purchase' || kind === 'refund' || kind === 'fee' || kind === 'interest' ? kind : undefined
     return [{
-      description, amount, currency: currencyField(item?.currency),
+      description, amount, item_type, currency: currencyField(item?.currency),
       transaction_date: isExactDueDate(item?.transaction_date) ? item.transaction_date.trim() : undefined,
     }]
   }) : undefined

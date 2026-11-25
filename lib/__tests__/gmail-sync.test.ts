@@ -118,7 +118,10 @@ describe("syncUserGmail", () => {
   it("证据足够时直接落账单，并记录去重行", async () => {
     await seedHolderAndProduct();
     __setGmailSyncDeps({
-      parse: async () => ({ ...parseOk }),
+      parse: async () => ({ ...parseOk, items: [
+        { description: "Dinner", amount: 50, transaction_date: "2026-10-15" },
+        { description: "Refund", amount: -9, currency: "HKD" },
+      ] }),
       fetchImpl: gmailFetch({
         list: { messages: [{ id: "m1", threadId: "t1" }] },
         raw: { raw: toRawB64(RAW_EML), id: "m1" },
@@ -134,6 +137,13 @@ describe("syncUserGmail", () => {
       .prepare("SELECT * FROM gmail_sync_messages WHERE gmail_message_id='m1'")
       .first<{ status: string }>();
     expect(msg?.status).toBe("bill_written");
+    await expect(syncUserGmail("u1")).resolves.toMatchObject({ written: 0, drafted: 0 });
+    expect(db.raw.prepare(
+      "SELECT description, amount, currency, item_type, source FROM bill_items ORDER BY description",
+    ).all()).toEqual([
+      { description: "Dinner", amount: 50, currency: "USD", item_type: "purchase", source: "email" },
+      { description: "Refund", amount: 9, currency: "HKD", item_type: "refund", source: "email" },
+    ]);
   });
 
   it("证据不足（识别不出持卡人）时停草稿", async () => {
@@ -208,6 +218,7 @@ describe("syncUserGmail", () => {
       .prepare("SELECT status FROM gmail_sync_messages WHERE gmail_message_id='m-retry'")
       .first<{ status: string }>();
     expect(msg?.status).toBe("bill_written");
+
   });
 
   it("重试再败：failed 行原地更新错误信息，不插新行", async () => {

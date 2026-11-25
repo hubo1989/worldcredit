@@ -403,6 +403,10 @@ export interface UpsertBillOptions {
    */
   trusted: boolean
   protectExisting?: boolean
+  newStatementItems?: {
+    billId: string
+    items: NonNullable<ParsedStatementItem['items']>
+  }
 }
 
 export interface UpsertBillOutcome {
@@ -502,12 +506,25 @@ export async function upsertBillForCard(
   let existing = await findExisting()
   let insertedId: string | null = null
   if (!existing && options.protectExisting) {
-    const id = crypto.randomUUID()
-    const insert = await db.prepare(
+    const id = options.newStatementItems?.billId ?? crypto.randomUUID()
+    const insert = db.prepare(
       `INSERT INTO bills (id, account_id, card_id, bill_month, bill_amount, min_payment, due_date, statement_date, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`
-    ).bind(id, accountId, anchorCardId, billMonth, amount, minPayment, dueDate, statementDate, initialStatus).run()
-    if (insert.meta.changes) {
+    ).bind(id, accountId, anchorCardId, billMonth, amount, minPayment, dueDate, statementDate, initialStatus)
+    const result = options.newStatementItems
+      ? (await db.batch([insert, db.prepare(
+        `INSERT INTO bill_items (id, bill_id, transaction_date, description, amount, currency, item_type, source)
+         SELECT 'mail_item_' || ?1 || '_' || j.key, ?1, json_extract(j.value, '$.transaction_date'),
+                json_extract(j.value, '$.description'), abs(json_extract(j.value, '$.amount')),
+                COALESCE(json_extract(j.value, '$.currency'), ?2),
+                COALESCE(json_extract(j.value, '$.item_type'),
+                  CASE WHEN json_extract(j.value, '$.amount') < 0 THEN 'refund' ELSE 'purchase' END), 'email'
+         FROM json_each(?3) AS j
+         WHERE EXISTS (SELECT 1 FROM bills WHERE id = ?1)
+         ON CONFLICT(id) DO NOTHING`,
+      ).bind(id, parsed.currency ?? 'CNY', JSON.stringify(options.newStatementItems.items))]))[0]
+      : await insert.run()
+    if (result.meta.changes) {
       insertedId = id
     } else {
       // A separate delivery can post the same account/month after the first read.
@@ -523,6 +540,13 @@ export async function upsertBillForCard(
     billId = insertedId
     action = 'inserted'
   } else if (existing) {
+    if (options.newStatementItems) {
+      // A retry of this delivery already committed the bill and its items together.
+      if (existing.id === options.newStatementItems.billId) {
+        return { billId: existing.id, action: 'updated', reason: null }
+      }
+      return { billId: existing.id, action: 'preserved', reason: '已有账单，请核对邮件明细后再导入' }
+    }
     if (options.protectExisting) {
       const guarded = await db.prepare(
         `UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?,
