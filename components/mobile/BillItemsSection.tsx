@@ -137,7 +137,8 @@ export function BillItemsSection({
     setCategory(item.category ?? '')
     setTxDate(item.transaction_date?.slice(0, 10) ?? '')
     setCardId(item.card_id ?? '')
-    setRememberMerchant(true)
+    // 编辑已有明细时不默认开启「记住商户」，避免仅改金额/日期时意外覆盖分类规则
+    setRememberMerchant(false)
     setError(null)
     setEditorOpen(true)
   }
@@ -212,7 +213,6 @@ export function BillItemsSection({
       await onChanged()
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除明细失败')
-      setDeleteTarget(null)
     } finally {
       setSubmitting(false)
     }
@@ -227,7 +227,6 @@ export function BillItemsSection({
       await onChanged()
     } catch (err) {
       setError(err instanceof Error ? err.message : '清空明细失败')
-      setClearConfirmOpen(false)
     } finally {
       setSubmitting(false)
     }
@@ -509,6 +508,7 @@ export function BillItemsSection({
           将删除「{deleteTarget?.description}」（{sym}
           {deleteTarget ? Number(deleteTarget.amount).toLocaleString() : ''}），不会改变账单主金额。
         </p>
+        {error && <div className='mt-2'><Alert severity='error'>{error}</Alert></div>}
       </ConfirmDialog>
 
       {/* 清空全部确认（禁用原生 window.confirm） */}
@@ -530,6 +530,7 @@ export function BillItemsSection({
         <p className='text-[13px] text-d-muted'>
           将清空本账单全部 {items.length} 条交易明细。账单主金额与还款记录不受影响。
         </p>
+        {error && <div className='mt-2'><Alert severity='error'>{error}</Alert></div>}
       </ConfirmDialog>
     </div>
   )

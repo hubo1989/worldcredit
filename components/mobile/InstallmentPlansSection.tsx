@@ -233,6 +233,24 @@ export function InstallmentPlansSection({
           setSubmitting(false)
           return
         }
+        const feeRate = Number(feeRatePctText)
+        const customFee = Number(customFeeText)
+        const aprPct = Number(aprPctText)
+        if (feeMode === 'equal_principal_fee' && !customFeeText.trim() && (!Number.isFinite(feeRate) || feeRate < 0)) {
+          setError('每期费率必须为不小于 0 的数字')
+          setSubmitting(false)
+          return
+        }
+        if (feeMode === 'equal_principal_fee' && customFeeText.trim() && (!Number.isFinite(customFee) || customFee < 0)) {
+          setError('固定手续费必须为不小于 0 的数字')
+          setSubmitting(false)
+          return
+        }
+        if (feeMode === 'equal_installment_apr' && (!Number.isFinite(aprPct) || aprPct < 0)) {
+          setError('年化利率必须为不小于 0 的数字')
+          setSubmitting(false)
+          return
+        }
         await createInstallmentPlan({
           card_id: cardId,
           title: title.trim(),
@@ -244,15 +262,10 @@ export function InstallmentPlansSection({
           fee_mode: feeMode,
           fee_charge_mode: feeChargeMode,
           fee_rate_per_period:
-            feeMode === 'equal_principal_fee' && !customFeeText.trim()
-              ? (Number(feeRatePctText) || 0) / 100
-              : null,
+            feeMode === 'equal_principal_fee' && !customFeeText.trim() ? feeRate / 100 : null,
           custom_period_fee:
-            feeMode === 'equal_principal_fee' && customFeeText.trim()
-              ? Number(customFeeText)
-              : null,
-          apr:
-            feeMode === 'equal_installment_apr' ? (Number(aprPctText) || 0) / 100 : null,
+            feeMode === 'equal_principal_fee' && customFeeText.trim() ? customFee : null,
+          apr: feeMode === 'equal_installment_apr' ? aprPct / 100 : null,
           start_month: startMonth,
           due_day: dueDay,
           due_month_offset: dueMonthOffset === '1' ? 1 : 0,
@@ -321,6 +334,11 @@ export function InstallmentPlansSection({
     }
   }
 
+  const schedulesById = useMemo(
+    () => new Map(plans.map((p) => [p.id, p.schedule ?? generateInstallmentSchedule(p)])),
+    [plans],
+  )
+
   return (
     <div className='mb-2.5'>
       <div className='mb-1.5 flex items-center justify-between'>
@@ -356,7 +374,7 @@ export function InstallmentPlansSection({
         ) : (
           <div className='flex flex-col gap-3'>
             {plans.map((plan) => {
-              const schedule = plan.schedule ?? generateInstallmentSchedule(plan)
+              const schedule = schedulesById.get(plan.id) ?? []
               const nextPeriod = schedule.find((s) => !s.is_paid)
               const unbilledPrincipal =
                 plan.unbilled_principal ??

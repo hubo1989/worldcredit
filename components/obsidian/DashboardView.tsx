@@ -264,6 +264,11 @@ export function DashboardView(vm: DashboardViewProps) {
               <div className="flex justify-between"><span>普通未还</span>
                 <span className={amountClass + ' font-semibold'}>{formatMoney(plainOwedValue, displayCurrency)}</span>
               </div>
+              {debtBreakdown?.unconvertedCurrencies && debtBreakdown.unconvertedCurrencies.length > 0 && (
+                <p className="pt-0.5 text-[10px] text-d-muted">
+                  未含汇率：{debtBreakdown.unconvertedCurrencies.join('、')} 未计入合计
+                </p>
+              )}
             </div>
           )}
         </button>

@@ -4,14 +4,13 @@ import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { format } from 'date-fns'
 import {
   getCardsWithBillsSummary,
-  createPayment,
   updateBillStatus,
   markAllOverdueBillsAsPaid,
   getPaymentTotal,
   type CardWithBillsSummary,
   type BillDashboardItem,
 } from '@/lib/api/bills'
-import { createPaymentWithFx } from '@/lib/direction3/rpc'
+import { submitBillPayment } from '@/lib/direction3/rpc'
 import type { PaymentFxLockFields } from '@/lib/direction3/types'
 import { syncGmailLedgerToCardsAndBills } from '@/lib/api/sync-gmail'
 import { getHolders } from '@/lib/api/holders'
@@ -278,28 +277,17 @@ export default function BillsPage() {
   ) => {
     if (!selectedBill) return
     try {
-      const hasFxLock =
-        data.settled_currency != null && data.settled_amount != null && data.locked_fx_rate != null
-      if (hasFxLock) {
-        await createPaymentWithFx({
-          bill_id: selectedBill.id,
-          amount: data.amount,
-          paid_at: data.paid_at,
-          channel: '手动还款',
-          note: data.note,
-          settled_currency: data.settled_currency,
-          settled_amount: data.settled_amount,
-          locked_fx_rate: data.locked_fx_rate,
-        })
-      } else {
-        await createPayment({
-          bill_id: selectedBill.id,
-          amount: data.amount,
-          paid_at: data.paid_at,
-          channel: '手动还款',
-          note: data.note,
-        })
-      }
+      await submitBillPayment({
+        bill_id: selectedBill.id,
+        amount: data.amount,
+        paid_at: data.paid_at,
+        channel: '手动还款',
+        note: data.note,
+        billCurrency: selectedBill.card?.card_product?.currency,
+        settled_currency: data.settled_currency,
+        settled_amount: data.settled_amount,
+        locked_fx_rate: data.locked_fx_rate,
+      })
 
       const totalPaid = await getPaymentTotal(selectedBill.id)
       const billAmount = Number(selectedBill.bill_amount)

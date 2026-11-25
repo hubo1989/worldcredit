@@ -1,5 +1,7 @@
 import type { AnalyticsFilters } from '@/lib/api/analytics.server'
-import { RpcError } from '@/lib/api/rpc-client'
+import { callRpc } from '@/lib/api/rpc-client'
+import { createPayment } from '@/lib/api/bills'
+import { validateFxLockInput } from './pure'
 import type {
   BillItem,
   BillItemInput,
@@ -22,28 +24,7 @@ import type {
 import type { CsvRow } from '@/lib/export'
 
 async function postRpc<T>(module: string, fn: string, ...args: unknown[]): Promise<T> {
-  const res = await fetch(`/api/rpc/${module}/${fn}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ args }),
-    credentials: 'same-origin',
-  })
-  const payload = (await res.json().catch(() => null)) as {
-    data?: unknown
-    error?: string
-    code?: string
-    details?: unknown
-    request_id?: string
-  } | null
-
-  if (!res.ok || !payload || payload.error) {
-    const message = payload?.error || `RPC ${module}.${fn} failed (${res.status})`
-    if (payload?.code || payload?.details || payload?.request_id) {
-      throw new RpcError(message, payload?.code, payload?.details, payload?.request_id)
-    }
-    throw new Error(message)
-  }
-  return payload.data as T
+  return callRpc<(...params: unknown[]) => T>(module, fn, ...(args as never[]))
 }
 
 export async function getBillItems(billId: string): Promise<BillItem[]> {
@@ -279,4 +260,43 @@ export async function updatePaymentWithFx(
   } & PaymentFxLockFields,
 ) {
   return postRpc('payments', 'updatePayment', paymentId, patch)
+}
+
+export async function submitBillPayment(
+  input: {
+    bill_id: string
+    amount: number
+    paid_at: string
+    channel?: string
+    note?: string
+    billCurrency?: string
+  } & PaymentFxLockFields,
+) {
+  const hasFxLock =
+    input.settled_currency != null && input.settled_amount != null && input.locked_fx_rate != null
+  if (hasFxLock) {
+    const check = validateFxLockInput({
+      amount: input.amount,
+      billCurrency: input.billCurrency || input.settled_currency!,
+      settledCurrency: input.settled_currency!,
+      settledAmount: input.settled_amount ?? null,
+      lockedFxRate: input.locked_fx_rate ?? null,
+    })
+    if (!check.ok) throw new Error(check.error)
+    return createPaymentWithFx({
+      bill_id: input.bill_id,
+      amount: input.amount,
+      paid_at: input.paid_at,
+      channel: input.channel,
+      note: input.note,
+      ...check.normalized,
+    })
+  }
+  return createPayment({
+    bill_id: input.bill_id,
+    amount: input.amount,
+    paid_at: input.paid_at,
+    channel: input.channel,
+    note: input.note,
+  })
 }

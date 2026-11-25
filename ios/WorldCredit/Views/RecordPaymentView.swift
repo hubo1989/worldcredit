@@ -27,6 +27,10 @@ struct RecordPaymentView: View {
         var id: String { rawValue }
     }
 
+    private static let settledCurrencies = ["CNY", "USD", "HKD", "EUR", "GBP", "JPY", "SGD"]
+    private enum FxField: Hashable { case amount, rate }
+    @FocusState private var fxFocus: FxField?
+
     private var billCurrency: String { item.currency }
     private var showFxLockSection: Bool {
         billCurrency.uppercased() != settledCurrency.uppercased()
@@ -306,16 +310,15 @@ struct RecordPaymentView: View {
                 .foregroundStyle(WCColors.textPrimary)
 
             Picker("结算币种", selection: $settledCurrency) {
-                Text("CNY").tag("CNY")
-                Text("USD").tag("USD")
-                Text("HKD").tag("HKD")
-            }
-            .pickerStyle(.segmented)
-            .onChange(of: settledCurrency) { _, nextCur in
-                if nextCur.uppercased() == billCurrency.uppercased() {
-                    settledAmountText = ""
-                    lockedRateText = ""
+                ForEach(Self.settledCurrencies, id: \.self) { cur in
+                    Text(cur).tag(cur)
                 }
+            }
+            .pickerStyle(.menu)
+            .onChange(of: settledCurrency) { _, _ in
+                fxFocus = nil
+                settledAmountText = ""
+                lockedRateText = ""
             }
 
             if showFxLockSection {
@@ -328,7 +331,9 @@ struct RecordPaymentView: View {
                             .keyboardType(.decimalPad)
                             .padding(10)
                             .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 8))
+                            .focused($fxFocus, equals: .amount)
                             .onChange(of: settledAmountText) { _, val in
+                                guard fxFocus == .amount else { return }
                                 if let s = Double(val), s > 0, effectiveAmount > 0 {
                                     lockedRateText = String(format: "%.4f", s / effectiveAmount)
                                 } else if val.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -345,7 +350,9 @@ struct RecordPaymentView: View {
                             .keyboardType(.decimalPad)
                             .padding(10)
                             .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 8))
+                            .focused($fxFocus, equals: .rate)
                             .onChange(of: lockedRateText) { _, val in
+                                guard fxFocus == .rate else { return }
                                 if let r = Double(val), r > 0, effectiveAmount > 0 {
                                     settledAmountText = String(format: "%.2f", effectiveAmount * r)
                                 } else if val.trimmingCharacters(in: .whitespaces).isEmpty {

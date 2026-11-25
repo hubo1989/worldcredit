@@ -30,17 +30,23 @@ interface Props {
   payments: PaymentWithFx[]
 }
 
+const DEFAULT_DAILY_RATE_PCT = '0.05'
+const DEFAULT_DAILY_RATE = 0.0005
+
 export function BillRepaymentHealthCard({ bill, cardType, currency, items, payments }: Props) {
   const [simOpen, setSimOpen] = useState(false)
   const [simMode, setSimMode] = useState<'current' | 'min' | 'full' | 'custom'>('min')
   const [customPayText, setCustomPayText] = useState('')
-  const [dailyRatePctText, setDailyRatePctText] = useState('0.05')
+  const [dailyRatePctText, setDailyRatePctText] = useState(DEFAULT_DAILY_RATE_PCT)
+
+  const dailyRateNum = Number(dailyRatePctText)
+  const dailyRateInvalid =
+    !dailyRatePctText.trim() || !Number.isFinite(dailyRateNum) || dailyRateNum < 0 || dailyRateNum > 1
 
   const dailyRate = useMemo(() => {
-    const pct = Number(dailyRatePctText)
-    if (!Number.isFinite(pct) || pct < 0 || pct > 1) return 0.0005
-    return pct / 100
-  }, [dailyRatePctText])
+    if (dailyRateInvalid) return DEFAULT_DAILY_RATE
+    return dailyRateNum / 100
+  }, [dailyRateInvalid, dailyRateNum])
 
   const health = useMemo(
     () =>
@@ -59,7 +65,10 @@ export function BillRepaymentHealthCard({ bill, cardType, currency, items, payme
     const base =
       billEffectiveStatementDate(bill) || bill.statement_end || `${bill.bill_month}-01`
     const nextMonth = addMonthsToPayablePeriod(base.slice(0, 7), 1)
-    return `${nextMonth}-${base.slice(8, 10) || '01'}`
+    const day = Number(base.slice(8, 10)) || 1
+    // 29/30/31 出账日在小月（如 2 月）钳制到当月最后一天，防止出现 2026-02-31
+    const lastDay = new Date(Number(nextMonth.slice(0, 4)), Number(nextMonth.slice(5, 7)), 0).getDate()
+    return `${nextMonth}-${String(Math.min(day, lastDay)).padStart(2, '0')}`
   }, [bill])
 
   const simulation = useMemo(
@@ -124,14 +133,12 @@ export function BillRepaymentHealthCard({ bill, cardType, currency, items, payme
     )
   }
 
-  const activeSim =
-    simMode === 'current'
-      ? simulation.current
-      : simMode === 'min'
-        ? simulation.min_payment
-        : simMode === 'full'
-          ? simulation.full_payment
-          : simulation.custom
+  const activeSim = {
+    current: simulation.current,
+    min: simulation.min_payment,
+    full: simulation.full_payment,
+    custom: simulation.custom,
+  }[simMode]
 
   return (
     <div className='mb-2.5'>
@@ -203,15 +210,22 @@ export function BillRepaymentHealthCard({ bill, cardType, currency, items, payme
             </div>
 
             <div className='mt-2.5 grid grid-cols-2 gap-2.5'>
-              <TextField
-                label='测算日利率 (%)'
-                type='number'
-                inputMode='decimal'
-                step='0.01'
-                value={dailyRatePctText}
-                onChange={(e) => setDailyRatePctText(e.target.value)}
-                helperText='默认万分之五 (0.05%)'
-              />
+              <div>
+                <TextField
+                  label='测算日利率 (%)'
+                  type='number'
+                  inputMode='decimal'
+                  step='0.01'
+                  value={dailyRatePctText}
+                  onChange={(e) => setDailyRatePctText(e.target.value)}
+                  helperText='默认万分之五 (0.05%)'
+                />
+                {dailyRateInvalid && (
+                  <p className='mt-1 text-[11px] text-d-warn-ink'>
+                    输入无效（需在 0–1% 之间），已按默认 0.05% 试算
+                  </p>
+                )}
+              </div>
               {simMode === 'custom' && (
                 <TextField
                   label={`今日追加还款 (${currency})`}
