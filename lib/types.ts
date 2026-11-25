@@ -476,6 +476,7 @@ export type NotificationCategory =
   | 'bill_due_advance'
   | 'payable_due_advance'
   | 'bill_overdue'
+  | 'bill_missing_statement'
   | 'grace_period_longest'
   | 'annual_fee_decision'
   | 'opportunity_expiry'
@@ -492,6 +493,7 @@ export interface NotificationItemSwitches {
   bill_due_advance: boolean
   payable_due_advance: boolean
   bill_overdue: boolean
+  bill_missing_statement: boolean
   grace_period_longest: boolean
   annual_fee_decision: boolean
   opportunity_expiry: boolean
@@ -524,6 +526,7 @@ export interface UserNotificationItem {
  */
 export interface UserReminderConfig {
   remind_days_before: number[]
+  missing_statement_grace_days?: number
   quiet_hours_start?: string
   quiet_hours_end?: string
   enabled_channels: ('web_push' | 'email' | 'webhook')[]

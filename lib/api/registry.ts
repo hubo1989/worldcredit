@@ -410,6 +410,11 @@ export const RPC_REGISTRY: Record<string, Record<string, RpcEntry>> = {
       memberGuard: guardBill(0),
     },
     deleteBill: { impl: billsServer.deleteBill, admin: true },
+    supplementMissingBill: {
+      impl: billsServer.supplementMissingBill,
+      bindField: { arg: 0, field: 'user_id' },
+      memberGuard: guardObjField(0, 'card_id', assertCardAccess),
+    },
   },
   payments: {
     // 还款记录编辑（spec 13 §6.1/§6.2）：成员经 payment -> bill -> card -> holder

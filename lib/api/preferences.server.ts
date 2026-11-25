@@ -8,6 +8,7 @@ import {
   type UserImportConfig,
 } from './preferences.shared'
 import { tableColumns } from './schema-columns.server'
+import { normalizeMissingStatementGraceDays } from '../missing-statement'
 import { mergeOpportunityReminderConfig } from '../opportunities/reminders'
 import {
   resolveNotificationSwitches,
@@ -48,6 +49,9 @@ export async function getUserPreferences(userId: string): Promise<UserPreference
     reminder_config: {
       ...DEFAULT_REMINDER_CONFIG,
       ...stored,
+      missing_statement_grace_days: normalizeMissingStatementGraceDays(
+        stored.missing_statement_grace_days,
+      ),
       items: mergedItems,
       // Task 14：opportunities 子树深合并默认值——只写偏好中的字段，其余回落
       // 默认；损坏子树在读时显式抛错，绝不静默关闭提醒。
@@ -74,9 +78,14 @@ export async function updateUserPreferences(
   )
 
   // 更新只覆盖给出字段；opportunities 子树保留既有未传入字段。
+  const rawGraceDays =
+    incomingReminder.missing_statement_grace_days !== undefined
+      ? incomingReminder.missing_statement_grace_days
+      : current.reminder_config.missing_statement_grace_days
   const updatedReminder: UserReminderConfig = {
     ...current.reminder_config,
     ...incomingReminder,
+    missing_statement_grace_days: normalizeMissingStatementGraceDays(rawGraceDays),
     items: mergedItems,
     opportunities: mergedOpp,
   }

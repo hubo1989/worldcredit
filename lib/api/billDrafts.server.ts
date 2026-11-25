@@ -14,6 +14,7 @@ import { getWorkerEnv } from '../db/client'
 import type { Bill } from '../types'
 import { createBill } from './bills.server'
 import type { BillItemInput } from './bills.server'
+import { prepareBillItemInserts } from './billItems.server'
 import { MemberScopeError } from './member-scope'
 import { RpcDomainError } from './errors'
 import { isExactDueDate } from '../email-core/due-date'
@@ -281,23 +282,52 @@ function rowToDraft(row: DraftRow): BillImportDraft {
   }
 }
 
-/** 同卡同月已有账单时的对比预览：让 UI 弹「合并更新 / 放弃」而不是静默覆盖。 */
+async function resolveMergedAccountId(cardId: string): Promise<string | null> {
+  const { data } = await queryOne<{
+    account_id: string | null
+    statement_mode: string | null
+  }>(
+    `SELECT cc.account_id, ca.statement_mode
+     FROM credit_cards cc
+     LEFT JOIN credit_accounts ca ON cc.account_id = ca.id
+     WHERE cc.id = ?`,
+    [cardId],
+  )
+  return data?.statement_mode === 'merged' && data.account_id ? data.account_id : null
+}
+
+/** 同卡或同合并账户同月已有账单时的对比预览：让 UI 弹「合并更新 / 放弃」而不是静默覆盖。 */
 export async function buildDuplicateBillPreview(
   cardId: string | null,
   billMonth: string | null | undefined,
 ): Promise<DuplicateBillPreview | null> {
   if (!cardId || !billMonth) return null
-  const { data } = await queryOne<{
-    id: string
-    bill_month: string
-    bill_amount: number
-    bill_amount_override: number | null
-    status: string
-  }>(
-    `SELECT id, bill_month, bill_amount, bill_amount_override, status
-     FROM bills WHERE card_id = ? AND bill_month = ? LIMIT 1`,
-    [cardId, billMonth],
-  )
+  const mergedAccountId = await resolveMergedAccountId(cardId)
+  const { data } = mergedAccountId
+    ? await queryOne<{
+        id: string
+        bill_month: string
+        bill_amount: number
+        bill_amount_override: number | null
+        status: string
+      }>(
+        `SELECT id, bill_month, bill_amount, bill_amount_override, status
+         FROM bills
+         WHERE bill_month = ? AND (card_id = ? OR account_id = ?)
+         LIMIT 1`,
+        [billMonth, cardId, mergedAccountId],
+      )
+    : await queryOne<{
+        id: string
+        bill_month: string
+        bill_amount: number
+        bill_amount_override: number | null
+        status: string
+      }>(
+        `SELECT id, bill_month, bill_amount, bill_amount_override, status
+         FROM bills WHERE card_id = ? AND bill_month = ? LIMIT 1`,
+        [cardId, billMonth],
+      )
   if (!data) return null
   const { data: paid } = await queryOne<{ paid: number }>(
     'SELECT COALESCE(SUM(amount), 0) AS paid FROM payments WHERE bill_id = ?',
@@ -1290,20 +1320,67 @@ export async function confirmBillImportDraft(
   if (existing) {
     // 合并更新：只写导入列，绝不触碰 *_override（spec 13 的钉住语义），
     // 还款状态由 payments 重算保护（keepPaidStatus 的同口径实现）。
-    const { error } = await execute(
-      `UPDATE bills SET statement_start = ?, statement_end = ?, statement_date = ?,
-              bill_amount = ?, min_payment = ?, due_date = ?
-       WHERE id = ?`,
-      [
-        payload.statement_start || null,
-        payload.statement_end || null,
-        payload.statement_date || null,
-        payload.bill_amount,
-        payload.min_payment ?? 0,
-        payload.due_date,
-        existing.bill_id,
-      ],
-    )
+    const stmts: { sql: string; params: unknown[] }[] = [
+      {
+        sql: `UPDATE bills SET statement_start = ?, statement_end = ?, statement_date = ?,
+                bill_amount = ?, min_payment = ?, due_date = ?
+         WHERE id = ?`,
+        params: [
+          payload.statement_start || null,
+          payload.statement_end || null,
+          payload.statement_date || null,
+          payload.bill_amount,
+          payload.min_payment ?? 0,
+          payload.due_date,
+          existing.bill_id,
+        ],
+      },
+    ]
+
+    if (items.length > 0) {
+      const existingItem = await queryOne<{ id: string }>(
+        'SELECT id FROM bill_items WHERE bill_id = ? LIMIT 1',
+        [existing.bill_id],
+      )
+      if (!existingItem.data) {
+        const { data: scopeRow } = await queryOne<{
+          card_id: string
+          account_id: string | null
+          holder_id: string
+          currency: string | null
+          statement_mode: string | null
+          managed_by: string | null
+        }>(
+          `SELECT b.card_id, b.account_id, cc.holder_id, cp.currency, ca.statement_mode, ch.managed_by
+           FROM bills b
+           JOIN credit_cards cc ON cc.id = b.card_id
+           JOIN card_holders ch ON ch.id = cc.holder_id
+           LEFT JOIN card_products cp ON cp.id = cc.card_product_id
+           LEFT JOIN credit_accounts ca ON ca.id = b.account_id
+           WHERE b.id = ?`,
+          [existing.bill_id],
+        )
+        if (scopeRow) {
+          const { statements: itemStatements } = await prepareBillItemInserts(
+            existing.bill_id,
+            {
+              card_id: scopeRow.card_id,
+              account_id: scopeRow.account_id,
+              holder_id: scopeRow.holder_id,
+              currency: scopeRow.currency || 'CNY',
+              statement_mode: scopeRow.statement_mode,
+              managed_by: scopeRow.managed_by || userId || draft.created_by,
+            },
+            items,
+            userId ?? draft.created_by,
+          )
+          stmts.push(...itemStatements)
+        }
+      }
+    }
+
+    stmts.push(billStatusRecalcStatement(existing.bill_id))
+    const { error } = await batch(stmts)
     if (error) throw new Error(error.message)
     billId = existing.bill_id
   } else {
@@ -1354,10 +1431,16 @@ export async function confirmBillImportDraft(
 }
 
 export async function checkDuplicateBill(cardId: string, billMonth: string): Promise<Bill | null> {
-  const { data } = await queryOne<Bill>(
-    'SELECT * FROM bills WHERE card_id = ? AND bill_month = ? LIMIT 1',
-    [cardId, billMonth],
-  )
+  const mergedAccountId = await resolveMergedAccountId(cardId)
+  const { data } = mergedAccountId
+    ? await queryOne<Bill>(
+        'SELECT * FROM bills WHERE bill_month = ? AND (card_id = ? OR account_id = ?) LIMIT 1',
+        [billMonth, cardId, mergedAccountId],
+      )
+    : await queryOne<Bill>(
+        'SELECT * FROM bills WHERE card_id = ? AND bill_month = ? LIMIT 1',
+        [cardId, billMonth],
+      )
   return data
 }
 

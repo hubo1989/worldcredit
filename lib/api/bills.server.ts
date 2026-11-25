@@ -14,12 +14,22 @@ import {
   isBillUnissued,
   calculateCardGracePeriod,
   diffInCalendarDays,
+  getLocalTodayString,
 } from "../utils";
 import { format } from "date-fns";
 import { RpcDomainError } from "./errors";
+import { MemberScopeError } from "./member-scope";
 import { isValidUuid } from "../validation-patterns";
 import { validateAndNormalizeFxLock } from "./direction3.shared";
 import { currencySymbol } from "../fx";
+import {
+  DEFAULT_MISSING_STATEMENT_GRACE_DAYS,
+  detectMissingStatements,
+  normalizeMissingStatementGraceDays,
+  type MissingStatementBillRef,
+  type MissingStatementDraftRef,
+  type MissingStatementSummary,
+} from "../missing-statement";
 
 /** 还款汇率锁定的三个可空列；只有客户端显式传入时才参与 INSERT / UPDATE。 */
 export interface PaymentFxInput {
@@ -414,6 +424,8 @@ export async function getBillById(id: string): Promise<BillWithCard | null> {
 
 export { calculateCardGracePeriod };
 
+export type { MissingStatementSummary };
+
 export interface CardWithBillsSummary {
   card: CreditCard & { card_product: CardProduct };
   holder_id: string;
@@ -430,6 +442,7 @@ export interface CardWithBillsSummary {
   isAnchorCard?: boolean;
   suppressMissingStatement?: boolean;
   memberCards?: CreditCard[];
+  missingStatement?: MissingStatementSummary | null;
 }
 
 export async function getCardsWithBillsSummary(userId?: string): Promise<CardWithBillsSummary[]> {
@@ -495,7 +508,63 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
     }
   }
 
-  const allBills = await getBillDashboardItems(500, userId);
+  const [allBills, fullBillRefsRes, prefRes, draftsRes] = await Promise.all([
+    getBillDashboardItems(500, userId),
+    query<MissingStatementBillRef>(
+      `SELECT b.id, b.card_id, COALESCE(b.account_id, cc.account_id) AS account_id, b.bill_month
+       FROM bills b
+       JOIN credit_cards cc ON b.card_id = cc.id
+       JOIN card_holders ch ON cc.holder_id = ch.id${where}`,
+      params,
+    ),
+    userId
+      ? queryOne<{ reminder_config: string | null }>(
+          "SELECT reminder_config FROM user_preferences WHERE user_id = ?",
+          [userId],
+        )
+      : Promise.resolve({ data: null, error: null }),
+    query<MissingStatementDraftRef>(
+      userId
+        ? `SELECT id, card_id, matched_account_id,
+                  json_extract(parsed_payload, '$.bill_month') AS bill_month,
+                  parse_status
+           FROM bill_import_drafts
+           WHERE created_by = ? AND status = 'draft'`
+        : `SELECT id, card_id, matched_account_id,
+                  json_extract(parsed_payload, '$.bill_month') AS bill_month,
+                  parse_status
+           FROM bill_import_drafts
+           WHERE status = 'draft'`,
+      userId ? [userId] : [],
+    ),
+  ]);
+  if (fullBillRefsRes.error) throw new Error(fullBillRefsRes.error.message);
+
+  let missingGraceDays = DEFAULT_MISSING_STATEMENT_GRACE_DAYS;
+  if (prefRes.data?.reminder_config) {
+    try {
+      const parsed = JSON.parse(prefRes.data.reminder_config) as {
+        missing_statement_grace_days?: unknown;
+      };
+      missingGraceDays = normalizeMissingStatementGraceDays(parsed.missing_statement_grace_days);
+    } catch {
+      missingGraceDays = DEFAULT_MISSING_STATEMENT_GRACE_DAYS;
+    }
+  }
+
+  const missingResult = detectMissingStatements({
+    cards: cards.map((card) => ({
+      card: {
+        ...card,
+        card_product: productMap[card.card_product_id] ?? null,
+      },
+      account: card.account_id ? accountMap[card.account_id] ?? null : null,
+    })),
+    bills: fullBillRefsRes.data || [],
+    drafts: draftsRes.error ? [] : draftsRes.data || [],
+    graceDays: missingGraceDays,
+  });
+
   const billsByCardId = new Map<string, BillDashboardItem[]>();
   const billsByAccountId = new Map<string, BillDashboardItem[]>();
   for (const b of allBills) {
@@ -526,7 +595,17 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
 
     const account = card.account_id ? accountMap[card.account_id] : undefined;
     const isMergedAccount = account?.statement_mode === "merged";
-    const isAnchorCard = !isMergedAccount || (account ? account.primary_card_id === card.id : true);
+    const resolvedCarrierId =
+      isMergedAccount && card.account_id
+        ? missingResult.carrierCardIdByAccountId.get(card.account_id)
+        : undefined;
+    const isAnchorCard = !isMergedAccount
+      ? true
+      : resolvedCarrierId
+        ? resolvedCarrierId === card.id
+        : account
+          ? account.primary_card_id === card.id
+          : true;
     const memberCards = card.account_id ? (memberCardsByAccountId[card.account_id] || [card]) : [card];
 
     // 获取账单列表：合并账户以 account_id 聚合并去重
@@ -597,7 +676,9 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
     }
 
     // 合并账户的非锚点卡抑制缺账告警
-    const suppressMissingStatement = isMergedAccount && !isAnchorCard;
+    const suppressMissingStatement =
+      missingResult.suppressedCardIds.has(card.id) || (isMergedAccount && !isAnchorCard);
+    const missingStatement = missingResult.byCarrierCardId.get(card.id) ?? null;
 
     return {
       card: cardWithProduct,
@@ -614,6 +695,7 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
       isAnchorCard,
       suppressMissingStatement,
       memberCards,
+      missingStatement,
     };
   });
 }
@@ -1027,15 +1109,43 @@ export interface BillLiteForForm {
   due_date_override: string | null;
 }
 
-/** Bill-entry form duplicate check: existing bill for card + month. */
+/** Bill-entry form duplicate check: existing bill for card (or merged account) + month. */
 export async function getBillByCardMonth(
   cardId: string,
   billMonth: string,
 ): Promise<BillLiteForForm | null> {
-  const { data, error } = await queryOne<BillLiteForForm>(
-    "SELECT id, bill_amount, bill_amount_override, min_payment, min_payment_override, statement_date, statement_date_override, due_date, due_date_override FROM bills WHERE card_id = ? AND bill_month = ? LIMIT 1",
-    [cardId, billMonth],
+  const { data: cardAcc, error: accErr } = await queryOne<{
+    account_id: string | null;
+    statement_mode: string | null;
+  }>(
+    `SELECT cc.account_id, ca.statement_mode
+     FROM credit_cards cc
+     LEFT JOIN credit_accounts ca ON cc.account_id = ca.id
+     WHERE cc.id = ?`,
+    [cardId],
   );
+  if (accErr) throw new Error(accErr.message);
+
+  const mergedAccountId =
+    cardAcc?.statement_mode === "merged" && cardAcc.account_id ? cardAcc.account_id : null;
+  const { data, error } = mergedAccountId
+    ? await queryOne<BillLiteForForm>(
+        `SELECT id, bill_amount, bill_amount_override, min_payment, min_payment_override,
+                statement_date, statement_date_override, due_date, due_date_override
+         FROM bills
+         WHERE bill_month = ?
+           AND (card_id = ? OR account_id = ?)
+         LIMIT 1`,
+        [billMonth, cardId, mergedAccountId],
+      )
+    : await queryOne<BillLiteForForm>(
+        `SELECT id, bill_amount, bill_amount_override, min_payment, min_payment_override,
+                statement_date, statement_date_override, due_date, due_date_override
+         FROM bills
+         WHERE card_id = ? AND bill_month = ?
+         LIMIT 1`,
+        [cardId, billMonth],
+      );
   if (error) throw new Error(error.message);
   return data
     ? {
@@ -1862,4 +1972,408 @@ export async function deleteBill(billId: string): Promise<void> {
 
   const { error } = await batch([{ sql: "DELETE FROM bills WHERE id = ?", params: [billId] }]);
   if (error) throw new Error(error.message);
+}
+
+// ── 超期未获得账单：手动补录 / 0 元零账单确认（HUB-269）─────────────────────
+
+export interface SupplementMissingBillInput {
+  /** 客户端幂等 UUID（可选；传入时作为 bills.id 支持离线/弱网安全重试） */
+  id?: string;
+  /** 服务端由 bindField 强制覆写，客户端不传 */
+  user_id?: string;
+  card_id: string;
+  /** 'YYYY-MM' */
+  bill_month: string;
+  /** >= 0；0 表示确认「本期无消费 / 0 元零账单」 */
+  bill_amount: number;
+  /** 选填，>= 0 */
+  min_payment?: number | null;
+  /** 必填，'YYYY-MM-DD' 真实日历日 */
+  due_date: string;
+  /** 选填，'YYYY-MM-DD' 真实日历日 */
+  statement_date?: string | null;
+  statement_start?: string | null;
+  statement_end?: string | null;
+  pin_due_date?: boolean;
+  pin_statement_date?: boolean;
+  pin_min_payment?: boolean;
+  /** 仅当 bill_amount > 0 时有效：同事务生成一笔等额还款（channel='手动补录结清'）并置为 paid */
+  mark_as_paid?: boolean;
+  subtotals?: Array<{
+    card_id?: string | null;
+    card_tail: string;
+    subtotal_amount: number;
+    currency?: string;
+  }>;
+}
+
+export interface SupplementMissingBillResult {
+  bill: Bill;
+  action: "created" | "updated_existing" | "replayed";
+  is_zero_bill: boolean;
+  payment_created: boolean;
+}
+
+export async function supplementMissingBill(
+  input: SupplementMissingBillInput,
+): Promise<SupplementMissingBillResult> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new RpcDomainError("VALIDATION_FAILED", "缺少合法的补录参数");
+  }
+  if (typeof input.card_id !== "string" || !input.card_id.trim()) {
+    throw new RpcDomainError("VALIDATION_FAILED", "缺少合法的卡片 ID");
+  }
+  if (
+    typeof input.bill_month !== "string" ||
+    !/^\d{4}-(0[1-9]|1[0-2])$/.test(input.bill_month.trim())
+  ) {
+    throw new RpcDomainError("VALIDATION_FAILED", "账单月份必须是 YYYY-MM 格式");
+  }
+  const billMonth = input.bill_month.trim();
+
+  if (typeof input.bill_amount !== "number" || !Number.isFinite(input.bill_amount) || input.bill_amount < 0) {
+    throw new RpcDomainError("VALIDATION_FAILED", "账单金额必须是不小于 0 的数字");
+  }
+  if (
+    input.min_payment !== undefined &&
+    input.min_payment !== null &&
+    (typeof input.min_payment !== "number" || !Number.isFinite(input.min_payment) || input.min_payment < 0)
+  ) {
+    throw new RpcDomainError("VALIDATION_FAILED", "最低还款额必须是不小于 0 的数字");
+  }
+  if (typeof input.due_date !== "string" || !isValidCalendarDate(input.due_date)) {
+    throw new RpcDomainError("VALIDATION_FAILED", "最后还款日必须是 YYYY-MM-DD 格式的真实日历日");
+  }
+  assertOptionalDate(input.statement_date, "账单日", { allowNull: true });
+  assertOptionalDate(input.statement_start, "账期开始日", { allowNull: true });
+  assertOptionalDate(input.statement_end, "账期结束日", { allowNull: true });
+  if (input.statement_start && input.statement_end && input.statement_start > input.statement_end) {
+    throw new RpcDomainError("VALIDATION_FAILED", "账期开始日不能晚于账期结束日");
+  }
+
+  const clientId = normalizeClientBillId(input.id);
+  const { data: card, error: cardError } = await queryOne<{
+    id: string;
+    account_id: string | null;
+    holder_id: string;
+    created_by: string | null;
+    managed_by: string | null;
+    auth_user_id: string | null;
+    currency: string | null;
+  }>(
+    `SELECT cc.id, cc.account_id, cc.holder_id,
+            h.created_by, h.managed_by, h.auth_user_id, cp.currency
+     FROM credit_cards cc
+     JOIN card_holders h ON h.id = cc.holder_id
+     LEFT JOIN card_products cp ON cp.id = cc.card_product_id
+     WHERE cc.id = ?`,
+    [input.card_id],
+  );
+  if (cardError) throw new Error(cardError.message);
+  if (!card) throw new RpcDomainError("NOT_FOUND", "卡片不存在");
+
+  if (input.user_id) {
+    const owned =
+      card.created_by === input.user_id ||
+      card.managed_by === input.user_id ||
+      card.auth_user_id === input.user_id;
+    if (!owned) {
+      throw new MemberScopeError("无权操作其他用户的卡片");
+    }
+  }
+
+  const accountId = card.account_id;
+  let anchorCardId = card.id;
+  let statementMode: string | null = null;
+  let currency = card.currency || "CNY";
+
+  if (accountId) {
+    const { data: account, error: accountError } = await queryOne<{
+      id: string;
+      statement_mode: string;
+      holder_id: string;
+      primary_card_id: string | null;
+    }>(
+      "SELECT id, statement_mode, holder_id, primary_card_id FROM credit_accounts WHERE id = ?",
+      [accountId],
+    );
+    if (accountError) throw new Error(accountError.message);
+    if (!account || account.holder_id !== card.holder_id) {
+      throw new RpcDomainError("VALIDATION_FAILED", "信用账户与卡片归属不符");
+    }
+    statementMode = account.statement_mode;
+    if (statementMode === "merged") {
+      const { data: memberRows, error: memberErr } = await query<{
+        id: string;
+        status: string;
+        card_type: string | null;
+        created_at: string;
+        currency: string | null;
+        bill_count: number;
+      }>(
+        `SELECT cc.id, cc.status, cc.card_type, cc.created_at, cp.currency,
+                (SELECT COUNT(*) FROM bills bi WHERE bi.card_id = cc.id) AS bill_count
+         FROM credit_cards cc
+         LEFT JOIN card_products cp ON cp.id = cc.card_product_id
+         WHERE cc.account_id = ? AND cc.holder_id = ?`,
+        [accountId, card.holder_id],
+      );
+      if (memberErr) throw new Error(memberErr.message);
+      const members = memberRows || [];
+      const activeMembers = members.filter(
+        (m) => m.status === "active" && (m.card_type ?? "credit") === "credit",
+      );
+      const primaryActive = account.primary_card_id
+        ? activeMembers.find((m) => m.id === account.primary_card_id)
+        : undefined;
+      if (primaryActive) {
+        anchorCardId = primaryActive.id;
+        currency = primaryActive.currency || currency;
+      } else if (activeMembers.length > 0) {
+        const sorted = [...activeMembers].sort((a, b) => {
+          const diff = Number(b.bill_count || 0) - Number(a.bill_count || 0);
+          if (diff !== 0) return diff;
+          if (a.created_at !== b.created_at) return a.created_at.localeCompare(b.created_at);
+          return a.id.localeCompare(b.id);
+        });
+        anchorCardId = sorted[0].id;
+        currency = sorted[0].currency || currency;
+      } else if (account.primary_card_id && members.some((m) => m.id === account.primary_card_id)) {
+        anchorCardId = account.primary_card_id;
+      }
+    }
+  }
+
+  // Idempotent replay by client UUID
+  if (clientId) {
+    const { data: existingById } = await queryOne<{ id: string; card_id: string }>(
+      "SELECT id, card_id FROM bills WHERE id = ?",
+      [clientId],
+    );
+    if (existingById) {
+      const sameHolder = await isSameCardHolder(existingById.card_id, anchorCardId);
+      if (!sameHolder) {
+        throw new RpcDomainError("CONFLICT", "该账单标识已被其他持卡人使用，请重新创建", {
+          bill_id: clientId,
+        });
+      }
+      const replayed = await getBillById(clientId);
+      if (replayed) {
+        return {
+          bill: replayed as unknown as Bill,
+          action: "replayed",
+          is_zero_bill: effectiveBillAmount(replayed) === 0,
+          payment_created: false,
+        };
+      }
+    }
+  }
+
+  const findExistingBill = async () => {
+    if (statementMode === "merged" && accountId) {
+      const res = await queryOne<{ id: string; bill_amount_override: number | null }>(
+        `SELECT id, bill_amount_override
+         FROM bills
+         WHERE bill_month = ?
+           AND (account_id = ? OR card_id IN (SELECT id FROM credit_cards WHERE account_id = ?))
+         ORDER BY created_at ASC
+         LIMIT 1`,
+        [billMonth, accountId, accountId],
+      );
+      if (res.error) throw new Error(res.error.message);
+      return res.data;
+    }
+    const res = await queryOne<{ id: string; bill_amount_override: number | null }>(
+      `SELECT id, bill_amount_override
+       FROM bills
+       WHERE card_id = ? AND bill_month = ?
+       LIMIT 1`,
+      [anchorCardId, billMonth],
+    );
+    if (res.error) throw new Error(res.error.message);
+    return res.data;
+  };
+
+  const applyUpdateExisting = async (existingId: string): Promise<SupplementMissingBillResult> => {
+    const patch: BillFieldPatch = {
+      amount: input.bill_amount,
+    };
+    if (input.pin_due_date) patch.due_date = input.due_date;
+    if (input.pin_statement_date) patch.statement_date = input.statement_date ?? null;
+    if (input.pin_min_payment) patch.min_payment = input.min_payment ?? null;
+    if (input.statement_start !== undefined) patch.statement_start = input.statement_start;
+    if (input.statement_end !== undefined) patch.statement_end = input.statement_end;
+
+    await updateBillFields(existingId, patch);
+
+    if (input.subtotals && input.subtotals.length > 0) {
+      const subStmts = input.subtotals.map((sub) => ({
+        sql:
+          "INSERT INTO bill_card_subtotals (id, bill_id, card_id, card_tail, subtotal_amount, currency, source) " +
+          "VALUES (?, ?, ?, ?, ?, ?, 'manual') ON CONFLICT(bill_id, card_tail) DO UPDATE SET " +
+          "card_id = excluded.card_id, subtotal_amount = excluded.subtotal_amount, currency = excluded.currency",
+        params: [
+          uuid(),
+          existingId,
+          sub.card_id || null,
+          sub.card_tail,
+          sub.subtotal_amount,
+          sub.currency || currency,
+        ],
+      }));
+      const { error: subErr } = await batch(subStmts);
+      if (subErr) throw new Error(subErr.message);
+    }
+
+    let paymentCreated = false;
+    if (input.mark_as_paid && input.bill_amount > 0) {
+      const alreadyPaid = await getPaymentTotal(existingId);
+      const remaining = Math.max(0, input.bill_amount - alreadyPaid);
+      if (remaining > 0.01) {
+        await recordPayment({
+          bill_id: existingId,
+          amount: remaining,
+          paid_at: getLocalTodayString(),
+          channel: "手动补录结清",
+          note: "超期未出账手动补录并标记已还清",
+          idempotency_key: `supp_pay_${existingId}`,
+        });
+        paymentCreated = true;
+      }
+    }
+
+    const updated = await getBillById(existingId);
+    if (!updated) throw new Error("账单补录更新失败");
+    return {
+      bill: updated as unknown as Bill,
+      action: "updated_existing",
+      is_zero_bill: input.bill_amount === 0,
+      payment_created: paymentCreated,
+    };
+  };
+
+  const existing = await findExistingBill();
+  if (existing) {
+    if (existing.bill_amount_override != null) {
+      throw new RpcDomainError("CONFLICT", "该账期账单已存在记录", {
+        existing_bill_id: existing.id,
+      });
+    }
+    return applyUpdateExisting(existing.id);
+  }
+
+  const id = clientId ?? uuid();
+  const isZeroBill = input.bill_amount === 0;
+  const markAsPaid = Boolean(input.mark_as_paid) && !isZeroBill;
+  const minPaymentBase = isZeroBill ? 0 : (input.min_payment ?? 0);
+  const initialStatus: Bill["status"] = isZeroBill ? "paid" : "unpaid";
+
+  const stmts: { sql: string; params: unknown[] }[] = [
+    {
+      sql:
+        "INSERT INTO bills (" +
+        "id, account_id, card_id, bill_month, statement_start, statement_end, " +
+        "statement_date, statement_date_override, bill_amount, bill_amount_override, " +
+        "min_payment, min_payment_override, due_date, due_date_override, status" +
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      params: [
+        id,
+        accountId,
+        anchorCardId,
+        billMonth,
+        input.statement_start || null,
+        input.statement_end || null,
+        input.statement_date || null,
+        input.pin_statement_date ? (input.statement_date ?? null) : null,
+        input.bill_amount,
+        input.bill_amount,
+        minPaymentBase,
+        input.pin_min_payment ? (input.min_payment ?? null) : null,
+        input.due_date,
+        input.pin_due_date ? input.due_date : null,
+        initialStatus,
+      ],
+    },
+  ];
+
+  if (markAsPaid) {
+    stmts.push({
+      sql:
+        "INSERT INTO payments (id, bill_id, amount, paid_at, channel, note, idempotency_key, created_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      params: [
+        uuid(),
+        id,
+        input.bill_amount,
+        getLocalTodayString(),
+        "手动补录结清",
+        "超期未出账手动补录并标记已还清",
+        `supp_pay_${id}`,
+        now(),
+      ],
+    });
+  }
+
+  if (!isZeroBill) {
+    stmts.push(buildAtomicBillStatusRecalcStatement(id));
+  }
+
+  for (const sub of input.subtotals ?? []) {
+    stmts.push({
+      sql:
+        "INSERT INTO bill_card_subtotals (id, bill_id, card_id, card_tail, subtotal_amount, currency, source) " +
+        "VALUES (?, ?, ?, ?, ?, ?, 'manual') ON CONFLICT(bill_id, card_tail) DO UPDATE SET " +
+        "card_id = excluded.card_id, subtotal_amount = excluded.subtotal_amount, currency = excluded.currency",
+      params: [
+        uuid(),
+        id,
+        sub.card_id || null,
+        sub.card_tail,
+        sub.subtotal_amount,
+        sub.currency || currency,
+      ],
+    });
+  }
+
+  const { error } = await batch(stmts);
+  if (error) {
+    if (error.message.includes("UNIQUE constraint failed")) {
+      if (clientId) {
+        const { data: twin } = await queryOne<{ id: string }>(
+          "SELECT id FROM bills WHERE id = ?",
+          [clientId],
+        );
+        if (twin) {
+          const replayed = await getBillById(clientId);
+          if (replayed) {
+            return {
+              bill: replayed as unknown as Bill,
+              action: "replayed",
+              is_zero_bill: effectiveBillAmount(replayed) === 0,
+              payment_created: false,
+            };
+          }
+        }
+      }
+      const winner = await findExistingBill();
+      if (winner && winner.bill_amount_override == null) {
+        return applyUpdateExisting(winner.id);
+      }
+      throw new RpcDomainError(
+        "CONFLICT",
+        "该账期账单已存在记录",
+        winner ? { existing_bill_id: winner.id } : {},
+      );
+    }
+    throw new Error(error.message);
+  }
+
+  const created = await getBillById(id);
+  if (!created) throw new Error("账单补录创建失败");
+  return {
+    bill: created as unknown as Bill,
+    action: "created",
+    is_zero_bill: isZeroBill,
+    payment_created: markAsPaid,
+  };
 }

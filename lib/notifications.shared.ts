@@ -36,6 +36,16 @@ export interface NotificationGraceCardMetadataItem {
   nextDueDate: string
 }
 
+export interface NotificationMissingStatementMetadataItem {
+  card_id: string
+  account_id: string | null
+  subject: string
+  bill_month: string
+  expected_statement_date: string
+  days_past: number
+  is_merged: boolean
+}
+
 export interface NotificationMetadata {
   kind?: string
   date?: string
@@ -55,6 +65,7 @@ export interface NotificationMetadata {
   bills?: NotificationBillMetadataItem[]
   payables?: NotificationPayableMetadataItem[]
   cards?: NotificationGraceCardMetadataItem[]
+  missing_statements?: NotificationMissingStatementMetadataItem[]
   event_key?: string
   delivery_key?: string
   object_id?: string
@@ -66,6 +77,7 @@ export const DEFAULT_NOTIFICATION_ITEM_SWITCHES: NotificationItemSwitches = {
   bill_due_advance: true,
   payable_due_advance: true,
   bill_overdue: true,
+  bill_missing_statement: true,
   grace_period_longest: true,
   annual_fee_decision: true,
   opportunity_expiry: true,
@@ -117,6 +129,12 @@ export const NOTIFICATION_SWITCH_ITEMS: Array<{
     group: 'bills',
     label: '逾期账单提醒',
     description: '账单或固定支出已过到期日仍未结清时每日提醒',
+  },
+  {
+    key: 'bill_missing_statement',
+    group: 'bills',
+    label: '超期未获得账单提醒',
+    description: '超过账单日宽限期仍未收到账单时每日提醒手动补充',
   },
   {
     key: 'annual_fee_decision',
@@ -171,6 +189,7 @@ export const NOTIFICATION_CATEGORY_META: Record<
   bill_due_advance: { label: '即将到期', tone: 'accent' },
   payable_due_advance: { label: '支出提醒', tone: 'accent' },
   bill_overdue: { label: '已逾期', tone: 'danger' },
+  bill_missing_statement: { label: '未收账单', tone: 'gold' },
   grace_period_longest: { label: '最长免息期', tone: 'gold' },
   annual_fee_decision: { label: '年费续卡决策', tone: 'gold' },
   opportunity_expiry: { label: '权益到期', tone: 'gold' },
@@ -199,6 +218,7 @@ export function resolveNotificationSwitches(
     bill_due_advance: pick('bill_due_advance'),
     payable_due_advance: pick('payable_due_advance'),
     bill_overdue: pick('bill_overdue'),
+    bill_missing_statement: pick('bill_missing_statement'),
     grace_period_longest: pick('grace_period_longest'),
     annual_fee_decision: pick('annual_fee_decision'),
     opportunity_expiry: pick('opportunity_expiry'),

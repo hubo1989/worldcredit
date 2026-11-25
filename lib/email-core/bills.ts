@@ -17,6 +17,7 @@ import {
   type HolderRecord,
 } from './holders'
 import { decodeMimeHeaderValue, extractHeaderDisplayName, parseRawMessage } from './mime'
+import { effectiveBillAmount, hasManualBillAmount } from '../utils'
 
 interface HolderRow {
   id: string
@@ -487,20 +488,26 @@ export async function upsertBillForCard(
   }
 
   // 唯一性判定：若有 accountId 则优先查 (account_id, bill_month)，否则查 (card_id, bill_month)
+  type ExistingBillRow = {
+    id: string
+    status: string | null
+    bill_amount: number
+    bill_amount_override: number | null
+  }
   async function findExisting() {
     if (accountId) {
       try {
         const match = await db.prepare(
-          'SELECT id, status FROM bills WHERE account_id = ? AND bill_month = ?'
-        ).bind(accountId, billMonth).first<{ id: string; status: string | null }>()
+          'SELECT id, status, bill_amount, bill_amount_override FROM bills WHERE account_id = ? AND bill_month = ?'
+        ).bind(accountId, billMonth).first<ExistingBillRow>()
         if (match) return match
       } catch (error) {
         if (options.protectExisting) throw error
       }
     }
     return db.prepare(
-      'SELECT id, status FROM bills WHERE card_id = ? AND bill_month = ?'
-    ).bind(anchorCardId, billMonth).first<{ id: string; status: string | null }>()
+      'SELECT id, status, bill_amount, bill_amount_override FROM bills WHERE card_id = ? AND bill_month = ?'
+    ).bind(anchorCardId, billMonth).first<ExistingBillRow>()
   }
 
   let existing = await findExisting()
@@ -540,26 +547,98 @@ export async function upsertBillForCard(
     billId = insertedId
     action = 'inserted'
   } else if (existing) {
-    if (options.newStatementItems) {
-      // A retry of this delivery already committed the bill and its items together.
-      if (existing.id === options.newStatementItems.billId) {
+    if (options.protectExisting) {
+      // 分支 A：同次投递幂等重试
+      if (options.newStatementItems && existing.id === options.newStatementItems.billId) {
         return { billId: existing.id, action: 'updated', reason: null }
       }
-      return { billId: existing.id, action: 'preserved', reason: '已有账单，请核对邮件明细后再导入' }
-    }
-    if (options.protectExisting) {
-      const guarded = await db.prepare(
-        `UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?,
-           account_id = COALESCE(account_id, ?)
-         WHERE id = ? AND (account_id IS NULL OR account_id = ?)
-           AND (bill_amount_override IS NULL OR abs(bill_amount_override - ?) <= 0.01000001)
-           AND (status != 'paid' OR abs(bill_amount - ?) <= 0.01000001)`
-      ).bind(amount, minPayment, dueDate, statementDate, accountId, existing.id, accountId, amount, amount).run()
-      if (!guarded.meta.changes) {
-        return { billId: existing.id, action: 'preserved', reason: '金额与已还清账单或人工调整金额冲突，请核对' }
+      const effectiveExisting = effectiveBillAmount(existing)
+      const amountDiff = Math.abs(effectiveExisting - amount)
+      const isManual = hasManualBillAmount(existing)
+
+      // 分支 B：金额一致（<= 0.01，含手填 0 元遇到官方 0 元账单），静默更新基础列并补入明细
+      if (amountDiff <= 0.01000001) {
+        const updateStmt = db.prepare(
+          `UPDATE bills
+           SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?,
+               account_id = COALESCE(account_id, ?)
+           WHERE id = ?
+             AND (account_id IS NULL OR account_id = ?)
+             AND abs(COALESCE(bill_amount_override, bill_amount) - ?) <= 0.01000001`
+        ).bind(amount, minPayment, dueDate, statementDate, accountId, existing.id, accountId, amount)
+
+        let updatedChanges: number
+        if (options.newStatementItems && options.newStatementItems.items.length > 0) {
+          const itemInsertStmt = db.prepare(
+            `INSERT INTO bill_items (id, bill_id, transaction_date, description, amount, currency, item_type, source)
+             SELECT 'mail_item_' || ?4 || '_' || j.key, ?1, json_extract(j.value, '$.transaction_date'),
+                    json_extract(j.value, '$.description'), abs(json_extract(j.value, '$.amount')),
+                    COALESCE(json_extract(j.value, '$.currency'), ?2),
+                    COALESCE(json_extract(j.value, '$.item_type'),
+                      CASE WHEN json_extract(j.value, '$.amount') < 0 THEN 'refund' ELSE 'purchase' END), 'email'
+             FROM json_each(?3) AS j
+             WHERE EXISTS (
+               SELECT 1 FROM bills
+               WHERE id = ?1
+                 AND (account_id IS NULL OR account_id = ?6)
+                 AND abs(COALESCE(bill_amount_override, bill_amount) - ?5) <= 0.01000001
+             )
+               AND NOT EXISTS (
+                 SELECT 1 FROM bill_items
+                 WHERE bill_id = ?1 AND id NOT LIKE ('mail_item_' || ?4 || '_%')
+               )
+             ON CONFLICT(id) DO NOTHING`
+          ).bind(
+            existing.id,
+            parsed.currency ?? 'CNY',
+            JSON.stringify(options.newStatementItems.items),
+            options.newStatementItems.billId,
+            amount,
+            accountId
+          )
+          const batchResults = await db.batch([updateStmt, itemInsertStmt])
+          updatedChanges = Number(batchResults[0]?.meta?.changes ?? 0)
+        } else {
+          const res = await updateStmt.run()
+          updatedChanges = Number(res.meta?.changes ?? 0)
+        }
+
+        if (!updatedChanges) {
+          return {
+            billId: existing.id,
+            action: 'preserved',
+            reason: isManual
+              ? `检测到已有手动补录账单（当前生效 ${effectiveExisting.toFixed(2)}，邮件解析 ${amount.toFixed(2)}），已保留手填值，请核对`
+              : '金额与已还清账单或人工调整金额冲突，请核对',
+          }
+        }
+        billId = existing.id
+        action = 'updated'
+      } else if (isManual || existing.status === 'paid') {
+        // 分支 C：金额不一致且有手填值或已还清，保护现有账单不覆写，停入草稿箱
+        return {
+          billId: existing.id,
+          action: 'preserved',
+          reason: isManual
+            ? `检测到已有手动补录账单（当前生效 ${effectiveExisting.toFixed(2)}，邮件解析 ${amount.toFixed(2)}），已保留手填值，请核对`
+            : '金额与已还清账单冲突，请核对',
+        }
+      } else if (options.newStatementItems) {
+        return { billId: existing.id, action: 'preserved', reason: '已有账单，请核对邮件明细后再导入' }
+      } else {
+        const guarded = await db.prepare(
+          `UPDATE bills SET bill_amount = ?, min_payment = ?, due_date = ?, statement_date = ?,
+             account_id = COALESCE(account_id, ?)
+           WHERE id = ? AND (account_id IS NULL OR account_id = ?)
+             AND bill_amount_override IS NULL
+             AND status != 'paid'`
+        ).bind(amount, minPayment, dueDate, statementDate, accountId, existing.id, accountId).run()
+        if (!guarded.meta.changes) {
+          return { billId: existing.id, action: 'preserved', reason: '金额与已还清账单或人工调整金额冲突，请核对' }
+        }
+        billId = existing.id
+        action = 'updated'
       }
-      billId = existing.id
-      action = 'updated'
     } else {
       if (!options.trusted) {
         return {

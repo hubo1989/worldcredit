@@ -2,6 +2,7 @@
 // server implementation and the client wrappers (no database imports).
 import type { UserDisplayConfig, UserReminderConfig } from '../types'
 import { normalizeCurrencyOrDefault } from '../fx'
+import { DEFAULT_MISSING_STATEMENT_GRACE_DAYS } from '../missing-statement'
 import {
   DEFAULT_ACTIVITY_DAYS,
   DEFAULT_NOTIFICATION_ITEM_SWITCHES,
@@ -50,6 +51,7 @@ export function normalizeImportConfig(raw: unknown): UserImportConfig {
 
 export const DEFAULT_REMINDER_CONFIG: UserReminderConfig = {
   remind_days_before: [3, 1, 0],
+  missing_statement_grace_days: DEFAULT_MISSING_STATEMENT_GRACE_DAYS,
   quiet_hours_start: '22:00',
   quiet_hours_end: '08:00',
   enabled_channels: ['web_push'],
