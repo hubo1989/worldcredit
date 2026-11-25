@@ -486,4 +486,91 @@ struct SyncPhase2EngineTests {
         let notices = await engine.fetchRejectedNotices()
         #expect(notices.first?.code == "CONFLICT")
     }
+
+    @Test("ProgressMetricValue decodes numbers as .number instead of coercing 1/0/50000 to Bool and RuleSnapshotV1 defaults openEnded to true")
+    func progressMetricValueAndOpenEndedDecoding() throws {
+        let json = #"{"as_of_on":"2026-10-15","metric_values":{"spend":50000,"count":1,"zero":0,"done":true,"flag":false}}"#
+        let decoded = try JSONDecoder().decode(ManualProgress.self, from: Data(json.utf8))
+        #expect(decoded.metricValues["spend"] == .number(50000))
+        #expect(decoded.metricValues["count"] == .number(1))
+        #expect(decoded.metricValues["zero"] == .number(0))
+        #expect(decoded.metricValues["done"] == .bool(true))
+        #expect(decoded.metricValues["flag"] == .bool(false))
+
+        let ruleJson = #"{"schema_version":1,"title":"开放权益","cycle":{"kind":"monthly"}}"#
+        let rule = try JSONDecoder().decode(RuleSnapshotV1.self, from: Data(ruleJson.utf8))
+        #expect(rule.openEnded == true)
+    }
+
+    @Test("OpportunityWriteService enforces state/limit guards, composite PK repeated updates, and parent-deleted rollback safety")
+    func opportunityWriteGuardsCompositePKAndRollbackSafety() async throws {
+        let manager = try makeDB()
+        try await manager.dbWriter.write { db in
+            try OpportunityDefinitionRecord(id: "d1", kind: "benefit", visibility: "shared").insert(db)
+            try OpportunityRuleVersionRecord(id: "v1", definitionId: "d1", version: 1, effectiveFrom: "2026-01-01", rulesJson: "{}").insert(db)
+            try OpportunityAccountRecord(id: "acc1", definitionId: "d1", holderId: "h1", scopeKind: "card", scopeKey: "k").insert(db)
+            try OpportunityCycleRecord(id: "cyc1", accountId: "acc1", versionId: "v1", versionAsOfOn: "2026-10-01", cycleKey: "2026-10", activationState: "active", periodStartOn: "2026-10-01", usableStartOn: "2026-10-01", countLimit: 5, usedCount: 1).insert(db)
+            try OpportunityCycleRecord(id: "cyc2", accountId: "acc1", versionId: "v1", versionAsOfOn: "2026-11-01", cycleKey: "2026-11", activationState: "active", periodStartOn: "2026-11-01", usableStartOn: "2026-11-01", countLimit: 1, usedCount: 1).insert(db)
+        }
+
+        let writer = OpportunityWriteService(dbManager: manager)
+
+        // 1. Repeated composite PK updates succeed without unique constraint errors
+        try await writer.setFollowed(userId: "u1", accountId: "acc1", followed: true)
+        try await writer.setFollowed(userId: "u1", accountId: "acc1", followed: false)
+        try await writer.updateReminderState(userId: "u1", eventKey: "ev-1", action: "read", step: "open")
+        try await writer.updateReminderState(userId: "u1", eventKey: "ev-1", action: "dismiss")
+
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            let ust = try OpportunityUserStateRecord.filter(Column("user_id") == "u1" && Column("account_id") == "acc1").fetchOne(db)
+            #expect(ust?.followed == false)
+            #expect(ust?.revision == 2)
+            let rem = try OpportunityReminderStateRecord.filter(Column("user_id") == "u1" && Column("event_key") == "ev-1").fetchOne(db)
+            #expect(rem?.dismissedAt != nil)
+            #expect(rem?.revision == 2)
+        }
+
+        // 2. correctUsage rejects missing target cycle and over-limit target cycle
+        let usageId = try await writer.recordUsage(accountId: "acc1", cycleId: "cyc1", cardId: "c1", usedOn: "2026-10-15", quantity: 1, amountMinor: 0)
+        await #expect(throws: OpportunityWriteError.invalidState("目标周期不存在或尚未同步：cyc-missing")) {
+            try await writer.correctUsage(usageId: usageId, cycleId: "cyc-missing", reason: "fix", expectedRevision: 1)
+        }
+        await #expect(throws: OpportunityWriteError.invalidState("超出目标周期可用次数上限")) {
+            try await writer.correctUsage(usageId: usageId, cycleId: "cyc2", reason: "fix", expectedRevision: 1)
+        }
+
+        // 3. completeBooking & cancelBooking state guards
+        let bookingId = try await writer.recordBooking(accountId: "acc1", cycleId: "cyc1", cardId: "c1", holderId: "h1", serviceAt: "2026-10-20T10:00:00Z", quantity: 1, amountMinor: 0)
+        try await writer.completeBooking(fulfillmentId: bookingId, usedOn: "2026-10-20", expectedRevision: 1)
+        await #expect(throws: OpportunityWriteError.invalidState("该预约已完成或已取消，不能重复结算")) {
+            try await writer.completeBooking(fulfillmentId: bookingId, usedOn: "2026-10-20", expectedRevision: 2)
+        }
+        await #expect(throws: OpportunityWriteError.invalidState("该预约当前状态（used）不可执行此取消或结算操作")) {
+            try await writer.cancelBooking(fulfillmentId: bookingId, settlement: "charged", reason: "dup", expectedRevision: 2)
+        }
+
+        // 4. recordClaim requires pending_claim
+        await #expect(throws: OpportunityWriteError.invalidState("当前周期状态（active）不允许记录领取")) {
+            try await writer.recordClaim(accountId: "acc1", cycleId: "cyc1", cardId: "c1", claimedOn: "2026-10-15", holderId: "h1")
+        }
+
+        // 5. Parent cycle deleted before permanent rejection does not deadlock outbox with FK error
+        let net = MockNetwork()
+        net.handler = { req in
+            let body = try JSONSerialization.jsonObject(with: req.httpBody!) as! [String: Any]
+            let muts = body["mutations"] as! [[String: Any]]
+            let results = muts.map { ["id": $0["id"]!, "ok": false, "permanent": true, "error": "cycle gone", "code": "NOT_FOUND"] as [String: Any] }
+            return (try JSONSerialization.data(withJSONObject: ["results": results]),
+                    HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        try await manager.dbWriter.write { db in
+            _ = try OpportunityCycleRecord.deleteOne(db, id: "cyc1")
+        }
+        let client = ApiClient(baseURL: URL(string: "https://example.test")!, session: net, token: "t1", useKeychain: false)
+        let engine = SyncEngine(dbManager: manager, apiClient: client, clientId: "cid-1")
+        try await engine.push()
+        try await manager.dbWriter.read { (db: Database) throws -> Void in
+            #expect(try MutationOutbox.fetchCount(db) == 0)
+        }
+    }
 }

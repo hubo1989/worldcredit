@@ -348,18 +348,27 @@ public final class SyncEngine: @unchecked Sendable {
                     for target in additions where !targets.contains(target) { targets.append(target) }
                     try self.saveReconcileTargets(targets, in: db)
                     try SyncMeta.deleteOne(db, key: "sync_retry_after_\(item.id)")
-                    try item.delete(db)
-                    try self.rollbackMutation(item, in: db)
-                    try self.removeOptimisticSnapshot(forMutationId: item.id, in: db)
-                    try self.appendRejectedNotice(
-                        SyncRejectedNotice(
-                            mutationId: item.id,
-                            mutationName: item.name,
-                            message: res.error ?? "服务端拒绝了离线提交的修改，已恢复本地数据",
-                            code: res.code
-                        ),
-                        in: db
-                    )
+                    do {
+                        try item.delete(db)
+                        try self.rollbackMutation(item, in: db)
+                        try self.removeOptimisticSnapshot(forMutationId: item.id, in: db)
+                        try self.appendRejectedNotice(
+                            SyncRejectedNotice(
+                                mutationId: item.id,
+                                mutationName: item.name,
+                                message: res.error ?? "服务端拒绝了离线提交的修改，已恢复本地数据",
+                                code: res.code
+                            ),
+                            in: db
+                        )
+                    } catch {
+                        // 回滚时若遇外键缺失等异常，按 transient 记账避免阻塞整个 outbox 死锁
+                        var updated = item
+                        updated.retryCount += 1
+                        updated.lastError = error.localizedDescription
+                        try updated.save(db)
+                        continue
+                    }
                 } else {
                     // Transient error: increment retry count
                     var updated = item
@@ -821,8 +830,12 @@ public final class SyncEngine: @unchecked Sendable {
                   let accountId = input["account_id"] as? String else {
                 throw SyncError.invalidMutation(item.id)
             }
-            if let userId = loadOptimisticSnapshot(forMutationId: item.id, in: db)?.userStateKey?.first,
-               !userId.isEmpty {
+            var userId = loadOptimisticSnapshot(forMutationId: item.id, in: db)?.userStateKey?.first
+            if userId == nil || userId?.isEmpty == true {
+                userId = try OpportunityUserStateRecord.filter(Column("account_id") == accountId).fetchOne(db)?.userId
+                    ?? (try UserPreferenceRecord.fetchOne(db)?.userId)
+            }
+            if let userId, !userId.isEmpty {
                 return [.init(tbl: "opportunity_user_states", rowId: Self.compositeRowId(userId, accountId))]
             }
             return [.init(tbl: "opportunity_accounts", rowId: accountId)]
@@ -831,8 +844,12 @@ public final class SyncEngine: @unchecked Sendable {
                   let eventKey = input["event_key"] as? String else {
                 throw SyncError.invalidMutation(item.id)
             }
-            if let userId = loadOptimisticSnapshot(forMutationId: item.id, in: db)?.reminderStateKey?.first,
-               !userId.isEmpty {
+            var userId = loadOptimisticSnapshot(forMutationId: item.id, in: db)?.reminderStateKey?.first
+            if userId == nil || userId?.isEmpty == true {
+                userId = try OpportunityReminderStateRecord.filter(Column("event_key") == eventKey).fetchOne(db)?.userId
+                    ?? (try UserPreferenceRecord.fetchOne(db)?.userId)
+            }
+            if let userId, !userId.isEmpty {
                 return [.init(tbl: "opportunity_reminder_states", rowId: Self.compositeRowId(userId, eventKey))]
             }
             return []
@@ -906,11 +923,31 @@ public final class SyncEngine: @unchecked Sendable {
         guard let snapshot = loadOptimisticSnapshot(forMutationId: mutation.id, in: db) else {
             return
         }
-        if let usage = snapshot.usage { try usage.save(db) }
-        if let sourceCycle = snapshot.sourceCycle { try sourceCycle.save(db) }
-        if let targetCycle = snapshot.targetCycle { try targetCycle.save(db) }
-        if let fulfillment = snapshot.fulfillment { try fulfillment.save(db) }
-        if let taskCycle = snapshot.taskCycle { try taskCycle.save(db) }
+        // 先恢复父行再恢复子行；父行若已被 pull 级联删除则跳过子行，交由 reconcile 补齐权威状态
+        if let sourceCycle = snapshot.sourceCycle,
+           try OpportunityAccountRecord.exists(db, id: sourceCycle.accountId) {
+            try sourceCycle.save(db)
+        }
+        if let targetCycle = snapshot.targetCycle,
+           try OpportunityAccountRecord.exists(db, id: targetCycle.accountId) {
+            try targetCycle.save(db)
+        }
+        if let taskCycle = snapshot.taskCycle,
+           try OpportunityTaskRecord.exists(db, id: taskCycle.taskId) {
+            try taskCycle.save(db)
+        }
+        if let usage = snapshot.usage,
+           try OpportunityCycleRecord.exists(db, id: usage.cycleId) {
+            try usage.save(db)
+        }
+        if let fulfillment = snapshot.fulfillment {
+            let accOk: Bool = try fulfillment.accountId.map { try OpportunityAccountRecord.exists(db, id: $0) } ?? true
+            let cycOk: Bool = try fulfillment.cycleId.map { try OpportunityCycleRecord.exists(db, id: $0) } ?? true
+            let tcOk: Bool = try fulfillment.taskCycleId.map { try OpportunityTaskCycleRecord.exists(db, id: $0) } ?? true
+            if accOk && cycOk && tcOk {
+                try fulfillment.save(db)
+            }
+        }
         if let key = snapshot.userStateKey, key.count == 2 {
             if let userState = snapshot.userState {
                 try userState.save(db)

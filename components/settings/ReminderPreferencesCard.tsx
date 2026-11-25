@@ -13,6 +13,10 @@ import { Toggle } from '@/components/obsidian/controls'
 import { ConfirmDialog, Toast } from '@/components/obsidian/overlays'
 import { sendTestPush } from '@/lib/api/push'
 import {
+  DEFAULT_QUIET_HOURS_END,
+  DEFAULT_QUIET_HOURS_START,
+  DEFAULT_REMINDER_LOCAL_TIME,
+  DEFAULT_REMINDER_TIME_ZONE,
   isWebPushChannelEnabled,
   resolveEffectiveChannels,
   formatTimezoneOptionLabel,
@@ -186,11 +190,10 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
     return base
   })()
 
-  const activeTimeZone = opp?.time_zone ?? 'Asia/Shanghai'
-  const activeLocalTime = opp?.local_time ?? '09:00'
-  const activeQuietStart = config.quiet_hours_start || '22:00'
-  const activeQuietEnd = config.quiet_hours_end || '08:00'
-  const localTimeHour = activeLocalTime.split(':')[0] || '09'
+  const activeTimeZone = opp?.time_zone ?? DEFAULT_REMINDER_TIME_ZONE
+  const activeLocalTime = opp?.local_time ?? DEFAULT_REMINDER_LOCAL_TIME
+  const activeQuietStart = config.quiet_hours_start ?? DEFAULT_QUIET_HOURS_START
+  const activeQuietEnd = config.quiet_hours_end ?? DEFAULT_QUIET_HOURS_END
   const isPostponedByQuietHours = isTimeInQuietHours(activeLocalTime, activeQuietStart, activeQuietEnd)
 
   const handleUseDeviceTimeZone = () => {
@@ -287,7 +290,7 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
                   type='time'
                   aria-label='免打扰起始'
                   disabled={disabled}
-                  value={config.quiet_hours_start || '22:00'}
+                  value={config.quiet_hours_start ?? DEFAULT_QUIET_HOURS_START}
                   onChange={(e) => onChange({ quiet_hours_start: e.target.value })}
                   className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
                 />
@@ -299,7 +302,7 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
                   type='time'
                   aria-label='免打扰结束'
                   disabled={disabled}
-                  value={config.quiet_hours_end || '08:00'}
+                  value={config.quiet_hours_end ?? DEFAULT_QUIET_HOURS_END}
                   onChange={(e) => onChange({ quiet_hours_end: e.target.value })}
                   className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
                 />
@@ -370,7 +373,7 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
               className='min-h-[44px] w-full rounded-xl border border-d-border bg-d-bg px-3 text-[16px] text-d-text outline-none focus:border-d-accent disabled:opacity-50'
             />
             <p className='mt-1.5 text-[12px] leading-4 text-d-muted'>
-              每日账单汇总与逾期提醒将在您所选时区的该整点小时窗口内（如 {localTimeHour}:00–{localTimeHour}:59）推送；权益/抢兑节点提醒按 15 分钟精度在所选时刻前后送达。
+              该时刻用于确定权益/抢兑节点提醒的送达时刻（按 15 分钟精度在所选时区生效，落入免打扰时段将顺延至免打扰结束）；每日账单汇总与逾期提醒由服务端按调度计划推送，免打扰时段内不下发系统推送。
             </p>
             {isPostponedByQuietHours && (
               <p

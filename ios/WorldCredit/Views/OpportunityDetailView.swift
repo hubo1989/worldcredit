@@ -294,11 +294,20 @@ struct OpportunityDetailView: View {
             if let claim = item.pendingClaimFulfillment,
                let cycle = item.currentCycle,
                cycle.usedCount == 0 && cycle.reservedCount == 0 && cycle.usedMinor == 0 && cycle.reservedMinor == 0 {
-                Button("撤销已领取") {
-                    voidingClaim = claim
+                let isUnsynced = claim.id.hasPrefix("opt_")
+                HStack(spacing: 8) {
+                    Button("撤销已领取") {
+                        voidingClaim = claim
+                    }
+                    .font(.caption.bold())
+                    .foregroundStyle(isUnsynced ? Color.secondary : Color.orange)
+                    .disabled(isUnsynced)
+                    if isUnsynced {
+                        Text("待同步完成后可操作")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .font(.caption.bold())
-                .foregroundStyle(.orange)
             }
         }
         .padding(16)
@@ -327,6 +336,7 @@ struct OpportunityDetailView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    let isUnsyncedBooking = booking.id.hasPrefix("opt_")
                     HStack(spacing: 10) {
                         if booking.status == "recorded" {
                             Button("完成使用") {
@@ -345,12 +355,19 @@ struct OpportunityDetailView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
+                            .disabled(isUnsyncedBooking)
                         }
                         Button(booking.status == "pending_settlement" ? "更新结算结果" : "取消/退改") {
                             settlingBooking = booking
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .disabled(isUnsyncedBooking)
+                    }
+                    if isUnsyncedBooking {
+                        Text("待同步完成后可操作")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .padding(12)
@@ -445,15 +462,23 @@ struct OpportunityDetailView: View {
                         }
 
                         if usage.status == "active" {
+                            let isUnsyncedUsage = usage.id.hasPrefix("opt_")
                             HStack(spacing: 12) {
                                 Button("更正") {
                                     editingUsage = usage
                                 }
                                 .font(.caption.bold())
+                                .disabled(isUnsyncedUsage)
                                 Button("作废", role: .destructive) {
                                     voidingUsage = usage
                                 }
                                 .font(.caption.bold())
+                                .disabled(isUnsyncedUsage)
+                                if isUnsyncedUsage {
+                                    Text("待同步完成后可操作")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                             .padding(.top, 2)
                         }

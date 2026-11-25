@@ -120,4 +120,22 @@ describe('ReminderPreferencesCard 提醒时区与推送时间独立配置', () =
       '该时刻位于免打扰时段（22:00–08:00）内，推送将顺延至免打扰结束（08:00）后发出。'
     )
   })
+
+  it('免打扰起止为空字符串时按关闭处理，不显示顺延提示且文案区分每日账单与权益提醒', () => {
+    render(
+      <ReminderPreferencesCard
+        config={{
+          remind_days_before: [3, 1, 0],
+          enabled_channels: ['web_push'],
+          quiet_hours_start: '',
+          quiet_hours_end: '',
+          opportunities: { enabled: true, time_zone: 'Asia/Shanghai', local_time: '23:00' },
+        }}
+        onChange={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByText(/每日账单汇总与逾期提醒由服务端按调度计划推送/)).toBeTruthy()
+  })
 })

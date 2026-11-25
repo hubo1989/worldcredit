@@ -156,10 +156,29 @@ public struct OpportunityWriteService: Sendable {
             guard var sourceCycle = try OpportunityCycleRecord.fetchOne(db, id: usage.cycleId) else {
                 throw OpportunityWriteError.recordNotFound(usage.cycleId)
             }
+            let oldQty = usage.quantity
+            let oldMinor = usage.amountMinor
+            let newQty = quantity ?? oldQty
+            let newMinor = amountMinor ?? oldMinor
+
             let targetCycleId = cycleId ?? usage.cycleId
-            var targetCycle: OpportunityCycleRecord? = (targetCycleId == sourceCycle.id)
-                ? nil
-                : try OpportunityCycleRecord.fetchOne(db, id: targetCycleId)
+            var targetCycle: OpportunityCycleRecord?
+            if targetCycleId != sourceCycle.id {
+                guard let fetched = try OpportunityCycleRecord.fetchOne(db, id: targetCycleId) else {
+                    throw OpportunityWriteError.invalidState("目标周期不存在或尚未同步：\(targetCycleId)")
+                }
+                if usage.status == "active" {
+                    if let limit = fetched.countLimit,
+                       fetched.openingUsedCount + fetched.usedCount + fetched.reservedCount + newQty > limit {
+                        throw OpportunityWriteError.invalidState("超出目标周期可用次数上限")
+                    }
+                    if let limitMinor = fetched.amountLimitMinor,
+                       fetched.openingUsedMinor + fetched.usedMinor + fetched.reservedMinor + newMinor > limitMinor {
+                        throw OpportunityWriteError.invalidState("超出目标周期可用金额上限")
+                    }
+                }
+                targetCycle = fetched
+            }
 
             try SyncEngine.saveOptimisticSnapshot(
                 SyncEngine.OptimisticSnapshot(
@@ -170,11 +189,6 @@ public struct OpportunityWriteService: Sendable {
                 forMutationId: mutId,
                 in: db
             )
-
-            let oldQty = usage.quantity
-            let oldMinor = usage.amountMinor
-            let newQty = quantity ?? oldQty
-            let newMinor = amountMinor ?? oldMinor
 
             if usage.status == "active" {
                 if var t = targetCycle {
@@ -312,6 +326,10 @@ public struct OpportunityWriteService: Sendable {
             guard var cycle = try OpportunityCycleRecord.fetchOne(db, id: cycleId) else {
                 throw OpportunityWriteError.recordNotFound(cycleId)
             }
+            guard cycle.activationState == "pending_claim" else {
+                throw OpportunityWriteError.invalidState("当前周期状态（\(cycle.activationState)）不允许记录领取")
+            }
+
             try SyncEngine.saveOptimisticSnapshot(
                 SyncEngine.OptimisticSnapshot(sourceCycle: cycle),
                 forMutationId: mutId,
@@ -378,6 +396,9 @@ public struct OpportunityWriteService: Sendable {
         try await dbManager.dbWriter.write { db in
             guard var fulfillment = try OpportunityFulfillmentRecord.fetchOne(db, id: fulfillmentId) else {
                 throw OpportunityWriteError.recordNotFound(fulfillmentId)
+            }
+            guard fulfillment.status == "recorded" else {
+                throw OpportunityWriteError.invalidState("当前领取记录状态（\(fulfillment.status)）不可撤销")
             }
             var cycle = try fulfillment.cycleId.flatMap { try OpportunityCycleRecord.fetchOne(db, id: $0) }
             try SyncEngine.saveOptimisticSnapshot(
@@ -526,6 +547,9 @@ public struct OpportunityWriteService: Sendable {
                   let cardId = fulfillment.cardId else {
                 throw OpportunityWriteError.recordNotFound(fulfillmentId)
             }
+            guard fulfillment.status == "recorded" else {
+                throw OpportunityWriteError.invalidState("该预约已完成或已取消，不能重复结算")
+            }
             var cycle = try OpportunityCycleRecord.fetchOne(db, id: cycleId)
             try SyncEngine.saveOptimisticSnapshot(
                 SyncEngine.OptimisticSnapshot(sourceCycle: cycle, fulfillment: fulfillment),
@@ -601,6 +625,9 @@ public struct OpportunityWriteService: Sendable {
         try await dbManager.dbWriter.write { db in
             guard var fulfillment = try OpportunityFulfillmentRecord.fetchOne(db, id: fulfillmentId) else {
                 throw OpportunityWriteError.recordNotFound(fulfillmentId)
+            }
+            guard fulfillment.status == "recorded" || (fulfillment.status == "pending_settlement" && settlement != "unknown") else {
+                throw OpportunityWriteError.invalidState("该预约当前状态（\(fulfillment.status)）不可执行此取消或结算操作")
             }
             var cycle = try fulfillment.cycleId.flatMap { try OpportunityCycleRecord.fetchOne(db, id: $0) }
             try SyncEngine.saveOptimisticSnapshot(

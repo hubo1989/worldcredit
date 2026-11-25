@@ -97,20 +97,41 @@ struct OpportunityCalendarAndRemindersView: View {
         }
     }
 
+    private var reminderTimeZone: String {
+        let tz = appState.reminderPreferences.opportunities.timeZone
+        return TimeZone(identifier: tz) != nil ? tz : "Asia/Shanghai"
+    }
+
     private func reloadData() async {
-        let todayOn = OpportunityDates.localDateInZone(Date(), timeZone: "Asia/Shanghai")
-        let fromOn = OpportunityDates.addDays(todayOn, days: -7)
-        let toBefore = OpportunityDates.addDays(todayOn, days: 85) // 85 + 7 == 92 <= CALENDAR_MAX_DAYS
+        let tz = reminderTimeZone
+        let todayOn = OpportunityDates.localDateInZone(Date(), timeZone: tz)
+        let todayFromOn = OpportunityDates.addDays(todayOn, days: -7)
+        let todayToBefore = OpportunityDates.addDays(todayOn, days: 85) // 85 + 7 == 92 <= CALENDAR_MAX_DAYS
+
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: tz) ?? TimeZone(identifier: "Asia/Shanghai")!
+        let monthStartDate = cal.date(from: cal.dateComponents([.year, .month], from: selectedMonthAnchor)) ?? selectedMonthAnchor
+        let monthStartOn = OpportunityDates.localDateInZone(monthStartDate, timeZone: tz)
+        let monthEndDate = cal.date(byAdding: DateComponents(month: 1, day: -1), to: monthStartDate) ?? selectedMonthAnchor
+        let monthEndOn = OpportunityDates.localDateInZone(monthEndDate, timeZone: tz)
+
+        // 若当前查看的月份落在默认窗口内则沿用 [today-7d, today+85d]，否则以所选月为中心扩展 92 天窗口
+        let (fromOn, toBefore): (String, String) = (monthStartOn >= todayFromOn && monthEndOn < todayToBefore)
+            ? (todayFromOn, todayToBefore)
+            : (OpportunityDates.addDays(monthStartOn, days: -7), OpportunityDates.addDays(monthStartOn, days: 85))
+
         do {
             calendarEvents = try await appState.opportunityQueryService.fetchCalendar(
                 fromOn: fromOn,
                 toBefore: toBefore,
                 holderId: selectedHolderId,
-                userId: appState.currentUser?.id
+                userId: appState.currentUser?.id,
+                timeZone: tz
             )
             reminders = try await appState.opportunityQueryService.fetchReminders(
                 userId: appState.currentUser?.id,
-                holderId: selectedHolderId
+                holderId: selectedHolderId,
+                timeZone: tz
             )
         } catch {
             actionError = error.localizedDescription
@@ -164,7 +185,7 @@ struct OpportunityCalendarAndRemindersView: View {
     private var calendarMonthSection: some View {
         let cal = {
             var c = Calendar(identifier: .gregorian)
-            c.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+            c.timeZone = TimeZone(identifier: reminderTimeZone) ?? TimeZone(identifier: "Asia/Shanghai")!
             return c
         }()
         let monthTitle: String = {

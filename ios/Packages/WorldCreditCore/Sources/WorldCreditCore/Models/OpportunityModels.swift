@@ -1173,7 +1173,7 @@ public struct RuleSnapshotV1: Codable, Equatable, Sendable {
         cardProductIds = try c.decodeIfPresent([String].self, forKey: .cardProductIds) ?? []
         validFrom = try c.decodeIfPresent(String.self, forKey: .validFrom)
         validUntilBefore = try c.decodeIfPresent(String.self, forKey: .validUntilBefore)
-        openEnded = try c.decodeIfPresent(Bool.self, forKey: .openEnded) ?? false
+        openEnded = try c.decodeIfPresent(Bool.self, forKey: .openEnded) ?? true
         weekdays = try c.decodeIfPresent([Int].self, forKey: .weekdays)
         cycle = try c.decode(RuleCycleSpec.self, forKey: .cycle)
         allocation = try c.decodeIfPresent(String.self, forKey: .allocation) ?? "recurring"
@@ -1265,12 +1265,14 @@ public enum ProgressMetricValue: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
-        if let b = try? c.decode(Bool.self) {
-            self = .bool(b)
-            return
-        }
+        // iOS ≤ 17 的 Foundation JSONDecoder 会把任意数字（如 50000 / 0 / 1）误解为 Bool，
+        // 而 Double.self 会严格拒绝 true/false；因此先解 Double 再解 Bool，避免数值进度被清零。
         if let n = try? c.decode(Double.self) {
             self = .number(n)
+            return
+        }
+        if let b = try? c.decode(Bool.self) {
+            self = .bool(b)
             return
         }
         throw DecodingError.typeMismatch(ProgressMetricValue.self, .init(codingPath: c.codingPath, debugDescription: "Expected number or bool"))

@@ -593,8 +593,10 @@ public enum OpportunityDomainEngine {
         expectedFromOn: String?,
         expectedUntilBefore: String?,
         satisfied: Bool,
-        version: String = "task"
+        version: String = "task",
+        timeZone: String = "Asia/Shanghai"
     ) -> [OpportunityCalendarEventView] {
+        let effectiveTz = TimeZone(identifier: timeZone) != nil ? timeZone : "Asia/Shanghai"
         var events: [OpportunityCalendarEventView] = []
         let deadlineDate = String(deadlineAt.prefix(10))
         if OpportunityDates.isValidCivilDate(deadlineDate) {
@@ -614,7 +616,7 @@ public enum OpportunityDomainEngine {
                 fulfillmentId: nil,
                 title: title,
                 localDateOn: deadlineDate,
-                timeZone: "Asia/Shanghai",
+                timeZone: effectiveTz,
                 deadlineBefore: deadlineDate,
                 actionHint: "任务统计截止",
                 needsReview: false
@@ -637,7 +639,7 @@ public enum OpportunityDomainEngine {
                 fulfillmentId: nil,
                 title: title,
                 localDateOn: expectedFromOn,
-                timeZone: "Asia/Shanghai",
+                timeZone: effectiveTz,
                 deadlineBefore: expectedUntilBefore,
                 actionHint: "奖励预计发放窗口（实际到账需手动记录）",
                 needsReview: false
@@ -946,7 +948,8 @@ public struct OpportunityQueryService: Sendable {
                     userStateRevision: userState?.revision ?? 0,
                     pendingClaimFulfillment: pendingClaim,
                     activeBookings: activeBookings,
-                    canBook: rules.bookingWindow != nil || covering != nil && availability.status == .availableToday || availability.status == .expiringSoon
+                    canBook: rules.bookingWindow != nil
+                        || (covering != nil && (availability.status == .availableToday || availability.status == .expiringSoon))
                 ))
             }
 
@@ -1018,14 +1021,16 @@ public struct OpportunityQueryService: Sendable {
         holderId: String? = nil,
         cardId: String? = nil,
         userId: String? = nil,
-        today: Date = Date()
+        today: Date = Date(),
+        timeZone: String = "Asia/Shanghai"
     ) async throws -> [OpportunityCalendarEventView] {
         try await dbManager.dbWriter.read { db in
             let rawEvents = try loadAllRawCalendarEvents(
                 in: db,
                 holderId: holderId,
                 cardId: cardId,
-                today: today
+                today: today,
+                timeZone: timeZone
             )
             let stateMap = try loadReminderStateMap(userId: userId, in: db)
             let decoder = JSONDecoder()
@@ -1056,9 +1061,11 @@ public struct OpportunityQueryService: Sendable {
         userId: String? = nil,
         holderId: String? = nil,
         cardId: String? = nil,
-        today: Date = Date()
+        today: Date = Date(),
+        timeZone: String = "Asia/Shanghai"
     ) async throws -> [OpportunityCalendarEventView] {
-        let todayOn = OpportunityDates.localDateInZone(today, timeZone: "Asia/Shanghai")
+        let effectiveTz = TimeZone(identifier: timeZone) != nil ? timeZone : "Asia/Shanghai"
+        let todayOn = OpportunityDates.localDateInZone(today, timeZone: effectiveTz)
         let horizonEnd = OpportunityDates.addDays(todayOn, days: OpportunityDomainEngine.reminderHorizonDays)
         let nowIso = ISO8601DateFormatter().string(from: today)
 
@@ -1067,7 +1074,8 @@ public struct OpportunityQueryService: Sendable {
                 in: db,
                 holderId: holderId,
                 cardId: cardId,
-                today: today
+                today: today,
+                timeZone: effectiveTz
             )
             let stateMap = try loadReminderStateMap(userId: userId, in: db)
             let decoder = JSONDecoder()
@@ -1203,7 +1211,8 @@ public struct OpportunityQueryService: Sendable {
         in db: Database,
         holderId: String?,
         cardId: String?,
-        today: Date
+        today: Date,
+        timeZone: String = "Asia/Shanghai"
     ) throws -> [OpportunityCalendarEventView] {
         let definitions = Dictionary(uniqueKeysWithValues: try OpportunityDefinitionRecord.fetchAll(db).map { ($0.id, $0) })
         let versions = try OpportunityRuleVersionRecord.fetchAll(db)
@@ -1253,7 +1262,8 @@ public struct OpportunityQueryService: Sendable {
 
         let tasks = try OpportunityTaskRecord.filter(Column("status") == "active").fetchAll(db)
         let taskCyclesByTask = Dictionary(grouping: try OpportunityTaskCycleRecord.fetchAll(db), by: \.taskId)
-        let todayOn = OpportunityDates.localDateInZone(today, timeZone: "Asia/Shanghai")
+        let effectiveTz = TimeZone(identifier: timeZone) != nil ? timeZone : "Asia/Shanghai"
+        let todayOn = OpportunityDates.localDateInZone(today, timeZone: effectiveTz)
 
         for task in tasks {
             if let holderId, task.holderId != holderId { continue }
@@ -1279,7 +1289,8 @@ public struct OpportunityQueryService: Sendable {
                     deadlineAt: tc.deadlineAt,
                     expectedFromOn: tc.expectedFromOn,
                     expectedUntilBefore: tc.expectedUntilBefore,
-                    satisfied: satisfied
+                    satisfied: satisfied,
+                    timeZone: effectiveTz
                 ))
             }
         }

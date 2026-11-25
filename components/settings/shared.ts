@@ -1,5 +1,10 @@
 import type { UserReminderConfig } from '@/lib/types'
 
+export const DEFAULT_REMINDER_TIME_ZONE = 'Asia/Shanghai'
+export const DEFAULT_REMINDER_LOCAL_TIME = '09:00'
+export const DEFAULT_QUIET_HOURS_START = '22:00'
+export const DEFAULT_QUIET_HOURS_END = '08:00'
+
 export interface CurrencyOption {
   value: string
   label: string
@@ -93,9 +98,10 @@ export function isTimeInQuietHours(
   quietStart: string | undefined,
   quietEnd: string | undefined
 ): boolean {
-  const t = parseMinutesOfDay(localTime ?? '09:00')
+  const t = parseMinutesOfDay(localTime)
   const start = parseMinutesOfDay(quietStart)
   const end = parseMinutesOfDay(quietEnd)
+  // start === end 约定为「免打扰关闭」，与每日账单链路 isInQuietHours 对齐
   if (t === null || start === null || end === null || start === end) return false
   if (start > end) {
     return t >= start || t < end

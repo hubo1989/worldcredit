@@ -234,7 +234,7 @@ struct OpportunityClaimSheet: View {
                 Section("领取信息") {
                     Picker("领取卡片", selection: $selectedCardId) {
                         ForEach(item.cardIds, id: \.self) { cid in
-                            Text(cid).tag(cid)
+                            Text(cardLabel(cid)).tag(cid)
                         }
                     }
                     DatePicker("领取日期", selection: $claimedDate, displayedComponents: .date)
@@ -254,6 +254,11 @@ struct OpportunityClaimSheet: View {
             }
             .onAppear { selectedCardId = item.cardIds.first ?? "" }
         }
+    }
+
+    private func cardLabel(_ cid: String) -> String {
+        guard let card = appState.cards.first(where: { $0.id == cid }) else { return cid }
+        return card.last4.isEmpty ? card.displayName : "\(card.displayName) (\(card.last4))"
     }
 
     private func submit() async {
@@ -307,7 +312,7 @@ struct OpportunityBookingSheet: View {
                 Section("预约信息") {
                     Picker("预约卡片", selection: $selectedCardId) {
                         ForEach(item.cardIds, id: \.self) { cid in
-                            Text(cid).tag(cid)
+                            Text(cardLabel(cid)).tag(cid)
                         }
                     }
                     DatePicker("服务时间", selection: $serviceDate)
@@ -337,6 +342,11 @@ struct OpportunityBookingSheet: View {
             }
             .onAppear { selectedCardId = item.cardIds.first ?? "" }
         }
+    }
+
+    private func cardLabel(_ cid: String) -> String {
+        guard let card = appState.cards.first(where: { $0.id == cid }) else { return cid }
+        return card.last4.isEmpty ? card.displayName : "\(card.displayName) (\(card.last4))"
     }
 
     private func submit() async {
