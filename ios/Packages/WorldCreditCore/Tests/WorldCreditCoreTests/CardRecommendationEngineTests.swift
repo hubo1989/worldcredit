@@ -327,4 +327,46 @@ struct CardRecommendationEngineTests {
             #expect(fixture.recommendation.data.topRecommendations.first?.cardId == "qa-cny")
         }
     }
+
+    @Test("CardEditService rejects negative manualRewardValue, invalid enum strings and malformed waiverProgressJson; diffCivilDays handles multi-year spans")
+    func testCardEditServiceValidationAndDiffCivilDays() async throws {
+        let dbManager = try DatabaseManager.inMemory()
+        let service = CardEditService(dbManager: dbManager)
+
+        try await dbManager.dbWriter.write { db in
+            try db.execute(sql: """
+                INSERT INTO card_holders (id, created_by, managed_by, name)
+                VALUES ('h1', 'u1', 'u1', '张三');
+                INSERT INTO card_products (
+                    id, bank_name, card_name, currency, payment_due_type, payment_due_value
+                ) VALUES ('p1', '招商银行', '经典白金卡', 'CNY', 'after_billing', 20);
+                INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day, credit_limit)
+                VALUES ('c1', 'h1', 'p1', 5, 50000);
+                """)
+        }
+
+        await #expect(throws: CardEditError.invalidManualRewardValue(-1)) {
+            var input = CardUpdateInput()
+            input.manualRewardValue = -1
+            _ = try await service.updateCard(cardId: "c1", input: input)
+        }
+        await #expect(throws: CardEditError.invalidEnumValue(field: "年费周期", value: "bogus_cycle")) {
+            var input = CardUpdateInput()
+            input.annualFeeCycleType = "bogus_cycle"
+            _ = try await service.updateCard(cardId: "c1", input: input)
+        }
+        await #expect(throws: CardEditError.invalidEnumValue(field: "年费状态", value: "bogus_status")) {
+            var input = CardUpdateInput()
+            input.annualFeeStatus = "bogus_status"
+            _ = try await service.updateCard(cardId: "c1", input: input)
+        }
+        await #expect(throws: CardEditError.invalidWaiverProgressJson) {
+            var input = CardUpdateInput()
+            input.waiverProgressJson = "{not valid json"
+            _ = try await service.updateCard(cardId: "c1", input: input)
+        }
+
+        #expect(CardRecommendationEngine.diffCivilDays(target: "2026-12-01", from: "2026-11-25") == 6)
+        #expect(CardRecommendationEngine.diffCivilDays(target: "2024-03-01", from: "2024-02-28") == 2)
+    }
 }

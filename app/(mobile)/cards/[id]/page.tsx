@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, use } from 'react'
+import { useEffect, useState, useCallback, use, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { getCardDetail, type CreditCardWithProduct } from '@/lib/api/cards'
@@ -87,9 +87,9 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
   const [cardDefOpen, setCardDefOpen] = useState(false)
   const [cardAccountOpen, setCardAccountOpen] = useState(false)
   const [highlightRoi, setHighlightRoi] = useState(false)
+  const hasScrolledToRoiRef = useRef(false)
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
     const section = new URLSearchParams(window.location.search).get('section')
     if (section === 'roi') {
       setHighlightRoi(true)
@@ -97,9 +97,10 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
   }, [])
 
   useEffect(() => {
-    if (!highlightRoi || loading) return
+    if (!highlightRoi || loading || hasScrolledToRoiRef.current) return
     const el = document.getElementById('roi-section')
     if (el && typeof el.scrollIntoView === 'function') {
+      hasScrolledToRoiRef.current = true
       el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }, [highlightRoi, loading])

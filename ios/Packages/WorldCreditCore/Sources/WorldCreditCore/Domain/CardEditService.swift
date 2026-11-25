@@ -6,6 +6,9 @@ public enum CardEditError: LocalizedError, Equatable {
     case invalidBillingDay(Int)
     case invalidCreditLimit(Double)
     case invalidAnnualFee(Double)
+    case invalidManualRewardValue(Double)
+    case invalidEnumValue(field: String, value: String)
+    case invalidWaiverProgressJson
     case invalidStatus(String)
     case invalidCardType(String)
     case invalidAccountMode(String)
@@ -21,6 +24,12 @@ public enum CardEditError: LocalizedError, Equatable {
             return "信用额度不能为负数: \(limit)"
         case .invalidAnnualFee(let fee):
             return "年费不能为负数: \(fee)"
+        case .invalidManualRewardValue(let value):
+            return "手动返现收益不能为负数: \(value)"
+        case .invalidEnumValue(let field, let value):
+            return "\(field)包含不支持的值: \(value)"
+        case .invalidWaiverProgressJson:
+            return "免年费进度必须是合法的 JSON 对象"
         case .invalidStatus(let status):
             return "不支持的卡片状态: \(status)"
         case .invalidCardType(let cardType):
@@ -217,7 +226,43 @@ public final class CardEditService: Sendable {
         }
         if let manualReward = input.manualRewardValue, !input.clearManualRewardValue {
             guard manualReward.isFinite && manualReward >= 0 else {
-                throw CardEditError.invalidAnnualFee(manualReward)
+                throw CardEditError.invalidManualRewardValue(manualReward)
+            }
+        }
+        if let cycleType = input.annualFeeCycleType, !input.clearAnnualFeeCycleType {
+            let trimmed = cycleType.trimmingCharacters(in: .whitespacesAndNewlines)
+            let allowedCycleTypes: Set<String> = [
+                "none",
+                "anniversary_issued",
+                "anniversary_activated",
+                "calendar_year",
+                "custom_date",
+            ]
+            if !trimmed.isEmpty && !allowedCycleTypes.contains(trimmed) {
+                throw CardEditError.invalidEnumValue(field: "年费周期", value: trimmed)
+            }
+        }
+        if let feeStatus = input.annualFeeStatus, !input.clearAnnualFeeStatus {
+            let trimmed = feeStatus.trimmingCharacters(in: .whitespacesAndNewlines)
+            let allowedStatuses: Set<String> = [
+                "not_applicable",
+                "in_progress",
+                "waived",
+                "paid",
+                "unknown",
+            ]
+            if !trimmed.isEmpty && !allowedStatuses.contains(trimmed) {
+                throw CardEditError.invalidEnumValue(field: "年费状态", value: trimmed)
+            }
+        }
+        if let progressJson = input.waiverProgressJson, !input.clearWaiverProgressJson {
+            let trimmed = progressJson.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                guard let data = trimmed.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: data),
+                      obj is [String: Any] else {
+                    throw CardEditError.invalidWaiverProgressJson
+                }
             }
         }
 

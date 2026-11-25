@@ -25,6 +25,15 @@ import {
 import type { CardProductWithRules } from '@/lib/recommendations-ui/types'
 import { aiComplete } from '@/lib/api/ai'
 
+const RULE_COMPLETENESS_META: Record<
+  ReturnType<typeof computeProductRuleCompleteness>,
+  { label: string; className: string }
+> = {
+  complete: { label: '已配回报+FTF', className: 'bg-d-success-soft text-d-success-ink' },
+  partial: { label: '部分缺失', className: 'bg-d-subtle text-d-warn-ink' },
+  none: { label: '待配置', className: 'bg-d-subtle text-d-muted' },
+}
+
 export default function CardProductsPage() {
   const [loading, setLoading] = useState(true)
   const [products, setProducts] = useState<(CardProductWithRules & { is_active: boolean })[]>([])
@@ -432,18 +441,10 @@ export default function CardProductsPage() {
                       <span
                         className={
                           'rounded-md px-2 py-1 text-[11px] font-semibold ' +
-                          (ruleCompleteness === 'complete'
-                            ? 'bg-d-success-soft text-d-success-ink'
-                            : ruleCompleteness === 'partial'
-                              ? 'bg-d-subtle text-d-warn-ink'
-                              : 'bg-d-subtle text-d-muted')
+                          RULE_COMPLETENESS_META[ruleCompleteness].className
                         }
                       >
-                        {ruleCompleteness === 'complete'
-                          ? '已配回报+FTF'
-                          : ruleCompleteness === 'partial'
-                            ? '部分缺失'
-                            : '待配置'}
+                        {RULE_COMPLETENESS_META[ruleCompleteness].label}
                       </span>
                     </td>
                     <td className='px-3 py-2'>

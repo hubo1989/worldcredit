@@ -239,3 +239,16 @@ export function formatPct1(value: number | null | undefined, showPlus = false): 
   const prefix = showPlus && value > 0 ? '+' : ''
   return `${prefix}${value.toFixed(1)}%`
 }
+
+/** 精确将非负十进制金额字符串转换为整数分（避免浮点乘法精度漂移） */
+export function parseAmountToMinor(raw: string): number | null {
+  const trimmed = raw.trim()
+  if (!trimmed || !/^\d+(\.\d+)?$/.test(trimmed)) return null
+  const [intPart, fracPart = ''] = trimmed.split('.')
+  const whole = Number(intPart)
+  if (!Number.isSafeInteger(whole)) return null
+  const padded = (fracPart + '000').slice(0, 3)
+  const baseCents = Number(padded.slice(0, 2))
+  const roundUp = Number(padded[2]) >= 5 ? 1 : 0
+  return whole * 100 + baseCents + roundUp
+}

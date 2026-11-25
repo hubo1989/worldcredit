@@ -56,7 +56,7 @@ import {
   updateCardAnnualFeeFields,
   previewCardProductRules,
 } from '@/lib/recommendations-ui/rpc'
-import { resolveAnnualFeeCycleLocal } from '@/lib/recommendations-ui/helpers'
+import { parseAmountToMinor, resolveAnnualFeeCycleLocal } from '@/lib/recommendations-ui/helpers'
 import { CardRecommendationAssistant } from '@/components/mobile/CardRecommendationAssistant'
 import { AnnualFeeRoiBoard } from '@/components/mobile/AnnualFeeRoiBoard'
 import { CardAnnualFeeSection } from '@/components/mobile/CardAnnualFeeSection'
@@ -604,5 +604,99 @@ describe('方向 4 前端：选卡助手、年费周期、ROI 看板与规则编
 
     fireEvent.click(screen.getByRole('button', { name: '应用到表单' }))
     expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('HUB-188 回归：parseAmountToMinor 精确换算，两位小数校验、all holder_id 与年模式持卡人筛选、AI 草稿不覆盖手工规则', async () => {
+    expect(parseAmountToMinor('19.99')).toBe(1999)
+    expect(parseAmountToMinor('18.999')).toBe(1900)
+    expect(parseAmountToMinor('-1')).toBeNull()
+
+    mockedGetHolders.mockResolvedValue([
+      { id: 'h-1', name: '张三', created_at: '2026-01-01', created_by: 'u-admin', managed_by: 'u-admin' },
+    ] as never)
+    mockedGetCardRecommendations.mockResolvedValue(makeRecommendationOutput())
+    const emptyFxSum = {
+      converted_currency: 'CNY',
+      by_currency: {},
+      total: 0,
+      converted: true,
+      unconverted_currencies: [],
+      mixed: false,
+    }
+    mockedGetFamilyAnnualFeeRoi.mockResolvedValue({
+      period_mode: 'last_12m',
+      window_start: '2025-11-25',
+      window_end_exclusive: '2026-11-26',
+      display_currency: 'CNY',
+      fx_available: true,
+      unconverted_currencies: [],
+      totals: {
+        annual_fee_cost: emptyFxSum,
+        redeemed_benefits_value: emptyFxSum,
+        promo_and_reward_value: emptyFxSum,
+        manual_reward_value: emptyFxSum,
+        total_value: emptyFxSum,
+        net_value: emptyFxSum,
+      },
+      cards: [],
+      warnings: [],
+    })
+
+    const onProductChange = vi.fn()
+    mockedPreviewCardProductRules.mockResolvedValue({
+      ftf_rate: null,
+      fx_free_currencies: [],
+      reward_rules: null,
+      annual_fee_cycle_type: null,
+      annual_fee_waiver_rules: null,
+      confidence_note: '无新增字段',
+    })
+
+    render(
+      <>
+        <CardRecommendationAssistant />
+        <AnnualFeeRoiBoard />
+        <CardProductRulesEditor
+          product={{
+            bank_name: '招商银行',
+            card_name: '经典白金卡',
+            currency: 'CNY',
+            country: 'CN',
+            ftf_rate: 1.5,
+            fx_free_currencies_json: '["USD"]',
+            reward_rules_json: '{"schema_version":1,"reward_kind":"cashback","base_rate_pct":1,"category_rules":[]}',
+          }}
+          onChange={onProductChange}
+        />
+      </>
+    )
+
+    await waitFor(() => {
+      expect(mockedGetCardRecommendations).toHaveBeenCalledWith(
+        expect.objectContaining({ holder_id: null })
+      )
+    })
+
+    const amountInput = screen.getByLabelText(/计划消费金额/) as HTMLInputElement
+    fireEvent.change(amountInput, { target: { value: '12.345' } })
+    fireEvent.click(screen.getByRole('button', { name: '计算最优刷卡建议' }))
+    expect(await screen.findByText('消费金额最多支持两位小数')).toBeInTheDocument()
+
+    // 年模式下管理员仍可筛选持卡人
+    fireEvent.change(screen.getByLabelText('统计窗口'), { target: { value: 'year' } })
+    expect(screen.getByLabelText('年份')).toBeInTheDocument()
+    expect(screen.getByLabelText('持卡人')).toBeInTheDocument()
+
+    // AI 草稿为 null/空时保留既有手工 FTF 与回报规则
+    fireEvent.click(screen.getByRole('button', { name: /AI 生成规则草稿/ }))
+    await screen.findByText(/AI 规则预览草稿（尚未写库）/)
+    fireEvent.click(screen.getByRole('button', { name: '应用到表单' }))
+    expect(onProductChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ftf_rate: 1.5,
+        fx_free_currencies_json: '["USD"]',
+        reward_rules_json: '{"schema_version":1,"reward_kind":"cashback","base_rate_pct":1,"category_rules":[]}',
+      })
+    )
   })
 })

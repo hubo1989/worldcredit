@@ -129,6 +129,8 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
     setHasCustomName(next.hasCustomName)
   }
 
+  const isLoan = card.card_type === 'loan'
+
   const handleSubmit = async () => {
     if (!cardName.trim()) {
       setError('请输入卡片名称')
@@ -149,7 +151,7 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
     const finalNameOverride = resolveNameOverride(cardName, currentProd, hasCustomName)
 
     let parsedAnnualFeeOverride: number | null = null
-    if (annualFeeOverride.trim()) {
+    if (!isLoan && annualFeeOverride.trim()) {
       const feeNum = Number(annualFeeOverride.trim())
       if (!Number.isFinite(feeNum) || feeNum < 0) {
         setError('年费覆盖金额必须为非负数')
@@ -157,7 +159,7 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
       }
       parsedAnnualFeeOverride = feeNum
     }
-    if (nextAnnualFeeDate.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(nextAnnualFeeDate.trim())) {
+    if (!isLoan && nextAnnualFeeDate.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(nextAnnualFeeDate.trim())) {
       setError('下次年费扣费日格式必须为 YYYY-MM-DD')
       return
     }
@@ -170,12 +172,16 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
         bank_id: selectedBankId || undefined,
         name_override: finalNameOverride,
         ...dueRulePayload,
-        annual_fee_override: parsedAnnualFeeOverride,
-        issued_on: issuedOn.trim() || null,
-        activated_on: activatedOn.trim() || null,
-        annual_fee_cycle_type: (annualFeeCycleType || null) as AnnualFeeCycleType | null,
-        next_annual_fee_date: nextAnnualFeeDate.trim() || null,
-        annual_fee_status: (annualFeeStatus || null) as AnnualFeeStatus | null,
+        ...(!isLoan
+          ? {
+              annual_fee_override: parsedAnnualFeeOverride,
+              issued_on: issuedOn.trim() || null,
+              activated_on: activatedOn.trim() || null,
+              annual_fee_cycle_type: (annualFeeCycleType || null) as AnnualFeeCycleType | null,
+              next_annual_fee_date: nextAnnualFeeDate.trim() || null,
+              annual_fee_status: (annualFeeStatus || null) as AnnualFeeStatus | null,
+            }
+          : {}),
       } as Parameters<typeof updateCard>[1])
       onSaved()
       onClose()
@@ -285,70 +291,74 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
           </div>
         )}
 
-        <div className='h-px bg-d-border' />
+        {!isLoan && (
+          <>
+            <div className='h-px bg-d-border' />
 
-        {/* 年费与周年日 */}
-        <div className='flex flex-col gap-3'>
-          <p className='text-[13px] font-semibold text-d-muted'>年费周期与卡生命周期</p>
-          <div className='grid grid-cols-2 gap-3'>
-            <TextField
-              label='发卡日'
-              type='date'
-              value={issuedOn}
-              onChange={(e) => setIssuedOn(e.target.value)}
-            />
-            <TextField
-              label='激活日'
-              type='date'
-              value={activatedOn}
-              onChange={(e) => setActivatedOn(e.target.value)}
-            />
-          </div>
-          <div className='grid grid-cols-2 gap-3'>
-            <TextField
-              label={`年费覆盖（${card.card_product?.currency || 'CNY'}）`}
-              type='number'
-              inputMode='decimal'
-              min='0'
-              placeholder='留空用默认'
-              value={annualFeeOverride}
-              onChange={(e) => setAnnualFeeOverride(e.target.value)}
-              startAdornment={<span>{currencySymbol(card.card_product?.currency || 'CNY')}</span>}
-            />
-            <SelectField
-              label='年费周期'
-              value={annualFeeCycleType}
-              onChange={(e) => setAnnualFeeCycleType(e.target.value)}
-              options={[
-                { value: '', label: '沿用卡产品默认' },
-                ...(Object.keys(ANNUAL_FEE_CYCLE_LABELS) as AnnualFeeCycleType[]).map((k) => ({
-                  value: k,
-                  label: ANNUAL_FEE_CYCLE_LABELS[k],
-                })),
-              ]}
-            />
-          </div>
-          <div className='grid grid-cols-2 gap-3'>
-            <TextField
-              label='下次年费扣费日'
-              type='date'
-              value={nextAnnualFeeDate}
-              onChange={(e) => setNextAnnualFeeDate(e.target.value)}
-            />
-            <SelectField
-              label='年费状态'
-              value={annualFeeStatus}
-              onChange={(e) => setAnnualFeeStatus(e.target.value)}
-              options={[
-                { value: '', label: '自动 / 未指定' },
-                ...(Object.keys(ANNUAL_FEE_STATUS_LABELS) as AnnualFeeStatus[]).map((k) => ({
-                  value: k,
-                  label: ANNUAL_FEE_STATUS_LABELS[k],
-                })),
-              ]}
-            />
-          </div>
-        </div>
+            {/* 年费与周年日 */}
+            <div className='flex flex-col gap-3'>
+              <p className='text-[13px] font-semibold text-d-muted'>年费周期与卡生命周期</p>
+              <div className='grid grid-cols-2 gap-3'>
+                <TextField
+                  label='发卡日'
+                  type='date'
+                  value={issuedOn}
+                  onChange={(e) => setIssuedOn(e.target.value)}
+                />
+                <TextField
+                  label='激活日'
+                  type='date'
+                  value={activatedOn}
+                  onChange={(e) => setActivatedOn(e.target.value)}
+                />
+              </div>
+              <div className='grid grid-cols-2 gap-3'>
+                <TextField
+                  label={`年费覆盖（${card.card_product?.currency || 'CNY'}）`}
+                  type='number'
+                  inputMode='decimal'
+                  min='0'
+                  placeholder='留空用默认'
+                  value={annualFeeOverride}
+                  onChange={(e) => setAnnualFeeOverride(e.target.value)}
+                  startAdornment={<span>{currencySymbol(card.card_product?.currency || 'CNY')}</span>}
+                />
+                <SelectField
+                  label='年费周期'
+                  value={annualFeeCycleType}
+                  onChange={(e) => setAnnualFeeCycleType(e.target.value)}
+                  options={[
+                    { value: '', label: '沿用卡产品默认' },
+                    ...(Object.keys(ANNUAL_FEE_CYCLE_LABELS) as AnnualFeeCycleType[]).map((k) => ({
+                      value: k,
+                      label: ANNUAL_FEE_CYCLE_LABELS[k],
+                    })),
+                  ]}
+                />
+              </div>
+              <div className='grid grid-cols-2 gap-3'>
+                <TextField
+                  label='下次年费扣费日'
+                  type='date'
+                  value={nextAnnualFeeDate}
+                  onChange={(e) => setNextAnnualFeeDate(e.target.value)}
+                />
+                <SelectField
+                  label='年费状态'
+                  value={annualFeeStatus}
+                  onChange={(e) => setAnnualFeeStatus(e.target.value)}
+                  options={[
+                    { value: '', label: '自动 / 未指定' },
+                    ...(Object.keys(ANNUAL_FEE_STATUS_LABELS) as AnnualFeeStatus[]).map((k) => ({
+                      value: k,
+                      label: ANNUAL_FEE_STATUS_LABELS[k],
+                    })),
+                  ]}
+                />
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </Modal>
   )

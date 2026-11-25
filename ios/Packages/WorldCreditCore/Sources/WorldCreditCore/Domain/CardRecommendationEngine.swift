@@ -604,11 +604,12 @@ public enum CardRecommendationEngine {
         guard BillEditService.isValidCalendarDate(target),
               BillEditService.isValidCalendarDate(from) else { return nil }
         let cal = BillingDateCalculator.businessCalendar
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.timeZone = cal.timeZone
-        df.dateFormat = "yyyy-MM-dd"
-        guard let d1 = df.date(from: from), let d2 = df.date(from: target) else { return nil }
+        let fromParts = from.split(separator: "-").compactMap { Int($0) }
+        let targetParts = target.split(separator: "-").compactMap { Int($0) }
+        guard fromParts.count == 3, targetParts.count == 3 else { return nil }
+        let c1 = DateComponents(year: fromParts[0], month: fromParts[1], day: fromParts[2])
+        let c2 = DateComponents(year: targetParts[0], month: targetParts[1], day: targetParts[2])
+        guard let d1 = cal.date(from: c1), let d2 = cal.date(from: c2) else { return nil }
         return cal.dateComponents([.day], from: d1, to: d2).day
     }
 

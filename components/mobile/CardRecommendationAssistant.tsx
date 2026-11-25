@@ -31,6 +31,16 @@ import {
   type RecommendationEngineOutput,
 } from '@/lib/recommendations-ui/types'
 
+const EMPTY_REASON_TITLES: Record<string, string> = {
+  no_credit_cards: '当前名下暂无可用信用卡',
+  all_frozen_or_cancelled: '全部信用卡均已冻结或注销',
+}
+
+const EXCLUDE_CODE_LABELS: Record<string, string> = {
+  card_frozen: '已冻结',
+  card_cancelled: '已注销',
+}
+
 const QUICK_CURRENCIES = ['CNY', 'USD', 'HKD', 'JPY', 'EUR', 'GBP']
 const ALL_CURRENCIES = [
   'CNY',
@@ -326,16 +336,21 @@ export function CardRecommendationAssistant() {
       })
   }, [user?.id, user?.role])
 
-  const validateAmount = useCallback((raw: string): number | null => {
-    const trimmed = raw.trim()
-    if (!trimmed) return null
-    const num = Number(trimmed)
-    if (!Number.isFinite(num) || num <= 0) return null
-    if (!/^\d+(\.\d{1,2})?$/.test(trimmed) && Math.round(num * 100) / 100 !== num) {
-      return Math.round(num * 100) / 100
-    }
-    return num
-  }, [])
+  const parseAmountInput = useCallback(
+    (raw: string): { value: number | null; error: string | null } => {
+      const trimmed = raw.trim()
+      if (!trimmed) return { value: null, error: '请输入大于 0 的消费金额' }
+      const num = Number(trimmed)
+      if (!Number.isFinite(num) || num <= 0) {
+        return { value: null, error: '请输入大于 0 的消费金额' }
+      }
+      if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) {
+        return { value: null, error: '消费金额最多支持两位小数' }
+      }
+      return { value: num, error: null }
+    },
+    []
+  )
 
   const runRecommend = useCallback(
     async (overrides?: {
@@ -345,18 +360,21 @@ export function CardRecommendationAssistant() {
       optimizeFor?: OptimizeForMode
     }) => {
       const targetAmountStr = overrides?.amountStr ?? amountInput
-      const parsedAmount = validateAmount(targetAmountStr)
-      if (parsedAmount === null) {
-        setValidationError('请输入大于 0 的消费金额')
+      const parsed = parseAmountInput(targetAmountStr)
+      if (parsed.value === null) {
+        setValidationError(parsed.error || '请输入大于 0 的消费金额')
         return
       }
+      const parsedAmount = parsed.value
       setValidationError(null)
       setSubmitError(null)
       setLoading(true)
       try {
         const effectiveHolderId =
           user?.role === 'admin'
-            ? holderId
+            ? holderId === 'all'
+              ? null
+              : holderId
             : holders.length > 0
               ? holders[0].id
               : null
@@ -388,7 +406,7 @@ export function CardRecommendationAssistant() {
       optimizeFor,
       purchaseDate,
       user?.role,
-      validateAmount,
+      parseAmountInput,
     ]
   )
 
@@ -659,14 +677,11 @@ export function CardRecommendationAssistant() {
           {result.top_recommendations.length === 0 && (
             <div className='rounded-2xl border border-dashed border-d-border bg-d-surface p-6 text-center'>
               <p className='text-[15px] font-semibold text-d-text'>
-                {result.empty_reason === 'no_credit_cards'
-                  ? '当前名下暂无可用信用卡'
-                  : result.empty_reason === 'all_frozen_or_cancelled'
-                    ? '全部信用卡均已冻结或注销'
-                    : `暂无可用额度覆盖 ${formatCurrencyAmount(
-                        validateAmount(amountInput) ?? 0,
-                        currency
-                      )} 的卡片`}
+                {(result.empty_reason && EMPTY_REASON_TITLES[result.empty_reason]) ??
+                  `暂无可用额度覆盖 ${formatCurrencyAmount(
+                    parseAmountInput(amountInput).value ?? 0,
+                    currency
+                  )} 的卡片`}
               </p>
               <p className='mt-1 text-[12px] text-d-muted'>
                 可展开下方「不可用原因」查看各卡剩余额度与状态，或前往账户页管理卡片。
@@ -739,11 +754,7 @@ export function CardRecommendationAssistant() {
                             <p className='mt-0.5 text-d-danger-ink'>{ex.reason}</p>
                           </div>
                           <span className='shrink-0 rounded-full bg-d-danger-soft px-2 py-0.5 text-[10px] font-semibold text-d-danger-ink'>
-                            {ex.exclude_code === 'card_frozen'
-                              ? '已冻结'
-                              : ex.exclude_code === 'card_cancelled'
-                                ? '已注销'
-                                : '额度不足'}
+                            {EXCLUDE_CODE_LABELS[ex.exclude_code] ?? '额度不足'}
                           </span>
                         </div>
                       ))}

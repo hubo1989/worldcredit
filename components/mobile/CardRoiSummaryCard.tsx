@@ -12,7 +12,11 @@ import {
   updateCardAnnualFeeFields,
   updateOpportunityValuation,
 } from '@/lib/recommendations-ui/rpc'
-import { formatCurrencyAmount, formatPct1 } from '@/lib/recommendations-ui/helpers'
+import {
+  formatCurrencyAmount,
+  formatPct1,
+  parseAmountToMinor,
+} from '@/lib/recommendations-ui/helpers'
 import {
   ROI_DECISION_META,
   type CardAnnualFeeRoiDetail,
@@ -111,8 +115,8 @@ export function CardRoiSummaryCard({ card, product, onUpdated, highlighted = fal
       setToast({ open: true, message: '缺少可更新的权益标识', severity: 'error' })
       return
     }
-    const val = Number(unitValueInput.trim())
-    if (!Number.isFinite(val) || val < 0) {
+    const minor = parseAmountToMinor(unitValueInput)
+    if (minor === null) {
       setToast({ open: true, message: '请输入大于等于 0 的单次估值金额', severity: 'error' })
       return
     }
@@ -121,7 +125,7 @@ export function CardRoiSummaryCard({ card, product, onUpdated, highlighted = fal
       await updateOpportunityValuation({
         target_kind: targetKind,
         target_id: targetId,
-        estimated_unit_value_minor: Math.round(val * 100),
+        estimated_unit_value_minor: minor,
         estimated_value_currency: cardCurrency,
       })
       setValuationTarget(null)

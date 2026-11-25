@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { AiSparkleIcon, PlusIcon, TrashIcon } from '@/components/icons/WcIcon'
 import { Button, CheckRow } from '@/components/obsidian/controls'
 import { SelectField, TextField } from '@/components/obsidian/fields'
@@ -37,8 +37,15 @@ export function CardProductRulesEditor({ product, onChange }: Props) {
   const currency = product.currency || 'CNY'
   const ftfValue =
     product.ftf_rate !== null && product.ftf_rate !== undefined ? String(product.ftf_rate) : ''
-  const fxFreeCurrencies = parseFxFreeCurrencies(product.fx_free_currencies_json)
-  const rewardRules: RewardRulesV1 = parseRewardRules(product.reward_rules_json) ?? {
+  const fxFreeCurrencies = useMemo(
+    () => parseFxFreeCurrencies(product.fx_free_currencies_json),
+    [product.fx_free_currencies_json]
+  )
+  const parsedRewardRules = useMemo(
+    () => parseRewardRules(product.reward_rules_json),
+    [product.reward_rules_json]
+  )
+  const rewardRules: RewardRulesV1 = parsedRewardRules ?? {
     schema_version: 1,
     reward_kind: 'cashback',
     point_unit_name: null,
@@ -48,10 +55,12 @@ export function CardProductRulesEditor({ product, onChange }: Props) {
     category_rules: [],
     notes: null,
   }
-  const hasRewardRules = parseRewardRules(product.reward_rules_json) !== null
-  const waiverRules: AnnualFeeWaiverRuleV1 = parseAnnualFeeWaiverRules(
-    product.annual_fee_waiver_rules_json
-  ) ?? {
+  const hasRewardRules = parsedRewardRules !== null
+  const parsedWaiverRules = useMemo(
+    () => parseAnnualFeeWaiverRules(product.annual_fee_waiver_rules_json),
+    [product.annual_fee_waiver_rules_json]
+  )
+  const waiverRules: AnnualFeeWaiverRuleV1 = parsedWaiverRules ?? {
     schema_version: 1,
     waiver_type: 'none',
     first_year_free: false,
@@ -62,7 +71,7 @@ export function CardProductRulesEditor({ product, onChange }: Props) {
     points_cost: null,
     notes: null,
   }
-  const hasWaiverRules = parseAnnualFeeWaiverRules(product.annual_fee_waiver_rules_json) !== null
+  const hasWaiverRules = parsedWaiverRules !== null
 
   const [customFxInput, setCustomFxInput] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
@@ -126,12 +135,14 @@ export function CardProductRulesEditor({ product, onChange }: Props) {
     if (!aiDraft) return
     onChange({
       ...product,
-      ftf_rate: aiDraft.ftf_rate,
+      ftf_rate: aiDraft.ftf_rate ?? product.ftf_rate,
       fx_free_currencies_json:
         aiDraft.fx_free_currencies.length > 0
           ? JSON.stringify(aiDraft.fx_free_currencies)
-          : null,
-      reward_rules_json: aiDraft.reward_rules ? JSON.stringify(aiDraft.reward_rules) : null,
+          : product.fx_free_currencies_json,
+      reward_rules_json: aiDraft.reward_rules
+        ? JSON.stringify(aiDraft.reward_rules)
+        : product.reward_rules_json,
       annual_fee_cycle_type: aiDraft.annual_fee_cycle_type ?? product.annual_fee_cycle_type,
       annual_fee_waiver_rules_json: aiDraft.annual_fee_waiver_rules
         ? JSON.stringify(aiDraft.annual_fee_waiver_rules)
@@ -560,13 +571,24 @@ export function CardProductRulesEditor({ product, onChange }: Props) {
             min='0'
             placeholder='选填'
             value={waiverRules.target_amount != null ? String(waiverRules.target_amount) : ''}
-            onChange={(e) =>
+            onChange={(e) => {
+              const raw = e.target.value
+              if (raw === '') {
+                patchWaiverRules((prev) => ({
+                  ...prev,
+                  target_amount: null,
+                  target_currency: currency,
+                }))
+                return
+              }
+              const parsed = Number(raw)
+              if (!Number.isFinite(parsed) || parsed < 0) return
               patchWaiverRules((prev) => ({
                 ...prev,
-                target_amount: e.target.value === '' ? null : Number(e.target.value),
+                target_amount: parsed,
                 target_currency: currency,
               }))
-            }
+            }}
           />
           <TextField
             label='达标消费笔数'
@@ -575,12 +597,16 @@ export function CardProductRulesEditor({ product, onChange }: Props) {
             min='0'
             placeholder='选填'
             value={waiverRules.target_count != null ? String(waiverRules.target_count) : ''}
-            onChange={(e) =>
-              patchWaiverRules((prev) => ({
-                ...prev,
-                target_count: e.target.value === '' ? null : Math.trunc(Number(e.target.value)),
-              }))
-            }
+            onChange={(e) => {
+              const raw = e.target.value
+              if (raw === '') {
+                patchWaiverRules((prev) => ({ ...prev, target_count: null }))
+                return
+              }
+              const parsed = Number(raw)
+              if (!Number.isFinite(parsed) || parsed < 0) return
+              patchWaiverRules((prev) => ({ ...prev, target_count: Math.trunc(parsed) }))
+            }}
           />
           <TextField
             label={`单笔最低门槛（${currency}）`}
@@ -591,12 +617,16 @@ export function CardProductRulesEditor({ product, onChange }: Props) {
             value={
               waiverRules.per_txn_min_amount != null ? String(waiverRules.per_txn_min_amount) : ''
             }
-            onChange={(e) =>
-              patchWaiverRules((prev) => ({
-                ...prev,
-                per_txn_min_amount: e.target.value === '' ? null : Number(e.target.value),
-              }))
-            }
+            onChange={(e) => {
+              const raw = e.target.value
+              if (raw === '') {
+                patchWaiverRules((prev) => ({ ...prev, per_txn_min_amount: null }))
+                return
+              }
+              const parsed = Number(raw)
+              if (!Number.isFinite(parsed) || parsed < 0) return
+              patchWaiverRules((prev) => ({ ...prev, per_txn_min_amount: parsed }))
+            }}
           />
         </div>
 

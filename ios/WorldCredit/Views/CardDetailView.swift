@@ -25,6 +25,7 @@ struct CardDetailView: View {
     @State private var roiPeriodMode: String = "current_cycle"
     @State private var showingManualRewardAlert: Bool = false
     @State private var manualRewardInputText: String = ""
+    @State private var hasScrolledToRoi: Bool = false
 
     init(cardId: String, initialSection: String? = nil) {
         self.cardId = cardId
@@ -425,14 +426,23 @@ struct CardDetailView: View {
         }
         .listStyle(.insetGrouped)
         .onAppear {
-            if initialSection == "roi" {
-                DispatchQueue.main.async {
-                    withAnimation {
-                        scrollProxy.scrollTo("roi-section", anchor: .top)
-                    }
-                }
+            scrollToRoiIfNeeded(scrollProxy: scrollProxy)
+        }
+        .onChange(of: detail != nil) { _, loaded in
+            if loaded {
+                scrollToRoiIfNeeded(scrollProxy: scrollProxy)
             }
         }
+        }
+    }
+
+    private func scrollToRoiIfNeeded(scrollProxy: ScrollViewProxy) {
+        guard initialSection == "roi", !hasScrolledToRoi else { return }
+        hasScrolledToRoi = true
+        DispatchQueue.main.async {
+            withAnimation {
+                scrollProxy.scrollTo("roi-section", anchor: .top)
+            }
         }
     }
 
@@ -739,12 +749,16 @@ struct CardDetailView: View {
             if state.nominalFee > 0 && state.status != "waived" {
                 Button("标记本周期已免年费") {
                     Task {
-                        var input = CardUpdateInput()
-                        input.annualFeeStatus = "waived"
-                        input.actualFeePaid = 0
-                        _ = try? await appState.updateCard(cardId: cardId, input: input)
-                        await loadDetails()
-                        await loadRoi()
+                        do {
+                            var input = CardUpdateInput()
+                            input.annualFeeStatus = "waived"
+                            input.actualFeePaid = 0
+                            _ = try await appState.updateCard(cardId: cardId, input: input)
+                            await loadDetails()
+                            await loadRoi()
+                        } catch {
+                            actionError = error.localizedDescription
+                        }
                     }
                 }
                 .accessibilityIdentifier("card.annualFee.markWaived")
@@ -851,11 +865,15 @@ struct CardDetailView: View {
             return
         }
         Task {
-            var input = CardUpdateInput()
-            input.manualRewardValue = val
-            _ = try? await appState.updateCard(cardId: cardId, input: input)
-            await loadDetails()
-            await loadRoi()
+            do {
+                var input = CardUpdateInput()
+                input.manualRewardValue = val
+                _ = try await appState.updateCard(cardId: cardId, input: input)
+                await loadDetails()
+                await loadRoi()
+            } catch {
+                actionError = error.localizedDescription
+            }
         }
     }
 }
@@ -1124,7 +1142,7 @@ private struct CardRulesEditSheet: View {
         _hasActivatedOn = State(initialValue: parsedActivated != nil)
         _activatedDate = State(initialValue: parsedActivated ?? Date())
 
-        _annualFeeCycleType = State(initialValue: card.annualFeeCycleType ?? product?.annualFeeCycleType ?? "")
+        _annualFeeCycleType = State(initialValue: card.annualFeeCycleType ?? "")
         let parsedNextFee = card.nextAnnualFeeDate.flatMap { Self.dateFormatter.date(from: $0) }
         _hasNextAnnualFeeDate = State(initialValue: parsedNextFee != nil)
         _nextAnnualFeeDate = State(initialValue: parsedNextFee ?? Date())

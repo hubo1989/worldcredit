@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ChevronLeftIcon, ChevronRightIcon } from '@/components/icons/WcIcon'
@@ -19,7 +19,11 @@ import {
   getFamilyAnnualFeeRoi,
   updateOpportunityValuation,
 } from '@/lib/recommendations-ui/rpc'
-import { formatCurrencyAmount, formatPct1 } from '@/lib/recommendations-ui/helpers'
+import {
+  formatCurrencyAmount,
+  formatPct1,
+  parseAmountToMinor,
+} from '@/lib/recommendations-ui/helpers'
 import {
   ROI_DECISION_META,
   type CardAnnualFeeRoiDetail,
@@ -28,6 +32,13 @@ import {
 } from '@/lib/recommendations-ui/types'
 
 type SortMode = 'net_value_desc' | 'net_value_asc' | 'roi_pct_desc' | 'due_soon'
+
+const SORT_OPTIONS: Array<{ value: SortMode; label: string }> = [
+  { value: 'net_value_desc', label: '净收益从高到低' },
+  { value: 'net_value_asc', label: '净收益从低到高' },
+  { value: 'roi_pct_desc', label: 'ROI 从高到低' },
+  { value: 'due_soon', label: '临近年费日优先' },
+]
 
 export function AnnualFeeRoiBoard() {
   const { user } = useAuth()
@@ -76,8 +87,11 @@ export function AnnualFeeRoiBoard() {
       .catch(() => setHolders([]))
   }, [user?.id, user?.role])
 
+  const boardReqSeqRef = useRef(0)
+
   const loadBoard = useCallback(async () => {
     if (!user?.id) return
+    const reqSeq = ++boardReqSeqRef.current
     setLoading(true)
     setError(null)
     try {
@@ -93,11 +107,15 @@ export function AnnualFeeRoiBoard() {
         year: periodMode === 'year' ? selectedYear : undefined,
         display_currency: displayCurrency,
       })
+      if (reqSeq !== boardReqSeqRef.current) return
       setBoard(data)
     } catch (err) {
+      if (reqSeq !== boardReqSeqRef.current) return
       setError(err instanceof Error ? err.message : '加载年费 ROI 看板失败')
     } finally {
-      setLoading(false)
+      if (reqSeq === boardReqSeqRef.current) {
+        setLoading(false)
+      }
     }
   }, [displayCurrency, holderId, holders, periodMode, selectedYear, user?.id, user?.role])
 
@@ -133,8 +151,8 @@ export function AnnualFeeRoiBoard() {
       setToast({ open: true, message: '缺少可更新的权益标识', severity: 'error' })
       return
     }
-    const val = Number(unitValueInput.trim())
-    if (!Number.isFinite(val) || val < 0) {
+    const minor = parseAmountToMinor(unitValueInput)
+    if (minor === null) {
       setToast({ open: true, message: '请输入大于等于 0 的单次估值金额', severity: 'error' })
       return
     }
@@ -143,7 +161,7 @@ export function AnnualFeeRoiBoard() {
       await updateOpportunityValuation({
         target_kind: targetKind,
         target_id: targetId,
-        estimated_unit_value_minor: Math.round(val * 100),
+        estimated_unit_value_minor: minor,
         estimated_value_currency: valuationTarget.currency,
       })
       setValuationTarget(null)
@@ -202,7 +220,7 @@ export function AnnualFeeRoiBoard() {
           ]}
         />
 
-        {periodMode === 'year' ? (
+        {periodMode === 'year' && (
           <SelectField
             label='年份'
             value={String(selectedYear)}
@@ -212,7 +230,9 @@ export function AnnualFeeRoiBoard() {
               label: `${y} 年`,
             }))}
           />
-        ) : isAdmin ? (
+        )}
+
+        {isAdmin && (
           <SelectField
             label='持卡人'
             value={holderId}
@@ -220,18 +240,6 @@ export function AnnualFeeRoiBoard() {
             options={[
               { value: 'all', label: '全部家庭成员' },
               ...holders.map((h) => ({ value: h.id, label: h.name })),
-            ]}
-          />
-        ) : (
-          <SelectField
-            label='排序方式'
-            value={sortMode}
-            onChange={(e) => setSortMode(e.target.value as SortMode)}
-            options={[
-              { value: 'net_value_desc', label: '净收益从高到低' },
-              { value: 'net_value_asc', label: '净收益从低到高' },
-              { value: 'roi_pct_desc', label: 'ROI 从高到低' },
-              { value: 'due_soon', label: '临近年费日优先' },
             ]}
           />
         )}
@@ -249,19 +257,12 @@ export function AnnualFeeRoiBoard() {
           ]}
         />
 
-        {(periodMode === 'year' || isAdmin) && (
-          <SelectField
-            label='排序方式'
-            value={sortMode}
-            onChange={(e) => setSortMode(e.target.value as SortMode)}
-            options={[
-              { value: 'net_value_desc', label: '净收益从高到低' },
-              { value: 'net_value_asc', label: '净收益从低到高' },
-              { value: 'roi_pct_desc', label: 'ROI 从高到低' },
-              { value: 'due_soon', label: '临近年费日优先' },
-            ]}
-          />
-        )}
+        <SelectField
+          label='排序方式'
+          value={sortMode}
+          onChange={(e) => setSortMode(e.target.value as SortMode)}
+          options={SORT_OPTIONS}
+        />
       </div>
 
       {error && (

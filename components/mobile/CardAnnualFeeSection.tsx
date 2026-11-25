@@ -28,6 +28,14 @@ import {
   type WaiverProgressV1,
 } from '@/lib/recommendations-ui/types'
 
+const ANNUAL_FEE_STATUS_BADGE_CLASSES: Record<AnnualFeeStatus, string> = {
+  not_applicable: 'bg-d-success-soft text-d-success-ink',
+  waived: 'bg-d-success-soft text-d-success-ink',
+  paid: 'bg-d-danger-soft text-d-danger-ink',
+  in_progress: 'bg-d-subtle text-d-accent-light',
+  unknown: 'bg-d-subtle text-d-accent-light',
+}
+
 interface Props {
   card: CreditCardWithAnnualFee
   product: CardProductWithRules | null | undefined
@@ -286,11 +294,7 @@ export function CardAnnualFeeSection({ card, product, onUpdated }: Props) {
           <span
             className={
               'rounded-full px-2.5 py-1 text-[11px] font-semibold ' +
-              (cycleState.status === 'waived' || cycleState.status === 'not_applicable'
-                ? 'bg-d-success-soft text-d-success-ink'
-                : cycleState.status === 'paid'
-                  ? 'bg-d-danger-soft text-d-danger-ink'
-                  : 'bg-d-subtle text-d-accent-light')
+              (ANNUAL_FEE_STATUS_BADGE_CLASSES[cycleState.status] ?? 'bg-d-subtle text-d-accent-light')
             }
           >
             {ANNUAL_FEE_STATUS_LABELS[cycleState.status]}
@@ -371,7 +375,12 @@ export function CardAnnualFeeSection({ card, product, onUpdated }: Props) {
             {amountTarget !== null && amountTarget > 0 && (
               <div className='mt-2'>
                 <div className='mb-1 flex justify-between text-[11px]'>
-                  <span className='text-d-muted'>累计合格消费额</span>
+                  <span className='text-d-muted'>
+                    累计合格消费额
+                    {waiverRule?.target_currency && waiverRule.target_currency !== cardCurrency
+                      ? `（按${waiverRule.target_currency}计，卡币种 ${cardCurrency}）`
+                      : ''}
+                  </span>
                   <span className='num-tabular font-semibold text-d-text'>
                     {formatCurrencyAmount(
                       currAmount,

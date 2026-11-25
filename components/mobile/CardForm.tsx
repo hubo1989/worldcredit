@@ -328,6 +328,42 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
       const finalNameOverride = resolveNameOverride(cardName, currentProd, hasCustomName)
       const dueRulePayload = buildDueRulePayload(overrideEnabled, overrideDueType, overrideDueValue)
 
+      const annualFeePayload = isCredit
+        ? {
+            issued_on: issuedOn || null,
+            activated_on: activatedOn || null,
+            ...(annualFeeOverride.trim()
+              ? { annual_fee_override: Number(annualFeeOverride.trim()) }
+              : initial
+                ? { annual_fee_override: null }
+                : {}),
+            ...(annualFeeCycleType
+              ? { annual_fee_cycle_type: annualFeeCycleType as AnnualFeeCycleType }
+              : initial
+                ? { annual_fee_cycle_type: null }
+                : {}),
+            ...(nextAnnualFeeDate.trim()
+              ? { next_annual_fee_date: nextAnnualFeeDate.trim() }
+              : initial
+                ? { next_annual_fee_date: null }
+                : {}),
+            ...(annualFeeStatus
+              ? { annual_fee_status: annualFeeStatus as AnnualFeeStatus }
+              : initial
+                ? { annual_fee_status: null }
+                : {}),
+          }
+        : initial
+          ? {
+              issued_on: null,
+              activated_on: null,
+              annual_fee_override: null,
+              annual_fee_cycle_type: null,
+              next_annual_fee_date: null,
+              annual_fee_status: null,
+            }
+          : {}
+
       const base = {
         holder_id: ownerId,
         card_product_id: productId,
@@ -341,12 +377,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
         name_override: finalNameOverride ?? undefined,
         ...dueRulePayload,
         account_mode_override: accountModeOverride === 'auto' ? null : accountModeOverride,
-        issued_on: issuedOn || null,
-        activated_on: activatedOn || null,
-        ...(annualFeeOverride.trim() ? { annual_fee_override: Number(annualFeeOverride.trim()) } : {}),
-        ...(annualFeeCycleType ? { annual_fee_cycle_type: annualFeeCycleType as AnnualFeeCycleType } : {}),
-        ...(nextAnnualFeeDate.trim() ? { next_annual_fee_date: nextAnnualFeeDate.trim() } : {}),
-        ...(annualFeeStatus ? { annual_fee_status: annualFeeStatus as AnnualFeeStatus } : {}),
+        ...annualFeePayload,
       }
 
       await onSubmit(base as unknown as Omit<CreditCard, 'id' | 'created_at'>)

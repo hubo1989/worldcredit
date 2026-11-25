@@ -466,7 +466,7 @@ export default function DashboardPage() {
       />
 
       {/* 轻量智能选卡与年费 ROI 快捷胶囊入口 */}
-      <div className="obsidian-dashboard fixed bottom-[72px] left-1/2 z-[900] flex -translate-x-1/2 items-center gap-2 rounded-full border border-d-border bg-d-surface/95 px-2.5 py-1.5 shadow-lg backdrop-blur">
+      <div className="obsidian-dashboard fixed bottom-[calc(72px+env(safe-area-inset-bottom))] left-1/2 z-[900] flex -translate-x-1/2 items-center gap-2 rounded-full border border-d-border bg-d-surface/95 px-2.5 py-1.5 shadow-lg backdrop-blur">
         <Link
           href="/recommend"
           className="flex min-h-[36px] items-center whitespace-nowrap rounded-full bg-d-accent px-3.5 text-[12px] font-semibold text-white"
