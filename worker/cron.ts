@@ -192,7 +192,9 @@ export async function handleScheduled(
 
         // Claim before calling either provider so overlapping scans share one sender.
         const leaseStarted = Date.now();
-        const leaseUntil = new Date(leaseStarted + 5 * 60_000).toISOString();
+        // Web Push is serial and each subscription can use its full request timeout.
+        const leaseDuration = 5 * 60_000 + (canSendWebPush ? userSubs.length * 10_000 : 0);
+        const leaseUntil = new Date(leaseStarted + leaseDuration).toISOString();
         const claim = await db
           .prepare(
             `UPDATE notification_history SET push_lease_until = ?
@@ -276,7 +278,8 @@ export async function handleScheduled(
             `UPDATE notification_history
              SET title = ?, body = ?, target_url = ?, metadata_json = ?,
                  status = ?, push_sent_at = COALESCE(push_sent_at, ?), error = ?, push_lease_until = NULL
-             WHERE user_id = ? AND notification_key = ? AND push_lease_until = ?`,
+             WHERE user_id = ? AND notification_key = ? AND push_lease_until = ?
+               AND read_at IS NULL AND deleted_at IS NULL`,
           )
           .bind(
             candidate.title, candidate.body, candidate.target_url, candidate.metadata_json,

@@ -282,7 +282,8 @@ export async function buildDailyNotificationCandidates(
   todayStr?: string,
   options?: { now?: Date; prefetched?: PrefetchedUserNotificationPrefs; context?: UserNotificationContext }
 ): Promise<{ context: UserNotificationContext; candidates: DailyNotificationCandidate[] }> {
-  const context = options?.context ?? await loadUserNotificationContext(db, userId, options?.prefetched)
+  const context = options?.context?.userId === userId
+    ? options.context : await loadUserNotificationContext(db, userId, options?.prefetched)
   const effectiveToday = todayStr ?? getLocalTodayString(context.timeZone, options?.now)
   const switches = resolveNotificationSwitches(context.reminderConfig)
   const advanceDays = new Set(context.remindDaysBefore.filter(d => Number.isInteger(d) && d > 0))
