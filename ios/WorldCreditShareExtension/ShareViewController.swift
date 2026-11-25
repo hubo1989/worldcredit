@@ -94,16 +94,12 @@ final class ShareViewController: UIViewController {
                     pdfPassword: pdfPassword
                 )
             },
-            onOpenMainApp: { [weak self] draftId in
-                guard let self else { return }
-                let target = draftId.map { "worldcredit://drafts/\($0)" } ?? "worldcredit://"
-                if let url = URL(string: target) {
-                    self.extensionContext?.open(url) { _ in
-                        self.finishAndDismiss()
-                    }
-                } else {
-                    self.finishAndDismiss()
+            onOpenMainApp: { [weak self] draftId, completion in
+                guard let self else {
+                    completion(false)
+                    return
                 }
+                self.openMainApp(draftId: draftId, completion: completion)
             },
             onClose: { [weak self] in
                 self?.finishAndDismiss()
@@ -126,6 +122,60 @@ final class ShareViewController: UIViewController {
         ])
         host.didMove(toParent: self)
         hostingController = host
+    }
+
+    @MainActor
+    private func openMainApp(draftId: String?, completion: @escaping @MainActor @Sendable (Bool) -> Void) {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/?#%")
+        let encodedId = draftId?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .addingPercentEncoding(withAllowedCharacters: allowed)
+        let target: String
+        if let encodedId, !encodedId.isEmpty {
+            target = "worldcredit://drafts/\(encodedId)"
+        } else {
+            target = "worldcredit://"
+        }
+        guard let url = URL(string: target) else {
+            completion(false)
+            return
+        }
+
+        // Share Extension 中 NSExtensionContext.open 仅限 Today Widget，需沿 Responder Chain 调用宿主 UIApplication。
+        let openSelector = NSSelectorFromString("openURL:options:completionHandler:")
+        let legacySelector = NSSelectorFromString("openURL:")
+        var responder: UIResponder? = self
+        while let current = responder {
+            if current.responds(to: openSelector), let imp = current.method(for: openSelector) {
+                typealias OpenFn = @convention(c) (AnyObject, Selector, NSURL, NSDictionary, Any?) -> Void
+                let fn = unsafeBitCast(imp, to: OpenFn.self)
+                fn(current, openSelector, url as NSURL, [:], nil)
+                completion(true)
+                self.finishAndDismiss()
+                return
+            }
+            if current.responds(to: legacySelector) {
+                _ = current.perform(legacySelector, with: url)
+                completion(true)
+                self.finishAndDismiss()
+                return
+            }
+            responder = current.next
+        }
+
+        if let context = extensionContext {
+            context.open(url) { [weak self] opened in
+                Task { @MainActor in
+                    completion(opened)
+                    if opened {
+                        self?.finishAndDismiss()
+                    }
+                }
+            }
+        } else {
+            completion(false)
+        }
     }
 
     private func finishAndDismiss() {

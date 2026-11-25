@@ -143,6 +143,14 @@ export function BillDraftsPanel({
     })
   }, [drafts, focusDraftId])
 
+  const cleanableDraftIds = useMemo(
+    () =>
+      drafts
+        .filter(d => d.parse_status === 'parse_failed' || d.parsed_payload.is_bill === false)
+        .map(d => d.id),
+    [drafts]
+  )
+
   if (!sortedDrafts.length) return null
 
   const patchCard = async (draft: DraftItem, cardId: string) => {
@@ -211,15 +219,16 @@ export function BillDraftsPanel({
   }
 
   const handleBatchDiscard = async () => {
-    const targetIds = drafts
-      .filter(d => d.parse_status === 'parse_failed' || d.parsed_payload.is_bill === false)
-      .map(d => d.id)
-    const idsToDiscard = targetIds.length > 0 ? targetIds : drafts.map(d => d.id)
+    if (cleanableDraftIds.length === 0) {
+      setConfirmBatchDiscardOpen(false)
+      setError('没有可批量清理的「解析失败 / 非账单」草稿，请逐条处理')
+      return
+    }
     setConfirmBatchDiscardOpen(false)
     setBusy(true)
     setError(null)
     try {
-      await batchDiscardBillDrafts(idsToDiscard)
+      await batchDiscardBillDrafts(cleanableDraftIds)
       await reload()
       onChanged?.()
     } catch (err) {
@@ -282,14 +291,14 @@ export function BillDraftsPanel({
                 : '全渠道识别结果统一停泊草稿箱，确认后写入主账单'}
             </p>
           </div>
-          {drafts.length > 1 && (
+          {cleanableDraftIds.length > 0 && (
             <button
               type='button'
               disabled={busy}
               onClick={() => setConfirmBatchDiscardOpen(true)}
               className='shrink-0 rounded-lg border border-d-border bg-d-subtle px-2.5 py-1 text-[11px] font-semibold text-d-muted hover:text-d-text disabled:opacity-40'
             >
-              批量清理
+              批量清理 ({cleanableDraftIds.length})
             </button>
           )}
         </div>
@@ -671,7 +680,7 @@ export function BillDraftsPanel({
         }
       >
         <p className='text-[13px] leading-5 text-d-muted'>
-          优先清理「解析失败 / 非账单」草稿；若无此类草稿，将清空当前全部待确认草稿。确定继续？
+          将清理 {cleanableDraftIds.length} 份「解析失败 / 非账单」草稿，不会影响待输入密码或待确认账单。确定继续？
         </p>
       </ConfirmDialog>
     </div>

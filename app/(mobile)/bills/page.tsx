@@ -17,6 +17,7 @@ import { PaymentForm } from '@/components/mobile/PaymentForm'
 import { BillForm } from '@/components/mobile/BillForm'
 import { CardCreateModal } from '@/components/mobile/CardCreateModal'
 import { AccountMergeWizardModal } from '@/components/mobile/AccountMergeWizardModal'
+import { updateBillImportDraft } from '@/lib/api/billDrafts'
 import { BillDraftsPanel } from '@/components/mobile/BillDraftsPanel'
 import { BillImportDialog, type CardOption } from '@/components/mobile/BillImportDialog'
 import { ManualBillAmountDialog } from '@/components/mobile/ManualBillAmountDialog'
@@ -104,6 +105,11 @@ export default function BillsPage() {
   const [focusDraftId, setFocusDraftId] = useState<string | null>(null)
   const [draftsRefreshToken, setDraftsRefreshToken] = useState(0)
   const [cardCreateOpen, setCardCreateOpen] = useState(false)
+  const [quickCreatePrefill, setQuickCreatePrefill] = useState<{
+    draftId: string
+    bankName?: string | null
+    last4?: string | null
+  } | null>(null)
   const [mergeWizardOpen, setMergeWizardOpen] = useState(false)
   // 手填金额：只针对「卡」，账单可能还没生成，因此传的是 card，不是 bill
   const [manualTarget, setManualTarget] = useState<CardWithBillsSummary | null>(null)
@@ -245,6 +251,9 @@ export default function BillsPage() {
     const draftId = params.get('draftId')
     if (draftId) {
       setFocusDraftId(draftId)
+      params.delete('draftId')
+      const query = params.toString()
+      window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`)
     }
   }, [])
 
@@ -613,7 +622,10 @@ export default function BillsPage() {
         onChanged={() => void loadData()}
         focusDraftId={focusDraftId}
         refreshToken={draftsRefreshToken}
-        onQuickCreateCard={() => setCardCreateOpen(true)}
+        onQuickCreateCard={(prefill) => {
+          setQuickCreatePrefill(prefill)
+          setCardCreateOpen(true)
+        }}
       />
       <BillsView
         syncing={syncing}
@@ -677,8 +689,19 @@ export default function BillsPage() {
 
       <CardCreateModal
         open={cardCreateOpen}
-        onClose={() => setCardCreateOpen(false)}
+        onClose={() => {
+          setCardCreateOpen(false)
+          setQuickCreatePrefill(null)
+        }}
+        initialBankName={quickCreatePrefill?.bankName}
+        initialLast4={quickCreatePrefill?.last4}
+        onCreatedCard={async (cardId) => {
+          if (quickCreatePrefill?.draftId) {
+            await updateBillImportDraft(quickCreatePrefill.draftId, { card_id: cardId })
+          }
+        }}
         onSuccess={() => {
+          setQuickCreatePrefill(null)
           setDraftsRefreshToken(t => t + 1)
           void loadData()
         }}

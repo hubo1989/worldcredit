@@ -16,6 +16,13 @@ import {
 
 const mockCallRpc = vi.fn()
 const mockAiComplete = vi.fn()
+const mockUploadAttachment = vi.fn()
+const mockDeleteAttachment = vi.fn()
+
+vi.mock('@/lib/api/attachments', () => ({
+  uploadRecordAttachment: (...args: unknown[]) => mockUploadAttachment(...args),
+  deleteRecordAttachment: (...args: unknown[]) => mockDeleteAttachment(...args),
+}))
 
 vi.mock('@/lib/api/rpc-client', () => {
   class RpcError extends Error {
@@ -402,7 +409,7 @@ describe('HUB-157 Web omnibus UI & utilities', () => {
             email: 'spouse@gmail.com',
             display_label: '配偶邮箱',
             default_holder_id: 'h-2',
-            attribution_mode: 'always_default',
+            attribution_mode: 'force_default_unless_conflict',
             sync_enabled: true,
             status: 'active',
           },
@@ -489,5 +496,179 @@ describe('HUB-157 Web omnibus UI & utilities', () => {
       { timeout: 2500 }
     )
     expect(screen.getByText(/本地规则粗提/)).toBeTruthy()
+  })
+
+  it('BillDraftsPanel 无解析失败或非账单草稿时不暴露批量清理，避免误删待解锁或待确认草稿', async () => {
+    const billDraftsMod = await import('@/lib/api/billDrafts')
+    vi.mocked(billDraftsMod.getBillImportDrafts).mockResolvedValue([
+      {
+        id: 'draft-ready-only',
+        created_by: 'u-1',
+        card_id: 'card-us',
+        source_type: 'text',
+        parsed_payload: { bank_name: 'Chase', currency: 'USD', bill_month: '2026-10', bill_amount: 500, due_date: '2026-11-10' },
+        status: 'draft',
+        parse_status: 'ready',
+        created_at: '2026-10-19T00:00:00Z',
+      } as never,
+      {
+        id: 'draft-lock-only',
+        created_by: 'u-1',
+        card_id: 'card-hk',
+        source_type: 'pdf',
+        parsed_payload: { bank_name: 'HSBC', currency: 'HKD' },
+        status: 'draft',
+        parse_status: 'needs_password',
+        created_at: '2026-10-18T00:00:00Z',
+      } as never,
+    ])
+
+    render(<BillDraftsPanel />)
+    await waitFor(() => {
+      expect(screen.getByText(/待确认导入草稿 2/)).toBeTruthy()
+    })
+    expect(screen.queryByRole('button', { name: /批量清理/ })).toBeNull()
+  })
+
+  it('BillImportDialog 多币种拆单切换页签不丢脏标记，且上传后解析失败自动回滚孤儿附件', async () => {
+    const billDraftsMod = await import('@/lib/api/billDrafts')
+    vi.mocked(billDraftsMod.updateBillImportDraft).mockResolvedValue({} as never)
+    vi.mocked(billDraftsMod.confirmBillImportDraft).mockResolvedValue({ id: 'bill-ok' } as never)
+    mockUploadAttachment.mockResolvedValue({ id: 'att-orphan-1', file_name: 's.pdf' })
+    mockDeleteAttachment.mockResolvedValue({ ok: true })
+
+    // 先验证 PDF 上传后 RPC 失败时自动回滚附件
+    mockCallRpc.mockRejectedValueOnce(new Error('解析服务暂不可用'))
+
+    render(
+      <BillImportDialog
+        open={true}
+        onClose={() => {}}
+        onImportSuccess={() => {}}
+        cards={sampleCards}
+        userId='u-1'
+        initialSourceType='pdf'
+      />
+    )
+    const pdfInput = screen.getByLabelText('选择 PDF 月结单')
+    const pdfFile = new File(['%PDF-1.4'], 'stmt.pdf', { type: 'application/pdf' })
+    fireEvent.change(pdfInput, { target: { files: [pdfFile] } })
+    fireEvent.click(screen.getByRole('button', { name: /开始解析/ }))
+
+    await waitFor(() => {
+      expect(mockDeleteAttachment).toHaveBeenCalledWith(expect.objectContaining({ id: 'att-orphan-1' }))
+      expect(screen.getByText('解析服务暂不可用')).toBeTruthy()
+    })
+
+    cleanup()
+
+    // 再验证多币种拆单切换页签保留脏标记
+    mockCallRpc.mockImplementation((mod: string, fn: string) => {
+      if (mod === 'billDrafts' && fn === 'importAndParseBill') {
+        return Promise.resolve({
+          outcome: 'drafts_created',
+          drafts: [
+            {
+              id: 'draft-cny',
+              created_by: 'u-1',
+              card_id: 'card-hk',
+              source_type: 'text',
+              parsed_payload: {
+                currency: 'CNY',
+                bill_month: '2026-10',
+                bill_amount: 1000,
+                due_date: '2026-11-10',
+              },
+              status: 'draft',
+              parse_status: 'ready',
+              created_at: '2026-10-20T00:00:00Z',
+            },
+            {
+              id: 'draft-usd',
+              created_by: 'u-1',
+              card_id: 'card-us',
+              source_type: 'text',
+              parsed_payload: {
+                currency: 'USD',
+                bill_month: '2026-10',
+                bill_amount: 200,
+                due_date: '2026-11-10',
+              },
+              status: 'draft',
+              parse_status: 'ready',
+              created_at: '2026-10-20T00:00:00Z',
+            },
+          ],
+        })
+      }
+      return Promise.resolve(null)
+    })
+
+    render(
+      <BillImportDialog
+        open={true}
+        onClose={() => {}}
+        onImportSuccess={() => {}}
+        cards={sampleCards}
+        userId='u-1'
+      />
+    )
+    fireEvent.change(screen.getByPlaceholderText(/粘贴银行短信或邮件正文/), {
+      target: { value: '双币账单 CNY 1000 / USD 200' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /开始解析/ }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /CNY/ })).toBeTruthy()
+    })
+    // 编辑第 1 份草稿金额，然后切到 USD 再切回 CNY 确认，应持久化修改
+    const amountInput = screen.getByDisplayValue('1000')
+    fireEvent.change(amountInput, { target: { value: '1234' } })
+    fireEvent.click(screen.getByRole('button', { name: /USD/ }))
+    fireEvent.click(screen.getByRole('button', { name: /CNY/ }))
+    fireEvent.click(screen.getByRole('button', { name: '确认入账' }))
+
+    await waitFor(() => {
+      expect(billDraftsMod.updateBillImportDraft).toHaveBeenCalledWith(
+        'draft-cny',
+        expect.objectContaining({
+          parsed_payload: expect.objectContaining({ bill_amount: 1234 }),
+        })
+      )
+    })
+  })
+
+  it('HolderForm 大小写不敏感去重别名且保存失败时保留弹窗并展示错误', async () => {
+    const onSubmit = vi.fn().mockRejectedValueOnce(new Error('网络错误'))
+    const onClose = vi.fn()
+    render(
+      <HolderForm
+        open={true}
+        onClose={onClose}
+        onSubmit={onSubmit}
+        initial={{
+          id: 'h-1',
+          name: '张三',
+          avatar_color: '#6366f1',
+          aliases: ['BO HU'],
+          created_by: 'u-1',
+          created_at: '',
+        }}
+      />
+    )
+
+    fireEvent.change(screen.getByLabelText('账单匹配别名（选填）'), { target: { value: 'bo hu, HU BO' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('网络错误')).toBeTruthy()
+    })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        aliases: ['BO HU', 'HU BO'],
+      })
+    )
   })
 })

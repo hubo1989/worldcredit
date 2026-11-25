@@ -8,7 +8,7 @@ struct ShareExtensionView: View {
     let rawText: String?
     let loadError: String?
     let onSubmit: (String?, String?) async throws -> ShareImportResponse
-    let onOpenMainApp: (String?) -> Void
+    let onOpenMainApp: (String?, @escaping @MainActor @Sendable (Bool) -> Void) -> Void
     let onClose: () -> Void
 
     @State private var selectedCardId: String = ""
@@ -16,6 +16,7 @@ struct ShareExtensionView: View {
     @State private var isSubmitting = false
     @State private var submitError: String?
     @State private var result: ShareImportResponse?
+    @State private var openMainAppFallbackHint: String?
 
     var body: some View {
         NavigationStack {
@@ -50,9 +51,18 @@ struct ShareExtensionView: View {
             Text("请先在 WorldCredit 主 App 中完成登录，再通过系统分享导入账单。")
         } actions: {
             Button("打开 WorldCredit") {
-                onOpenMainApp(nil)
+                onOpenMainApp(nil) { opened in
+                    if !opened {
+                        openMainAppFallbackHint = "未能自动唤起主 App，请返回桌面打开 WorldCredit 完成登录。"
+                    }
+                }
             }
             .buttonStyle(.borderedProminent)
+            if let openMainAppFallbackHint {
+                Text(openMainAppFallbackHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -156,7 +166,7 @@ struct ShareExtensionView: View {
                         HStack {
                             Text(draft.displayBankName)
                                 .font(.headline)
-                            if let last4 = draft.cardLast4, !last4.isEmpty {
+                            if let last4 = draft.displayCardLast4, !last4.isEmpty {
                                 Text("·\(last4)")
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
@@ -164,14 +174,14 @@ struct ShareExtensionView: View {
                             Spacer()
                             Text(draft.statusLabel)
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(draft.status == "ready_for_confirm" ? .green : .orange)
+                                .foregroundStyle(draft.isReadyForConfirm ? .green : .orange)
                         }
 
-                        if let amount = draft.parsedPayload?.totalAmount {
+                        if let amount = draft.parsedPayload?.billAmount {
                             Text(String(format: "%@ %.2f", draft.displayCurrency, amount))
                                 .font(.title3.monospacedDigit().weight(.semibold))
                         }
-                        if let err = draft.parseErrorMessage, !err.isEmpty {
+                        if let err = draft.errorMessage, !err.isEmpty {
                             Text(err)
                                 .font(.caption)
                                 .foregroundStyle(.orange)
@@ -181,9 +191,21 @@ struct ShareExtensionView: View {
                 }
             }
 
+            if let openMainAppFallbackHint {
+                Section {
+                    Text(openMainAppFallbackHint)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section {
                 Button {
-                    onOpenMainApp(response.drafts.first?.id)
+                    onOpenMainApp(response.drafts.first?.id) { opened in
+                        if !opened {
+                            openMainAppFallbackHint = "草稿已保存。系统限制当前页面自动跳转，请切换至 WorldCredit App 的「账单 → 草稿箱」确认入账。"
+                        }
+                    }
                 } label: {
                     HStack {
                         Spacer()

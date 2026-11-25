@@ -79,7 +79,7 @@ struct OmnibusImportModelsTests {
             "email": "main@gmail.com",
             "display_label": "家庭主邮箱",
             "default_holder_id": "h-1",
-            "attribution_mode": "always_default",
+            "attribution_mode": "force_default_unless_conflict",
             "sync_enabled": 1,
             "status": "active",
             "created_at": "2026-10-01T00:00:00Z"
@@ -95,7 +95,7 @@ struct OmnibusImportModelsTests {
         #expect(list.count == 2)
         #expect(list[0].syncEnabled == true)
         #expect(list[0].displayLabel == "家庭主邮箱")
-        #expect(list[0].attributionMode == "always_default")
+        #expect(list[0].attributionMode == "force_default_unless_conflict")
         #expect(list[1].syncEnabled == false)
         #expect(list[1].attributionMode == "auto_then_default")
         #expect(list[1].status == "active")
@@ -222,5 +222,27 @@ struct OmnibusImportModelsTests {
         #expect(recorded.contains("/api/rpc/passwordVault/listPasswordRules"))
         #expect(recorded.contains("/api/rpc/preferences/getUserImportPreferences"))
         #expect(recorded.contains("/api/rpc/preferences/updateUserImportPreferences"))
+    }
+
+    @Test("fetchAttachmentData 对含斜杠的 file_ref 做单段编码")
+    func encodesAttachmentIdPathSegment() async throws {
+        final class PathBox: @unchecked Sendable {
+            var rawPath: String?
+        }
+        let box = PathBox()
+        let client = makeClient { request in
+            box.rawPath = request.url?.absoluteString
+            let res = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/pdf"]
+            )!
+            return (Data("%PDF-1.4".utf8), res)
+        }
+        let (data, mime) = try await client.fetchAttachmentData(attachmentId: "folder/att 1")
+        #expect(String(data: data, encoding: .utf8) == "%PDF-1.4")
+        #expect(mime == "application/pdf")
+        #expect(box.rawPath == "https://test.local/api/attachments/folder%2Fatt%201")
     }
 }

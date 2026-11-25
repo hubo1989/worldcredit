@@ -32,13 +32,13 @@ function localExtract(text: string, mode: Props['mode']): Record<string, unknown
   const amounts = [...text.matchAll(/(\d[\d,]*\.?\d*)\s*[元¥]|(?:US\$|HK\$|\$|¥)\s*(\d[\d,]*\.?\d*)/gi)]
     .map(m => (m[1] || m[2]).replace(/,/g, ''))
     .map(Number)
-    .filter(n => !isNaN(n) && n >= 0)
+    .filter(n => !isNaN(n) && n > 0)
   if (amounts.length > 0) {
     data.bill_amount = amounts[0]
     if (amounts.length > 1) data.min_payment = amounts[amounts.length - 1]
   }
-  if (/USD|美元|US\$/i.test(text)) data.currency = 'USD'
-  else if (/HKD|港币|HK\$/i.test(text)) data.currency = 'HKD'
+  if (/HKD|港币|HK\$/i.test(text)) data.currency = 'HKD'
+  else if (/USD|美元|US\$/i.test(text)) data.currency = 'USD'
 
   const dateMatch = text.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/)
   if (dateMatch) {

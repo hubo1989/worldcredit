@@ -512,7 +512,11 @@ struct DraftConfirmView: View {
             } else {
                 ext = "jpg"
             }
-            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("draft-\(fileRef).\(ext)")
+            let safeRef = fileRef.map { ch -> Character in
+                (ch.isASCII && (ch.isLetter || ch.isNumber || ch == "-" || ch == "_")) ? ch : "_"
+            }
+            let fileNameStem = safeRef.isEmpty ? UUID().uuidString : String(safeRef)
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("draft-\(fileNameStem).\(ext)")
             try data.write(to: tmp, options: .atomic)
             previewFileURL = tmp
         } catch {

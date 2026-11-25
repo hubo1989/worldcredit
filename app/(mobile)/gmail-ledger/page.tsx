@@ -11,7 +11,7 @@ import { getBillImportDrafts } from '@/lib/api/billDrafts'
 import { formatCardTail } from '@/lib/utils'
 import { Button } from '@/components/obsidian/controls'
 import { Alert, Spinner } from '@/components/obsidian/feedback'
-import { Toast } from '@/components/obsidian/overlays'
+import { ConfirmDialog, Toast } from '@/components/obsidian/overlays'
 import { ChevronDownIcon, ImportIcon, ChevronRightIcon } from '@/components/icons/WcIcon'
 import { formatDraftAmount, migrateLegacyLedgerToDrafts } from '@/components/mobile/omnibusApi'
 
@@ -19,17 +19,11 @@ export default function GmailLedgerPage() {
   const router = useRouter()
   const [draftCount, setDraftCount] = useState<number>(0)
   const [entries, setEntries] = useState<GmailLedgerEntry[]>([])
-  const [summary, setSummary] = useState({
-    total: 0,
-    unpaid: 0,
-    partial: 0,
-    paid: 0,
-    totalAmount: 0,
-    unpaidAmount: 0,
-    needsAmount: 0,
-  })
+  const [archiveTotal, setArchiveTotal] = useState<number>(0)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [migrating, setMigrating] = useState(false)
+  const [migrateConfirmOpen, setMigrateConfirmOpen] = useState(false)
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [toast, setToast] = useState<{
     open: boolean
@@ -39,23 +33,20 @@ export default function GmailLedgerPage() {
 
   const fetchData = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const [drafts, entriesData, summaryData] = await Promise.all([
-        getBillImportDrafts().catch(() => []),
-        getGmailLedgerEntries().catch(() => [] as GmailLedgerEntry[]),
-        getGmailLedgerSummary().catch(() => ({
-          total: 0,
-          unpaid: 0,
-          partial: 0,
-          paid: 0,
-          totalAmount: 0,
-          unpaidAmount: 0,
-          needsAmount: 0,
-        })),
+        getBillImportDrafts(),
+        getGmailLedgerEntries(),
+        getGmailLedgerSummary(),
       ])
       setDraftCount(drafts.length)
       setEntries(entriesData)
-      setSummary(summaryData)
+      setArchiveTotal(summaryData.total)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '加载历史邮箱台账失败'
+      setLoadError(msg)
+      setToast({ open: true, severity: 'error', message: msg })
     } finally {
       setLoading(false)
     }
@@ -119,13 +110,19 @@ export default function GmailLedgerPage() {
             <Button
               variant='ghost'
               loading={migrating}
-              onClick={() => void handleMigrateLegacy()}
+              onClick={() => setMigrateConfirmOpen(true)}
             >
               检查遗留迁出
             </Button>
           </div>
         </div>
       </div>
+
+      {loadError && (
+        <div className='mt-4'>
+          <Alert severity='error'>{loadError}</Alert>
+        </div>
+      )}
 
       {/* 历史流水只读折叠存档 */}
       <div className='mt-4 rounded-2xl border border-d-border bg-d-surface p-4'>
@@ -137,7 +134,7 @@ export default function GmailLedgerPage() {
           <div>
             <p className='text-[15px] font-semibold text-d-text'>历史邮箱账单只读存档</p>
             <p className='mt-0.5 text-[12px] text-d-muted'>
-              共 {summary.total} 条历史流水（只读留档，不支持新建或在此还款）
+              共 {archiveTotal} 条历史流水（只读留档，不支持新建或在此还款）
             </p>
           </div>
           <ChevronDownIcon
@@ -172,15 +169,9 @@ export default function GmailLedgerPage() {
                     </div>
                     <p className='mt-1 text-d-muted'>
                       账单金额：
-                      {formatDraftAmount(
-                        entry.statement_amount,
-                        (entry as unknown as { currency?: string }).currency || 'CNY'
-                      )}
+                      {formatDraftAmount(entry.statement_amount, entry.currency || 'CNY')}
                       {entry.paid_amount > 0
-                        ? ` · 历史已还 ${formatDraftAmount(
-                            entry.paid_amount,
-                            (entry as unknown as { currency?: string }).currency || 'CNY'
-                          )}`
+                        ? ` · 历史已还 ${formatDraftAmount(entry.paid_amount, entry.currency || 'CNY')}`
                         : ''}
                       {entry.due_date ? ` · 到期 ${entry.due_date}` : ''}
                     </p>
@@ -194,6 +185,38 @@ export default function GmailLedgerPage() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={migrateConfirmOpen}
+        title='检查并迁出遗留邮箱账单？'
+        onClose={() => !migrating && setMigrateConfirmOpen(false)}
+        actions={
+          <>
+            <Button
+              variant='ghost'
+              size='sm'
+              disabled={migrating}
+              onClick={() => setMigrateConfirmOpen(false)}
+            >
+              取消
+            </Button>
+            <Button
+              size='sm'
+              loading={migrating}
+              onClick={() => {
+                setMigrateConfirmOpen(false)
+                void handleMigrateLegacy()
+              }}
+            >
+              确认检查并迁出
+            </Button>
+          </>
+        }
+      >
+        <p className='text-[13px] leading-5 text-d-muted'>
+          将把尚未入账或未关联主账单的历史邮箱账本条目单向转入统一草稿箱，原记录将标记为只读归档，操作不可撤销。确认继续？
+        </p>
+      </ConfirmDialog>
 
       <Toast
         open={toast.open}

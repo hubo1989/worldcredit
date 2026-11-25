@@ -50,27 +50,43 @@ export default function HolderDetailPage() {
     aliases?: string[]
   }) => {
     if (!holder) return
+    const isAdmin = user?.role === 'admin'
+    if (!user) {
+      setToast({ open: true, message: '用户信息尚未加载完成，请稍后重试', severity: 'error' })
+      throw new Error('用户信息尚未加载完成')
+    }
     try {
-      if (user?.role === 'admin') {
-        await updateHolder(holder.id, data as Parameters<typeof updateHolder>[1])
+      if (isAdmin) {
+        await updateHolder(holder.id, {
+          name: data.name,
+          phone: data.phone,
+          email: data.email,
+          avatar_color: data.avatar_color,
+          aliases: data.aliases,
+        })
+        setToast({ open: true, message: '持卡人信息与账单别名已保存', severity: 'success' })
       } else {
         await updateMyHolderAliases(holder.id, data.aliases ?? [])
+        setToast({ open: true, message: '账单匹配别名已保存', severity: 'success' })
       }
-      setToast({ open: true, message: '持卡人信息与账单别名已保存', severity: 'success' })
       await loadData()
     } catch (err) {
-      // 成员若触发 admin 限制则退回仅更新别名
-      try {
-        await updateMyHolderAliases(holder.id, data.aliases ?? [])
-        setToast({ open: true, message: '账单匹配别名已保存', severity: 'success' })
-        await loadData()
-      } catch {
-        setToast({
-          open: true,
-          message: err instanceof Error ? err.message : '保存失败',
-          severity: 'error',
-        })
+      const msg = err instanceof Error ? err.message : '保存失败'
+      const isPermissionErr = /403|权限|无权|仅管理员/.test(msg)
+      if (isAdmin && isPermissionErr) {
+        try {
+          await updateMyHolderAliases(holder.id, data.aliases ?? [])
+          setToast({ open: true, message: '账单匹配别名已保存', severity: 'success' })
+          await loadData()
+          return
+        } catch (aliasErr) {
+          const aliasMsg = aliasErr instanceof Error ? aliasErr.message : '保存失败'
+          setToast({ open: true, message: aliasMsg, severity: 'error' })
+          throw aliasErr
+        }
       }
+      setToast({ open: true, message: msg, severity: 'error' })
+      throw err
     }
   }
 

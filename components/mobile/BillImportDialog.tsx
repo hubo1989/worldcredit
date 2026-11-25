@@ -17,7 +17,7 @@ import {
   FileIcon,
 } from '@/components/icons/WcIcon'
 import { confirmBillImportDraft, discardBillImportDraft, updateBillImportDraft } from '@/lib/api/billDrafts'
-import { uploadRecordAttachment } from '@/lib/api/attachments'
+import { deleteRecordAttachment, uploadRecordAttachment, type RecordAttachment } from '@/lib/api/attachments'
 import { normalizeCurrencyOrDefault } from '@/lib/fx'
 import type { CreditCard } from '@/lib/types'
 import {
@@ -168,8 +168,9 @@ export function BillImportDialog({
   const [unlockHint, setUnlockHint] = useState('')
 
   const [nonBillMessage, setNonBillMessage] = useState<string | null>(null)
+  const [pendingAttachments, setPendingAttachments] = useState<RecordAttachment[] | null>(null)
   const [duplicateConflict, setDuplicateConflict] = useState<DuplicateBillDetails | null>(null)
-  const [hasEditedCurrentDraft, setHasEditedCurrentDraft] = useState(false)
+  const [editedDraftIds, setEditedDraftIds] = useState<Set<string>>(() => new Set())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [infoNotice, setInfoNotice] = useState('')
@@ -195,8 +196,9 @@ export function BillImportDialog({
     setUnlockLabel('')
     setUnlockHint('')
     setNonBillMessage(null)
+    setPendingAttachments(null)
     setDuplicateConflict(null)
-    setHasEditedCurrentDraft(false)
+    setEditedDraftIds(new Set())
     setLoading(false)
     setError('')
     setInfoNotice('')
@@ -225,6 +227,7 @@ export function BillImportDialog({
   const handleImagePick = (fileList: FileList | null) => {
     setError('')
     setNonBillMessage(null)
+    setPendingAttachments(null)
     if (!fileList || fileList.length === 0) return
     const next = [...imageFiles]
     for (const f of Array.from(fileList)) {
@@ -253,6 +256,7 @@ export function BillImportDialog({
   const handlePdfPick = (fileList: FileList | null) => {
     setError('')
     setNonBillMessage(null)
+    setPendingAttachments(null)
     if (!fileList || fileList.length === 0) return
     const file = fileList[0]
     if (!isAcceptedPdf(file)) {
@@ -264,6 +268,11 @@ export function BillImportDialog({
       return
     }
     setPdfFile(file)
+  }
+
+  const rollbackAttachments = async (attachments: RecordAttachment[]) => {
+    if (attachments.length === 0) return
+    await Promise.allSettled(attachments.map(att => deleteRecordAttachment(att)))
   }
 
   const runImportAndParse = async (forceSaveNonBill = false) => {
@@ -294,20 +303,28 @@ export function BillImportDialog({
     }
 
     setLoading(true)
+    const newlyUploaded: RecordAttachment[] = []
     try {
       const preDraftId = createClientUuid()
       const clientRequestId = createClientUuid()
-      let attachmentIds: string[] | undefined
+      let attachmentsForRun: RecordAttachment[] =
+        forceSaveNonBill && pendingAttachments ? pendingAttachments : []
 
-      if (sourceType === 'image') {
-        const uploaded = await Promise.all(
-          imageFiles.map(file => uploadRecordAttachment('draft', preDraftId, file, userId))
-        )
-        attachmentIds = uploaded.map(a => a.id)
-      } else if (sourceType === 'pdf' && pdfFile) {
-        const uploaded = await uploadRecordAttachment('draft', preDraftId, pdfFile, userId)
-        attachmentIds = [uploaded.id]
+      if (attachmentsForRun.length === 0) {
+        if (sourceType === 'image') {
+          for (const file of imageFiles) {
+            const uploaded = await uploadRecordAttachment('draft', preDraftId, file, userId)
+            newlyUploaded.push(uploaded)
+          }
+          attachmentsForRun = newlyUploaded
+        } else if (sourceType === 'pdf' && pdfFile) {
+          const uploaded = await uploadRecordAttachment('draft', preDraftId, pdfFile, userId)
+          newlyUploaded.push(uploaded)
+          attachmentsForRun = newlyUploaded
+        }
       }
+
+      const attachmentIds = attachmentsForRun.length > 0 ? attachmentsForRun.map(a => a.id) : undefined
 
       const res = await importAndParseBill({
         source_type: sourceType,
@@ -324,19 +341,31 @@ export function BillImportDialog({
       })
 
       if (res.outcome === 'non_bill_warning') {
+        if (attachmentsForRun.length > 0) {
+          setPendingAttachments(attachmentsForRun)
+        }
         setNonBillMessage(res.message || '识别内容疑似非信用卡账单或自动扣款通知，请确认是否继续保存为草稿')
         return
       }
 
       if (res.outcome === 'duplicate_file') {
+        const orphanAttachments = pendingAttachments ?? newlyUploaded
+        await rollbackAttachments(orphanAttachments)
         setInfoNotice(res.message || '该文件已存在一份待确认草稿，已为你定位到既有草稿')
       }
 
+      setPendingAttachments(null)
+      setPdfPassword('')
+      setPasswordLabel('')
+      setPasswordHint('')
       setDrafts(res.drafts)
       setActiveDraftIdx(0)
-      setHasEditedCurrentDraft(false)
+      setEditedDraftIds(new Set())
       setActiveStep(1)
     } catch (err) {
+      const toRollback = forceSaveNonBill && pendingAttachments ? pendingAttachments : newlyUploaded
+      await rollbackAttachments(toRollback)
+      if (forceSaveNonBill) setPendingAttachments(null)
       setError(err instanceof Error ? err.message : '导入解析失败，请重试')
     } finally {
       setLoading(false)
@@ -365,7 +394,7 @@ export function BillImportDialog({
       setDrafts(res.drafts)
       setActiveDraftIdx(0)
       setUnlockPassword('')
-      setHasEditedCurrentDraft(false)
+      setEditedDraftIds(new Set())
       if (res.vault_rule_saved) {
         setInfoNotice('PDF 已解密并保存到家庭月结单密码本')
       }
@@ -393,7 +422,13 @@ export function BillImportDialog({
   const updateCurrentDraft = (
     updater: (prev: BillImportDraftOmnibus) => BillImportDraftOmnibus
   ) => {
-    setHasEditedCurrentDraft(true)
+    if (currentDraft) {
+      setEditedDraftIds(prev => {
+        const next = new Set(prev)
+        next.add(currentDraft.id)
+        return next
+      })
+    }
     setDrafts(prev => prev.map((d, i) => (i === activeDraftIdx ? updater(d) : d)))
   }
 
@@ -407,13 +442,25 @@ export function BillImportDialog({
     }))
   }
 
-  const persistCurrentDraftEditsIfNeeded = async () => {
-    if (!currentDraft || !hasEditedCurrentDraft) return
-    await updateBillImportDraft(currentDraft.id, {
-      card_id: currentDraft.card_id ?? undefined,
-      parsed_payload: currentDraft.parsed_payload as Record<string, unknown>,
+  const persistDraftEdits = async (target: BillImportDraftOmnibus) => {
+    if (!editedDraftIds.has(target.id)) return
+    await updateBillImportDraft(target.id, {
+      card_id: target.card_id ?? undefined,
+      parsed_payload: target.parsed_payload as Record<string, unknown>,
     })
-    setHasEditedCurrentDraft(false)
+    setEditedDraftIds(prev => {
+      const next = new Set(prev)
+      next.delete(target.id)
+      return next
+    })
+  }
+
+  const persistAllEditedDrafts = async () => {
+    for (const draft of drafts) {
+      if (editedDraftIds.has(draft.id)) {
+        await persistDraftEdits(draft)
+      }
+    }
   }
 
   const canConfirmCurrentDraft = useMemo(() => {
@@ -434,7 +481,7 @@ export function BillImportDialog({
     setError('')
     setLoading(true)
     try {
-      await persistCurrentDraftEditsIfNeeded()
+      await persistDraftEdits(currentDraft)
       if (forceMerge) {
         await confirmBillImportDraftWithOptions(currentDraft.id, {
           conflict_resolution: 'merge_update',
@@ -449,7 +496,6 @@ export function BillImportDialog({
         const remaining = drafts.filter((_, idx) => idx !== activeDraftIdx)
         setDrafts(remaining)
         setActiveDraftIdx(0)
-        setHasEditedCurrentDraft(false)
         setInfoNotice(`已入账 1 份账单，还剩 ${remaining.length} 份待核对`)
       } else {
         setActiveStep(2)
@@ -470,7 +516,7 @@ export function BillImportDialog({
     setError('')
     setLoading(true)
     try {
-      await persistCurrentDraftEditsIfNeeded()
+      await persistAllEditedDrafts()
       onImportSuccess()
       onClose()
     } catch (err) {
@@ -798,7 +844,6 @@ export function BillImportDialog({
                   type='button'
                   onClick={() => {
                     setActiveDraftIdx(idx)
-                    setHasEditedCurrentDraft(false)
                   }}
                   className={
                     'rounded-full px-3 py-1 text-[12px] font-semibold ' +
@@ -987,6 +1032,48 @@ export function BillImportDialog({
     </div>
   )
 
+  const renderFooter = () => {
+    if (activeStep === 0) {
+      return (
+        <>
+          <Button variant='ghost' onClick={handleClose} disabled={loading}>
+            取消
+          </Button>
+          <Button onClick={() => void runImportAndParse(false)} loading={loading}>
+            {loading ? '上传并解析中…' : <>开始解析 <ChevronRightIcon size={16} /></>}
+          </Button>
+        </>
+      )
+    }
+    if (activeStep === 1) {
+      return (
+        <>
+          <Button
+            variant='ghost'
+            onClick={() => {
+              setError('')
+              setActiveStep(0)
+            }}
+            disabled={loading}
+          >
+            <ChevronLeftIcon size={16} /> 重新导入
+          </Button>
+          <Button variant='secondary' onClick={() => void handleSaveToDraftBox()} disabled={loading}>
+            暂存草稿箱
+          </Button>
+          <Button
+            onClick={() => void handleConfirmCurrentDraft(false)}
+            disabled={!canConfirmCurrentDraft || loading}
+            loading={loading}
+          >
+            确认入账
+          </Button>
+        </>
+      )
+    }
+    return <Button onClick={handleClose}>完成</Button>
+  }
+
   return (
     <>
       <Modal
@@ -995,43 +1082,7 @@ export function BillImportDialog({
         maxWidth='md'
         dismissible={!loading}
         title='智能导入账单'
-        footer={
-          activeStep === 0 ? (
-            <>
-              <Button variant='ghost' onClick={handleClose} disabled={loading}>
-                取消
-              </Button>
-              <Button onClick={() => void runImportAndParse(false)} loading={loading}>
-                {loading ? '上传并解析中…' : <>开始解析 <ChevronRightIcon size={16} /></>}
-              </Button>
-            </>
-          ) : activeStep === 1 ? (
-            <>
-              <Button
-                variant='ghost'
-                onClick={() => {
-                  setError('')
-                  setActiveStep(0)
-                }}
-                disabled={loading}
-              >
-                <ChevronLeftIcon size={16} /> 重新导入
-              </Button>
-              <Button variant='secondary' onClick={() => void handleSaveToDraftBox()} disabled={loading}>
-                暂存草稿箱
-              </Button>
-              <Button
-                onClick={() => void handleConfirmCurrentDraft(false)}
-                disabled={!canConfirmCurrentDraft || loading}
-                loading={loading}
-              >
-                确认入账
-              </Button>
-            </>
-          ) : (
-            <Button onClick={handleClose}>完成</Button>
-          )
-        }
+        footer={renderFooter()}
       >
         <StepBar activeStep={activeStep} />
 

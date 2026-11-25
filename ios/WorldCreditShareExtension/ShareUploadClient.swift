@@ -29,46 +29,62 @@ struct ShareCardLiteDTO: Codable, Identifiable, Equatable {
 struct ShareDraftSummary: Identifiable, Decodable, Equatable {
     let id: String
     let status: String
-    let cardLast4: String?
-    let currency: String?
-    let parseErrorMessage: String?
+    let parseStatus: String?
+    let errorMessage: String?
     let parsedPayload: Payload?
 
     struct Payload: Decodable, Equatable {
         let bankName: String?
-        let totalAmount: Double?
+        let cardLast4: String?
+        let billAmount: Double?
         let currency: String?
+        let billMonth: String?
 
         enum CodingKeys: String, CodingKey {
             case bankName = "bank_name"
-            case totalAmount = "total_amount"
+            case cardLast4 = "card_last4"
+            case billAmount = "bill_amount"
             case currency
+            case billMonth = "bill_month"
         }
     }
 
     enum CodingKeys: String, CodingKey {
         case id, status
-        case cardLast4 = "card_last4"
-        case currency
-        case parseErrorMessage = "parse_error_message"
+        case parseStatus = "parse_status"
+        case errorMessage = "error_message"
         case parsedPayload = "parsed_payload"
+    }
+
+    var resolvedParseStatus: String {
+        parseStatus ?? "ready"
+    }
+
+    var isReadyForConfirm: Bool {
+        status != "confirmed" && status != "discarded" && resolvedParseStatus == "ready"
     }
 
     var displayBankName: String {
         parsedPayload?.bankName ?? "待补充银行"
     }
 
+    var displayCardLast4: String? {
+        parsedPayload?.cardLast4
+    }
+
     var displayCurrency: String {
-        parsedPayload?.currency ?? currency ?? "CNY"
+        parsedPayload?.currency ?? "CNY"
     }
 
     var statusLabel: String {
-        switch status {
-        case "ready_for_confirm": return "待确认入账"
+        if status == "confirmed" { return "已入账" }
+        if status == "discarded" { return "已丢弃" }
+        switch resolvedParseStatus {
+        case "ready": return "待确认入账"
         case "needs_password": return "PDF 需要密码"
         case "parse_failed": return "解析待补充"
-        case "committed": return "已入账"
-        default: return status
+        case "parsing": return "解析中"
+        default: return resolvedParseStatus
         }
     }
 }

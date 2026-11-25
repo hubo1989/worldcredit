@@ -15,6 +15,12 @@ struct DraftsInboxView: View {
         }
     }
 
+    private var cleanableDraftIds: [String] {
+        sortedDrafts
+            .filter { $0.parseStatus == "parse_failed" || $0.parsedPayload.isBill == false }
+            .map(\.id)
+    }
+
     private func urgencyWeight(_ draft: BillImportDraftDTO) -> Int {
         switch draft.parseStatus {
         case "needs_password": return 0
@@ -88,7 +94,7 @@ struct DraftsInboxView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if sortedDrafts.count > 1 {
+                if !cleanableDraftIds.isEmpty {
                     Button {
                         showingBatchDiscardConfirm = true
                     } label: {
@@ -122,7 +128,7 @@ struct DraftsInboxView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("优先丢弃解析失败或非账单草稿；若无此类草稿将清空全部待处理草稿。")
+            Text("将清理 \(cleanableDraftIds.count) 份「解析失败 / 非账单」草稿，不会影响待输入密码或待确认账单。")
         }
     }
 
@@ -244,12 +250,10 @@ struct DraftsInboxView: View {
     }
 
     private func performBatchDiscard() async {
+        let targetIds = cleanableDraftIds
+        guard !targetIds.isEmpty else { return }
         isBatchDiscarding = true
         actionError = nil
-        let failedOrNonBill = sortedDrafts
-            .filter { $0.parseStatus == "parse_failed" || $0.parsedPayload.isBill == false }
-            .map(\.id)
-        let targetIds = failedOrNonBill.isEmpty ? sortedDrafts.map(\.id) : failedOrNonBill
         do {
             _ = try await appState.batchDiscardBillDrafts(draftIds: targetIds)
         } catch {

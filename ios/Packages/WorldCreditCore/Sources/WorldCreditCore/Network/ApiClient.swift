@@ -1071,7 +1071,25 @@ public final class ApiClient: @unchecked Sendable {
     }
 
     public func fetchAttachmentData(attachmentId: String) async throws -> (Data, String?) {
-        let request = try authenticatedRequest(path: "api/attachments/\(attachmentId)", method: "GET", timeoutInterval: 60)
+        guard let token = self.token, !token.isEmpty else {
+            throw NSError(domain: "ApiClient", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
+        }
+        let segmentAllowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+        let encodedId = attachmentId.addingPercentEncoding(withAllowedCharacters: segmentAllowed) ?? attachmentId
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            throw NSError(domain: "ApiClient", code: 400, userInfo: [NSLocalizedDescriptionKey: "无效的附件地址"])
+        }
+        let trimmedPath = components.percentEncodedPath.hasSuffix("/")
+            ? String(components.percentEncodedPath.dropLast())
+            : components.percentEncodedPath
+        components.percentEncodedPath = "\(trimmedPath)/api/attachments/\(encodedId)"
+        guard let url = components.url else {
+            throw NSError(domain: "ApiClient", code: 400, userInfo: [NSLocalizedDescriptionKey: "无效的附件地址"])
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 60
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await session.data(for: request)
         try validateHTTP(response, data: data)
         let mime = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type")

@@ -11,6 +11,7 @@ import { ConfirmDialog, Modal } from '@/components/obsidian/overlays'
 import { Button, Toggle } from '@/components/obsidian/controls'
 import { SelectField, TextField } from '@/components/obsidian/fields'
 import type { CardHolder } from '@/lib/types'
+import { RpcError } from '@/lib/api/rpc-client'
 import {
   getGmailConnections,
   updateGmailConnection,
@@ -20,6 +21,21 @@ import {
   updateUserImportPreferences,
   type GmailConnectionItem,
 } from './omnibusApi'
+
+const MAX_GMAIL_CONNECTIONS = 10
+
+const CONNECTION_STATUS_TEXT: Record<GmailConnectionItem['status'], string> = {
+  active: '已连接',
+  revoked: '授权已过期，请重连',
+  error: '异常',
+}
+
+function isMissingEndpointError(err: unknown): boolean {
+  if (err instanceof RpcError) {
+    return /接口不存在|未注册|404|not found/i.test(err.message)
+  }
+  return err instanceof Error && /接口不存在|未注册|404/.test(err.message)
+}
 
 export function GmailConnectPanel() {
   const [connections, setConnections] = useState<GmailConnectionItem[]>([])
@@ -96,7 +112,8 @@ export function GmailConnectPanel() {
         let s: { written: number; drafted: number; skipped: number; failed: number; remaining: number }
         try {
           s = await syncGmailConnection({ connectionId, maxMessages: 6 })
-        } catch {
+        } catch (err) {
+          if (!isMissingEndpointError(err)) throw err
           s = await syncGmailNow(undefined, { maxMessages: 6 })
         }
         acc.written += s.written
@@ -125,7 +142,8 @@ export function GmailConnectPanel() {
     try {
       try {
         await disconnectGmailConnection({ connectionId: target.id })
-      } catch {
+      } catch (err) {
+        if (!isMissingEndpointError(err)) throw err
         await disconnectGmail()
       }
       setNotice(`已断开 ${target.email} 授权，其余邮箱与已导入账单不受影响`)
@@ -203,10 +221,12 @@ export function GmailConnectPanel() {
         </div>
         <button
           type='button'
+          disabled={connections.length >= MAX_GMAIL_CONNECTIONS}
+          title={connections.length >= MAX_GMAIL_CONNECTIONS ? `最多绑定 ${MAX_GMAIL_CONNECTIONS} 个 Gmail` : undefined}
           onClick={() => setAddOpen(true)}
-          className='min-h-[38px] shrink-0 rounded-xl bg-d-accent px-3 text-[12px] font-semibold text-white'
+          className='min-h-[38px] shrink-0 rounded-xl bg-d-accent px-3 text-[12px] font-semibold text-white disabled:opacity-40'
         >
-          + 添加邮箱
+          {connections.length >= MAX_GMAIL_CONNECTIONS ? `已达上限 (${MAX_GMAIL_CONNECTIONS})` : '+ 添加邮箱'}
         </button>
       </div>
 
@@ -265,11 +285,7 @@ export function GmailConnectPanel() {
                         : 'border-d-danger/40 bg-d-danger-soft text-d-danger-ink')
                     }
                   >
-                    {conn.status === 'active'
-                      ? '已连接'
-                      : conn.status === 'revoked'
-                        ? '授权已过期，请重连'
-                        : '异常'}
+                    {CONNECTION_STATUS_TEXT[conn.status] ?? '异常'}
                   </span>
                 </div>
 
@@ -292,14 +308,16 @@ export function GmailConnectPanel() {
                   >
                     {busyId === conn.id ? '同步中…' : '立即同步'}
                   </button>
-                  <button
-                    type='button'
-                    onClick={() => openEditModal(conn)}
-                    disabled={isBusy}
-                    className='min-h-[38px] rounded-xl border border-d-border bg-d-subtle px-3 text-[12px] font-semibold text-d-text disabled:opacity-50'
-                  >
-                    归属设置
-                  </button>
+                  {conn.id !== 'legacy-single' && (
+                    <button
+                      type='button'
+                      onClick={() => openEditModal(conn)}
+                      disabled={isBusy}
+                      className='min-h-[38px] rounded-xl border border-d-border bg-d-subtle px-3 text-[12px] font-semibold text-d-text disabled:opacity-50'
+                    >
+                      归属设置
+                    </button>
+                  )}
                   {conn.status === 'revoked' && (
                     <a
                       href='/api/auth/gmail/start'

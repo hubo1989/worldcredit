@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react'
 import { Modal } from '@/components/obsidian/overlays'
 import { Button } from '@/components/obsidian/controls'
+import { Alert } from '@/components/obsidian/feedback'
 import { TextField } from '@/components/obsidian/fields'
 import { CloseIcon } from '@/components/icons/WcIcon'
 import type { CardHolder } from '@/lib/types'
@@ -38,6 +39,8 @@ export function HolderForm({ open, onClose, onSubmit, initial }: Props) {
   const [color, setColor] = useState(initial?.avatar_color ?? COLORS[0])
   const [aliases, setAliases] = useState<string[]>(initial?.aliases ?? [])
   const [aliasInput, setAliasInput] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
 
   useEffect(() => {
     if (open) {
@@ -47,19 +50,26 @@ export function HolderForm({ open, onClose, onSubmit, initial }: Props) {
       setColor(initial?.avatar_color ?? COLORS[0])
       setAliases(Array.isArray(initial?.aliases) ? initial.aliases : [])
       setAliasInput('')
+      setSubmitting(false)
+      setFormError(null)
     }
   }, [open, initial])
+
+  const appendUniqueAliases = (base: string[], additions: string[]): string[] => {
+    const next = [...base]
+    for (const item of additions) {
+      const normalized = item.toUpperCase()
+      if (!next.some(a => a.toUpperCase() === normalized)) {
+        next.push(item)
+      }
+    }
+    return next
+  }
 
   const appendAliasInput = () => {
     const parsed = parseAliasesText(aliasInput)
     if (parsed.length === 0) return
-    setAliases(prev => {
-      const next = [...prev]
-      for (const item of parsed) {
-        if (!next.includes(item)) next.push(item)
-      }
-      return next
-    })
+    setAliases(prev => appendUniqueAliases(prev, parsed))
     setAliasInput('')
   }
 
@@ -68,20 +78,25 @@ export function HolderForm({ open, onClose, onSubmit, initial }: Props) {
   }
 
   const handleSubmit = async () => {
-    if (!name.trim()) return
-    const pendingAliases = parseAliasesText(aliasInput)
-    const mergedAliases = [...aliases]
-    for (const item of pendingAliases) {
-      if (!mergedAliases.includes(item)) mergedAliases.push(item)
+    if (!name.trim() || submitting) return
+    setSubmitting(true)
+    setFormError(null)
+    try {
+      const pendingAliases = parseAliasesText(aliasInput)
+      const mergedAliases = appendUniqueAliases(aliases, pendingAliases)
+      await onSubmit({
+        name: name.trim(),
+        phone: phone.trim() || undefined,
+        email: email.trim() || undefined,
+        avatar_color: color,
+        aliases: mergedAliases,
+      })
+      onClose()
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : '保存失败')
+    } finally {
+      setSubmitting(false)
     }
-    await onSubmit({
-      name: name.trim(),
-      phone: phone.trim() || undefined,
-      email: email.trim() || undefined,
-      avatar_color: color,
-      aliases: mergedAliases,
-    })
-    onClose()
   }
 
   return (
@@ -89,18 +104,20 @@ export function HolderForm({ open, onClose, onSubmit, initial }: Props) {
       open={open}
       title={initial ? '编辑持卡人' : '添加持卡人'}
       onClose={onClose}
+      dismissible={!submitting}
       footer={
         <>
-          <Button variant='ghost' onClick={onClose}>
+          <Button variant='ghost' onClick={onClose} disabled={submitting}>
             取消
           </Button>
-          <Button onClick={() => void handleSubmit()} disabled={!name.trim()}>
+          <Button onClick={() => void handleSubmit()} disabled={!name.trim() || submitting} loading={submitting}>
             保存
           </Button>
         </>
       }
     >
       <div className='flex flex-col gap-4'>
+        {formError && <Alert severity='error'>{formError}</Alert>}
         <TextField
           label='姓名'
           required

@@ -16,8 +16,8 @@ import {
 import {
   formatDraftAmount,
   getDraftCurrencySymbol,
+  type AnyBillImportDraft,
   type BillDraftPayload,
-  type BillImportDraftOmnibus,
 } from './omnibusApi'
 
 /** 可编辑的 parsed_payload 字段（其余字段原样保留）。 */
@@ -32,7 +32,10 @@ export interface BillDraftFieldValues {
 
 type Errors = Partial<Record<keyof BillDraftFieldValues, string>>
 
-function toInputValues(draft: BillImportDraft | BillImportDraftOmnibus): BillDraftFieldValues {
+function toInputValues(
+  draft: AnyBillImportDraft,
+  fallbackCurrency?: string,
+): BillDraftFieldValues {
   const p = draft.parsed_payload as BillDraftPayload
   return {
     bill_amount: isPresent(p.bill_amount) ? String(p.bill_amount) : '',
@@ -40,7 +43,7 @@ function toInputValues(draft: BillImportDraft | BillImportDraftOmnibus): BillDra
     bill_month: p.bill_month ?? '',
     due_date: p.due_date ?? '',
     statement_date: p.statement_date ?? '',
-    currency: p.currency ?? 'CNY',
+    currency: p.currency || fallbackCurrency || 'CNY',
   }
 }
 
@@ -74,7 +77,7 @@ export function validateDraftFields(values: BillDraftFieldValues): Errors {
 
 /** 表单值合并回 parsed_payload：只覆盖这几个字段，其余原样带回去。 */
 export function mergeDraftPayload(
-  draft: BillImportDraft | BillImportDraftOmnibus,
+  draft: AnyBillImportDraft,
   values: BillDraftFieldValues,
 ): BillImportDraft['parsed_payload'] {
   const next = { ...draft.parsed_payload } as BillDraftPayload & BillImportDraft['parsed_payload']
@@ -92,7 +95,7 @@ export function mergeDraftPayload(
 
 interface Props {
   open: boolean
-  draft: BillImportDraft | BillImportDraftOmnibus | null
+  draft: AnyBillImportDraft | null
   /** 卡选项与列表里的选卡器同源 */
   cards: Array<{ id: string; label: string; currency?: string }>
   onClose: () => void
@@ -122,11 +125,12 @@ export function BillDraftEditForm({ open, draft, cards, onClose, onSaved, onSubm
 
   useEffect(() => {
     if (!open || !draft || loadedId === draft.id) return
-    setValues(toInputValues(draft))
+    const cardCurrency = cards.find(c => c.id === draft.card_id)?.currency
+    setValues(toInputValues(draft, cardCurrency))
     setErrors({})
     setSubmitError(null)
     setLoadedId(draft.id)
-  }, [open, draft, loadedId])
+  }, [open, draft, loadedId, cards])
 
   useEffect(() => {
     if (!open) setLoadedId(null)
@@ -162,7 +166,7 @@ export function BillDraftEditForm({ open, draft, cards, onClose, onSaved, onSubm
   const hasErrors = Object.values(errors).some(Boolean)
   const matchedCard = cards.find(c => c.id === draft.card_id)
   const cardLabel = matchedCard?.label ?? (draft.card_id ? '未知卡片' : '未绑定卡片')
-  const effectiveCurrency = values.currency || matchedCard?.currency || 'CNY'
+  const effectiveCurrency = values.currency || 'CNY'
   const currencySym = getDraftCurrencySymbol(effectiveCurrency)
   const subtotals = (draft.parsed_payload as BillDraftPayload).card_subtotals
 

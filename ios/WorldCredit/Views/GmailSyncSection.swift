@@ -49,8 +49,13 @@ struct GmailSyncSection: View {
                         }
                     }
                 }
-                .disabled(isConnecting || syncingConnectionId != nil || isDisconnecting)
+                .disabled(isConnecting || syncingConnectionId != nil || isDisconnecting || connections.count >= 10)
                 .accessibilityIdentifier("gmail.addAccount")
+                if connections.count >= 10 {
+                    Text("已达单账号最多 10 个邮箱上限")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Toggle(isOn: Binding(
@@ -604,8 +609,7 @@ private struct EditGmailConnectionSheet: View {
 
                     Picker("归属匹配策略", selection: $attributionMode) {
                         Text("自动匹配优先，失败兜底").tag("auto_then_default")
-                        Text("始终归属默认持卡人").tag("always_default")
-                        Text("仅按姓名/别名自动匹配").tag("auto_only")
+                        Text("强绑定默认持卡人").tag("force_default_unless_conflict")
                     }
                 }
 
