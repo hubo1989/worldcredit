@@ -15,6 +15,7 @@ import {
 } from "../utils";
 import { format } from "date-fns";
 import { RpcDomainError } from "./errors";
+import { isValidUuid } from "../validation-patterns";
 
 export type BillDashboardItem = Bill & {
   card: CreditCard & { card_product: CardProduct };
@@ -611,6 +612,8 @@ export interface BillItemInput {
 
 export async function createBill(
   bill: Omit<Bill, "id" | "created_at"> & {
+    /** Client-generated UUID for offline sync (Phase 2); omitted on the web path. */
+    id?: string;
     items?: BillItemInput[];
     subtotals?: Array<{
       card_id?: string | null;
@@ -620,7 +623,8 @@ export async function createBill(
     }>;
   },
 ): Promise<Bill> {
-  const id = uuid();
+  const clientId = normalizeClientBillId(bill.id);
+  const id = clientId ?? uuid();
   const { items: _items, subtotals, ...billRow } = bill;
   void _items;
 
@@ -647,6 +651,26 @@ export async function createBill(
     }
   }
 
+  // Offline retry with the same client UUID replays the stored bill. Ownership
+  // is the card's holder (merged accounts re-anchor card_id to the primary
+  // card), so the check compares holders rather than the raw card id.
+  if (clientId) {
+    const { data: existing } = await queryOne<{ id: string; card_id: string }>(
+      "SELECT id, card_id FROM bills WHERE id = ?",
+      [clientId],
+    );
+    if (existing) {
+      const sameHolder = await isSameCardHolder(existing.card_id, billRow.card_id);
+      if (!sameHolder) {
+        throw new RpcDomainError("CONFLICT", "该账单标识已被其他持卡人使用，请重新创建", {
+          bill_id: clientId,
+        });
+      }
+      const replayed = await getBillById(clientId);
+      if (replayed) return replayed as unknown as Bill;
+    }
+  }
+
   const { error } = await execute(
     `INSERT INTO bills (id, account_id, card_id, bill_month, statement_start, statement_end, statement_date, bill_amount, min_payment, due_date, status)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -664,7 +688,16 @@ export async function createBill(
       billRow.status || "unpaid",
     ],
   );
-  if (error) throw new Error(error.message);
+  if (error) {
+    const replayed = await classifyBillCreateFailure(error.message, {
+      cardId: anchorCardId,
+      accountId,
+      billMonth: billRow.bill_month,
+      clientId,
+    });
+    if (!replayed) throw new Error(error.message);
+    return replayed;
+  }
 
   // 批量保存分卡小计（如果有）
   if (subtotals && subtotals.length > 0) {
@@ -692,6 +725,66 @@ export async function createBill(
   const created = await getBillById(id);
   if (!created) throw new Error("账单创建失败");
   return created as unknown as Bill;
+}
+
+/** Offline sync sends the client UUID as the real primary key; lowercase it so replays compare equal. */
+function normalizeClientBillId(value: unknown): string | null {
+  return isValidUuid(value) ? value.toLowerCase() : null;
+}
+
+/** True when both cards belong to the same holder (merged accounts re-anchor card_id). */
+async function isSameCardHolder(leftCardId: string, rightCardId: string): Promise<boolean> {
+  if (leftCardId === rightCardId) return true;
+  const { data } = await queryOne<{ ok: number }>(
+    `SELECT 1 AS ok FROM credit_cards a
+     JOIN credit_cards b ON b.holder_id = a.holder_id
+     WHERE a.id = ? AND b.id = ?`,
+    [leftCardId, rightCardId],
+  );
+  return data?.ok === 1;
+}
+
+/**
+ * Classifies a failed bill insert so an offline client gets a `permanent: true`
+ * verdict it can act on. A same-month duplicate returns 409 together with the
+ * winning bill id, letting the client reconcile that exact row. Returns the
+ * replayed bill when a concurrent identical retry already committed it.
+ */
+async function classifyBillCreateFailure(
+  message: string,
+  identity: { cardId: string; accountId: string | null; billMonth: string; clientId: string | null },
+): Promise<Bill | null> {
+  if (message.includes("UNIQUE constraint failed")) {
+    if (identity.clientId) {
+      const { data: twin } = await queryOne<{ id: string }>(
+        "SELECT id FROM bills WHERE id = ?",
+        [identity.clientId],
+      );
+      if (twin) {
+        const replayed = await getBillById(identity.clientId);
+        if (replayed) return replayed as unknown as Bill;
+      }
+    }
+    const { data: winner } = await queryOne<{ id: string }>(
+      `SELECT id FROM bills
+       WHERE bill_month = ?
+         AND (card_id = ? OR (account_id IS NOT NULL AND account_id = ?))
+       ORDER BY created_at ASC LIMIT 1`,
+      [identity.billMonth, identity.cardId, identity.accountId],
+    );
+    throw new RpcDomainError(
+      "CONFLICT",
+      "该卡片或合并账户当月账单已存在",
+      winner ? { existing_bill_id: winner.id } : {},
+    );
+  }
+  if (message.includes("FOREIGN KEY constraint failed")) {
+    throw new RpcDomainError("NOT_FOUND", "关联的卡片不存在");
+  }
+  if (message.includes("CHECK constraint failed")) {
+    throw new RpcDomainError("VALIDATION_FAILED", "账单字段不满足约束，请检查后重试");
+  }
+  return null;
 }
 
 export interface BillDetail {
