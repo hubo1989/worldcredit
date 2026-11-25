@@ -1,5 +1,7 @@
+import type { BillItemInput } from "../finance/bill-item-import";
+import { getBillItems, prepareBillItemInserts, validateBillItemImport } from "./billItems.server";
 import { query, queryByChunks, queryOne, execute, batch, uuid, now, today } from "../db";
-import type { Bill, Payment, CreditCard, CardProduct, BillCardSubtotal, CreditAccount, CardHolder } from "../types";
+import type { Bill, BillItem, Payment, CreditCard, CardProduct, BillCardSubtotal, CreditAccount, CardHolder } from "../types";
 import {
   getDueDate,
   effectiveBillAmount,
@@ -616,26 +618,13 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
   });
 }
 
-/** 账单明细输入 */
-export interface BillItemInput {
-  transaction_date?: string;
-  post_date?: string;
-  description: string;
-  merchant_name?: string;
-  category?: string;
-  amount: number;
-  currency?: string;
-  item_type: "purchase" | "refund" | "fee" | "interest";
-  source: "manual" | "llm" | "email" | "sms" | "image" | "pdf";
-  confidence?: number;
-  raw_text?: string;
-  metadata?: Record<string, unknown>;
-}
+export type { BillItemInput } from "../finance/bill-item-import";
 
 export async function createBill(
   bill: Omit<Bill, "id" | "created_at"> & {
     /** Client-generated UUID for offline sync (Phase 2); omitted on the web path. */
     id?: string;
+    created_by?: string;
     items?: BillItemInput[];
     subtotals?: Array<{
       card_id?: string | null;
@@ -645,31 +634,42 @@ export async function createBill(
     }>;
   },
 ): Promise<Bill> {
-  const clientId = normalizeClientBillId(bill.id);
+  const { id: rawClientId, items, subtotals, created_by, ...billRow } = bill;
+  const clientId = normalizeClientBillId(rawClientId);
   const id = clientId ?? uuid();
-  const { items: _items, subtotals, ...billRow } = bill;
-  void _items;
+  if (items != null) validateBillItemImport(items);
 
-  let accountId = billRow.account_id || null;
-  let anchorCardId = billRow.card_id;
-
-  // 若未传 account_id，从所属卡片查出其 account_id
-  const { data: cardRow } = await queryOne<{ account_id: string | null }>(
-    "SELECT account_id FROM credit_cards WHERE id = ?",
+  const { data: card, error: cardError } = await queryOne<{
+    account_id: string | null; holder_id: string; managed_by: string; currency: string;
+  }>(
+    "SELECT cc.account_id, cc.holder_id, h.managed_by, cp.currency FROM credit_cards cc " +
+    "JOIN card_holders h ON h.id = cc.holder_id JOIN card_products cp ON cp.id = cc.card_product_id WHERE cc.id = ?",
     [billRow.card_id],
   );
-  if (!accountId && cardRow?.account_id) {
-    accountId = cardRow.account_id;
-  }
+  if (cardError) throw new Error(cardError.message);
+  if (!card) throw new RpcDomainError("NOT_FOUND", "卡片不存在");
 
-  // 若所属账户是 merged，确保 card_id 对齐账户的 primary_card_id
+  const accountId = billRow.account_id || card.account_id;
+  let anchorCardId = billRow.card_id;
+  let statementMode: string | null = null;
+  let currency = card.currency;
   if (accountId) {
-    const { data: acc } = await queryOne<{ statement_mode: string; primary_card_id: string | null }>(
-      "SELECT statement_mode, primary_card_id FROM credit_accounts WHERE id = ?",
+    const { data: account, error: accountError } = await queryOne<{
+      statement_mode: string; holder_id: string; anchor_id: string | null; anchor_currency: string | null;
+    }>(
+      "SELECT a.statement_mode, a.holder_id, c.id AS anchor_id, p.currency AS anchor_currency " +
+      "FROM credit_accounts a LEFT JOIN credit_cards c ON c.id = a.primary_card_id AND c.holder_id = a.holder_id " +
+      "LEFT JOIN card_products p ON p.id = c.card_product_id WHERE a.id = ?",
       [accountId],
     );
-    if (acc?.statement_mode === "merged" && acc.primary_card_id) {
-      anchorCardId = acc.primary_card_id;
+    if (accountError) throw new Error(accountError.message);
+    if (!account || account.holder_id !== card.holder_id) {
+      throw new RpcDomainError("VALIDATION_FAILED", "信用账户与卡片归属不符");
+    }
+    statementMode = account.statement_mode;
+    if (statementMode === "merged" && account.anchor_id) {
+      anchorCardId = account.anchor_id;
+      currency = account.anchor_currency ?? currency;
     }
   }
 
@@ -693,23 +693,28 @@ export async function createBill(
     }
   }
 
-  const { error } = await execute(
-    `INSERT INTO bills (id, account_id, card_id, bill_month, statement_start, statement_end, statement_date, bill_amount, min_payment, due_date, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      accountId,
-      anchorCardId,
-      billRow.bill_month,
-      billRow.statement_start || null,
-      billRow.statement_end || null,
-      billRow.statement_date || null,
-      billRow.bill_amount,
-      billRow.min_payment || 0,
-      billRow.due_date,
-      billRow.status || "unpaid",
-    ],
-  );
+  const { statements: itemInserts } = await prepareBillItemInserts(id, {
+    card_id: anchorCardId, account_id: accountId, holder_id: card.holder_id,
+    currency, statement_mode: statementMode, managed_by: card.managed_by,
+  }, items ?? [], created_by);
+  const { error } = await batch([
+    {
+      sql: "INSERT INTO bills (id, account_id, card_id, bill_month, statement_start, statement_end, " +
+        "statement_date, bill_amount, min_payment, due_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      params: [
+        id, accountId, anchorCardId, billRow.bill_month, billRow.statement_start || null,
+        billRow.statement_end || null, billRow.statement_date || null, billRow.bill_amount,
+        billRow.min_payment || 0, billRow.due_date, billRow.status || "unpaid",
+      ],
+    },
+    ...(subtotals ?? []).map(sub => ({
+      sql: "INSERT INTO bill_card_subtotals (id, bill_id, card_id, card_tail, subtotal_amount, currency, source) " +
+        "VALUES (?, ?, ?, ?, ?, ?, 'manual') ON CONFLICT(bill_id, card_tail) DO UPDATE SET " +
+        "card_id = excluded.card_id, subtotal_amount = excluded.subtotal_amount, currency = excluded.currency",
+      params: [uuid(), id, sub.card_id || null, sub.card_tail, sub.subtotal_amount, sub.currency || "CNY"],
+    })),
+    ...itemInserts,
+  ]);
   if (error) {
     const replayed = await classifyBillCreateFailure(error.message, {
       cardId: anchorCardId,
@@ -719,29 +724,6 @@ export async function createBill(
     });
     if (!replayed) throw new Error(error.message);
     return replayed;
-  }
-
-  // 批量保存分卡小计（如果有）
-  if (subtotals && subtotals.length > 0) {
-    for (const sub of subtotals) {
-      const subId = uuid();
-      await execute(
-        `INSERT INTO bill_card_subtotals (id, bill_id, card_id, card_tail, subtotal_amount, currency, source)
-         VALUES (?, ?, ?, ?, ?, ?, 'manual')
-         ON CONFLICT(bill_id, card_tail) DO UPDATE SET
-           card_id = excluded.card_id,
-           subtotal_amount = excluded.subtotal_amount,
-           currency = excluded.currency`,
-        [
-          subId,
-          id,
-          sub.card_id || null,
-          sub.card_tail,
-          sub.subtotal_amount,
-          sub.currency || "CNY",
-        ],
-      );
-    }
   }
 
   const created = await getBillById(id);
@@ -826,6 +808,7 @@ export interface BillDetail {
     }>;
   };
   payments: Payment[];
+  items: BillItem[];
 }
 
 /** Bill detail page: bill + card + product + holder + payments + account + subtotals in one call. */
@@ -990,12 +973,12 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
     }));
   }
 
-  const { data: paymentRows, error: payError } = await query<Payment>(
-    "SELECT * FROM payments WHERE bill_id = ? ORDER BY paid_at DESC",
-    [billId],
-  );
+  const [{ data: paymentRows, error: payError }, items] = await Promise.all([
+    query<Payment>("SELECT * FROM payments WHERE bill_id = ? ORDER BY paid_at DESC", [billId]),
+    getBillItems(billId),
+  ]);
   if (payError) throw new Error(payError.message);
-  return { bill, payments: paymentRows || [] };
+  return { bill, payments: paymentRows || [], items };
 }
 
 export interface UnpaidBillLite {

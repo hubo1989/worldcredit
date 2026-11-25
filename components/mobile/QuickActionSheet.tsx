@@ -14,6 +14,8 @@ import { PaymentForm } from "./PaymentForm";
 import { CardForm } from "./CardForm";
 import { getHolders } from "@/lib/api/holders";
 import { createPayment, updateBillStatus, getUnpaidBills, getPaymentTotal } from "@/lib/api/bills";
+import { createPaymentWithFx } from "@/lib/direction3/rpc";
+import type { PaymentFxLockFields } from "@/lib/direction3/types";
 import { createCard } from "@/lib/api/cards";
 import { type NativeQuickAction } from "@/lib/native-action";
 import type { CardHolder, CreditCard } from "@/lib/types";
@@ -157,16 +159,33 @@ export function QuickActionSheet({ open, onClose, onChanged, initialAction }: Pr
     }
   };
 
-  const handlePaymentSubmit = async (data: { amount: number; paid_at: string; note?: string }) => {
+  const handlePaymentSubmit = async (
+    data: { amount: number; paid_at: string; note?: string } & PaymentFxLockFields,
+  ) => {
     if (!pickedBill) return;
     try {
-      await createPayment({
-        bill_id: pickedBill.id,
-        amount: data.amount,
-        paid_at: data.paid_at,
-        channel: "手动还款",
-        note: data.note,
-      });
+      const hasFxLock =
+        data.settled_currency != null && data.settled_amount != null && data.locked_fx_rate != null;
+      if (hasFxLock) {
+        await createPaymentWithFx({
+          bill_id: pickedBill.id,
+          amount: data.amount,
+          paid_at: data.paid_at,
+          channel: "手动还款",
+          note: data.note,
+          settled_currency: data.settled_currency,
+          settled_amount: data.settled_amount,
+          locked_fx_rate: data.locked_fx_rate,
+        });
+      } else {
+        await createPayment({
+          bill_id: pickedBill.id,
+          amount: data.amount,
+          paid_at: data.paid_at,
+          channel: "手动还款",
+          note: data.note,
+        });
+      }
       // 重算状态
       const totalPaid = await getPaymentTotal(pickedBill.id);
       const billAmount = Number(pickedBill.bill_amount);

@@ -339,16 +339,32 @@ struct BillDetailView: View {
             }
         }
         .sheet(isPresented: $showingPaymentSheet) {
-            PaymentSheetView(item: item) { amount, date, channel, note in
-                try await appState.recordPayment(
-                    billId: item.bill.id,
-                    amount: amount,
-                    paidAt: date,
-                    channel: channel,
-                    note: note
-                )
-                await loadDetails()
-            }
+            PaymentSheetView(
+                item: item,
+                onPay: { amount, date, channel, note in
+                    try await appState.recordPayment(
+                        billId: item.bill.id,
+                        amount: amount,
+                        paidAt: date,
+                        channel: channel,
+                        note: note
+                    )
+                    await loadDetails()
+                },
+                onPayWithFx: { amount, date, channel, note, settledCur, settledAmt, lockedRate in
+                    try await appState.recordPayment(
+                        billId: item.bill.id,
+                        amount: amount,
+                        paidAt: date,
+                        channel: channel,
+                        note: note,
+                        settledCurrency: settledCur,
+                        settledAmount: settledAmt,
+                        lockedFxRate: lockedRate
+                    )
+                    await loadDetails()
+                }
+            )
         }
         .sheet(isPresented: $showingAmountOverrideSheet) {
             // onSave 只负责业务写入；详情刷新交给 appState.isSyncing 变更后的
