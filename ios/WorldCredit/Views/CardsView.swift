@@ -13,6 +13,8 @@ struct CardsView: View {
     @State private var editingCreditAccount: CreditAccount?
     @State private var showingCreateCardSheet: Bool = false
     @State private var showingMergeWizard: Bool = false
+    @State private var showingRecommendationSheet: Bool = false
+    @State private var showingAnnualFeeRoiBoard: Bool = false
     @State private var showingCreateHolderAlert: Bool = false
     @State private var newHolderName: String = ""
     @State private var holderCreateError: String?
@@ -146,13 +148,34 @@ struct CardsView: View {
             }
             .navigationTitle("账户")
             .navigationDestination(for: CardDetailRoute.self) { route in
-                CardDetailView(cardId: route.cardId)
+                CardDetailView(cardId: route.cardId, initialSection: route.initialSection)
             }
             .navigationDestination(for: BillDetailRoute.self) { route in
                 BillDetailView(item: route.item)
             }
+            .navigationDestination(isPresented: $showingAnnualFeeRoiBoard) {
+                AnnualFeeRoiListView()
+            }
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
+                    Button {
+                        HapticManager.impactLight()
+                        showingRecommendationSheet = true
+                    } label: {
+                        Image(systemName: "wand.and.stars")
+                    }
+                    .accessibilityLabel("选卡助手")
+                    .accessibilityIdentifier("cards.recommend")
+
+                    Button {
+                        HapticManager.impactLight()
+                        showingAnnualFeeRoiBoard = true
+                    } label: {
+                        Image(systemName: "chart.line.uptrend.xyaxis")
+                    }
+                    .accessibilityLabel("年费 ROI")
+                    .accessibilityIdentifier("cards.roiBoard")
+
                     if selectedSegment == .credit {
                         Button {
                             HapticManager.impactLight()
@@ -179,6 +202,7 @@ struct CardsView: View {
                     appState.showingCreateCardSheet = false
                     showingCreateCardSheet = true
                 }
+                consumePendingDeepLink()
             }
             .onChange(of: appState.showingCreateCardSheet) { _, newValue in
                 if newValue {
@@ -186,8 +210,17 @@ struct CardsView: View {
                     showingCreateCardSheet = true
                 }
             }
+            .onChange(of: appState.pendingDeepLinkCardId) { _, _ in
+                consumePendingDeepLink()
+            }
+            .onChange(of: appState.pendingDeepLinkCardSection) { _, _ in
+                consumePendingDeepLink()
+            }
             .onChange(of: selectedSegment) { _, _ in
                 HapticManager.selection()
+            }
+            .sheet(isPresented: $showingRecommendationSheet) {
+                CardRecommendationSheetView()
             }
             .sheet(item: $editingCard) { card in
                 CardEditSheetView(card: card) { input in
@@ -817,6 +850,18 @@ struct CardsView: View {
                 holderCreateError = error.localizedDescription
                 HapticManager.error()
             }
+        }
+    }
+
+    private func consumePendingDeepLink() {
+        if let cardId = appState.pendingDeepLinkCardId, !cardId.isEmpty {
+            let section = appState.pendingDeepLinkCardSection
+            appState.pendingDeepLinkCardId = nil
+            appState.pendingDeepLinkCardSection = nil
+            navigationPath.append(CardDetailRoute(cardId: cardId, initialSection: section))
+        } else if appState.pendingDeepLinkCardSection == "roi_board" {
+            appState.pendingDeepLinkCardSection = nil
+            showingAnnualFeeRoiBoard = true
         }
     }
 }

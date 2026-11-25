@@ -32,6 +32,12 @@ public struct CardProduct: Codable, FetchableRecord, TableRecord, PersistableRec
     public var cardArtUrl: String?
     public var isActive: Bool
     public var createdAt: String?
+    public var ftfRate: Double?
+    public var fxFreeCurrenciesJson: String?
+    public var rewardRulesJson: String?
+    public var annualFeeCycleType: String?
+    public var annualFeeWaiverRulesJson: String?
+    public var rulesUpdatedAt: String?
 
     public init(
         id: String,
@@ -51,7 +57,13 @@ public struct CardProduct: Codable, FetchableRecord, TableRecord, PersistableRec
         rewardsSummary: String? = nil,
         annualFeeWaiver: String? = nil,
         isActive: Bool = true,
-        createdAt: String? = nil
+        createdAt: String? = nil,
+        ftfRate: Double? = nil,
+        fxFreeCurrenciesJson: String? = nil,
+        rewardRulesJson: String? = nil,
+        annualFeeCycleType: String? = nil,
+        annualFeeWaiverRulesJson: String? = nil,
+        rulesUpdatedAt: String? = nil
     ) {
         let resolvedImage = cardImageId ?? cardArtUrl
         self.id = id
@@ -71,6 +83,12 @@ public struct CardProduct: Codable, FetchableRecord, TableRecord, PersistableRec
         self.cardArtUrl = resolvedImage
         self.isActive = isActive
         self.createdAt = createdAt
+        self.ftfRate = ftfRate
+        self.fxFreeCurrenciesJson = fxFreeCurrenciesJson
+        self.rewardRulesJson = rewardRulesJson
+        self.annualFeeCycleType = annualFeeCycleType
+        self.annualFeeWaiverRulesJson = annualFeeWaiverRulesJson
+        self.rulesUpdatedAt = rulesUpdatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -92,6 +110,12 @@ public struct CardProduct: Codable, FetchableRecord, TableRecord, PersistableRec
         annualFeeWaiver = try row.decodeIfPresent(String.self, forKey: .annualFeeWaiver)
         isActive = try row.decodeFlexibleBoolIfPresent(forKey: .isActive) ?? true
         createdAt = try row.decodeIfPresent(String.self, forKey: .createdAt)
+        ftfRate = try row.decodeIfPresent(Double.self, forKey: .ftfRate)
+        fxFreeCurrenciesJson = try row.decodeIfPresent(String.self, forKey: .fxFreeCurrenciesJson)
+        rewardRulesJson = try row.decodeIfPresent(String.self, forKey: .rewardRulesJson)
+        annualFeeCycleType = try row.decodeIfPresent(String.self, forKey: .annualFeeCycleType)
+        annualFeeWaiverRulesJson = try row.decodeIfPresent(String.self, forKey: .annualFeeWaiverRulesJson)
+        rulesUpdatedAt = try row.decodeIfPresent(String.self, forKey: .rulesUpdatedAt)
 
         // D1 stores card_image_id while existing local records/tests may provide card_art_url.
         let remoteImage = try row.decodeIfPresent(String.self, forKey: .cardImageId)
@@ -119,6 +143,12 @@ public struct CardProduct: Codable, FetchableRecord, TableRecord, PersistableRec
         try row.encodeIfPresent(cardArtUrl, forKey: .cardArtUrl)
         try row.encode(isActive, forKey: .isActive)
         try row.encodeIfPresent(createdAt, forKey: .createdAt)
+        try row.encodeIfPresent(ftfRate, forKey: .ftfRate)
+        try row.encodeIfPresent(fxFreeCurrenciesJson, forKey: .fxFreeCurrenciesJson)
+        try row.encodeIfPresent(rewardRulesJson, forKey: .rewardRulesJson)
+        try row.encodeIfPresent(annualFeeCycleType, forKey: .annualFeeCycleType)
+        try row.encodeIfPresent(annualFeeWaiverRulesJson, forKey: .annualFeeWaiverRulesJson)
+        try row.encodeIfPresent(rulesUpdatedAt, forKey: .rulesUpdatedAt)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -138,5 +168,11 @@ public struct CardProduct: Codable, FetchableRecord, TableRecord, PersistableRec
         case cardArtUrl = "card_art_url"
         case isActive = "is_active"
         case createdAt = "created_at"
+        case ftfRate = "ftf_rate"
+        case fxFreeCurrenciesJson = "fx_free_currencies_json"
+        case rewardRulesJson = "reward_rules_json"
+        case annualFeeCycleType = "annual_fee_cycle_type"
+        case annualFeeWaiverRulesJson = "annual_fee_waiver_rules_json"
+        case rulesUpdatedAt = "rules_updated_at"
     }
 }

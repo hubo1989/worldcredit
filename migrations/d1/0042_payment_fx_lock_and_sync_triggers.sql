@@ -219,7 +219,7 @@ BEGIN
 END;
 
 -- Direct parent changes also invalidate the former owner's cached row.
-CREATE TRIGGER trg_bill_items_transfer_sync_d3
+CREATE TRIGGER IF NOT EXISTS trg_bill_items_transfer_sync_d3
 AFTER UPDATE OF bill_id ON bill_items
 WHEN OLD.bill_id IS NOT NEW.bill_id
 BEGIN
@@ -230,7 +230,7 @@ BEGIN
     AND ch.managed_by IS NOT (SELECT ch.managed_by FROM bills b JOIN credit_cards cc ON cc.id = b.card_id JOIN card_holders ch ON ch.id = cc.holder_id WHERE b.id = NEW.bill_id);
 END;
 
-CREATE TRIGGER trg_installment_plans_transfer_sync_d3
+CREATE TRIGGER IF NOT EXISTS trg_installment_plans_transfer_sync_d3
 AFTER UPDATE OF card_id ON installment_plans
 WHEN OLD.card_id IS NOT NEW.card_id
 BEGIN
@@ -241,7 +241,7 @@ BEGIN
     AND ch.managed_by IS NOT (SELECT ch.managed_by FROM credit_cards cc JOIN card_holders ch ON ch.id = cc.holder_id WHERE cc.id = NEW.card_id);
 END;
 
-CREATE TRIGGER trg_merchant_category_rules_transfer_sync_d3
+CREATE TRIGGER IF NOT EXISTS trg_merchant_category_rules_transfer_sync_d3
 AFTER UPDATE OF user_id ON merchant_category_rules
 WHEN OLD.user_id IS NOT NEW.user_id
 BEGIN
@@ -249,7 +249,7 @@ BEGIN
   VALUES (OLD.user_id, 'merchant_category_rules', OLD.id, 'delete');
 END;
 
-CREATE TRIGGER trg_bills_transfer_sync_d3
+CREATE TRIGGER IF NOT EXISTS trg_bills_transfer_sync_d3
 AFTER UPDATE OF card_id ON bills
 WHEN OLD.card_id IS NOT NEW.card_id
 BEGIN

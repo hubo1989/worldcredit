@@ -114,6 +114,13 @@ export function estimateBillRepaymentHealth(input: RepaymentHealthInput) {
       slices[index].cents -= deduction
       credits -= deduction
     }
+    // Known non-interest items still explain part of the statement total.
+    const itemNet = items.reduce((sum, item) => sum + toCents(signedItemAmount(item)), 0)
+    const unitemized = effective - itemNet
+    if (unitemized > 0) {
+      slices.push({ start: statementFallback, cents: unitemized, fallback: true })
+      slices.sort((a, b) => a.start.localeCompare(b.start))
+    }
   }
 
   let interestCents = 0

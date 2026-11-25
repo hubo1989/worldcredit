@@ -29,6 +29,7 @@ struct BenefitsHubView: View {
     @State private var deepLinkedAccountAction: String?
     @State private var deepLinkedEventKey: String?
     @State private var deepLinkedTaskCycleId: String?
+    @State private var showingRecommendationSheet: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -70,6 +71,21 @@ struct BenefitsHubView: View {
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: String.self) { accountId in
                 OpportunityDetailView(accountId: accountId)
+            }
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        HapticManager.impactLight()
+                        showingRecommendationSheet = true
+                    } label: {
+                        Label("选卡助手", systemImage: "wand.and.stars")
+                            .font(.subheadline.bold())
+                    }
+                    .accessibilityIdentifier("benefits.recommend")
+                }
+            }
+            .sheet(isPresented: $showingRecommendationSheet) {
+                CardRecommendationSheetView()
             }
             .sensoryFeedback(.selection, trigger: selectedSegment)
             .onAppear {

@@ -1,14 +1,17 @@
 'use client'
 
-import { useEffect, useState, useCallback, use } from 'react'
+import { useEffect, useState, useCallback, use, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { getCardDetail, type CreditCardWithProduct } from '@/lib/api/cards'
 import { CardDefinitionModal } from '@/components/mobile/CardDefinitionModal'
 import { CardAccountModal } from '@/components/mobile/CardAccountModal'
+import { CardAnnualFeeSection } from '@/components/mobile/CardAnnualFeeSection'
+import { CardRoiSummaryCard } from '@/components/mobile/CardRoiSummaryCard'
 import { InstallmentPlansSection } from '@/components/mobile/InstallmentPlansSection'
 import { ChevronLeftIcon, ClockIcon } from '@/components/icons/WcIcon'
 import { currencySymbol } from '@/lib/fx'
+import type { CardProductWithRules, CreditCardWithAnnualFee } from '@/lib/recommendations-ui/types'
 import { getEffectiveBillingDay, getEffectiveDueConfig, formatCardTail, getEffectiveCardName, getEffectiveAnnualFee, getEffectiveCreditLimit, isCreditLimitManuallySet } from '@/lib/utils'
 import type { CreditCard, CardProduct, CardHolder, Bill, Benefit, CardDueDateResolution } from '@/lib/types'
 import type { OpportunityDto } from '@/lib/opportunities/queries.server'
@@ -84,6 +87,24 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
   // 编辑表单状态
   const [cardDefOpen, setCardDefOpen] = useState(false)
   const [cardAccountOpen, setCardAccountOpen] = useState(false)
+  const [highlightRoi, setHighlightRoi] = useState(false)
+  const hasScrolledToRoiRef = useRef(false)
+
+  useEffect(() => {
+    const section = new URLSearchParams(window.location.search).get('section')
+    if (section === 'roi') {
+      setHighlightRoi(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!highlightRoi || loading || hasScrolledToRoiRef.current) return
+    const el = document.getElementById('roi-section')
+    if (el && typeof el.scrollIntoView === 'function') {
+      hasScrolledToRoiRef.current = true
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [highlightRoi, loading])
 
   const load = useCallback(async () => {
     try {
@@ -173,7 +194,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
   // 修改内容优先：卡级别年费覆盖 > 卡产品默认
   const annualFee = getEffectiveAnnualFee(card, product)
   const currency = product?.currency || 'CNY'
-  const sym = currencySymbol(currency)
+  const curSym = currencySymbol(currency)
   // 是否存在卡级别自定义（展示「已自定义」徽标）
   const isNameOverridden = !!card.name_override
   const isDueOverridden = card.override_due_type != null && card.override_due_value != null
@@ -254,17 +275,17 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
             {limitBadge}
           </p>
           <p className={'num-tabular text-[15px] font-bold ' + (effLimit === null ? 'text-d-warn-ink' : 'text-d-text')}>
-            {effLimit !== null ? `${sym}${effLimit.toLocaleString()}` : '未获取'}
+            {effLimit !== null ? `${curSym}${effLimit.toLocaleString()}` : '未获取'}
           </p>
         </button>
         <div className='p-1 text-center'>
           <p className='mb-0.5 text-[12px] leading-4 text-d-muted'>已用</p>
-          <p className='num-tabular text-[15px] font-bold text-d-gold'>{sym}{Number(used).toLocaleString()}</p>
+          <p className='num-tabular text-[15px] font-bold text-d-gold'>{curSym}{Number(used).toLocaleString()}</p>
         </div>
         <div className='p-1 text-center'>
           <p className='mb-0.5 text-[12px] leading-4 text-d-muted'>可用</p>
           <p className='num-tabular text-[15px] font-bold text-d-success-ink'>
-            {available !== null ? `${sym}${available.toLocaleString()}` : '—'}
+            {available !== null ? `${curSym}${available.toLocaleString()}` : '—'}
           </p>
         </div>
       </div>
@@ -346,7 +367,7 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
             label='年费'
             value={
               <span className='inline-flex items-center gap-1.5'>
-                {annualFee != null ? `${sym}${annualFee.toLocaleString()}` : '—'}
+                {annualFee != null ? `${curSym}${annualFee.toLocaleString()}` : '—'}
                 {isAnnualFeeOverridden && <CustomizedTag />}
               </span>
             }
@@ -354,6 +375,21 @@ export default function CardDetailPage({ params }: { params: Promise<{ id: strin
           <Row label='币种' value={currency} />
         </div>
       </Section>
+
+      {/* 年费周期与免年费达标进度 */}
+      <CardAnnualFeeSection
+        card={card as unknown as CreditCardWithAnnualFee}
+        product={product as unknown as CardProductWithRules}
+        onUpdated={load}
+      />
+
+      {/* 单卡年度年费 ROI 复盘 */}
+      <CardRoiSummaryCard
+        card={card as unknown as CreditCardWithAnnualFee}
+        product={product as unknown as CardProductWithRules}
+        onUpdated={load}
+        highlighted={highlightRoi}
+      />
 
       {/* 编辑卡片对话框：保存后卡级别内容优先于卡产品默认 */}
       {card && (

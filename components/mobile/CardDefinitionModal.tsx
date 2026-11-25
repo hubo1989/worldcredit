@@ -7,7 +7,15 @@ import { TextField, SelectField } from '@/components/obsidian/fields'
 import { getBanks, type BankItem } from '@/lib/api/banks'
 import { getCardProducts, updateCard, type CreditCardWithProduct } from '@/lib/api/cards'
 import type { CardProduct } from '@/lib/types'
+import { currencySymbol } from '@/lib/fx'
 import { getEffectiveCardName } from '@/lib/utils'
+import {
+  ANNUAL_FEE_CYCLE_LABELS,
+  ANNUAL_FEE_STATUS_LABELS,
+  type AnnualFeeCycleType,
+  type AnnualFeeStatus,
+  type CreditCardWithAnnualFee,
+} from '@/lib/recommendations-ui/types'
 import {
   validateDueRule,
   resolveBankChange,
@@ -44,6 +52,21 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
   const [overrideDueValue, setOverrideDueValue] = useState(
     card.override_due_value?.toString() ?? ''
   )
+  const extCard = card as unknown as CreditCardWithAnnualFee
+  const [annualFeeOverride, setAnnualFeeOverride] = useState(
+    card.annual_fee_override != null ? String(card.annual_fee_override) : ''
+  )
+  const [issuedOn, setIssuedOn] = useState(card.issued_on ?? '')
+  const [activatedOn, setActivatedOn] = useState(card.activated_on ?? '')
+  const [annualFeeCycleType, setAnnualFeeCycleType] = useState<string>(
+    extCard.annual_fee_cycle_type ?? ''
+  )
+  const [nextAnnualFeeDate, setNextAnnualFeeDate] = useState(
+    extCard.next_annual_fee_date ?? ''
+  )
+  const [annualFeeStatus, setAnnualFeeStatus] = useState<string>(
+    extCard.annual_fee_status ?? ''
+  )
 
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -69,6 +92,13 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
         setOverrideEnabled(!!card.override_due_type)
         setOverrideDueType(normalizeDueType(card.override_due_type))
         setOverrideDueValue(card.override_due_value?.toString() ?? '')
+        const ext = card as unknown as CreditCardWithAnnualFee
+        setAnnualFeeOverride(card.annual_fee_override != null ? String(card.annual_fee_override) : '')
+        setIssuedOn(card.issued_on ?? '')
+        setActivatedOn(card.activated_on ?? '')
+        setAnnualFeeCycleType(ext.annual_fee_cycle_type ?? '')
+        setNextAnnualFeeDate(ext.next_annual_fee_date ?? '')
+        setAnnualFeeStatus(ext.annual_fee_status ?? '')
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : '加载银行列表失败')
@@ -99,6 +129,8 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
     setHasCustomName(next.hasCustomName)
   }
 
+  const isLoan = card.card_type === 'loan'
+
   const handleSubmit = async () => {
     if (!cardName.trim()) {
       setError('请输入卡片名称')
@@ -118,6 +150,20 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
     const currentProd = products.find((p) => p.id === selectedProductId)
     const finalNameOverride = resolveNameOverride(cardName, currentProd, hasCustomName)
 
+    let parsedAnnualFeeOverride: number | null = null
+    if (!isLoan && annualFeeOverride.trim()) {
+      const feeNum = Number(annualFeeOverride.trim())
+      if (!Number.isFinite(feeNum) || feeNum < 0) {
+        setError('年费覆盖金额必须为非负数')
+        return
+      }
+      parsedAnnualFeeOverride = feeNum
+    }
+    if (!isLoan && nextAnnualFeeDate.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(nextAnnualFeeDate.trim())) {
+      setError('下次年费扣费日格式必须为 YYYY-MM-DD')
+      return
+    }
+
     setError(null)
     setSubmitting(true)
     try {
@@ -126,7 +172,17 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
         bank_id: selectedBankId || undefined,
         name_override: finalNameOverride,
         ...dueRulePayload,
-      })
+        ...(!isLoan
+          ? {
+              annual_fee_override: parsedAnnualFeeOverride,
+              issued_on: issuedOn.trim() || null,
+              activated_on: activatedOn.trim() || null,
+              annual_fee_cycle_type: (annualFeeCycleType || null) as AnnualFeeCycleType | null,
+              next_annual_fee_date: nextAnnualFeeDate.trim() || null,
+              annual_fee_status: (annualFeeStatus || null) as AnnualFeeStatus | null,
+            }
+          : {}),
+      } as Parameters<typeof updateCard>[1])
       onSaved()
       onClose()
     } catch (err) {
@@ -233,6 +289,75 @@ export function CardDefinitionModal({ open, onClose, card, onSaved }: Props) {
               endAdornment={<span>{overrideDueType === 'after_billing' ? '天' : '日'}</span>}
             />
           </div>
+        )}
+
+        {!isLoan && (
+          <>
+            <div className='h-px bg-d-border' />
+
+            {/* 年费与周年日 */}
+            <div className='flex flex-col gap-3'>
+              <p className='text-[13px] font-semibold text-d-muted'>年费周期与卡生命周期</p>
+              <div className='grid grid-cols-2 gap-3'>
+                <TextField
+                  label='发卡日'
+                  type='date'
+                  value={issuedOn}
+                  onChange={(e) => setIssuedOn(e.target.value)}
+                />
+                <TextField
+                  label='激活日'
+                  type='date'
+                  value={activatedOn}
+                  onChange={(e) => setActivatedOn(e.target.value)}
+                />
+              </div>
+              <div className='grid grid-cols-2 gap-3'>
+                <TextField
+                  label={`年费覆盖（${card.card_product?.currency || 'CNY'}）`}
+                  type='number'
+                  inputMode='decimal'
+                  min='0'
+                  placeholder='留空用默认'
+                  value={annualFeeOverride}
+                  onChange={(e) => setAnnualFeeOverride(e.target.value)}
+                  startAdornment={<span>{currencySymbol(card.card_product?.currency || 'CNY')}</span>}
+                />
+                <SelectField
+                  label='年费周期'
+                  value={annualFeeCycleType}
+                  onChange={(e) => setAnnualFeeCycleType(e.target.value)}
+                  options={[
+                    { value: '', label: '沿用卡产品默认' },
+                    ...(Object.keys(ANNUAL_FEE_CYCLE_LABELS) as AnnualFeeCycleType[]).map((k) => ({
+                      value: k,
+                      label: ANNUAL_FEE_CYCLE_LABELS[k],
+                    })),
+                  ]}
+                />
+              </div>
+              <div className='grid grid-cols-2 gap-3'>
+                <TextField
+                  label='下次年费扣费日'
+                  type='date'
+                  value={nextAnnualFeeDate}
+                  onChange={(e) => setNextAnnualFeeDate(e.target.value)}
+                />
+                <SelectField
+                  label='年费状态'
+                  value={annualFeeStatus}
+                  onChange={(e) => setAnnualFeeStatus(e.target.value)}
+                  options={[
+                    { value: '', label: '自动 / 未指定' },
+                    ...(Object.keys(ANNUAL_FEE_STATUS_LABELS) as AnnualFeeStatus[]).map((k) => ({
+                      value: k,
+                      label: ANNUAL_FEE_STATUS_LABELS[k],
+                    })),
+                  ]}
+                />
+              </div>
+            </div>
+          </>
         )}
       </div>
     </Modal>

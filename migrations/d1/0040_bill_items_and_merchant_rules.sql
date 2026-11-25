@@ -39,7 +39,9 @@ INSERT INTO bill_items_v2 (
   item_type, source, confidence, raw_text, metadata, updated_at, created_at
 )
 SELECT
-  id, bill_id, card_id, card_tail, transaction_date, post_date,
+  id, bill_id,
+  (SELECT c.id FROM credit_cards c WHERE c.id = bill_items.card_id),
+  card_tail, transaction_date, post_date,
   description, merchant_name,
   CASE WHEN category IN (
     'dining', 'shopping', 'transport', 'travel', 'utilities',
