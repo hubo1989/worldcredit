@@ -42,7 +42,12 @@ export default {
 
     try {
       const owner = await db.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first()
-      if (!owner) return
+      if (!owner) {
+        log.status = 'skipped'
+        log.error_msg = '收件地址未关联有效账户'
+        await writeLog(db, log)
+        return
+      }
       const raw = await streamToBytes(message.raw)
       // Gmail sends this verification mail before forwarding can start.
       if (fromEmail === 'forwarding-noreply@google.com') {
@@ -61,7 +66,9 @@ export default {
         return
       }
 
-      const outcome = await processEmailDelivery(raw, { db, userId, bucket: env.ATTACHMENTS, secret: env.SESSION_SECRET })
+      const outcome = await processEmailDelivery(raw, {
+        db, userId, bucket: env.ATTACHMENTS, secret: env.SESSION_SECRET, imagesBinding: env.IMAGES,
+      })
       log.bill_id = outcome.billIds[0] ?? null
       log.status = outcome.billIds.length ? 'success' : 'skipped'
       log.error_msg = outcome.reason

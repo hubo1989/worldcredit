@@ -2,7 +2,7 @@
 import { getDb, getWorkerEnv } from "../db/client";
 import { ingestStatementEmail, parseRawMessage, type BillParseResult } from "../email-core";
 import { decryptToken } from "./token-crypto";
-import { refreshAccessToken, listMessageRefs, getRawMessage, type GmailClientOptions } from "./api";
+import { GmailApiError, refreshAccessToken, listMessageRefs, getRawMessage, type GmailClientOptions } from "./api";
 
 export interface GmailSyncSummary {
   scanned: number;
@@ -123,7 +123,16 @@ async function syncConnection(db: D1Database, conn: GmailConnection, maxMessages
     clientId: deps?.clientId ?? env.GOOGLE_CLIENT_ID ?? process.env.GOOGLE_CLIENT_ID,
     clientSecret: deps?.clientSecret ?? env.GOOGLE_CLIENT_SECRET ?? process.env.GOOGLE_CLIENT_SECRET,
   };
-  const access = await refreshAccessToken(await decryptToken(conn.refresh_token_enc, secret), client);
+  let refreshToken: string;
+  try {
+    refreshToken = await decryptToken(conn.refresh_token_enc, secret);
+  } catch {
+    throw new Error("无法读取 Gmail 授权凭据，请重试");
+  }
+  const access = await refreshAccessToken(refreshToken, client);
+  if (!access.accessToken || !Number.isFinite(access.expiresIn) || access.expiresIn <= 0) {
+    throw new Error("Gmail 返回了无效的授权响应");
+  }
   await db.prepare(
     "UPDATE gmail_connections SET access_token_expires_at = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
   ).bind(new Date(Date.now() + access.expiresIn * 1000).toISOString(), conn.id, conn.user_id).run();
@@ -230,10 +239,12 @@ export async function syncAllGmailConnections(): Promise<{ users: number; failur
         await syncConnection(db, conn, 20);
       } catch (error) {
         failures++;
-        const message = error instanceof Error ? error.message.slice(0, 300) : "Gmail 同步失败";
+        const needsReauthorization = error instanceof GmailApiError && (error.invalidGrant || error.status === 401);
+        const message = error instanceof GmailApiError ? error.message : "Gmail 同步失败，可重试";
         await db.prepare(
-          "UPDATE gmail_connections SET status = 'error', last_error = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ? AND status = 'active'",
-        ).bind(message, conn.id, conn.user_id).run();
+          `UPDATE gmail_connections SET status = ?, last_error = ?, updated_at = datetime('now')
+           WHERE id = ? AND user_id = ? AND status = 'active' AND refresh_token_enc = ?`,
+        ).bind(needsReauthorization ? "error" : "active", message, conn.id, conn.user_id, conn.refresh_token_enc).run();
       }
     }
   }

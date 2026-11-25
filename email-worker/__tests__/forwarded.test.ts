@@ -66,6 +66,16 @@ function forwardedBundle(attachment = nestedBillEmail()): Uint8Array<ArrayBuffer
   )
 }
 
+function inlineBanner(boundary: string): string[] {
+  const bytes = new Uint8Array(17_000)
+  bytes.set([137, 80, 78, 71, 13, 10, 26, 10])
+  return [
+    `--${boundary}`, 'Content-Type: image/png; name="banner.png"',
+    'Content-Disposition: inline; filename="banner.png"', 'Content-ID: <banner@test>',
+    'Content-Transfer-Encoding: base64', '', toBase64(bytes),
+  ]
+}
+
 const USER_ID = '11111111-1111-1111-1111-111111111111'
 
 let sqlite: SqliteD1
@@ -120,6 +130,19 @@ describe('邮箱转发入账', () => {
     expect(sqlite.raw.prepare('SELECT COUNT(*) AS count FROM credit_cards').get()).toEqual({ count: 2 })
   })
 
+  it('parses HTML bill text even with a large inline banner', async () => {
+    const raw = enc([
+      'From: bill@bank.test', 'To: Zhang <zhang@example.test>',
+      'Content-Type: multipart/related; boundary="HTML"', '',
+      '--HTML', 'Content-Type: text/html; charset=utf-8', '',
+      '<p>本期应还 6000</p><img src="cid:banner@test">', ...inlineBanner('HTML'), '--HTML--',
+    ].join('\r\n'))
+    const parseText = vi.fn(async () => ({ ...await parseOk(), holder_hint: '张改菊' }))
+    const result = await processEmailDelivery(raw, { db, userId: USER_ID, parseText })
+    expect(parseText).toHaveBeenCalledWith(expect.stringContaining('6000'))
+    expect(result).toMatchObject({ billIds: [expect.any(String)], draftIds: [] })
+  })
+
   it('对直发还款提醒不建账单或草稿', async () => {
     const raw = enc('From: sender@example.test\r\nTo: me@example.test\r\n\r\nYour autopay is scheduled')
     const result = await processEmailDelivery(raw, {
@@ -136,7 +159,7 @@ describe('邮箱转发入账', () => {
       'Content-Type: multipart/mixed; boundary="INNER"', '',
       '--INNER', 'Content-Type: text/plain', '', 'Your PDF statement is attached.',
       '--INNER', 'Content-Type: application/pdf', 'Content-Disposition: attachment; filename="statement.pdf"',
-      'Content-Transfer-Encoding: base64', '', toBase64(encrypted), '--INNER--', '',
+      'Content-Transfer-Encoding: base64', '', toBase64(encrypted), ...inlineBanner('INNER'), '--INNER--', '',
     ].join('\r\n'))
     const raw = forwardedBundle(nested)
     const put = vi.fn(async () => {})
@@ -147,7 +170,9 @@ describe('邮箱转发入账', () => {
       raw: new ReadableStream({ start(controller) { controller.enqueue(raw); controller.close() } }),
     } as unknown as ForwardableEmailMessage
     await worker.email(message, { DB: db, ATTACHMENTS: { put } as unknown as R2Bucket }, {} as ExecutionContext)
-    const draft = sqlite.raw.prepare('SELECT id, parse_status, password_hint, file_ref FROM bill_import_drafts').get()
+    const drafts = sqlite.raw.prepare('SELECT id, parse_status, password_hint, file_ref FROM bill_import_drafts').all()
+    expect(drafts).toHaveLength(1)
+    const [draft] = drafts
     expect(draft).toMatchObject({
       parse_status: 'needs_password', password_hint: expect.stringContaining('密码说明'), file_ref: expect.any(String),
     })

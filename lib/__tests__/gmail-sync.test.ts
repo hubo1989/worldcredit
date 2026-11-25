@@ -291,6 +291,26 @@ describe("syncUserGmail", () => {
 });
 
 describe("syncAllGmailConnections", () => {
+  it.each([429, 503])("keeps a mailbox active after a transient list failure (%s) and retries it", async (status) => {
+    let shouldFail = true;
+    __setGmailSyncDeps({
+      parse: async () => ({ ...parseOk }),
+      sessionSecret: SECRET,
+      bucket: null,
+      fetchImpl: async input => {
+        if (String(input).includes("/token")) return Response.json({ access_token: "at", expires_in: 3600 });
+        const response = shouldFail ? Response.json({ error: "temporary" }, { status }) : Response.json({});
+        shouldFail = false;
+        return response;
+      },
+    });
+    const connection = () => db.raw.prepare("SELECT status, last_error FROM gmail_connections WHERE user_id = 'u1'").get();
+    await expect(syncAllGmailConnections()).resolves.toEqual({ users: 1, failures: 1 });
+    expect(connection()).toEqual({ status: "active", last_error: `Gmail API error (${status})` });
+    await expect(syncAllGmailConnections()).resolves.toEqual({ users: 1, failures: 0 });
+    expect(connection()).toEqual({ status: "active", last_error: null });
+  });
+
   it("单用户失败被隔离：u1 置 error，u2 仍被处理", async () => {
     await seedUser("u2");
     await seedConnection("u2");
@@ -306,9 +326,8 @@ describe("syncAllGmailConnections", () => {
       "INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day, card_number_last4) VALUES ('c2', 'h2', 'p1', 16, '7491')",
     ).run();
 
-    // u1 的 refresh token 是用错误密钥加密的：decryptToken 必然失败，
-    // 不依赖 fetch 就能触发单用户失败路径；u2 走正常链路。
-    const badEnc = await encryptToken("rt", "wrong-secret");
+    // Google confirms that u1 revoked consent. u2 still uses the normal path.
+    const badEnc = await encryptToken("revoked", SECRET);
     await db
       .prepare("UPDATE gmail_connections SET refresh_token_enc=? WHERE user_id='u1'")
       .bind(badEnc)
@@ -319,7 +338,12 @@ describe("syncAllGmailConnections", () => {
     });
     __setGmailSyncDeps({
       parse: async () => ({ ...parseOk }),
-      fetchImpl: okFetch as unknown as typeof fetch,
+      fetchImpl: (input, init) => {
+        if (String(input).includes("/token") && String(init?.body).includes("refresh_token=revoked")) {
+          return Promise.resolve(Response.json({ error: "invalid_grant" }, { status: 400 }));
+        }
+        return okFetch(input);
+      },
       sessionSecret: SECRET,
       bucket: null,
     });

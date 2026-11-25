@@ -41,7 +41,8 @@ export interface EmailIngestResult {
 function binaries(attachments: RawAttachment[]): RawAttachment[] {
   return attachments.filter(file => hasPdfHeader(file.bytes) ||
     (file.contentType === 'application/pdf' && !isEmlAttachment(file)) ||
-    ((file.filename || !file.contentId) && sniffStatementImage(file.bytes) && (!file.contentId || file.bytes.length >= 16_384)))
+    (sniffStatementImage(file.bytes) &&
+      (file.disposition === 'attachment' || (file.disposition !== 'inline' && !file.contentId))))
 }
 
 async function sha256(bytes: Uint8Array): Promise<string> {

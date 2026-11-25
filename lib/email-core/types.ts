@@ -1,6 +1,7 @@
 export interface Env {
   DB: D1Database
   ATTACHMENTS?: R2Bucket
+  IMAGES?: ImagesBinding
   SESSION_SECRET?: string
   APNS_KEY_P8?: string
   APNS_KEY_ID?: string
@@ -109,7 +110,8 @@ export interface RawAttachment {
   filename: string
   contentType: string
   bytes: Uint8Array
-  /** Content-ID，暂时不用，保留给将来对齐内嵌图片/账单。 */
+  disposition?: string | null
+  /** Content-ID for embedded MIME resources. */
   contentId: string | null
 }
 

@@ -31,13 +31,15 @@ it('preserves connections, messages and legacy payments while making drafts and 
     INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day) VALUES ('c', 'h', 'p', 1);
     INSERT INTO bills (id, card_id, bill_month, bill_amount, due_date) VALUES ('b', 'c', '2026-10', 100, '2026-11-10');
     INSERT INTO gmail_ledger_entries
-      (id, ledger_id, created_by, bank, account_tail, currency, statement_amount, paid_amount, due_date, matched_bill_id)
+      (id, ledger_id, created_by, bank, account_tail, currency, statement_amount, paid_amount, due_date, matched_bill_id, manually_priced)
     VALUES
-      ('partial', 'l1', 'u', 'Test Bank', '4321', 'USD', 100, 25, '2026-11-10', NULL),
-      ('duplicate', 'l2', 'u', 'Test Bank', '4321', 'USD', 100, 0, '2026-11-10', NULL),
-      ('other-currency', 'l3', 'u', 'Test Bank', '4321', 'HKD', 100, 0, '2026-11-10', NULL),
-      ('unpriced', 'l4', 'u', 'Test Bank', '4321', 'USD', 0, 0, NULL, NULL),
-      ('matched', 'l5', 'u', 'Test Bank', '4321', 'USD', 100, 100, '2026-11-10', 'b');
+      ('partial', 'l1', 'u', 'Test Bank', '4321', 'USD', 100, 25, '2026-11-10', NULL, 0),
+      ('duplicate', 'l2', 'u', 'Test Bank', '4321', 'USD', 100, 0, '2026-11-10', NULL, 0),
+      ('other-currency', 'l3', 'u', 'Test Bank', '4321', 'HKD', 100, 0, '2026-11-10', NULL, 0),
+      ('unpriced', 'l4', 'u', 'Test Bank', '4321', 'USD', 0, 0, NULL, NULL, 0),
+      ('matched', 'l5', 'u', 'Test Bank', '4321', 'USD', 100, 100, '2026-11-10', 'b', 0),
+      ('undated-a', 'l6', 'u', 'Test Bank', '4321', 'USD', 100, 0, NULL, NULL, 1),
+      ('undated-b', 'l7', 'u', 'Test Bank', '4321', 'USD', 100, 25, NULL, NULL, 1);
   `)
   const migrations = files.filter(file => file >= '0034' && file < '0037')
   expect(migrations).toHaveLength(3)
@@ -65,6 +67,8 @@ it('preserves connections, messages and legacy payments while making drafts and 
     { id: 'matched', migration_status: 'archived_matched' },
     { id: 'other-currency', migration_status: 'migrated_to_draft' },
     { id: 'partial', migration_status: 'migrated_to_draft' },
+    { id: 'undated-a', migration_status: 'migrated_to_draft' },
+    { id: 'undated-b', migration_status: 'migrated_to_draft' },
     { id: 'unpriced', migration_status: 'migrated_to_draft' },
   ])
   expect(db.raw.prepare(`

@@ -18,6 +18,13 @@ export interface GmailMessageRef {
   threadId: string | null;
 }
 
+export class GmailApiError extends Error {
+  constructor(readonly status: number, readonly invalidGrant: boolean) {
+    super(`Gmail API error (${status})${invalidGrant ? ": invalid_grant" : ""}`);
+    this.name = "GmailApiError";
+  }
+}
+
 async function callJson(
   url: string,
   init: RequestInit,
@@ -25,8 +32,12 @@ async function callJson(
 ): Promise<Record<string, unknown>> {
   const res = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(30_000) });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Gmail API error (${res.status}): ${text.slice(0, 300)}`);
+    let invalidGrant = false;
+    if (res.status === 400 && url === "https://oauth2.googleapis.com/token") {
+      const body: unknown = await res.json().catch(() => null);
+      invalidGrant = !!body && typeof body === "object" && "error" in body && body.error === "invalid_grant";
+    }
+    throw new GmailApiError(res.status, invalidGrant);
   }
   return res.json() as Promise<Record<string, unknown>>;
 }

@@ -11,3 +11,6 @@ database_id = "6ce5f678-e5bb-46cc-88d7-a316f1a209cb"
 [[r2_buckets]]
 binding = "ATTACHMENTS"
 bucket_name = "worldcredit-attachments"
+
+[images]
+binding = "IMAGES"

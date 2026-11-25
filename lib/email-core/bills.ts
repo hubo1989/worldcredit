@@ -839,20 +839,22 @@ export async function resolveBillAttribution(
   const people = hints.flatMap(([source, name]) => matchHolderNames(name, holders).map(holderId => ({ source, holderId })))
   const named = people[0]
   if (named && people.some(person => person.holderId !== named.holderId)) return conflict()
+  const recipientAddresses = new Set(input.recipient?.toLowerCase().match(/[\w.!#$%&'*+/=?^\x60{|}~-]+@[\w.-]+\.[a-z0-9-]+/g) ?? [])
+  const emailMatches = holders.filter(holder => holder.email && recipientAddresses.has(holder.email.trim().toLowerCase()))
+  const emailPerson = emailMatches.length === 1 ? { source: 'holder_email' as const, holderId: emailMatches[0].id } : undefined
+  const evidence = named ?? emailPerson
   const defaultHolderId = holders.find(holder => holder.id === input.defaultHolderId)?.id
   if (defaultHolderId && input.attributionMode === 'force_default_unless_conflict' &&
-      ((named && named.holderId !== defaultHolderId) ||
+      ((evidence && evidence.holderId !== defaultHolderId) ||
        (distinctTargets.length === 1 && distinctTargets[0].holder_id !== defaultHolderId))) return conflict()
   if (distinctTargets.length === 1) {
     const target = distinctTargets[0]
-    if (named && target.holder_id !== named.holderId) return conflict()
+    if (evidence && target.holder_id !== evidence.holderId) return conflict()
     return result('unique_card', target.holder_id, target)
   }
-  const recipientAddresses = new Set(input.recipient?.toLowerCase().match(/[\w.!#$%&'*+/=?^\x60{|}~-]+@[\w.-]+\.[a-z0-9-]+/g) ?? [])
-  const emailMatches = holders.filter(holder => holder.email && recipientAddresses.has(holder.email.trim().toLowerCase()))
-  const person = named ??
-    (defaultHolderId ? { source: 'connection_default' as const, holderId: defaultHolderId } : undefined) ??
-    (emailMatches.length === 1 ? { source: 'holder_email' as const, holderId: emailMatches[0].id } : undefined)
+  const person = evidence ??
+    (defaultHolderId && emailMatches.length === 0
+      ? { source: 'connection_default' as const, holderId: defaultHolderId } : undefined)
   if (person) {
     const owned = distinctTargets.filter(target => target.holder_id === person.holderId)
     if (owned.length === 1) return result(person.source, person.holderId, owned[0])

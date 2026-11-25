@@ -597,6 +597,7 @@ function walk(header: HeaderInfo, body: Uint8Array, ctx: WalkContext, depth: num
       contentType: type,
       bytes,
       contentId: header.contentId,
+      disposition: header.disposition,
     })
     return
   }

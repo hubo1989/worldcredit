@@ -98,7 +98,7 @@ function defaultPasswordHint(context: string): string | null {
 async function unlockWithVault(bytes: Uint8Array, options: PdfOptions): Promise<
   { status: 'unlocked'; bytes: Uint8Array } | Exclude<PreparedStatementPdf, { status: 'ready' }>
 > {
-  const rules = options.db && options.secret ? (await loadVaultRules(options.db, options)).results : []
+  const { db, secret } = options
   const attempted = new Set<string>()
   if (options.adhocPassword) {
     attempted.add(options.adhocPassword)
@@ -106,10 +106,12 @@ async function unlockWithVault(bytes: Uint8Array, options: PdfOptions): Promise<
     if (result.ok) return { status: 'unlocked', bytes: result.bytes }
     if (result.reason === 'unsupported') return { status: 'parse_failed', error: '暂不支持此 PDF 的加密方式' }
   }
+  if (!db || !secret) return { status: 'needs_password', suggestedHint: defaultPasswordHint(options.context ?? '') }
+  const { results: rules } = await loadVaultRules(db, options)
   for (const rule of rules) {
     let password: string
     try {
-      password = await decryptVaultPassword(rule.password_ciphertext, options.secret!, options.userId)
+      password = await decryptVaultPassword(rule.password_ciphertext, secret, options.userId)
     } catch {
       continue
     }
@@ -120,10 +122,14 @@ async function unlockWithVault(bytes: Uint8Array, options: PdfOptions): Promise<
       if (result.reason === 'unsupported') return { status: 'parse_failed', error: '暂不支持此 PDF 的加密方式' }
       continue
     }
-    await options.db!.prepare(
-      `UPDATE statement_password_vault SET use_count = use_count + 1,
-       last_used_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND user_id = ?`,
-    ).bind(rule.id, options.userId).run()
+    try {
+      await db.prepare(
+        `UPDATE statement_password_vault SET use_count = use_count + 1,
+         last_used_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND user_id = ?`,
+      ).bind(rule.id, options.userId).run()
+    } catch {
+      console.warn('[statement-pdf] Failed to update password rule usage')
+    }
     return { status: 'unlocked', bytes: result.bytes }
   }
   return {

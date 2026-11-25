@@ -31,6 +31,7 @@ WITH ranked_priced AS (
     ) AS rk
   FROM gmail_ledger_entries
   WHERE matched_bill_id IS NULL AND migration_status IS NULL AND COALESCE(statement_amount, 0) > 0
+    AND COALESCE(due_date, statement_date, '') <> ''
 )
 UPDATE gmail_ledger_entries
 SET migration_status = 'skipped_noise'
@@ -43,8 +44,8 @@ INSERT OR IGNORE INTO bill_import_drafts (
 )
 SELECT
   'draft_leg_' || gle.id,
-  COALESCE(gle.created_by, (SELECT id FROM users WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1)),
-  gle.matched_card_id,
+  COALESCE(gle.created_by, (SELECT id FROM users WHERE role = 'admin' ORDER BY created_at ASC, id LIMIT 1)),
+  (SELECT id FROM credit_cards WHERE id = gle.matched_card_id),
   'legacy_ledger',
   '历史邮箱账本迁入',
   COALESCE(gle.evidence, gle.subject),
@@ -82,7 +83,7 @@ SELECT
 FROM gmail_ledger_entries gle
 WHERE gle.matched_bill_id IS NULL
   AND gle.migration_status IS NULL
-  AND COALESCE(gle.created_by, (SELECT id FROM users WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1)) IS NOT NULL;
+  AND COALESCE(gle.created_by, (SELECT id FROM users WHERE role = 'admin' ORDER BY created_at ASC, id LIMIT 1)) IS NOT NULL;
 
 UPDATE gmail_ledger_entries
 SET migration_status = 'migrated_to_draft',
