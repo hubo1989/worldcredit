@@ -48,12 +48,12 @@ afterEach(() => {
   for (const db of dbs.splice(0)) db.close();
 });
 
-function database(legacy = false) {
-  const db = legacy ? createSqliteD1() : createOpportunityDb();
+function database(beforeMigration?: "0019" | "0043") {
+  const db = beforeMigration ? createSqliteD1() : createOpportunityDb();
   dbs.push(db);
-  if (legacy) {
+  if (beforeMigration) {
     for (const file of readdirSync(SQLITE_D1_MIGRATIONS_DIR).sort()) {
-      if (file.endsWith(".sql") && file < "0019") {
+      if (file.endsWith(".sql") && file < beforeMigration) {
         db.exec(readFileSync(join(SQLITE_D1_MIGRATIONS_DIR, file), "utf8"));
       }
     }
@@ -132,7 +132,7 @@ function allBusinessRows(db: SqliteD1) {
 
 describe("0020 bootstrap of a populated pre-sync database", () => {
   it("backfills all 12 tables in dependency order, preserves rows, and is idempotent", () => {
-    const db = database(true);
+    const db = database("0019");
     seed(db);
     const original = allBusinessRows(db);
     migration(db, "0019_offline_sync_tables.sql");
@@ -161,7 +161,7 @@ describe("0020 bootstrap of a populated pre-sync database", () => {
   });
 
   it("pages all existing rows from cursor 0 without crossing user boundaries", async () => {
-    const db = database(true);
+    const db = database("0019");
     seed(db);
     migration(db, "0019_offline_sync_tables.sql");
     migration(db, "0020_offline_sync_backfill.sql");
@@ -188,7 +188,7 @@ describe("0020 bootstrap of a populated pre-sync database", () => {
   });
 
   it("does not duplicate rows already captured by the 0019 triggers", () => {
-    const db = database(true);
+    const db = database("0019");
     seed(db);
     migration(db, "0019_offline_sync_tables.sql");
     db.exec("INSERT INTO banks (id,name) VALUES ('new-bank','新银行')");
@@ -283,9 +283,12 @@ describe("authoritative pull reconciliation", () => {
 
   it("merges/deduplicates reconciliation without consuming incremental page slots", async () => {
     const db = database();
+    const baseline = await db.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM sync_changes")
+      .first<{ seq: number }>();
+    const cursor = baseline?.seq ?? 0;
     seed(db);
     const first = await pullData({
-      cursor: 0,
+      cursor,
       limit: 1,
       reconcile: [
         { tbl: "banks", row_id: "bank" },
@@ -293,11 +296,11 @@ describe("authoritative pull reconciliation", () => {
         { tbl: "bills", row_id: "bill-a" },
       ],
     });
-    expect(first.cursor).toBe(1);
+    expect(first.cursor).toBe(cursor + 1);
     expect(first.has_more).toBe(true);
     expect(first.changes.map((change) => change.tbl)).toEqual(["banks", "bills"]);
     const second = await pullData({ cursor: first.cursor, limit: 1 });
-    expect(second.cursor).toBe(2);
+    expect(second.cursor).toBe(cursor + 2);
     expect(second.changes.map((change) => change.tbl)).toEqual(["card_products"]);
   });
 
@@ -389,8 +392,8 @@ describe("authoritative pull reconciliation", () => {
     expect((await pull({ cursor: 0, reconcile })).status).toBe(400);
   });
 
-  it("matches the shared Swift wire fixture against actual SQLite pull rows", async () => {
-    const db = database();
+  it("matches the pre-0043 shared Swift wire fixture against actual SQLite pull rows", async () => {
+    const db = database("0043");
     const fixture = JSON.parse(
       readFileSync(join(__dirname, "../../shared/fixtures/sync-d1-rows.json"), "utf8"),
     ) as {
