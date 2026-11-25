@@ -61,6 +61,26 @@ struct SettingsView: View {
                         }
                     }
 
+                    if !appState.syncRejectedNotices.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("离线提交被拒绝通知 (\(appState.syncRejectedNotices.count))")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.orange)
+                                Spacer()
+                                Button("知道了") {
+                                    Task { await appState.clearAllSyncRejectedNotices() }
+                                }
+                                .font(.caption.bold())
+                            }
+                            ForEach(appState.syncRejectedNotices) { notice in
+                                Text("• \(notice.message)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
                     if appState.isolatedSyncChanges.isEmpty {
                         LabeledContent("同步异常隔离记录", value: "0 条")
                             .accessibilityIdentifier("settings.isolatedChanges")

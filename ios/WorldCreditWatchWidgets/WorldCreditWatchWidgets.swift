@@ -7,6 +7,7 @@ struct WatchDueEntry: TimelineEntry {
     let bankName: String
     let cardTitle: String
     let amount: Double
+    let currency: String
     let days: Int
     let isOverdue: Bool
     let distanceLabel: String
@@ -20,6 +21,7 @@ struct WatchDueWidgetProvider: TimelineProvider {
             bankName: "招商银行",
             cardTitle: "经典白",
             amount: 3200,
+            currency: "CNY",
             days: 3,
             isOverdue: false,
             distanceLabel: "3 天后",
@@ -54,12 +56,14 @@ struct WatchDueWidgetProvider: TimelineProvider {
 
     private func entry(from snapshot: WatchSnapshot?, for evaluationDate: Date, timestamp: Date? = nil) -> WatchDueEntry {
         let time = timestamp ?? evaluationDate
+        let fallbackCurrency = snapshot?.displayCurrency ?? "CNY"
         guard let snapshot, let bill = snapshot.nextDueBill else {
             return WatchDueEntry(
                 date: time,
                 bankName: "",
                 cardTitle: "暂无待还",
                 amount: 0,
+                currency: fallbackCurrency,
                 days: 999,
                 isOverdue: false,
                 distanceLabel: "全部已结清",
@@ -76,6 +80,7 @@ struct WatchDueWidgetProvider: TimelineProvider {
             bankName: bill.bankName,
             cardTitle: bill.cardTitle,
             amount: bill.remainingAmount,
+            currency: bill.currency,
             days: days,
             isOverdue: isOverdue,
             distanceLabel: label,
@@ -139,7 +144,7 @@ struct WatchDueWidgetEntryView: View {
                     .foregroundStyle(.secondary)
             } else {
                 HStack {
-                    Text("\(entry.bankName) ¥\(String(format: "%.0f", entry.amount))")
+                    Text("\(entry.bankName) \(DashboardMoney.formatCompact(entry.amount, currency: entry.currency))")
                         .font(.caption2.bold())
                         .lineLimit(1)
                     Spacer()
@@ -168,7 +173,7 @@ struct WatchDueWidgetEntryView: View {
         if entry.amount <= 0 {
             Text("WorldCredit · 账单结清")
         } else {
-            Text("\(entry.bankName) ¥\(String(format: "%.0f", entry.amount)) · \(entry.distanceLabel)")
+            Text("\(entry.bankName) \(DashboardMoney.formatCompact(entry.amount, currency: entry.currency)) · \(entry.distanceLabel)")
         }
     }
 }

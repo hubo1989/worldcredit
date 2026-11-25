@@ -17,12 +17,14 @@ interface MutationResult {
   data?: unknown;
   error?: string;
   code?: string;
+  details?: unknown;
   permanent?: boolean;
   already_processed?: boolean;
 }
 
 const MAX_MUTATIONS = 100;
 const MAX_ID_LENGTH = 256;
+const MAX_REQUEST_KEY_LENGTH = 128;
 /** Only offline mutations with row-level or key-level idempotency may use sync/push. */
 const OFFLINE_SYNC_MUTATIONS = new Set([
   "bills.recordPayment",
@@ -30,13 +32,56 @@ const OFFLINE_SYNC_MUTATIONS = new Set([
   "bills.updateBillFields",
   "bills.clearOverride",
   "cards.updateCard",
+  // Phase 2 (HUB-163): offline create + opportunity/notification replay.
+  "cards.createCard",
+  "bills.createBill",
   "payments.updatePayment",
   "payables.createRecurringPayable",
   "payables.updateRecurringPayable",
   "notifications.markNotificationRead",
   "notifications.markAllNotificationsRead",
+  "notifications.deleteNotification",
   "preferences.updateUserPreferences",
+  "opportunities.recordOpportunityUsage",
+  "opportunities.correctOpportunityUsage",
+  "opportunities.voidOpportunityUsage",
+  "opportunities.recordOpportunityClaim",
+  "opportunities.voidOpportunityClaim",
+  "opportunities.recordOpportunityBooking",
+  "opportunities.completeOpportunityBooking",
+  "opportunities.cancelOpportunityBooking",
+  "opportunities.updateManualTaskProgress",
+  "opportunities.recordTaskRewardReceived",
+  "opportunities.setOpportunityFollowed",
+  "opportunities.updateOpportunityReminderState",
 ]);
+
+/** Ledger writes whose `opportunity_commands(actor, request_key)` row is the replay anchor. */
+const REQUEST_KEY_MUTATIONS = new Set([
+  "opportunities.recordOpportunityUsage",
+  "opportunities.correctOpportunityUsage",
+  "opportunities.voidOpportunityUsage",
+  "opportunities.recordOpportunityClaim",
+  "opportunities.voidOpportunityClaim",
+  "opportunities.recordOpportunityBooking",
+  "opportunities.completeOpportunityBooking",
+  "opportunities.cancelOpportunityBooking",
+  "opportunities.updateManualTaskProgress",
+  "opportunities.recordTaskRewardReceived",
+]);
+
+/** Ledger writes that additionally compare-and-swap on `expected_revision`. */
+const REVISION_MUTATIONS = new Set([
+  "opportunities.correctOpportunityUsage",
+  "opportunities.voidOpportunityUsage",
+  "opportunities.voidOpportunityClaim",
+  "opportunities.completeOpportunityBooking",
+  "opportunities.cancelOpportunityBooking",
+  "opportunities.updateManualTaskProgress",
+]);
+
+const REMINDER_ACTIONS = new Set(["read", "dismiss", "snooze", "restore"]);
+
 const inFlightByMutation = new Map<string, Promise<MutationResult>>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,6 +94,78 @@ function validateOfflineReplaySafety(mut: MutationItem): { error: string; code: 
     if (!isRecord(payload) || !isValidUuid(payload.id)) {
       return {
         error: "离线创建固定支出必须提供合法的客户端 UUID id",
+        code: "VALIDATION_FAILED",
+      };
+    }
+  } else if (mut.name === "cards.createCard") {
+    const payload = mut.args[0];
+    if (!isRecord(payload) || !isValidUuid(payload.id)) {
+      return {
+        error: "离线建卡必须提供合法的客户端 UUID id",
+        code: "VALIDATION_FAILED",
+      };
+    }
+  } else if (mut.name === "bills.createBill") {
+    const payload = mut.args[0];
+    if (!isRecord(payload) || !isValidUuid(payload.id)) {
+      return {
+        error: "离线建账单必须提供合法的客户端 UUID id",
+        code: "VALIDATION_FAILED",
+      };
+    }
+  } else if (mut.name === "opportunities.setOpportunityFollowed") {
+    const payload = mut.args[0];
+    if (
+      !isRecord(payload) ||
+      typeof payload.account_id !== "string" ||
+      !payload.account_id.trim()
+    ) {
+      return {
+        error: "离线关注状态必须提供合法的 account_id",
+        code: "VALIDATION_FAILED",
+      };
+    }
+  } else if (mut.name === "opportunities.updateOpportunityReminderState") {
+    const payload = mut.args[0];
+    if (
+      !isRecord(payload) ||
+      typeof payload.event_key !== "string" ||
+      !payload.event_key.startsWith("op:") ||
+      typeof payload.action !== "string" ||
+      !REMINDER_ACTIONS.has(payload.action)
+    ) {
+      return {
+        error: "离线提醒状态必须提供合法的 event_key 与 action",
+        code: "VALIDATION_FAILED",
+      };
+    }
+  } else if (mut.name === "notifications.deleteNotification") {
+    const notificationId = mut.args[1];
+    if (typeof notificationId !== "string" || !notificationId.trim()) {
+      return {
+        error: "离线删除通知必须提供合法的通知 ID",
+        code: "VALIDATION_FAILED",
+      };
+    }
+  } else if (REQUEST_KEY_MUTATIONS.has(mut.name)) {
+    const payload = mut.args[0];
+    if (
+      !isRecord(payload) ||
+      typeof payload.request_key !== "string" ||
+      !payload.request_key.trim() ||
+      payload.request_key.length > MAX_REQUEST_KEY_LENGTH
+    ) {
+      return {
+        error: "离线权益变更必须提供合法的 request_key（1–128 字符）",
+        code: "VALIDATION_FAILED",
+      };
+    }
+    if (
+      REVISION_MUTATIONS.has(mut.name) &&
+      (!Number.isInteger(payload.expected_revision) || (payload.expected_revision as number) < 1)
+    ) {
+      return {
+        error: "离线权益变更必须提供正整数 expected_revision",
         code: "VALIDATION_FAILED",
       };
     }
@@ -259,6 +376,7 @@ export async function POST(request: Request) {
           ok: false,
           error: dispatchRes.error,
           code: dispatchRes.code,
+          details: dispatchRes.details,
           permanent: isPermanent,
         };
         if (isPermanent) {

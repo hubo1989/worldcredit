@@ -4,28 +4,20 @@ import Foundation
 
 /// 原生首页 → 尚未原生实现的 Web 业务入口。
 ///
-/// 方向 1 移除了 `.gmailLedger`（已全面原生化为 DraftsInboxView），仅保留方向 2 权益入口。
-/// 纯值类型，不依赖 WebKit / SwiftUI，便于路由约束单测。
-public enum DashboardWebDestination: String, CaseIterable, Identifiable, Sendable {
-    case benefits
-    case benefitCalendar
+/// 方向 1（#64）移除了 `.gmailLedger`，Phase 2（#61）移除了 `.benefits`、`.benefitCalendar`；
+/// 当前全部首页入口均已原生化，不再保留 WebView 受限顶层入口，保留零实例只读契约类型。
+public struct DashboardWebDestination: CaseIterable, Identifiable, Hashable, Sendable {
 
-    public var id: String { rawValue }
+    public static let allCases: [DashboardWebDestination] = []
 
-    /// 导航栏标题（与 Web 页面文案一致，供 DashboardWebView 的 NavigationStack 使用）。
-    public var title: String {
-        switch self {
-        case .benefits: return "权益"
-        case .benefitCalendar: return "权益日历"
-        }
-    }
+    public let id: String
+    public let title: String
+    public let path: String
 
-    /// 受限 path（不含 query）。
-    public var path: String {
-        switch self {
-        case .benefits: return "/benefits"
-        case .benefitCalendar: return "/benefits/calendar"
-        }
+    private init(id: String, title: String, path: String) {
+        self.id = id
+        self.title = title
+        self.path = path
     }
 
     /// 保留入口均无桥接 query 参数。
@@ -34,7 +26,7 @@ public enum DashboardWebDestination: String, CaseIterable, Identifiable, Sendabl
     /// 生产 host 固定为 app.all-bill.com；cookie 与 URL 均不接受入参拼 host。
     public static let webHost = "app.all-bill.com"
 
-    /// 入口 URL。只由枚举常量拼装，永不携带 token。
+    /// 入口 URL。只由受限常量拼装，永不携带 token。
     public func url(host: String = DashboardWebDestination.webHost) -> URL {
         var components = URLComponents()
         components.scheme = "https"
@@ -42,7 +34,7 @@ public enum DashboardWebDestination: String, CaseIterable, Identifiable, Sendabl
         components.path = path
         components.queryItems = queryItems.isEmpty ? nil : queryItems
         guard let url = components.url else {
-            preconditionFailure("unreachable: static destination \(rawValue) must build a URL")
+            preconditionFailure("unreachable: destination \(id) must build a URL")
         }
         return url
     }
@@ -84,7 +76,7 @@ public enum DashboardWebRoutePolicy: Sendable {
             return .reject
         }
 
-        // 3) 目标站：精确 host + https + 443 + 受限 path（仅保留 /benefits, /benefits/calendar）。
+        // 3) 目标站：精确 host + https + 443 + 受限 path（全部业务已原生化，allowedPaths 为空，均拒绝进受限 WebView）。
         if host == allowedHost {
             guard scheme == "https" else { return .reject }
             if let port = url.port, port != 443 { return .reject }

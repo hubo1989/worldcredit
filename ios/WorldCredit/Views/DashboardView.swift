@@ -574,11 +574,11 @@ struct DashboardView: View {
                     HStack {
                         Text("权益待办").font(.headline)
                         Spacer()
-                        Button("全部 ›") { appState.openWebDestination(.benefitCalendar) }
+                        Button("全部 ›") { appState.openBenefits(.calendar()) }
                             .font(.caption.bold())
                     }
                     ForEach(appState.dashboardReminders) { reminder in
-                        Button { appState.openWebDestination(.benefitCalendar) } label: {
+                        Button { appState.openBenefits(.calendar(eventKey: reminder.eventKey)) } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(reminder.title).font(.subheadline.bold())
                                     .lineLimit(1)
@@ -646,7 +646,7 @@ struct DashboardView: View {
             }
             quickAction("权益", systemImage: "gift") {
                 HapticManager.impactLight()
-                appState.openWebDestination(.benefits)
+                appState.openBenefits(.ledger(accountId: nil))
             }
             quickAction(
                 appState.billDrafts.isEmpty ? "账单草稿" : "账单草稿 (\(appState.billDrafts.count))",

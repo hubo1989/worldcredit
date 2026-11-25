@@ -106,7 +106,7 @@ beforeEach(() => {
     render(<ReminderPreferencesCard config={legacyConfig} onChange={onChange} />)
 
     // 默认判断为开启状态
-    const toggle = screen.getByRole('switch', { name: 'Web Push 浏览器通道' })
+    const toggle = screen.getByRole('switch', { name: '站外推送通知（Web Push / iOS APNs）' })
     expect(toggle).toHaveAttribute('aria-checked', 'true')
 
     // 点击切换为关闭，应提交包含空数组的 enabled_channels
@@ -126,7 +126,7 @@ beforeEach(() => {
     render(<ReminderPreferencesCard config={legacyOffConfig} onChange={onChange} />)
 
     // 绝不让显式关闭过的用户被重新开启：判定为关闭状态
-    const toggle = screen.getByRole('switch', { name: 'Web Push 浏览器通道' })
+    const toggle = screen.getByRole('switch', { name: '站外推送通知（Web Push / iOS APNs）' })
     expect(toggle).toHaveAttribute('aria-checked', 'false')
 
     // 自动写回一次空数组迁移
@@ -145,7 +145,7 @@ beforeEach(() => {
     } as unknown as UserReminderConfig
 
     render(<ReminderPreferencesCard config={legacyOnConfig} onChange={onChange} />)
-    const toggle = screen.getByRole('switch', { name: 'Web Push 浏览器通道' })
+    const toggle = screen.getByRole('switch', { name: '站外推送通知（Web Push / iOS APNs）' })
     expect(toggle).toHaveAttribute('aria-checked', 'true')
     // 默认开启时不触发多余的关闭写回
     expect(onChange).not.toHaveBeenCalledWith({ enabled_channels: [] })
@@ -159,7 +159,7 @@ beforeEach(() => {
     } as unknown as UserReminderConfig
 
     render(<ReminderPreferencesCard config={offConfig} onChange={onChange} />)
-    const toggle = screen.getByRole('switch', { name: 'Web Push 浏览器通道' })
+    const toggle = screen.getByRole('switch', { name: '站外推送通知（Web Push / iOS APNs）' })
     expect(toggle).toHaveAttribute('aria-checked', 'false')
   })
 
@@ -194,7 +194,7 @@ beforeEach(() => {
     } as unknown as UserReminderConfig
 
     render(<ReminderPreferencesCard config={customTzConfig} onChange={onChange} />)
-    const select = screen.getByLabelText('提醒时区 (标准下拉)') as unknown as HTMLSelectElement
+    const select = screen.getByLabelText('提醒时区') as unknown as HTMLSelectElement
     expect(select.value).toBe('Asia/Chongqing')
     expect(screen.getByRole('option', { name: 'Asia/Chongqing (当前设置)' })).toBeInTheDocument()
   })
@@ -295,7 +295,7 @@ beforeEach(() => {
       await user.click(testBtn)
 
       await waitFor(() => {
-        expect(screen.getByText('Web Push 浏览器通道已关闭，请先开启通道后再测试。')).toBeInTheDocument()
+        expect(screen.getByText('站外推送通道已关闭，请先开启通道后再测试。')).toBeInTheDocument()
       })
       expect(pushApi.sendTestPush).not.toHaveBeenCalled()
     } finally {
@@ -310,7 +310,7 @@ beforeEach(() => {
         onChange={vi.fn()}
       />
     )
-    const select = screen.getByLabelText('提醒时区 (标准下拉)') as unknown as HTMLSelectElement
+    const select = screen.getByLabelText('提醒时区') as unknown as HTMLSelectElement
     const nyOption = Array.from(select.options).find((o) => o.value === 'America/New_York')
     expect(nyOption).toBeDefined()
     // 包含动态 UTC 偏移，非写死文本

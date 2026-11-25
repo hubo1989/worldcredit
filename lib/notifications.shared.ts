@@ -41,6 +41,11 @@ export interface NotificationMetadata {
   date?: string
   due_date?: string
   bill_id?: string
+  card_id?: string
+  annual_fee?: number
+  annual_fee_status?: string
+  roi_net_value?: number
+  waiver_gap_text?: string
   payable_id?: string
   remaining?: number
   currency?: string
@@ -62,6 +67,7 @@ export const DEFAULT_NOTIFICATION_ITEM_SWITCHES: NotificationItemSwitches = {
   payable_due_advance: true,
   bill_overdue: true,
   grace_period_longest: true,
+  annual_fee_decision: true,
   opportunity_expiry: true,
   opportunity_claim: true,
   opportunity_activity: true,
@@ -113,6 +119,12 @@ export const NOTIFICATION_SWITCH_ITEMS: Array<{
     description: '账单或固定支出已过到期日仍未结清时每日提醒',
   },
   {
+    key: 'annual_fee_decision',
+    group: 'bills',
+    label: '年费续卡决策',
+    description: '在年费扣费前结合免年费进度与权益回报提醒续卡决策',
+  },
+  {
     key: 'opportunity_expiry',
     group: 'opportunities',
     label: '权益到期提醒',
@@ -160,6 +172,7 @@ export const NOTIFICATION_CATEGORY_META: Record<
   payable_due_advance: { label: '支出提醒', tone: 'accent' },
   bill_overdue: { label: '已逾期', tone: 'danger' },
   grace_period_longest: { label: '最长免息期', tone: 'gold' },
+  annual_fee_decision: { label: '年费续卡决策', tone: 'gold' },
   opportunity_expiry: { label: '权益到期', tone: 'gold' },
   opportunity_claim: { label: '权益领取', tone: 'accent' },
   opportunity_activity: { label: '优惠活动', tone: 'accent' },
@@ -187,6 +200,7 @@ export function resolveNotificationSwitches(
     payable_due_advance: pick('payable_due_advance'),
     bill_overdue: pick('bill_overdue'),
     grace_period_longest: pick('grace_period_longest'),
+    annual_fee_decision: pick('annual_fee_decision'),
     opportunity_expiry: pick('opportunity_expiry'),
     opportunity_claim: pick('opportunity_claim'),
     opportunity_activity: pick('opportunity_activity'),

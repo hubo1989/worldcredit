@@ -718,6 +718,13 @@ export async function setOpportunityFollowed(
         actual_revision: existing.revision,
       })
     }
+    // Offline replay without a CAS anchor: an already-reached target state is
+    // the same intent, so answer with the current revision instead of bumping
+    // it (a bump would make every replayed follow/unfollow look like a change).
+    const alreadyThere = existing.followed === (input.followed ? 1 : 0);
+    if (alreadyThere && (input.expected_revision === undefined || input.expected_revision === null)) {
+      return { account_id: input.account_id, followed: input.followed, revision: existing.revision };
+    }
     const { results } = await db
       .prepare(
         `UPDATE opportunity_user_states
