@@ -437,6 +437,7 @@ export type NotificationCategory =
   | 'payable_due_advance'
   | 'bill_overdue'
   | 'grace_period_longest'
+  | 'annual_fee_decision'
   | 'opportunity_expiry'
   | 'opportunity_claim'
   | 'opportunity_activity'
@@ -452,6 +453,7 @@ export interface NotificationItemSwitches {
   payable_due_advance: boolean
   bill_overdue: boolean
   grace_period_longest: boolean
+  annual_fee_decision: boolean
   opportunity_expiry: boolean
   opportunity_claim: boolean
   opportunity_activity: boolean

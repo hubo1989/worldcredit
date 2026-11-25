@@ -100,6 +100,59 @@ export async function assertDraftAccess(draftId: unknown, ctx: MemberContext): P
   memberAssert(!!data && data.created_by === ctx.userId, '无权操作其他用户的导入草稿')
 }
 
+/** 交易明细归属：bill_items → bills → credit_cards.holder_id（fail closed）。 */
+export async function assertBillItemAccess(itemId: unknown, ctx: MemberContext): Promise<void> {
+  memberAssert(typeof itemId === 'string', '参数必须是账单明细 ID')
+  const { data } = await queryOne<{ holder_id: string }>(
+    `SELECT cc.holder_id FROM bill_items bi
+     JOIN bills b ON b.id = bi.bill_id
+     JOIN credit_cards cc ON cc.id = b.card_id
+     WHERE bi.id = ?`,
+    [itemId],
+  )
+  memberAssert(!!data && ctx.holderIds.includes(data.holder_id), '无权访问其他成员的账单明细')
+}
+
+/** 分期计划归属：installment_plans → credit_cards.holder_id（fail closed）。 */
+export async function assertInstallmentAccess(planId: unknown, ctx: MemberContext): Promise<void> {
+  memberAssert(typeof planId === 'string', '参数必须是分期计划 ID')
+  const { data } = await queryOne<{ holder_id: string }>(
+    `SELECT cc.holder_id FROM installment_plans ip
+     JOIN credit_cards cc ON cc.id = ip.card_id
+     WHERE ip.id = ?`,
+    [planId],
+  )
+  memberAssert(!!data && ctx.holderIds.includes(data.holder_id), '无权访问其他成员的分期计划')
+}
+
+/**
+ * 全家庭报表导出的成员隔离（AC-5.2）：
+ * - `scope === 'family'` 一律 403（成员没有「全家庭」视野）；
+ * - 传了非本人 `holder_id` 一律 403；
+ * - 未传 holder_id 时仅当成员只绑定一个持卡人档案才自动补全，否则要求显式选择。
+ * 就地改写入参对象，导出服务后续只认 `holder_id`。
+ */
+export function guardFamilyExport(request: unknown, ctx: MemberContext): void {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) {
+    throw new MemberScopeError('参数必须是导出请求对象')
+  }
+  const req = request as { scope?: unknown; holder_id?: unknown }
+  if (req.scope === 'family') {
+    throw new MemberScopeError('无权导出全家庭对账单')
+  }
+  if (ctx.holderIds.length === 0) {
+    throw new MemberScopeError('当前账号未绑定持卡人档案')
+  }
+  if (typeof req.holder_id === 'string' && req.holder_id) {
+    assertHolderAccess(req.holder_id, ctx)
+    return
+  }
+  if (ctx.holderIds.length !== 1) {
+    throw new MemberScopeError('请选择你自己的持卡人档案后重试')
+  }
+  req.holder_id = ctx.holderIds[0]
+}
+
 /**
  * Ledger rows are account-scoped: gmail_ledger_entries.created_by stores the
  * user id that ingested the statement mail. A member may only touch their own
