@@ -20,7 +20,7 @@ struct WatchBillsListView: View {
                                     .font(.headline)
                                     .lineLimit(1)
                                 Spacer()
-                                Text("¥\(String(format: "%.0f", bill.remainingAmount))")
+                                Text(DashboardMoney.formatCompact(bill.remainingAmount, currency: bill.currency))
                                     .font(.headline)
                                     .foregroundStyle(bill.isOverdue() ? .red : .primary)
                             }
@@ -50,7 +50,7 @@ struct WatchBillsListView: View {
             titleVisibility: .visible
         ) {
             if let b = selectedBill {
-                Button("全额还款 ¥\(String(format: "%.2f", b.remainingAmount))") {
+                Button("全额还款 \(DashboardMoney.format(b.remainingAmount, currency: b.currency))") {
                     store.markAsPaid(bill: b)
                 }
             }

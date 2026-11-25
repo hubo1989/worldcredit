@@ -118,7 +118,8 @@ struct CardCreateSheetView: View {
                     }
 
                     HStack {
-                        Text("信用额度 (¥)")
+                        let currency = products.first(where: { $0.id == selectedCardProductId })?.currency ?? "CNY"
+                        Text("信用额度 (\(DashboardMoney.currencySymbol(currency)))")
                         Spacer()
                         TextField("0", text: $creditLimitText)
                             .keyboardType(.numberPad)

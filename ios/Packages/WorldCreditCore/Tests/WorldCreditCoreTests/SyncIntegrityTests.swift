@@ -183,7 +183,7 @@ struct SyncIntegrityTests {
     @Test("Unsupported server entities remain forward compatible")
     func unsupportedTable() async throws {
         let manager = try database()
-        let data = try responseData(changes: [["tbl": "opportunity_definitions", "row_id": "opp-def-1", "op": "upsert"]], cursor: 7)
+        let data = try responseData(changes: [["tbl": "future_unsupported_entity", "row_id": "future-1", "op": "upsert"]], cursor: 7)
         try await engine(manager) { _ in data }.pull()
         try await manager.dbWriter.read { (db: Database) throws -> Void in
             #expect(try SyncMeta.fetchOne(db, key: "sync_cursor")?.value == "7")
@@ -647,6 +647,18 @@ struct SyncIntegrityTests {
         try await manager.dbWriter.write { db in
             try MutationOutbox(id: "mut-wipe", name: "bills.updateBillFields", argsJson: "[]").insert(db)
             try SyncMeta(key: "sync_client_id", value: "client-wipe").save(db)
+            try OpportunityDefinitionRecord(id: "def-w", kind: "benefit", visibility: "shared", createdAt: "2026-10-01T00:00:00Z").insert(db)
+            try OpportunityRuleVersionRecord(id: "ver-w", definitionId: "def-w", version: 1, effectiveFrom: "2026-01-01", rulesJson: "{}", publishedAt: "2026-01-01T00:00:00Z").insert(db)
+            try OpportunityAccountRecord(id: "acc-w", definitionId: "def-w", holderId: "sync-fixture-holder", scopeKind: "holder", scopeKey: "k", createdBy: "sync-fixture-user", createdAt: "2026-10-01T00:00:00Z").insert(db)
+            try OpportunityAccountCardRecord(accountId: "acc-w", definitionId: "def-w", holderId: "sync-fixture-holder", cardId: "sync-fixture-card").insert(db)
+            try OpportunityCycleRecord(id: "cyc-w", accountId: "acc-w", versionId: "ver-w", versionAsOfOn: "2026-10-01", cycleKey: "2026-10", periodStartOn: "2026-10-01", usableStartOn: "2026-10-01", createdAt: "2026-10-01T00:00:00Z").insert(db)
+            try OpportunityUsageRecord(id: "use-w", accountId: "acc-w", cycleId: "cyc-w", cardId: "sync-fixture-card", usedOn: "2026-10-10").insert(db)
+            try OpportunityTaskRecord(id: "task-w", holderId: "sync-fixture-holder", taskType: "custom", title: "T", cardIdsJson: "[]", rulesJson: "{}", rewardJson: "{}").insert(db)
+            try OpportunityTaskCycleRecord(id: "tcyc-w", taskId: "task-w", cycleKey: "2026-10", rulesSnapshotJson: "{}", rewardSnapshotJson: "{}", periodStartOn: "2026-10-01", periodEndBefore: "2026-11-01", deadlineAt: "2026-10-31T23:59:59Z").insert(db)
+            try OpportunityFulfillmentRecord(id: "ful-w", holderId: "sync-fixture-holder", kind: "claim", accountId: "acc-w", cycleId: "cyc-w", sourceKey: "claim:acc-w:cyc-w", recordedOn: "2026-10-02").insert(db)
+            try OpportunityUserStateRecord(userId: "sync-fixture-user", accountId: "acc-w", followed: true).insert(db)
+            try OpportunityReminderStateRecord(userId: "sync-fixture-user", eventKey: "op:expiry:acc-w:cyc-w:1234567890ab").insert(db)
+            try NotificationHistoryRecord(id: "notif-w", userId: "sync-fixture-user", notificationKey: "k-w", title: "T").insert(db)
         }
 
         let reflectedTablesBefore = try await manager.dbWriter.read { db in
@@ -656,7 +668,7 @@ struct SyncIntegrityTests {
                 ORDER BY name
             """)
         }
-        #expect(reflectedTablesBefore.count == 17)
+        #expect(reflectedTablesBefore.count == 29)
 
         for table in reflectedTablesBefore {
             let count = try await manager.dbWriter.read { db in

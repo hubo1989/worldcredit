@@ -7,6 +7,19 @@ struct NotificationSettingsView: View {
 
     private let advanceDayChoices = [7, 5, 3, 2, 1, 0]
 
+    private let timezonePresets: [(id: String, name: String)] = [
+        ("Asia/Shanghai", "中国标准时间"),
+        ("Asia/Hong_Kong", "香港时间"),
+        ("Asia/Tokyo", "日本标准时间"),
+        ("Asia/Singapore", "新加坡时间"),
+        ("America/New_York", "美东时间"),
+        ("America/Los_Angeles", "美西时间"),
+        ("Europe/London", "伦敦时间"),
+        ("Australia/Sydney", "悉尼时间"),
+    ]
+
+    private let hourChoices: [String] = (0..<24).map { String(format: "%02d:00", $0) }
+
     private enum QuietPreset: String, CaseIterable, Identifiable {
         case off = "off"
         case night22 = "22:00-08:00"
@@ -120,7 +133,7 @@ struct NotificationSettingsView: View {
             }
 
             Section {
-                Toggle("推送通道（Web Push / 站外推送）", isOn: Binding(
+                Toggle("站外推送通知（Web Push / iOS APNs）", isOn: Binding(
                     get: { appState.reminderPreferences.webPushChannelEnabled },
                     set: { enabled in
                         var next = appState.reminderPreferences
@@ -144,10 +157,54 @@ struct NotificationSettingsView: View {
             } footer: {
                 if let start = appState.reminderPreferences.quietHoursStart,
                    let end = appState.reminderPreferences.quietHoursEnd {
-                    Text("当前免打扰时段：\(start) - \(end)（仍会保留站内通知中心记录）。")
+                    Text("当前免打扰时段：\(start) - \(end)（关闭站外推送后仅保留站内通知中心，不下发系统推送）。")
                 } else {
-                    Text("当前未开启免打扰，将在触发时段正常下发推送。")
+                    Text("关闭站外推送后仅写站内通知中心，不下发系统推送。")
                 }
+            }
+
+            Section {
+                Picker("提醒时区", selection: timeZoneBinding) {
+                    ForEach(timezoneOptions, id: \.id) { opt in
+                        Text(opt.label).tag(opt.id)
+                    }
+                }
+                .accessibilityIdentifier("settings.notifications.timezone")
+
+                Button {
+                    var next = appState.reminderPreferences
+                    next.opportunities.timeZone = TimeZone.current.identifier
+                    persist(next)
+                } label: {
+                    Label("使用当前设备时区（\(TimeZone.current.identifier)）", systemImage: "location.fill")
+                        .font(.subheadline)
+                }
+                .accessibilityIdentifier("settings.notifications.useDeviceTimezone")
+
+                Picker("每日提醒推送时间", selection: localTimeBinding) {
+                    ForEach(hourSelectionChoices, id: \.self) { hhmm in
+                        Text(hhmm).tag(hhmm)
+                    }
+                }
+                .accessibilityIdentifier("settings.notifications.localTime")
+
+                if isLocalTimeInQuietHours,
+                   let qStart = appState.reminderPreferences.quietHoursStart,
+                   let qEnd = appState.reminderPreferences.quietHoursEnd {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "clock.badge.exclamationmark")
+                            .foregroundStyle(.orange)
+                        Text("该时刻位于免打扰时段（\(qStart)–\(qEnd)）内，推送将顺延至免打扰结束（\(qEnd)）后发出。")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                    .accessibilityIdentifier("settings.notifications.quietHoursWarning")
+                }
+            } header: {
+                Text("提醒时区与推送时间")
+            } footer: {
+                let hourPrefix = String(appState.reminderPreferences.opportunities.localTime.prefix(2))
+                Text("每日账单汇总与逾期提醒将在您所选时区的该整点小时窗口内（如 \(hourPrefix):00–\(hourPrefix):59）推送；本地提醒亦按此时区与时刻安排。")
             }
         }
         .listStyle(.insetGrouped)
@@ -177,6 +234,81 @@ struct NotificationSettingsView: View {
                 persist(next)
             }
         )
+    }
+
+    private var timezoneOptions: [(id: String, label: String)] {
+        let current = appState.reminderPreferences.opportunities.timeZone
+        var list: [(id: String, label: String)] = timezonePresets.map { preset in
+            (preset.id, formatTimeZoneLabel(preset.id, name: preset.name))
+        }
+        if !current.isEmpty && !list.contains(where: { $0.id == current }) {
+            list.insert((current, formatTimeZoneLabel(current, name: "当前设置")), at: 0)
+        }
+        return list
+    }
+
+    private func formatTimeZoneLabel(_ identifier: String, name: String) -> String {
+        guard let tz = TimeZone(identifier: identifier) else { return "\(identifier) (\(name))" }
+        let sec = tz.secondsFromGMT()
+        let hours = sec / 3600
+        let mins = abs(sec % 3600) / 60
+        let offsetStr = mins == 0
+            ? String(format: "UTC%+d", hours)
+            : String(format: "UTC%+d:%02d", hours, mins)
+        return "\(identifier) (\(name) \(offsetStr))"
+    }
+
+    private var hourSelectionChoices: [String] {
+        let current = appState.reminderPreferences.opportunities.localTime
+        var choices = hourChoices
+        if !choices.contains(current) && !current.isEmpty {
+            choices.insert(current, at: 0)
+        }
+        return choices
+    }
+
+    private var timeZoneBinding: Binding<String> {
+        Binding(
+            get: { appState.reminderPreferences.opportunities.timeZone },
+            set: { tz in
+                var next = appState.reminderPreferences
+                next.opportunities.timeZone = tz
+                persist(next)
+            }
+        )
+    }
+
+    private var localTimeBinding: Binding<String> {
+        Binding(
+            get: { appState.reminderPreferences.opportunities.localTime },
+            set: { hhmm in
+                var next = appState.reminderPreferences
+                next.opportunities.localTime = hhmm
+                persist(next)
+            }
+        )
+    }
+
+    private var isLocalTimeInQuietHours: Bool {
+        let local = appState.reminderPreferences.opportunities.localTime
+        guard let start = appState.reminderPreferences.quietHoursStart,
+              let end = appState.reminderPreferences.quietHoursEnd,
+              let lMin = parseMinutes(local),
+              let sMin = parseMinutes(start),
+              let eMin = parseMinutes(end),
+              sMin != eMin else {
+            return false
+        }
+        if sMin > eMin {
+            return lMin >= sMin || lMin < eMin
+        }
+        return lMin >= sMin && lMin < eMin
+    }
+
+    private func parseMinutes(_ hhmm: String) -> Int? {
+        let parts = hhmm.split(separator: ":")
+        guard parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]) else { return nil }
+        return h * 60 + m
     }
 
     private var quietPresetBinding: Binding<QuietPreset> {
