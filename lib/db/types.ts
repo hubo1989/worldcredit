@@ -1,5 +1,11 @@
 // lib/db/types.ts — SQLite/D1 row types (TEXT timestamps, REAL amounts, INTEGER booleans)
 
+import type { BillItem, InstallmentPlan, MerchantCategoryRule } from '../types'
+
+export type BillItemRow = BillItem
+export type MerchantCategoryRuleRow = MerchantCategoryRule
+export type InstallmentPlanRow = Required<InstallmentPlan>
+
 export interface UserRow {
   id: string
   email: string
@@ -159,6 +165,9 @@ export interface PaymentRow {
   channel: string | null
   note: string | null
   idempotency_key: string
+  settled_currency?: string | null
+  settled_amount?: number | null
+  locked_fx_rate?: number | null
   created_at: string
 }
 

@@ -55,6 +55,21 @@ const SYNCABLE_TABLES = {
       WHERE rp.id = t.payable_id AND rp.created_by = ?)`,
   },
   payable_custom_categories: { pk: "id", owner: "t.user_id = ?" },
+  // Direction 3 (HUB-166)
+  bill_items: {
+    pk: "id",
+    owner: `EXISTS (SELECT 1 FROM bills b
+      JOIN credit_cards cc ON cc.id = b.card_id
+      JOIN card_holders ch ON ch.id = cc.holder_id
+      WHERE b.id = t.bill_id AND ch.managed_by = ?)`,
+  },
+  installment_plans: {
+    pk: "id",
+    owner: `EXISTS (SELECT 1 FROM credit_cards cc
+      JOIN card_holders ch ON ch.id = cc.holder_id
+      WHERE cc.id = t.card_id AND ch.managed_by = ?)`,
+  },
+  merchant_category_rules: { pk: "id", owner: "t.user_id = ?" },
 } as const;
 
 type SyncTable = keyof typeof SYNCABLE_TABLES;

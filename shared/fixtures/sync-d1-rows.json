@@ -126,6 +126,9 @@
           "channel": "手动还款",
           "note": null,
           "idempotency_key": "sync-fixture-idempotency",
+          "settled_currency": null,
+          "settled_amount": null,
+          "locked_fx_rate": null,
           "created_at": "2026-10-20T00:00:00Z"
         }
       }
@@ -332,6 +335,9 @@
           "channel": "手动还款",
           "note": null,
           "idempotency_key": "sync-fixture-idempotency",
+          "settled_currency": null,
+          "settled_amount": null,
+          "locked_fx_rate": null,
           "created_at": "2026-10-20T00:00:00Z"
         }
       },

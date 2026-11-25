@@ -1,3 +1,9 @@
+import type { BillItemType, SpendCategory } from './finance/categories'
+import type { BillItemSource } from './finance/bill-item-import'
+
+export type { BillItemType, SpendCategory } from './finance/categories'
+export type { BillItemSource, BillItemInput } from './finance/bill-item-import'
+
 /**
  * 银行目录
  */
@@ -214,6 +220,65 @@ export interface Bill {
   created_at: string
 }
 
+export interface BillItem {
+  id: string
+  bill_id: string
+  card_id: string | null
+  card_tail: string | null
+  transaction_date: string | null
+  post_date: string | null
+  description: string
+  merchant_name: string | null
+  category: SpendCategory | null
+  amount: number
+  currency: string
+  item_type: BillItemType
+  source: BillItemSource
+  confidence: number | null
+  raw_text: string | null
+  metadata: string | null
+  updated_at: string
+  created_at: string
+}
+
+export interface MerchantCategoryRule {
+  id: string
+  user_id: string
+  normalized_merchant: string
+  display_merchant: string
+  category: SpendCategory
+  updated_at: string
+  created_at: string
+}
+
+export interface InstallmentPlan {
+  id: string
+  card_id: string
+  source_bill_id?: string | null
+  source_item_id?: string | null
+  title: string
+  plan_type: 'purchase' | 'bill' | 'cash'
+  currency: string
+  principal_amount: number
+  total_periods: number
+  paid_periods: number
+  fee_mode: 'equal_principal_fee' | 'interest_free' | 'equal_installment_apr'
+  fee_charge_mode: 'per_period' | 'upfront'
+  fee_rate_per_period?: number | null
+  custom_period_fee?: number | null
+  apr?: number | null
+  start_month: string
+  due_day: number
+  due_month_offset: 0 | 1
+  billing_mode: 'included_in_statement' | 'independent'
+  status: 'active' | 'completed' | 'early_settled' | 'cancelled'
+  early_settled_at?: string | null
+  early_settled_amount?: number | null
+  note?: string | null
+  created_at: string
+  updated_at: string
+}
+
 /**
  * 还款记录
  */
@@ -225,6 +290,9 @@ export interface Payment {
   channel?: string
   note?: string
   idempotency_key: string
+  settled_currency?: string | null
+  settled_amount?: number | null
+  locked_fx_rate?: number | null
   created_at: string
 }
 
