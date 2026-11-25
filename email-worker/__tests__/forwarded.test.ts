@@ -144,6 +144,21 @@ describe('邮箱转发入账', () => {
     expect(result).toMatchObject({ billIds: [expect.any(String)], draftIds: [] })
   })
 
+  it('matches a merged account using its printed account ending', async () => {
+    sqlite.exec(`
+      INSERT INTO credit_accounts (id, holder_id, bank_name, currency, account_tail, statement_mode, primary_card_id)
+      VALUES ('account', 'h1', '中国银行', 'CNY', '7890', 'merged', 'c1');
+      UPDATE credit_cards SET account_id = 'account' WHERE id = 'c1';
+    `)
+    const statement = { ...await parseOk(), statement_scope: 'account_merged' as const }
+    await expect(resolveBillAttribution(db, {
+      userId: USER_ID, statement: { ...statement, card_last4: '7890' },
+    })).resolves.toMatchObject({ cardId: 'c1', accountId: 'account', trusted: true })
+    await expect(resolveBillAttribution(db, {
+      userId: USER_ID, statement: { ...statement, card_last4: null },
+    })).resolves.toMatchObject({ cardId: 'c1', accountId: 'account', trusted: true })
+  })
+
   it('prefers a matching holder email over the configured mailbox default', async () => {
     sqlite.exec("UPDATE card_holders SET email = 'holder@example.test' WHERE id = 'h2'")
     const input = {

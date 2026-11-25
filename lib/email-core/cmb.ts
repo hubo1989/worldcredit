@@ -137,11 +137,9 @@ export function parseCmbStatement(text: string): BillParseResult {
     if (uniqueTails.length === 1) {
       // 单卡样本小计 = 账户总额
       cardLast4 = uniqueTails[0]
-      subtotals.push({
-        card_last4: uniqueTails[0],
-        amount: billAmount ?? 0,
-        currency: 'CNY',
-      })
+      if (billAmount !== undefined && Number.isFinite(billAmount)) {
+        subtotals.push({ card_last4: uniqueTails[0], amount: billAmount, currency: 'CNY' })
+      }
     } else if (uniqueTails.length > 1) {
       // 多卡时各尾号求和（含还款/分期/消费全部分段），与总额差额按 PRD 归「上期结转/账户级调整」，不反向覆写总额
       cardLast4 = uniqueTails[0]
@@ -167,7 +165,7 @@ export function parseCmbStatement(text: string): BillParseResult {
     due_date: dueDate,
     due_date_status: dueDateStatus,
     credit_limit: creditLimit,
-    bill_amount: billAmount ?? 0,
+    bill_amount: billAmount,
     min_payment: minPayment,
     currency: 'CNY',
     confidence: 0.98,

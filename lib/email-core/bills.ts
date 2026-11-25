@@ -811,7 +811,7 @@ export async function resolveBillAttribution(
   const { statement: parsed } = input
   const { holders } = scope ?? await loadHolderScope(db, input.userId)
   const tail = normalizeCardTail(parsed.card_last4)
-  const accountTail = normalizeCardTail(parsed.account_tail) ?? tail
+  const accountTail = normalizeCardTail(parsed.account_tail) || tail || null
   const wantedBank = normalizeBankName(parsed.bank_name)
   const currency = parsed.currency?.toUpperCase()
   const matchesBank = (bank: string) => {
