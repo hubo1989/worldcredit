@@ -43,7 +43,7 @@ export async function loadAiConfig(db: D1Database): Promise<AiConfig> {
 
 // ─── OpenAI bill parser ───────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `你是银行账单解析助手。从邮件内容中提取信用卡账单信息，以 JSON 格式返回：
+export const BILL_SYSTEM_PROMPT = `你是银行账单解析助手。从邮件内容中提取信用卡账单信息，以 JSON 格式返回：
 {"is_bill":true,"email_kind":"statement","bank_name":"","card_last4":"","bill_amount":0,"min_payment":null,"credit_limit":null,"due_date":"YYYY-MM-DD","due_date_status":"exact","bill_month":"YYYY-MM","statement_date":null,"statement_day":null,"currency":"CNY","confidence":0.9}
 字段 card_last4 请填邮件中出现的"卡号/账户结尾"完整数字，不要截断：
 - 大陆/香港卡通常是末 4 位，如 "1234"
@@ -70,9 +70,25 @@ export async function parseBillWithAI(
   config: AiConfig,
   emailBody: string,
 ): Promise<BillParseResult> {
+  return (await requestBillJson(config, BILL_SYSTEM_PROMPT, emailBody)) as BillParseResult;
+}
+
+export type BillAiContent = string | Array<
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail: "high" } }
+  | { type: "file"; file: { filename: string; file_data: string } }
+>;
+
+export async function requestBillJson(
+  config: AiConfig,
+  prompt: string,
+  content: BillAiContent,
+): Promise<unknown> {
+  if (!config.apiKey) throw new Error("AI API Key 未配置");
   const endpoint = config.baseURL.replace(/\/$/, "") + "/chat/completions";
   const res = await fetch(endpoint, {
     method: "POST",
+    signal: AbortSignal.timeout(45_000),
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.apiKey}`,
@@ -81,16 +97,18 @@ export async function parseBillWithAI(
       model: config.model,
       temperature: 0,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: emailBody },
+        { role: "system", content: prompt },
+        { role: "user", content },
       ],
       response_format: { type: "json_object" },
     }),
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`OpenAI API error (${res.status}): ${text.slice(0, 500)}`);
+    await res.body?.cancel();
+    throw new Error(`OpenAI API error (${res.status})`);
   }
   const json = (await res.json()) as { choices: Array<{ message: { content: string } }> };
-  return JSON.parse(json.choices?.[0]?.message?.content ?? "{}") as BillParseResult;
+  const response = json.choices?.[0]?.message?.content;
+  if (!response) throw new Error("AI 返回空结果");
+  return JSON.parse(response);
 }

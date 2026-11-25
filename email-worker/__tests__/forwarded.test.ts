@@ -1,7 +1,12 @@
-import { describe, it, expect } from 'vitest'
-import { createFakeD1 } from './fakeD1'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { createOpportunityDb, type SqliteD1 } from '../../lib/__tests__/helpers/sqlite-d1'
 import { parseRawMessage } from '../../lib/email-core/mime'
-import { processForwardedBundle, buildBundleLogPayload } from '../src/forwarded'
+import { resolveBillAttribution } from '../../lib/email-core/bills'
+import { processEmailDelivery } from '../src/forwarded'
+import worker from '../src/index'
+import { encryptVaultPassword } from '../../lib/email-core/vault-crypto'
 import type { BillParseResult } from '../../lib/email-core/types'
 
 /**
@@ -9,7 +14,7 @@ import type { BillParseResult } from '../../lib/email-core/types'
  * 这条链路此前只有 /tmp 里的一次性 harness 覆盖（不入库），这里用合成邮件固化。
  */
 
-const enc = (s: string) => new TextEncoder().encode(s)
+const enc = (s: string) => new Uint8Array(new TextEncoder().encode(s))
 
 /** 把字节 base64 编码（模拟邮件客户端对 .eml 附件的处理）。 */
 function toBase64(bytes: Uint8Array): string {
@@ -38,7 +43,7 @@ function nestedBillEmail(): Uint8Array {
 }
 
 /** 顶层转发包：正文只有「见附件」，真正的账单在 message/rfc822 附件里。 */
-function forwardedBundle(): Uint8Array {
+function forwardedBundle(attachment = nestedBillEmail()): Uint8Array<ArrayBuffer> {
   return enc(
     [
       'From: me@example.com',
@@ -55,84 +60,199 @@ function forwardedBundle(): Uint8Array {
       'Content-Disposition: attachment; filename="bill.eml"',
       'Content-Transfer-Encoding: base64',
       '',
-      toBase64(nestedBillEmail()),
+      toBase64(attachment),
       '--OUT--',
       '',
     ].join('\r\n')
   )
 }
 
-const USER_ID = '11111111-1111-1111-1111-111111111111'
-
-function seed() {
-  return createFakeD1({
-    card_holders: [
-      { id: 'h1', name: '张改菊', aliases: '["张改菊女士"]', created_by: USER_ID, created_at: '2026-01-01' },
-    ],
-    card_products: [{ id: 'p1', bank_name: '中国银行', currency: 'CNY', is_active: 1, created_at: '2026-01-01' }],
-    credit_cards: [{ id: 'c1', holder_id: 'h1', card_number_last4: '1234', card_product_id: 'p1' }],
-    bills: [],
-  })
+function inlineBanner(boundary: string): string[] {
+  const bytes = new Uint8Array(17_000)
+  bytes.set([137, 80, 78, 71, 13, 10, 26, 10])
+  return [
+    `--${boundary}`, 'Content-Type: image/png; name="banner.png"',
+    'Content-Disposition: inline; filename="banner.png"', 'Content-ID: <banner@test>',
+    'Content-Transfer-Encoding: base64', '', toBase64(bytes),
+  ]
 }
 
-const parseOk = async (): Promise<BillParseResult> => ({
-  is_bill: true,
-  bank_name: '中国银行',
-  card_last4: '1234',
-  bill_amount: 6000,
-  due_date: '2026-09-20',
-  bill_month: '2026-08',
-  statement_date: '2026-08-16',
-  currency: 'CNY',
+const USER_ID = '11111111-1111-1111-1111-111111111111'
+
+let sqlite: SqliteD1
+let db: D1Database
+beforeEach(() => {
+  sqlite = createOpportunityDb()
+  db = sqlite as unknown as D1Database
+  sqlite.exec(`
+    INSERT INTO users(id, email, password_hash) VALUES ('${USER_ID}', 'user@example.test', 'x');
+    INSERT INTO card_holders(id, created_by, managed_by, name, aliases)
+      VALUES ('h1', '${USER_ID}', '${USER_ID}', '张改菊', '["张改菊女士"]'),
+             ('h2', '${USER_ID}', '${USER_ID}', '高敏', NULL);
+    INSERT INTO card_products(id, bank_name, card_name, currency) VALUES ('p1', '中国银行', 'Credit card', 'CNY');
+    INSERT INTO credit_cards(id, holder_id, card_product_id, billing_day, card_number_last4)
+      VALUES ('c1', 'h1', 'p1', 16, '1234'), ('c2', 'h2', 'p1', 16, '1234');
+  `)
+})
+afterEach(() => {
+  sqlite.close()
+  vi.unstubAllGlobals()
 })
 
-describe('processForwardedBundle 端到端', () => {
-  it('从真实字节的转发包里解出嵌套账单并归属到正确持卡人', async () => {
-    const { db, tables } = seed()
-    const top = parseRawMessage(forwardedBundle())
+const parseOk = async (): Promise<BillParseResult> => ({
+  is_bill: true, email_kind: 'statement', confidence: 0.96,
+  bank_name: '中国银行', card_last4: '1234', bill_amount: 6000,
+  due_date: '2026-09-20', due_date_status: 'exact', bill_month: '2026-08',
+  statement_date: '2026-08-16', currency: 'CNY',
+})
 
-    // 附件被识别为嵌套邮件，正文不含账单内容
-    expect(top.attachments).toHaveLength(1)
-    expect(top.attachments[0].contentType).toBe('message/rfc822')
-
-    const outcome = await processForwardedBundle({ db, userId: USER_ID, top, parse: parseOk })
-    expect(outcome).not.toBeNull()
-    expect(outcome!.attachmentCount).toBe(1)
-    expect(outcome!.nestedCount).toBe(1)
-    expect(outcome!.billsWritten).toBe(1)
-    expect(outcome!.skipped).toHaveLength(0)
-
-    // 认人走的是 To 头里 GBK 编码的显示名
-    expect(outcome!.written[0].holderId).toBe('h1')
-    expect(outcome!.written[0].matchSource).toBe('header_name')
-    expect(outcome!.written[0].cardId).toBe('c1')
-
-    expect(tables.bills).toHaveLength(1)
-    expect(tables.bills[0]).toMatchObject({ card_id: 'c1', bill_month: '2026-08', status: 'unpaid' })
+describe('邮箱转发入账', () => {
+  it('从真实字节的转发包解出 GBK 收件人并消歧两张同尾号卡', async () => {
+    const raw = forwardedBundle()
+    expect(parseRawMessage(raw).attachments[0].contentType).toBe('message/rfc822')
+    const parseText = vi.fn(parseOk)
+    const result = await processEmailDelivery(raw, { db, userId: USER_ID, parseText })
+    expect(result).toMatchObject({ nestedCount: 1, billIds: [expect.any(String)], draftIds: [] })
+    expect(parseText).toHaveBeenCalledWith(expect.stringContaining('6000'))
+    expect(sqlite.raw.prepare('SELECT card_id, bill_month, status FROM bills').get())
+      .toEqual({ card_id: 'c1', bill_month: '2026-08', status: 'unpaid' })
   })
 
-  it('没有邮件附件时返回 null，让调用方回落到直发路径', async () => {
-    const { db } = seed()
-    const top = parseRawMessage(
-      enc(['From: a@b.com', 'Content-Type: text/plain', '', '普通直发邮件'].join('\r\n'))
-    )
-    const outcome = await processForwardedBundle({ db, userId: USER_ID, top, parse: parseOk })
-    expect(outcome).toBeNull()
+  it('有明确收件人但尾号为新卡时留草稿，重试保持幂等', async () => {
+    const raw = forwardedBundle()
+    const options = { db, userId: USER_ID, parseText: async () => ({ ...await parseOk(), card_last4: '5678' }) }
+    const first = await processEmailDelivery(raw, options)
+    const second = await processEmailDelivery(raw, options)
+    expect(second.draftIds).toEqual(first.draftIds)
+    expect(second.billIds).toEqual([])
+    expect(sqlite.raw.prepare(
+      'SELECT holder_id, card_id, attribution_source, attribution_trusted FROM bill_import_drafts',
+    ).all()).toEqual([{ holder_id: 'h1', card_id: null, attribution_source: 'header_name', attribution_trusted: 1 }])
+    expect(sqlite.raw.prepare('SELECT COUNT(*) AS count FROM credit_cards').get()).toEqual({ count: 2 })
   })
 
-  it('日志载荷记录归属依据，回落默认持卡人时不隐藏事实', async () => {
-    const { db } = seed()
-    const top = parseRawMessage(forwardedBundle())
-    const outcome = await processForwardedBundle({
-      db, userId: USER_ID, top,
-      parse: async () => ({ ...(await parseOk()), card_last4: '1234' }),
-    })
-    const payload = JSON.parse(buildBundleLogPayload(outcome!)) as {
-      source: string
-      written: Array<{ matchSource: string; holder: string }>
+  it('parses HTML bill text even with a large inline banner', async () => {
+    const raw = enc([
+      'From: bill@bank.test', 'To: Zhang <zhang@example.test>',
+      'Content-Type: multipart/related; boundary="HTML"', '',
+      '--HTML', 'Content-Type: text/html; charset=utf-8', '',
+      '<p>本期应还 6000</p><img src="cid:banner@test">', ...inlineBanner('HTML'), '--HTML--',
+    ].join('\r\n'))
+    const parseText = vi.fn(async () => ({ ...await parseOk(), holder_hint: '张改菊' }))
+    const result = await processEmailDelivery(raw, { db, userId: USER_ID, parseText })
+    expect(parseText).toHaveBeenCalledWith(expect.stringContaining('6000'))
+    expect(result).toMatchObject({ billIds: [expect.any(String)], draftIds: [] })
+  })
+
+  it('matches a merged account using its printed account ending', async () => {
+    sqlite.exec(`
+      INSERT INTO credit_accounts (id, holder_id, bank_name, currency, account_tail, statement_mode, primary_card_id)
+      VALUES ('account', 'h1', '中国银行', 'CNY', '7890', 'merged', 'c1');
+      UPDATE credit_cards SET account_id = 'account' WHERE id = 'c1';
+    `)
+    const statement = { ...await parseOk(), statement_scope: 'account_merged' as const }
+    await expect(resolveBillAttribution(db, {
+      userId: USER_ID, statement: { ...statement, card_last4: '7890' },
+    })).resolves.toMatchObject({ cardId: 'c1', accountId: 'account', trusted: true })
+    await expect(resolveBillAttribution(db, {
+      userId: USER_ID, statement: { ...statement, card_last4: null },
+    })).resolves.toMatchObject({ cardId: 'c1', accountId: 'account', trusted: true })
+  })
+
+  it('prefers a matching holder email over the configured mailbox default', async () => {
+    sqlite.exec("UPDATE card_holders SET email = 'holder@example.test' WHERE id = 'h2'")
+    const input = {
+      userId: USER_ID, statement: await parseOk(), recipient: 'holder@example.test', defaultHolderId: 'h1',
     }
-    expect(payload.source).toBe('forwarded_bundle')
-    expect(payload.written[0].matchSource).toBe('header_name')
-    expect(payload.written[0].holder).toBe('张改菊')
+    await expect(resolveBillAttribution(db, input)).resolves.toMatchObject({
+      source: 'holder_email', holderId: 'h2', cardId: 'c2', trusted: true,
+    })
+    await expect(resolveBillAttribution(db, {
+      ...input, attributionMode: 'force_default_unless_conflict',
+    })).resolves.toMatchObject({ source: 'conflict', cardId: null, trusted: false })
   })
+
+  it('对直发还款提醒不建账单或草稿', async () => {
+    const raw = enc('From: sender@example.test\r\nTo: me@example.test\r\n\r\nYour autopay is scheduled')
+    const result = await processEmailDelivery(raw, {
+      db, userId: USER_ID,
+      parseText: async () => ({ ...await parseOk(), is_bill: false, email_kind: 'autopay_scheduled' }),
+    })
+    expect(result).toMatchObject({ nestedCount: 0, billIds: [], draftIds: [], reason: '非账单邮件' })
+  })
+
+  it('实际 Email Worker 保留嵌套加密 PDF，缺 SESSION_SECRET 时建立草稿和通知', async () => {
+    const encrypted = readFileSync(join(__dirname, 'fixtures/statement-aes-128.pdf'))
+    const nested = enc([
+      'From: letters@hsbc.example', 'To: Customer <me@example.test>', 'Subject: HSBC statement',
+      'Content-Type: multipart/mixed; boundary="INNER"', '',
+      '--INNER', 'Content-Type: text/plain', '', 'Your PDF statement is attached.',
+      '--INNER', 'Content-Type: application/pdf', 'Content-Disposition: attachment; filename="statement.pdf"',
+      'Content-Transfer-Encoding: base64', '', toBase64(encrypted), ...inlineBanner('INNER'), '--INNER--', '',
+    ].join('\r\n'))
+    const raw = forwardedBundle(nested)
+    const put = vi.fn(async () => {})
+    const model = vi.fn()
+    vi.stubGlobal('fetch', model)
+    const message = {
+      to: `bills+${USER_ID}@20160325.xyz`, from: 'me@example.test', headers: new Headers(),
+      raw: new ReadableStream({ start(controller) { controller.enqueue(raw); controller.close() } }),
+    } as unknown as ForwardableEmailMessage
+    await worker.email(message, { DB: db, ATTACHMENTS: { put } as unknown as R2Bucket }, {} as ExecutionContext)
+    const drafts = sqlite.raw.prepare('SELECT id, parse_status, password_hint, file_ref FROM bill_import_drafts').all()
+    expect(drafts).toHaveLength(1)
+    const [draft] = drafts
+    expect(draft).toMatchObject({
+      parse_status: 'needs_password', password_hint: expect.stringContaining('密码说明'), file_ref: expect.any(String),
+    })
+    expect(put).toHaveBeenCalledWith(expect.stringContaining(`draft-files/${USER_ID}/`), new Uint8Array(encrypted), {
+      httpMetadata: { contentType: 'application/pdf' },
+    })
+    expect(model).not.toHaveBeenCalled()
+    expect(sqlite.raw.prepare('SELECT category, target_url FROM notification_history').get())
+      .toEqual({ category: 'system', target_url: `/bills?draftId=${draft?.id}` })
+  })
+})
+
+it('解锁 PDF 后按币种建立共享附件的两条草稿', async () => {
+  const encrypted = readFileSync(join(__dirname, 'fixtures/statement-aes-128.pdf'))
+  sqlite.exec("INSERT INTO system_settings (key, value) VALUES ('ai_api_key', 'test-api-key')")
+  const password = 'fixture-7491'
+  const secret = 'worker-test-secret'
+  await db.prepare(
+    "INSERT INTO statement_password_vault (id, user_id, label, password_ciphertext) VALUES ('rule', ?, 'test', ?)",
+  ).bind(USER_ID, await encryptVaultPassword(password, secret, USER_ID)).run()
+  const raw = enc([
+    'From: chase@example.test', 'To: Customer <me@example.test>', 'Subject: Statement',
+    'Content-Type: multipart/mixed; boundary="PDF"', '',
+    '--PDF', 'Content-Type: application/pdf', 'Content-Disposition: attachment; filename="statement.pdf"',
+    'Content-Transfer-Encoding: base64', '', toBase64(encrypted), '--PDF--', '',
+  ].join('\r\n'))
+  const model = vi.fn(async (_url: string, init?: RequestInit) => {
+    const request = String(init?.body)
+    expect(request).not.toContain(password)
+    expect(request).toContain('1234.56 USD')
+    return Response.json({ choices: [{ message: { content: JSON.stringify({
+      is_bill: true, email_kind: 'statement', statements: [
+        { ...await parseOk(), bill_amount: 6000, currency: 'CNY' },
+        { ...await parseOk(), bill_amount: 99, currency: 'USD' },
+      ],
+    }) } }] })
+  })
+  vi.stubGlobal('fetch', model)
+  const put = vi.fn(async () => {})
+  const result = await processEmailDelivery(raw, { db, userId: USER_ID, secret, bucket: { put } as unknown as R2Bucket })
+  expect(result.billIds).toEqual([])
+  expect(result.draftIds).toHaveLength(2)
+  expect(put).toHaveBeenCalledOnce()
+  expect(model).toHaveBeenCalledOnce()
+  const drafts = sqlite.raw.prepare(`SELECT batch_id, file_ref,
+    json_extract(parsed_payload, '$.currency') AS currency, json_extract(parsed_payload, '$.bill_amount') AS amount
+    FROM bill_import_drafts ORDER BY currency`).all()
+  expect(drafts).toEqual([
+    { batch_id: expect.any(String), file_ref: expect.any(String), currency: 'CNY', amount: 6000 },
+    { batch_id: drafts[0].batch_id, file_ref: drafts[0].file_ref, currency: 'USD', amount: 99 },
+  ])
+  expect(sqlite.raw.prepare("SELECT use_count FROM statement_password_vault WHERE id = 'rule'").get())
+    .toEqual({ use_count: 1 })
 })

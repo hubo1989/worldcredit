@@ -15,9 +15,9 @@
 import type { ParsedRawMessage, RawAttachment, RawHeaders } from './types'
 
 /** 单个附件的解码上限：超过这个体积的部件当作异常数据丢弃，避免撑爆 Worker 内存。 */
-const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 /** 一封邮件里所有附件的累计上限：转发包动辄几十个附件，必须设总量闸门。 */
-const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024
+export const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024
 /** multipart 嵌套深度上限：畸形邮件可能自指，防止无限递归。 */
 const MAX_MULTIPART_DEPTH = 12
 /** 交给 LLM 的正文上限，沿用旧实现的 8000 字，避免 token 成本随附件数量爆炸。 */
@@ -49,7 +49,7 @@ const CHARSET_ALIASES: Record<string, string> = {
 // ─── 字节工具 ─────────────────────────────────────────────────────────────────
 
 /** 读完整条 stream 并拼成连续字节。 */
-export async function streamToBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+export async function streamToBytes(stream: ReadableStream<Uint8Array>, maxBytes = 30 * 1024 * 1024): Promise<Uint8Array<ArrayBuffer>> {
   const reader = stream.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
@@ -57,8 +57,12 @@ export async function streamToBytes(stream: ReadableStream<Uint8Array>): Promise
     const { done, value } = await reader.read()
     if (done) break
     if (value) {
-      chunks.push(value)
       total += value.length
+      if (total > maxBytes) {
+        await reader.cancel()
+        throw new Error('邮件原件超过大小上限')
+      }
+      chunks.push(value)
     }
   }
   return concatBytes(chunks, total)
@@ -70,7 +74,7 @@ export async function streamToString(stream: ReadableStream<Uint8Array>): Promis
   return new TextDecoder('utf-8', { fatal: false, ignoreBOM: false }).decode(bytes)
 }
 
-function concatBytes(chunks: Uint8Array[], total: number): Uint8Array {
+function concatBytes(chunks: Uint8Array[], total: number): Uint8Array<ArrayBuffer> {
   const merged = new Uint8Array(total)
   let offset = 0
   for (const c of chunks) {
@@ -593,6 +597,7 @@ function walk(header: HeaderInfo, body: Uint8Array, ctx: WalkContext, depth: num
       contentType: type,
       bytes,
       contentId: header.contentId,
+      disposition: header.disposition,
     })
     return
   }

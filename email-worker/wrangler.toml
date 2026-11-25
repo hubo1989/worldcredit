@@ -1,8 +1,16 @@
 name = "worldcredit-email-worker"
 main = "src/index.ts"
-compatibility_date = "2024-01-01"
+compatibility_date = "2026-03-20"
+compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "worldcredit"
 database_id = "6ce5f678-e5bb-46cc-88d7-a316f1a209cb"
+
+[[r2_buckets]]
+binding = "ATTACHMENTS"
+bucket_name = "worldcredit-attachments"
+
+[images]
+binding = "IMAGES"
