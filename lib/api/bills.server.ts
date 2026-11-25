@@ -1,5 +1,7 @@
+import type { BillItemInput } from "../finance/bill-item-import";
+import { getBillItems, prepareBillItemInserts, validateBillItemImport } from "./billItems.server";
 import { query, queryByChunks, queryOne, execute, batch, uuid, now, today } from "../db";
-import type { Bill, Payment, CreditCard, CardProduct, BillCardSubtotal, CreditAccount, CardHolder } from "../types";
+import type { Bill, BillItem, Payment, CreditCard, CardProduct, BillCardSubtotal, CreditAccount, CardHolder } from "../types";
 import {
   getDueDate,
   effectiveBillAmount,
@@ -16,6 +18,28 @@ import {
 import { format } from "date-fns";
 import { RpcDomainError } from "./errors";
 import { isValidUuid } from "../validation-patterns";
+import { validateAndNormalizeFxLock } from "./direction3.shared";
+import { currencySymbol } from "../fx";
+
+/** 还款汇率锁定的三个可空列；只有客户端显式传入时才参与 INSERT / UPDATE。 */
+export interface PaymentFxInput {
+  settled_currency?: string | null;
+  settled_amount?: number | null;
+  locked_fx_rate?: number | null;
+}
+
+/** 账单币种（卡产品币种），用于汇率锁定归一与货币符号。 */
+async function getBillCurrency(billId: string): Promise<string> {
+  const { data, error } = await queryOne<{ currency: string | null }>(
+    `SELECT cp.currency FROM bills b
+     JOIN credit_cards cc ON cc.id = b.card_id
+     LEFT JOIN card_products cp ON cp.id = cc.card_product_id
+     WHERE b.id = ?`,
+    [billId],
+  );
+  if (error) throw new Error(error.message);
+  return data?.currency || "CNY";
+}
 
 export type BillDashboardItem = Bill & {
   card: CreditCard & { card_product: CardProduct };
@@ -594,26 +618,13 @@ export async function getCardsWithBillsSummary(userId?: string): Promise<CardWit
   });
 }
 
-/** 账单明细输入 */
-export interface BillItemInput {
-  transaction_date?: string;
-  post_date?: string;
-  description: string;
-  merchant_name?: string;
-  category?: string;
-  amount: number;
-  currency?: string;
-  item_type: "purchase" | "refund" | "fee" | "interest";
-  source: "manual" | "llm" | "email" | "sms" | "image" | "pdf";
-  confidence?: number;
-  raw_text?: string;
-  metadata?: Record<string, unknown>;
-}
+export type { BillItemInput } from "../finance/bill-item-import";
 
 export async function createBill(
   bill: Omit<Bill, "id" | "created_at"> & {
     /** Client-generated UUID for offline sync (Phase 2); omitted on the web path. */
     id?: string;
+    created_by?: string;
     items?: BillItemInput[];
     subtotals?: Array<{
       card_id?: string | null;
@@ -623,31 +634,42 @@ export async function createBill(
     }>;
   },
 ): Promise<Bill> {
-  const clientId = normalizeClientBillId(bill.id);
+  const { id: rawClientId, items, subtotals, created_by, ...billRow } = bill;
+  const clientId = normalizeClientBillId(rawClientId);
   const id = clientId ?? uuid();
-  const { items: _items, subtotals, ...billRow } = bill;
-  void _items;
+  if (items != null) validateBillItemImport(items);
 
-  let accountId = billRow.account_id || null;
-  let anchorCardId = billRow.card_id;
-
-  // 若未传 account_id，从所属卡片查出其 account_id
-  const { data: cardRow } = await queryOne<{ account_id: string | null }>(
-    "SELECT account_id FROM credit_cards WHERE id = ?",
+  const { data: card, error: cardError } = await queryOne<{
+    account_id: string | null; holder_id: string; managed_by: string; currency: string;
+  }>(
+    "SELECT cc.account_id, cc.holder_id, h.managed_by, cp.currency FROM credit_cards cc " +
+    "JOIN card_holders h ON h.id = cc.holder_id JOIN card_products cp ON cp.id = cc.card_product_id WHERE cc.id = ?",
     [billRow.card_id],
   );
-  if (!accountId && cardRow?.account_id) {
-    accountId = cardRow.account_id;
-  }
+  if (cardError) throw new Error(cardError.message);
+  if (!card) throw new RpcDomainError("NOT_FOUND", "卡片不存在");
 
-  // 若所属账户是 merged，确保 card_id 对齐账户的 primary_card_id
+  const accountId = billRow.account_id || card.account_id;
+  let anchorCardId = billRow.card_id;
+  let statementMode: string | null = null;
+  let currency = card.currency;
   if (accountId) {
-    const { data: acc } = await queryOne<{ statement_mode: string; primary_card_id: string | null }>(
-      "SELECT statement_mode, primary_card_id FROM credit_accounts WHERE id = ?",
+    const { data: account, error: accountError } = await queryOne<{
+      statement_mode: string; holder_id: string; anchor_id: string | null; anchor_currency: string | null;
+    }>(
+      "SELECT a.statement_mode, a.holder_id, c.id AS anchor_id, p.currency AS anchor_currency " +
+      "FROM credit_accounts a LEFT JOIN credit_cards c ON c.id = a.primary_card_id AND c.holder_id = a.holder_id " +
+      "LEFT JOIN card_products p ON p.id = c.card_product_id WHERE a.id = ?",
       [accountId],
     );
-    if (acc?.statement_mode === "merged" && acc.primary_card_id) {
-      anchorCardId = acc.primary_card_id;
+    if (accountError) throw new Error(accountError.message);
+    if (!account || account.holder_id !== card.holder_id) {
+      throw new RpcDomainError("VALIDATION_FAILED", "信用账户与卡片归属不符");
+    }
+    statementMode = account.statement_mode;
+    if (statementMode === "merged" && account.anchor_id) {
+      anchorCardId = account.anchor_id;
+      currency = account.anchor_currency ?? currency;
     }
   }
 
@@ -671,23 +693,28 @@ export async function createBill(
     }
   }
 
-  const { error } = await execute(
-    `INSERT INTO bills (id, account_id, card_id, bill_month, statement_start, statement_end, statement_date, bill_amount, min_payment, due_date, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      accountId,
-      anchorCardId,
-      billRow.bill_month,
-      billRow.statement_start || null,
-      billRow.statement_end || null,
-      billRow.statement_date || null,
-      billRow.bill_amount,
-      billRow.min_payment || 0,
-      billRow.due_date,
-      billRow.status || "unpaid",
-    ],
-  );
+  const { statements: itemInserts } = await prepareBillItemInserts(id, {
+    card_id: anchorCardId, account_id: accountId, holder_id: card.holder_id,
+    currency, statement_mode: statementMode, managed_by: card.managed_by,
+  }, items ?? [], created_by);
+  const { error } = await batch([
+    {
+      sql: "INSERT INTO bills (id, account_id, card_id, bill_month, statement_start, statement_end, " +
+        "statement_date, bill_amount, min_payment, due_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      params: [
+        id, accountId, anchorCardId, billRow.bill_month, billRow.statement_start || null,
+        billRow.statement_end || null, billRow.statement_date || null, billRow.bill_amount,
+        billRow.min_payment || 0, billRow.due_date, billRow.status || "unpaid",
+      ],
+    },
+    ...(subtotals ?? []).map(sub => ({
+      sql: "INSERT INTO bill_card_subtotals (id, bill_id, card_id, card_tail, subtotal_amount, currency, source) " +
+        "VALUES (?, ?, ?, ?, ?, ?, 'manual') ON CONFLICT(bill_id, card_tail) DO UPDATE SET " +
+        "card_id = excluded.card_id, subtotal_amount = excluded.subtotal_amount, currency = excluded.currency",
+      params: [uuid(), id, sub.card_id || null, sub.card_tail, sub.subtotal_amount, sub.currency || "CNY"],
+    })),
+    ...itemInserts,
+  ]);
   if (error) {
     const replayed = await classifyBillCreateFailure(error.message, {
       cardId: anchorCardId,
@@ -697,29 +724,6 @@ export async function createBill(
     });
     if (!replayed) throw new Error(error.message);
     return replayed;
-  }
-
-  // 批量保存分卡小计（如果有）
-  if (subtotals && subtotals.length > 0) {
-    for (const sub of subtotals) {
-      const subId = uuid();
-      await execute(
-        `INSERT INTO bill_card_subtotals (id, bill_id, card_id, card_tail, subtotal_amount, currency, source)
-         VALUES (?, ?, ?, ?, ?, ?, 'manual')
-         ON CONFLICT(bill_id, card_tail) DO UPDATE SET
-           card_id = excluded.card_id,
-           subtotal_amount = excluded.subtotal_amount,
-           currency = excluded.currency`,
-        [
-          subId,
-          id,
-          sub.card_id || null,
-          sub.card_tail,
-          sub.subtotal_amount,
-          sub.currency || "CNY",
-        ],
-      );
-    }
   }
 
   const created = await getBillById(id);
@@ -804,6 +808,7 @@ export interface BillDetail {
     }>;
   };
   payments: Payment[];
+  items: BillItem[];
 }
 
 /** Bill detail page: bill + card + product + holder + payments + account + subtotals in one call. */
@@ -968,12 +973,12 @@ export async function getBillDetail(billId: string): Promise<BillDetail> {
     }));
   }
 
-  const { data: paymentRows, error: payError } = await query<Payment>(
-    "SELECT * FROM payments WHERE bill_id = ? ORDER BY paid_at DESC",
-    [billId],
-  );
+  const [{ data: paymentRows, error: payError }, items] = await Promise.all([
+    query<Payment>("SELECT * FROM payments WHERE bill_id = ? ORDER BY paid_at DESC", [billId]),
+    getBillItems(billId),
+  ]);
   if (payError) throw new Error(payError.message);
-  return { bill, payments: paymentRows || [] };
+  return { bill, payments: paymentRows || [], items };
 }
 
 export interface UnpaidBillLite {
@@ -1276,13 +1281,27 @@ export async function getPaymentsByBill(billId: string): Promise<Payment[]> {
 }
 
 export async function createPayment(
-  payment: Omit<Payment, "id" | "created_at" | "idempotency_key">,
-): Promise<Payment> {
+  payment: Omit<Payment, "id" | "created_at" | "idempotency_key"> & PaymentFxInput,
+): Promise<Payment & PaymentFxInput> {
   const id = uuid();
   const key = `pay_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const ts = now();
+  const billCurrency = await getBillCurrency(payment.bill_id);
+  const fxLock = validateAndNormalizeFxLock(
+    {
+      settled_currency: payment.settled_currency ?? null,
+      settled_amount: payment.settled_amount ?? null,
+      locked_fx_rate: payment.locked_fx_rate ?? null,
+    },
+    payment.amount,
+    billCurrency,
+  );
+  // 未锁定的还款不写这三列：旧库（0042 之前）没有这些列，保持向后兼容。
+  const hasFxLock = fxLock.settled_currency !== null;
   const { error } = await execute(
-    "INSERT INTO payments (id, bill_id, amount, paid_at, channel, note, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    `INSERT INTO payments (id, bill_id, amount, paid_at, channel, note, idempotency_key, created_at${
+      hasFxLock ? ", settled_currency, settled_amount, locked_fx_rate" : ""
+    }) VALUES (?, ?, ?, ?, ?, ?, ?, ?${hasFxLock ? ", ?, ?, ?" : ""})`,
     [
       id,
       payment.bill_id,
@@ -1292,10 +1311,13 @@ export async function createPayment(
       payment.note || null,
       key,
       ts,
+      ...(hasFxLock
+ ? [fxLock.settled_currency, fxLock.settled_amount, fxLock.locked_fx_rate]
+        : []),
     ],
   );
   if (error) throw new Error(error.message);
-  const created = await queryOne<Payment>("SELECT * FROM payments WHERE id = ?", [id]);
+  const created = await queryOne<Payment & PaymentFxInput>("SELECT * FROM payments WHERE id = ?", [id]);
   if (!created.data) throw new Error("还款记录创建失败");
   return created.data;
 }
@@ -1338,13 +1360,16 @@ export async function markBillAsPaid(
   const alreadyPaid = await getPaymentTotal(billId);
   const remaining = Math.max(0, billAmount - alreadyPaid);
   if (remaining <= 0) throw new Error("该账单已无应还金额，无需重复还款");
+  const billCurrency = await getBillCurrency(billId);
 
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error("还款金额必须是大于 0 的数字");
   }
   // 金额列为 REAL，留 0.01 的浮点余量；超过剩余一律拒绝（不再有「已还 > 应还」的账单）
   if (amount > remaining + 0.01) {
-    throw new Error(`还款金额超过剩余应还（剩余 ¥${remaining.toFixed(2)}）`);
+    throw new Error(
+      `还款金额超过剩余应还（剩余 ${currencySymbol(billCurrency)}${remaining.toFixed(2)}）`,
+    );
   }
 
   const covered = alreadyPaid + amount >= billAmount - 0.01;
@@ -1374,10 +1399,14 @@ export interface RecordPaymentInput {
   channel?: string | null;
   note?: string | null;
   idempotency_key: string;
+  /** 还款汇率锁定（可选）：实付币种 / 实付金额 / 锁定汇率。 */
+  settled_currency?: string | null;
+  settled_amount?: number | null;
+  locked_fx_rate?: number | null;
 }
 
 export interface RecordPaymentResult {
-  payment: Payment;
+  payment: Payment & PaymentFxInput;
   bill_status: Bill["status"];
   already_processed?: boolean;
 }
@@ -1446,15 +1475,30 @@ export async function recordPayment(input: RecordPaymentInput): Promise<RecordPa
   const alreadyPaid = await getPaymentTotal(input.bill_id);
   const remaining = Math.max(0, billAmount - alreadyPaid);
   if (remaining <= 0) throw new RpcDomainError("CONFLICT", "该账单已无应还金额，无需重复还款");
+  const billCurrency = await getBillCurrency(input.bill_id);
 
   if (input.amount > remaining + 0.01) {
-    throw new RpcDomainError("CONFLICT", `还款金额超过剩余应还（剩余 ¥${remaining.toFixed(2)}）`);
+    throw new RpcDomainError(
+      "CONFLICT",
+      `还款金额超过剩余应还（剩余 ${currencySymbol(billCurrency)}${remaining.toFixed(2)}）`,
+    );
   }
 
   const paymentId = input.id || uuid();
   const paidAt = input.paid_at || today();
   const channel = input.channel || "手动还款";
   const note = input.note || null;
+  const fxLock = validateAndNormalizeFxLock(
+    {
+      settled_currency: input.settled_currency ?? null,
+      settled_amount: input.settled_amount ?? null,
+      locked_fx_rate: input.locked_fx_rate ?? null,
+    },
+    input.amount,
+    billCurrency,
+  );
+  // 未锁定的还款不写这三列：旧库（0042 之前）没有这些列，保持向后兼容。
+  const hasFxLock = fxLock.settled_currency !== null;
   const covered = alreadyPaid + input.amount >= billAmount - 0.01;
   const newStatus: Bill["status"] = covered ? "paid" : "partial";
   const ts = now();
@@ -1462,7 +1506,9 @@ export async function recordPayment(input: RecordPaymentInput): Promise<RecordPa
   // 3. 原子批处理插入与状态更新
   const { error } = await batch([
     {
-      sql: "INSERT INTO payments (id, bill_id, amount, paid_at, channel, note, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      sql: `INSERT INTO payments (id, bill_id, amount, paid_at, channel, note, idempotency_key, created_at${
+        hasFxLock ? ", settled_currency, settled_amount, locked_fx_rate" : ""
+      }) VALUES (?, ?, ?, ?, ?, ?, ?, ?${hasFxLock ? ", ?, ?, ?" : ""})`,
       params: [
         paymentId,
         input.bill_id,
@@ -1472,6 +1518,9 @@ export async function recordPayment(input: RecordPaymentInput): Promise<RecordPa
         note,
         input.idempotency_key,
         ts,
+        ...(hasFxLock
+          ? [fxLock.settled_currency, fxLock.settled_amount, fxLock.locked_fx_rate]
+          : []),
       ],
     },
     {
@@ -1511,13 +1560,13 @@ export async function recordPayment(input: RecordPaymentInput): Promise<RecordPa
         throw new RpcDomainError("CONFLICT", "该账单已无应还金额，无需重复还款");
       throw new RpcDomainError(
         "CONFLICT",
-        `还款金额超过剩余应还（剩余 ¥${latestRemaining.toFixed(2)}）`,
+        `还款金额超过剩余应还（剩余 ${currencySymbol(billCurrency)}${latestRemaining.toFixed(2)}）`,
       );
     }
     throw new Error(error.message);
   }
 
-  const created = await queryOne<Payment>("SELECT * FROM payments WHERE id = ?", [paymentId]);
+  const created = await queryOne<Payment & PaymentFxInput>("SELECT * FROM payments WHERE id = ?", [paymentId]);
   const updatedBill = await getBillById(input.bill_id);
   if (!created.data) throw new Error("还款记录保存失败");
 

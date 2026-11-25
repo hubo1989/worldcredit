@@ -37,7 +37,15 @@ export interface DashboardViewProps {
   onPayAllOpen: () => void
   onNavBills: () => void
   onNavPromos: () => void
+  onNavCashflowForecast?: () => void
   onNavNotifications?: () => void
+  debtBreakdown?: {
+    totalDebt: number
+    installmentOwed: number
+    loanOwed: number
+    plainOwed: number
+    unconvertedCurrencies?: string[]
+  }
   unreadNotificationCount?: number
   totalCardCount: number
   holders: Array<{ id: string; name: string }>
@@ -56,10 +64,21 @@ export function DashboardView(vm: DashboardViewProps) {
     metrics, holderPills, holderFilter, onHolderFilter, futureRange, onFutureRange,
     debtExpanded, onDebtExpanded, privacyOn, privacyIcon, onTogglePrivacy,
     amountClass, displayCurrency, onPaySingle, onPayPayable, payingPayableId, onPayAllOpen,
-    onNavBills, onNavPromos, onNavNotifications, unreadNotificationCount = 0,
+    onNavBills, onNavPromos, onNavCashflowForecast, onNavNotifications, unreadNotificationCount = 0,
     totalCardCount, holders, cardsByHolder,
-    quickActions, promoCount, userName, userEmail, urgentReminders,
+    quickActions, promoCount, userName, userEmail, urgentReminders, debtBreakdown,
   } = vm
+
+  const extMetrics = metrics as DashboardMetrics & {
+    totalDebt?: number
+    installmentOwed?: number
+    loanOwed?: number
+  }
+  const plainOwedValue = debtBreakdown?.plainOwed ?? metrics.plainOwed
+  const installmentOwedValue = debtBreakdown?.installmentOwed ?? extMetrics.installmentOwed ?? 0
+  const loanOwedValue = debtBreakdown?.loanOwed ?? extMetrics.loanOwed ?? 0
+  const totalDebtValue =
+    debtBreakdown?.totalDebt ?? extMetrics.totalDebt ?? plainOwedValue + installmentOwedValue + loanOwedValue
 
   // 头像/称呼都来自当前登录用户；邮箱前缀只是兜底，不能再写死成某一个人的名字。
   const emailPrefix = (userEmail || '').split('@')[0]
@@ -211,6 +230,15 @@ export function DashboardView(vm: DashboardViewProps) {
             {formatMoney(metrics.futureAmount, displayCurrency)}
           </p>
           <p className="mt-1 text-[11px] text-d-muted">{futureRange} 天内到期合计</p>
+          {onNavCashflowForecast && (
+            <button
+              type="button"
+              onClick={onNavCashflowForecast}
+              className="mt-1.5 inline-flex min-h-[28px] items-center text-[11px] font-semibold text-d-accent-light"
+            >
+              查看 30/60/90 天预测 ›
+            </button>
+          )}
         </div>
         <button
           onClick={() => onDebtExpanded()}
@@ -221,15 +249,26 @@ export function DashboardView(vm: DashboardViewProps) {
             <span className="text-xs text-d-muted">{debtExpanded ? '收起' : '展开'}</span>
           </div>
           <p className={amountClass + ' mt-1 text-[22px] font-bold'}>
-            {formatMoney(metrics.plainOwed, displayCurrency)}
+            {formatMoney(totalDebtValue, displayCurrency)}
           </p>
           {debtExpanded && (
             <div className="mt-2 space-y-1 border-t border-d-border pt-2 text-[11px] text-d-muted">
-              <div className="flex justify-between"><span>分期剩余本金</span><span>暂未接入</span></div>
-              <div className="flex justify-between"><span>贷款剩余本息</span><span>暂未接入</span></div>
-              <div className="flex justify-between"><span>普通未还</span>
-                <span className={amountClass + ' font-semibold'}>{formatMoney(metrics.plainOwed, displayCurrency)}</span>
+              <div className="flex justify-between">
+                <span>分期剩余本金</span>
+                <span className={amountClass + ' font-semibold'}>{formatMoney(installmentOwedValue, displayCurrency)}</span>
               </div>
+              <div className="flex justify-between">
+                <span>贷款剩余本息</span>
+                <span className={amountClass + ' font-semibold'}>{formatMoney(loanOwedValue, displayCurrency)}</span>
+              </div>
+              <div className="flex justify-between"><span>普通未还</span>
+                <span className={amountClass + ' font-semibold'}>{formatMoney(plainOwedValue, displayCurrency)}</span>
+              </div>
+              {debtBreakdown?.unconvertedCurrencies && debtBreakdown.unconvertedCurrencies.length > 0 && (
+                <p className="pt-0.5 text-[10px] text-d-muted">
+                  未含汇率：{debtBreakdown.unconvertedCurrencies.join('、')} 未计入合计
+                </p>
+              )}
             </div>
           )}
         </button>

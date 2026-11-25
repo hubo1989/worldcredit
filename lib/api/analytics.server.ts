@@ -14,6 +14,36 @@ import {
   type FxRates,
   type FxSum,
 } from '../fx'
+import {
+  addMonthsToPayablePeriod,
+  billEffectiveDueDate,
+  diffInCalendarDays,
+  effectiveBillAmount,
+  getLocalTodayString,
+  isBillUnissued,
+  nextPayablePeriodOf,
+  payableDueDate,
+  payablePeriodOf,
+} from '../utils'
+import {
+  bucketLabelForDate,
+  bucketRange,
+  categoryLabel,
+  generateInstallmentSchedule,
+  normalizeMerchantKey,
+  orderedBucketLabels,
+  round2,
+  UNCATEGORIZED_KEY,
+  type CashflowEvent,
+  type CashflowForecastFilters,
+  type CashflowForecastResult,
+  type CashflowHorizon,
+  type InstallmentPlanLike,
+  type LockedPaymentLike,
+  type PaymentFxLock,
+} from './direction3.shared'
+import { sumPaymentsWithLockedFx } from './direction3.shared'
+import type { Payment } from '../types'
 
 export interface AnalyticsFilters {
   from_month?: string  // YYYY-MM
@@ -78,6 +108,47 @@ export interface CategoryBreakdown {
   category: string
   amount: number
   percentage: number
+  /** 中文标签；旧调用方不读它，新 UI 直接展示。 */
+  category_label?: string
+  item_count?: number
+  /** 原币分币种真数（缺汇率时唯一可信的构成）。 */
+  by_currency?: Record<string, number>
+  fx_converted?: boolean
+  fx_unconverted_currencies?: string[]
+  meta_covered_bills?: number
+  meta_total_bills?: number
+  meta_unallocated_refunds?: Record<string, number>
+}
+
+export interface CategoryBreakdownReport {
+  items: CategoryBreakdown[]
+  /** 无法归属到任何分类的退款（按原币），不参与分类占比。 */
+  unallocated_refunds_by_currency: Record<string, number>
+  covered_bills: number
+  total_bills: number
+  fx_converted: boolean
+  fx_unconverted_currencies: string[]
+  display_currency: string
+  /** 折算后的分类总额（不含无法归属的退款）。 */
+  total_amount: number
+}
+
+export interface CategoryDrilldownItem {
+  item_id: string
+  bill_id: string
+  bill_month: string
+  holder_id: string
+  bank_name: string | null
+  card_name: string | null
+  card_tail: string | null
+  description: string
+  merchant_name: string | null
+  category: string
+  item_type: string
+  /** 带符号净额：退款为负。 */
+  amount: number
+  currency: string
+  transaction_date: string | null
 }
 
 export interface BenefitUsageStats {
@@ -125,10 +196,16 @@ async function getFilteredCardIds(filters: AnalyticsFilters): Promise<string[]> 
 interface BillRow {
   id: string
   card_id: string
+  account_id?: string | null
   bill_month: string
   bill_amount: number
   status: string
   due_date: string
+  due_date_override?: string | null
+  statement_date?: string | null
+  statement_date_override?: string | null
+  statement_end?: string | null
+  card_number_last4?: string | null
   holder_id: string
   bank_name: string | null
   card_name: string | null
@@ -157,9 +234,11 @@ async function getFilteredBills(filters: AnalyticsFilters): Promise<BillRow[]> {
 
   const { data, error } = await queryByChunks<BillRow>(cardIds, (chunk, placeholders) => ({
     // 手填金额优先：统计口径必须与账单页一致，否则同一笔钱在两页显示不同
-    sql: `SELECT b.id, b.card_id, b.bill_month,
+    sql: `SELECT b.id, b.card_id, b.account_id, b.bill_month,
             COALESCE(b.bill_amount_override, b.bill_amount) AS bill_amount,
-            b.status, b.due_date,
+            b.status, b.due_date, b.due_date_override,
+            b.statement_date, b.statement_date_override, b.statement_end,
+            cc.card_number_last4,
             cc.holder_id, cp.bank_name, cp.card_name, cp.currency, cc.credit_limit,
             cc.status AS card_status
      FROM bills b
@@ -174,10 +253,12 @@ async function getFilteredBills(filters: AnalyticsFilters): Promise<BillRow[]> {
 
 async function getPaymentsForBillIds(billIds: string[]) {
   if (billIds.length === 0) return []
-  const { data, error } = await queryByChunks<{ bill_id: string; amount: number; paid_at: string }>(
+  // SELECT * 而不是显式列出锁定三列：0042 之前的老库没有这些列，
+  // 显式列名会让整条查询直接失败；SELECT * 在老库上只是少几个字段。
+  const { data, error } = await queryByChunks<Payment & Partial<PaymentFxLock>>(
     billIds,
     (chunk, placeholders) => ({
-      sql: `SELECT bill_id, amount, paid_at FROM payments WHERE bill_id IN (${placeholders})`,
+      sql: `SELECT * FROM payments WHERE bill_id IN (${placeholders})`,
       params: chunk,
     })
   )
@@ -233,13 +314,15 @@ export async function getAnalyticsSummary(filters: AnalyticsFilters): Promise<An
     displayCurrency,
     rates
   )
-  // 还款的币种取自它所属的账单，不能假设是人民币
-  const paid = sumByCurrency(
-    payments,
-    payment => ({
+  // 历史已还：锁定过实付币种/金额的还款直接按实付金额计入，免疫实时汇率漂移
+  const paid = sumPaymentsWithLockedFx(
+    payments.map(payment => ({
       amount: Number(payment.amount) || 0,
-      currency: billById.get(payment.bill_id)?.currency ?? displayCurrency,
-    }),
+      bill_currency: billById.get(payment.bill_id)?.currency ?? displayCurrency,
+      settled_currency: payment.settled_currency ?? null,
+      settled_amount: payment.settled_amount ?? null,
+      locked_fx_rate: payment.locked_fx_rate ?? null,
+    })),
     displayCurrency,
     rates
   )
@@ -382,7 +465,7 @@ export async function getMonthlyDebtTrend(
   interface MonthBucket {
     bill: { amount: number; currency: string }[]
     pending: { amount: number; currency: string }[]
-    paid: { amount: number; currency: string }[]
+    paid: LockedPaymentLike[]
   }
   const monthlyMap = new Map<string, MonthBucket>()
   const ensureMonth = (month: string): MonthBucket => {
@@ -409,7 +492,10 @@ export async function getMonthlyDebtTrend(
     if (!month) continue
     ensureMonth(month).paid.push({
       amount: Number(payment.amount) || 0,
-      currency: bill?.currency ?? displayCurrency,
+      bill_currency: bill?.currency ?? displayCurrency,
+      settled_currency: payment.settled_currency ?? null,
+      settled_amount: payment.settled_amount ?? null,
+      locked_fx_rate: payment.locked_fx_rate ?? null,
     })
   }
 
@@ -417,7 +503,7 @@ export async function getMonthlyDebtTrend(
     .map(([month, bucket]) => {
       const billAmount = sumByCurrency(bucket.bill, item => item, displayCurrency, rates)
       const pendingAmount = sumByCurrency(bucket.pending, item => item, displayCurrency, rates)
-      const paidAmount = sumByCurrency(bucket.paid, item => item, displayCurrency, rates)
+      const paidAmount = sumPaymentsWithLockedFx(bucket.paid, displayCurrency, rates)
       return {
         month,
         bill_amount: billAmount.total,
@@ -434,10 +520,673 @@ export async function getMonthlyDebtTrend(
     .slice(-months)
 }
 
-export async function getCategoryBreakdown(_filters: AnalyticsFilters): Promise<CategoryBreakdown[]> {
-  // NOTE: bill_items table does not exist in the current schema. Return empty.
-  // TODO(W09): implement once transaction detail model is added
-  return []
+interface ItemAggregateRow {
+  bill_id: string
+  currency: string
+  category: string
+  item_type: string
+  merchant_key: string | null
+  amount: number
+  item_count: number
+}
+
+/**
+ * 分类聚合的三次分片查询（固定 3 次 D1 往返，与账单数量无关）：
+ *   1) 正向消费按 (bill, currency, category) 汇总；
+ *   2) 退款按 (bill, currency, category, merchant) 汇总（用于同商户回冲）；
+ *   3) 已分类消费按 (bill, currency, category, merchant) 汇总（用于无分类退款的商户归属）。
+ * 明细行数再大也只在 SQL 内分组，传输量始终是「桶数」而不是「条数」。
+ */
+async function getItemAggregates(
+  billIds: string[],
+  includeFees: boolean,
+): Promise<{
+  spend: ItemAggregateRow[]
+  refunds: ItemAggregateRow[]
+  merchantSpend: ItemAggregateRow[]
+}> {
+  const itemTypes = includeFees
+ ? "('purchase','fee','interest','installment')"
+    : "('purchase','installment')"
+  const [spend, refunds, merchantSpend] = await Promise.all([
+    queryByChunks<ItemAggregateRow>(billIds, (chunk, placeholders) => ({
+      sql: `SELECT bill_id, currency, COALESCE(category, '') AS category, item_type,
+                   '' AS merchant_key, SUM(amount) AS amount, COUNT(*) AS item_count
+            FROM bill_items
+            WHERE bill_id IN (${placeholders}) AND item_type IN ${itemTypes}
+            GROUP BY bill_id, currency, COALESCE(category, ''), item_type`,
+      params: chunk,
+    })),
+    queryByChunks<ItemAggregateRow>(billIds, (chunk, placeholders) => ({
+      sql: `SELECT bill_id, currency, COALESCE(category, '') AS category, 'refund' AS item_type,
+                   COALESCE(merchant_name, description, '') AS merchant_key,
+                   SUM(amount) AS amount, COUNT(*) AS item_count
+            FROM bill_items
+            WHERE bill_id IN (${placeholders}) AND item_type = 'refund'
+            GROUP BY bill_id, currency, COALESCE(category, ''),
+                     COALESCE(merchant_name, description, '')`,
+      params: chunk,
+    })),
+    queryByChunks<ItemAggregateRow>(billIds, (chunk, placeholders) => ({
+      sql: `SELECT bill_id, currency, COALESCE(category, '') AS category, item_type,
+                   COALESCE(merchant_name, description, '') AS merchant_key,
+                   SUM(amount) AS amount, COUNT(*) AS item_count
+            FROM bill_items
+            WHERE bill_id IN (${placeholders})
+              AND item_type IN ${itemTypes}
+              AND category IS NOT NULL
+            GROUP BY bill_id, currency, COALESCE(category, ''), item_type,
+                     COALESCE(merchant_name, description, '')`,
+      params: chunk,
+    })),
+  ])
+  for (const result of [spend, refunds, merchantSpend]) {
+    if (result.error) throw new Error(result.error.message)
+  }
+  return {
+    spend: spend.data || [],
+    refunds: refunds.data || [],
+    merchantSpend: merchantSpend.data || [],
+  }
+}
+
+/**
+ * fee / interest 默认归 `fees_interest`；用户显式指定了别的分类时保留显式值
+ * （`other` 是导入默认值，视同未指定）。
+ */
+function normalizeItemCategory(row: { category: string; item_type: string }): string {
+  const category = row.category || UNCATEGORIZED_KEY
+  if (row.item_type !== 'fee' && row.item_type !== 'interest') return category
+  if (
+    category === UNCATEGORIZED_KEY ||
+    category === 'other' ||
+    category === 'fees_interest'
+  ) {
+    return 'fees_interest'
+  }
+  return category
+}
+
+/** 单个 (bill, currency) 内的退款回冲桶。 */
+interface BillCategoryBucket {
+  spendByCategory: Map<string, number>
+  itemCountByCategory: Map<string, number>
+  covered: boolean
+}
+
+/**
+ * 真实分类聚合（AC-1.4）：
+ * - fee / interest 默认归 `fees_interest`，`include_fees=false` 时整体剔除；
+ * - 同账单退款优先冲减其显式分类，否则按同账单同归一化商户的消费分类回冲，
+ *   桶内扣减下限钳制为 0，溢出部分进 `unallocated_refunds_by_currency`；
+ * - 缺汇率币种绝不 1:1 混入 amount / percentage，保留在 by_currency 并标记未折算。
+ */
+export async function getCategoryBreakdownReport(
+  filters: AnalyticsFilters & { include_fees?: boolean },
+): Promise<CategoryBreakdownReport> {
+  const displayCurrency = normalizeCurrencyOrDefault(filters.display_currency, 'CNY')
+  const rates: FxRates | null = await fetchRates()
+  const bills = await getFilteredBills(filters)
+  const billIds = bills.map(bill => bill.id)
+
+  const buckets = new Map<string, BillCategoryBucket>()
+  /** 无法归属的退款（按原币累计），不参与分类占比，报表单独披露。 */
+  const unallocatedRefunds: Record<string, number> = {}
+  const ensureBucket = (billId: string, currency: string): BillCategoryBucket => {
+    const key = `${billId}|${currency}`
+    let bucket = buckets.get(key)
+    if (!bucket) {
+      bucket = {
+        spendByCategory: new Map<string, number>(),
+        itemCountByCategory: new Map<string, number>(),
+        covered: false,
+      }
+      buckets.set(key, bucket)
+    }
+    return bucket
+  }
+
+  if (billIds.length > 0) {
+    const { spend, refunds, merchantSpend } = await getItemAggregates(
+      billIds,
+      filters.include_fees !== false,
+    )
+
+    for (const row of spend) {
+      const bucket = ensureBucket(row.bill_id, row.currency)
+      const category = normalizeItemCategory(row)
+      bucket.spendByCategory.set(
+        category,
+        (bucket.spendByCategory.get(category) ?? 0) + Number(row.amount),
+      )
+      bucket.itemCountByCategory.set(
+        category,
+        (bucket.itemCountByCategory.get(category) ?? 0) + Number(row.item_count),
+      )
+      bucket.covered = true
+    }
+
+    // 商户 → 分类：同账单同币种下，取消费金额最大的那个已分类桶。
+    const merchantCategory = new Map<string, string>()
+    const merchantAmount = new Map<string, number>()
+    for (const row of merchantSpend) {
+      const key = `${row.bill_id}|${row.currency}|${normalizeMerchantKey(row.merchant_key)}`
+      const current = merchantAmount.get(key) ?? 0
+      const next = current + Number(row.amount)
+      merchantAmount.set(key, next)
+      if (!merchantCategory.has(key) || next > current) {
+        merchantCategory.set(key, normalizeItemCategory(row))
+      }
+    }
+
+    for (const row of refunds) {
+      const bucket = ensureBucket(row.bill_id, row.currency)
+      bucket.covered = true
+      let target = normalizeItemCategory(row)
+      if (!target || target === UNCATEGORIZED_KEY) {
+        const key = `${row.bill_id}|${row.currency}|${normalizeMerchantKey(row.merchant_key)}`
+        target = merchantCategory.get(key) ?? UNCATEGORIZED_KEY
+      }
+      // 笔数记在最终归属的分类上（无分类退款按商户回冲后归入该分类）
+      bucket.itemCountByCategory.set(
+        target,
+        (bucket.itemCountByCategory.get(target) ?? 0) + Number(row.item_count),
+      )
+      let remaining = Number(row.amount)
+      const available = bucket.spendByCategory.get(target) ?? 0
+      if (available > 0) {
+        const taken = Math.min(remaining, available)
+        bucket.spendByCategory.set(target, available - taken)
+        remaining -= taken
+      }
+      if (remaining > 0.005) {
+        // 无法归属的退款：不硬塞进「其他」，交给报表单独披露。
+        unallocatedRefunds[row.currency] = round2(
+          (unallocatedRefunds[row.currency] ?? 0) + remaining,
+        )
+      }
+    }
+  }
+
+  // 按 (category, currency) 合并全部账单
+  const merged = new Map<string, Map<string, { amount: number; count: number }>>()
+  for (const [bucketKey, bucket] of buckets.entries()) {
+    const currency = bucketKey.slice(bucketKey.indexOf('|') + 1)
+    for (const [category, amount] of bucket.spendByCategory) {
+      let perCurrency = merged.get(category)
+      if (!perCurrency) {
+        perCurrency = new Map<string, { amount: number; count: number }>()
+        merged.set(category, perCurrency)
+      }
+      const entry = perCurrency.get(currency) ?? { amount: 0, count: 0 }
+      entry.amount += amount
+      entry.count += bucket.itemCountByCategory.get(category) ?? 0
+      perCurrency.set(currency, entry)
+    }
+  }
+
+  const items: CategoryBreakdown[] = []
+  const unconverted = new Set<string>()
+  for (const [category, perCurrency] of merged) {
+    const entries = Array.from(perCurrency.entries()).map(([currency, entry]) => ({
+      amount: round2(entry.amount),
+      currency,
+    }))
+    const sum = sumByCurrency(entries, entry => entry, displayCurrency, rates)
+    const itemCount = Array.from(perCurrency.values()).reduce((total, entry) => total + entry.count, 0)
+    for (const currency of sum.unconverted_currencies) unconverted.add(currency)
+    items.push({
+      category,
+      amount: round2(sum.total),
+      percentage: 0,
+      category_label: categoryLabel(category),
+      item_count: itemCount,
+      by_currency: sum.by_currency,
+      fx_converted: sum.converted,
+      fx_unconverted_currencies: sum.unconverted_currencies,
+    })
+  }
+
+  const totalAmount = round2(items.reduce((total, item) => total + item.amount, 0))
+  for (const item of items) {
+    item.percentage = totalAmount > 0 ? round2((item.amount / totalAmount) * 100) : 0
+  }
+  items.sort((a, b) => b.amount - a.amount)
+
+  return {
+    items,
+    unallocated_refunds_by_currency: unallocatedRefunds,
+    covered_bills: new Set(Array.from(buckets.entries()).filter(([, bucket]) => bucket.covered).map(([key]) => key.split('|')[0])).size,
+    total_bills: bills.length,
+    fx_converted: unconverted.size === 0,
+    fx_unconverted_currencies: Array.from(unconverted).sort(),
+    display_currency: displayCurrency,
+    total_amount: totalAmount,
+  }
+}
+
+/**
+ * 分类饼图数据源。保持数组返回以兼容既有调用方（lib/export.ts、analytics 页面），
+ * 元数据挂在每个元素上，需要完整元数据的调用方走 getCategoryBreakdownReport。
+ */
+export async function getCategoryBreakdown(
+  filters: AnalyticsFilters & { include_fees?: boolean },
+): Promise<CategoryBreakdown[]> {
+  return (await getCategoryBreakdownReport(filters)).items
+}
+
+/** 分类下钻明细列表（点饼图某块时调用）。 */
+export async function getCategoryDrilldownItems(
+  filters: AnalyticsFilters & { category?: string | null },
+): Promise<CategoryDrilldownItem[]> {
+  const bills = await getFilteredBills(filters)
+  const billIds = bills.map(bill => bill.id)
+  if (billIds.length === 0) return []
+
+  const categoryFilter =
+    filters.category && filters.category !== UNCATEGORIZED_KEY ? filters.category : null
+  const { data, error } = await queryByChunks<CategoryDrilldownItem>(
+    billIds,
+    (chunk, placeholders) => ({
+      sql: `SELECT bi.id AS item_id, bi.bill_id, b.bill_month, cc.holder_id,
+                   cp.bank_name, COALESCE(cc.name_override, cp.card_name) AS card_name,
+                   cc.card_number_last4 AS card_tail,
+                   bi.description, bi.merchant_name,
+                   COALESCE(bi.category, '${UNCATEGORIZED_KEY}') AS category,
+                   bi.item_type, bi.amount, bi.currency, bi.transaction_date
+            FROM bill_items bi
+            JOIN bills b ON b.id = bi.bill_id
+            JOIN credit_cards cc ON cc.id = b.card_id
+            LEFT JOIN card_products cp ON cc.card_product_id = cp.id
+            WHERE bi.bill_id IN (${placeholders})
+              AND (? IS NULL OR COALESCE(bi.category, '${UNCATEGORIZED_KEY}') = ?)`,
+      params: [...chunk, categoryFilter, categoryFilter],
+    }),
+    78,
+  )
+  if (error) throw new Error(error.message)
+  return (data || []).sort((a, b) => {
+    const left = a.transaction_date || a.bill_month
+    const right = b.transaction_date || b.bill_month
+    return right.localeCompare(left)
+  })
+}
+
+interface InstallmentRow extends InstallmentPlanLike {
+  id: string
+  card_id: string
+  account_id: string | null
+  card_tail: string | null
+  holder_id: string
+  title: string
+}
+
+interface PayableRow {
+  id: string
+  created_by: string
+  name: string
+  category: string
+  amount: number
+  currency: string
+  cycle_type?: string | null
+  cycle_months?: number | null
+  due_month?: number | null
+  anchor_period?: string | null
+  due_day: number
+  holder_id: string | null
+}
+
+/**
+ * 未来 30/60/90 天按币种现金流预测（AC-4.1–AC-4.3）。
+ *
+ * 三源展开：
+ *   1. 未结清信用卡账单（remaining > 0.01，days_until_due ∈ [0, horizon]）；
+ *   2. 活跃分期未出账期次（`included_in_statement` 且该卡/该账户当月已出账的期次剔除，
+ *      由已出账单承接，避免双计）；
+ *   3. 固定支出多期展开（月付在 90 天窗口内精确产出 3 期，扣减已付）。
+ *
+ * 逾期硬隔离：`days_until_due < 0` 的账单 / 独立分期期次 / 逾期固定支出只进
+ * `overdue_alert`，绝不计入未来 N 天准备金与柱状图。
+ *
+ * 固定支出隐私：成员只能看到自己 holder 名下或自己创建且未绑定 holder 的支出，
+ * 绝不泄露管理员名下未绑定该成员的家庭公共支出（AC-4.3）。
+ */
+export async function getCashflowForecast(
+  filters: CashflowForecastFilters,
+  userId?: string,
+): Promise<CashflowForecastResult> {
+  const horizon = filters.horizon_days
+  const displayCurrency = normalizeCurrencyOrDefault(filters.display_currency, 'CNY')
+  const rates: FxRates | null = await fetchRates()
+  const baseDate = getLocalTodayString('Asia/Shanghai')
+  const baseDateObj = new Date(`${baseDate}T00:00:00`)
+
+  const cardIds = await getFilteredCardIds(filters)
+  if (cardIds.length === 0) {
+    return emptyCashflowForecast(baseDate, horizon, displayCurrency)
+  }
+
+  const analyticsFilters: AnalyticsFilters = {
+    holder_id: filters.holder_id,
+    card_id: filters.card_id,
+    display_currency: displayCurrency,
+  }
+  const bills = await getFilteredBills(analyticsFilters)
+  const billIds = bills.map(bill => bill.id)
+
+  const billScopeKeys = new Set<string>()
+  for (const bill of bills) {
+    billScopeKeys.add(`card:${bill.card_id}:${bill.bill_month}`)
+    if (bill.account_id) billScopeKeys.add(`acc:${bill.account_id}:${bill.bill_month}`)
+  }
+
+  // 固定支出窗口：多期展开最多 6 期，先取足够宽的账期区间再一次查回已付合计
+  const payableWindowStart = baseDate.slice(0, 7)
+  const payableWindowEnd = addMonthsToPayablePeriod(
+    payableWindowStart,
+    Math.ceil(horizon / 28) + 1,
+  )
+  const scopedUserId = typeof userId === 'string' ? userId : ''
+
+  const [paymentsResult, installmentsResult, payablesResult] = await Promise.all([
+    billIds.length > 0
+      ? queryByChunks<{ bill_id: string; amount: number }>(billIds, (chunk, placeholders) => ({
+          sql: 'SELECT bill_id, amount FROM payments WHERE bill_id IN (' + placeholders + ')',
+          params: chunk,
+        }))
+      : Promise.resolve({ data: [], error: null }),
+    queryByChunks<InstallmentRow>(cardIds, (chunk, placeholders) => ({
+      sql: `SELECT ip.*, cc.account_id, cc.card_number_last4 AS card_tail, cc.holder_id
+            FROM installment_plans ip
+            JOIN credit_cards cc ON cc.id = ip.card_id
+            WHERE ip.card_id IN (${placeholders}) AND ip.status = 'active'`,
+      params: chunk,
+    })),
+    query<PayableRow>(
+      `SELECT * FROM recurring_payables
+       WHERE is_active = 1
+         AND (
+           (? IS NOT NULL AND (holder_id = ? OR (created_by = ? AND holder_id IS NULL)))
+           OR (? IS NULL AND created_by = ?)
+         )`,
+      [
+        filters.holder_id ?? null,
+        filters.holder_id ?? null,
+        scopedUserId,
+        filters.holder_id ?? null,
+        scopedUserId,
+      ],
+    ),
+  ])
+  if (paymentsResult.error) throw new Error(paymentsResult.error.message)
+  if (installmentsResult.error) throw new Error(installmentsResult.error.message)
+  if (payablesResult.error) throw new Error(payablesResult.error.message)
+
+  const payables = payablesResult.data || []
+  const payableIds = payables.map(payable => payable.id)
+  const paidByPayablePeriod = new Map<string, number>()
+  if (payableIds.length > 0) {
+    const paidResult = await queryByChunks<{ payable_id: string; period: string; amount: number }>(
+      payableIds,
+      (chunk, placeholders) => ({
+        sql: `SELECT payable_id, period, SUM(amount) AS amount
+              FROM recurring_payable_payments
+              WHERE payable_id IN (${placeholders}) AND period >= ? AND period <= ?
+              GROUP BY payable_id, period`,
+        params: [...chunk, payableWindowStart, payableWindowEnd],
+      }),
+      78,
+    )
+    if (paidResult.error) throw new Error(paidResult.error.message)
+    for (const row of paidResult.data || []) {
+      paidByPayablePeriod.set(`${row.payable_id}:${row.period}`, Number(row.amount) || 0)
+    }
+  }
+
+  const paidByBill = new Map<string, number>()
+  for (const row of paymentsResult.data || []) {
+    paidByBill.set(row.bill_id, (paidByBill.get(row.bill_id) ?? 0) + (Number(row.amount) || 0))
+  }
+
+  const events: CashflowEvent[] = []
+  const overdueEvents: CashflowEvent[] = []
+  const push = (event: CashflowEvent): void => {
+    if (event.days_until_due < 0) overdueEvents.push(event)
+    else events.push(event)
+  }
+
+  // 源 1：未结清账单
+  for (const bill of bills) {
+    const remaining = round2(
+      effectiveBillAmount({ bill_amount: bill.bill_amount }) - (paidByBill.get(bill.id) ?? 0),
+    )
+    if (remaining <= 0.01 || bill.status === 'paid') continue
+    const dueDate = billEffectiveDueDate({
+      due_date: bill.due_date,
+      due_date_override: bill.due_date_override ?? null,
+    })
+    const days = diffInCalendarDays(dueDate, baseDateObj)
+    if (days > horizon) continue
+    if (days < 0 && isBillUnissued(bill, baseDateObj)) continue
+    push({
+      source: 'bill',
+      ref_id: bill.id,
+      title: `${bill.bill_month} ${bill.bank_name ?? ''} ${bill.card_name ?? ''}`.trim(),
+      due_date: dueDate,
+      days_until_due: days,
+      amount: remaining,
+      currency: bill.currency ?? displayCurrency,
+      holder_id: bill.holder_id,
+      card_tail: bill.card_number_last4 ?? null,
+    })
+  }
+
+  // 源 2：活跃分期未出账期次
+  for (const plan of installmentsResult.data || []) {
+    const schedule = generateInstallmentSchedule(plan)
+    for (const period of schedule) {
+      if (period.period_index <= plan.paid_periods) continue
+      const covered =
+        plan.billing_mode !== 'independent' &&
+        (billScopeKeys.has(`card:${plan.card_id}:${period.bill_month}`) ||
+          (plan.account_id
+            ? billScopeKeys.has(`acc:${plan.account_id}:${period.bill_month}`)
+            : false))
+      if (covered) continue
+      const days = diffInCalendarDays(period.due_date, baseDateObj)
+      if (days > horizon) continue
+      push({
+        source: 'installment',
+        ref_id: plan.id,
+        title: `${plan.title} 第${period.period_index}/${plan.total_periods}期`,
+        due_date: period.due_date,
+        days_until_due: days,
+        amount: period.total,
+        currency: plan.currency,
+        holder_id: plan.holder_id,
+        card_tail: plan.card_tail,
+      })
+    }
+  }
+
+  // 源 3：固定支出多期展开
+  for (const payable of payables) {
+    const cycle = {
+      cycle_type: (payable.cycle_type ?? 'monthly') as
+        | 'monthly'
+        | 'every_n_months'
+        | 'yearly',
+      cycle_months: payable.cycle_months ?? undefined,
+      due_month: payable.due_month ?? undefined,
+    }
+    let period = payablePeriodOf(baseDateObj, cycle)
+    for (let step = 0; step < 6; step++) {
+      const dueDate = payableDueDate(payable.due_day, period)
+      const dueDateStr = `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, '0')}-${String(
+        dueDate.getDate(),
+      ).padStart(2, '0')}`
+      const paid = paidByPayablePeriod.get(`${payable.id}:${period}`) ?? 0
+      const remaining = round2((Number(payable.amount) || 0) - paid)
+      if (remaining > 0.01) {
+        const days = diffInCalendarDays(dueDateStr, baseDateObj)
+        if (days <= horizon) {
+          push({
+            source: 'payable',
+            ref_id: payable.id,
+            title: payable.name,
+            due_date: dueDateStr,
+            days_until_due: days,
+            amount: remaining,
+            currency: payable.currency || displayCurrency,
+            holder_id: payable.holder_id,
+          })
+        }
+      }
+      period = nextPayablePeriodOf(period, cycle)
+    }
+  }
+
+  return buildCashflowResult({
+    baseDate,
+    horizon,
+    displayCurrency,
+    rates,
+    events,
+    overdueEvents,
+  })
+}
+
+function emptyCashflowForecast(
+  baseDate: string,
+  horizon: CashflowHorizon,
+  displayCurrency: string,
+): CashflowForecastResult {
+  return {
+    base_date: baseDate,
+    horizon_days: horizon,
+    display_currency: displayCurrency,
+    reserves_by_currency: {},
+    converted_summary: {
+      converted_currency: displayCurrency,
+      by_currency: {},
+      total: 0,
+      converted: true,
+      unconverted_currencies: [],
+      mixed: false,
+    },
+    buckets: orderedBucketLabels(horizon, baseDate).map(label => ({
+      label,
+      ...bucketRange(horizon, label, baseDate),
+      by_currency: {},
+      bill: 0,
+      installment: 0,
+      payable: 0,
+      total: 0,
+    })),
+    timeline: [],
+    overdue_alert: {
+      count: 0,
+      by_currency: {},
+      total_converted: 0,
+      fx_converted: true,
+      items: [],
+    },
+  }
+}
+
+function buildCashflowResult(input: {
+  baseDate: string
+  horizon: CashflowHorizon
+  displayCurrency: string
+  rates: FxRates | null
+  events: CashflowEvent[]
+  overdueEvents: CashflowEvent[]
+}): CashflowForecastResult {
+  const { baseDate, horizon, displayCurrency, rates, events, overdueEvents } = input
+
+  const reserves: CashflowForecastResult['reserves_by_currency'] = {}
+  const ensureReserve = (currency: string) => {
+    let entry = reserves[currency]
+    if (!entry) {
+      entry = { bill: 0, installment: 0, payable: 0, total: 0 }
+      reserves[currency] = entry
+    }
+    return entry
+  }
+  for (const event of events) {
+    const entry = ensureReserve(event.currency)
+    entry[event.source] = round2(entry[event.source] + event.amount)
+    entry.total = round2(entry.total + event.amount)
+  }
+
+  const converted = sumByCurrency(
+    events,
+    event => ({ amount: event.amount, currency: event.currency }),
+    displayCurrency,
+    rates,
+  )
+
+  const buckets = new Map<string, CashflowForecastResult['buckets'][number]>()
+  for (const label of orderedBucketLabels(horizon, baseDate)) {
+    buckets.set(label, {
+      label,
+      ...bucketRange(horizon, label, baseDate),
+      by_currency: {},
+      bill: 0,
+      installment: 0,
+      payable: 0,
+      total: 0,
+    })
+  }
+  for (const event of events) {
+    const label = bucketLabelForDate(horizon, event.due_date, baseDate)
+    const bucket = buckets.get(label)
+    if (!bucket) continue
+    bucket.by_currency[event.currency] = round2(
+      (bucket.by_currency[event.currency] ?? 0) + event.amount,
+    )
+    bucket[event.source] = round2(bucket[event.source] + event.amount)
+    bucket.total = round2(bucket.total + event.amount)
+  }
+
+  const overdueByCurrency: Record<string, number> = {}
+  for (const event of overdueEvents) {
+    overdueByCurrency[event.currency] = round2(
+      (overdueByCurrency[event.currency] ?? 0) + event.amount,
+    )
+  }
+  const overdueConverted = sumByCurrency(
+    overdueEvents,
+    event => ({ amount: event.amount, currency: event.currency }),
+    displayCurrency,
+    rates,
+  )
+
+  return {
+    base_date: baseDate,
+    horizon_days: horizon,
+    display_currency: displayCurrency,
+    reserves_by_currency: reserves,
+    converted_summary: {
+      converted_currency: displayCurrency,
+      by_currency: converted.by_currency,
+      total: round2(converted.total),
+      converted: converted.converted,
+      unconverted_currencies: converted.unconverted_currencies,
+      mixed: converted.mixed,
+    },
+    buckets: Array.from(buckets.values()),
+    timeline: [...events].sort(
+      (a, b) => a.due_date.localeCompare(b.due_date) || a.source.localeCompare(b.source),
+    ),
+    overdue_alert: {
+      count: overdueEvents.length,
+      by_currency: overdueByCurrency,
+      total_converted: round2(overdueConverted.total),
+      fx_converted: overdueConverted.converted,
+      items: [...overdueEvents].sort((a, b) => a.due_date.localeCompare(b.due_date)),
+    },
+  }
 }
 
 /** First day AFTER the given month, as an exclusive upper bound. */

@@ -691,7 +691,11 @@ public final class ApiClient: @unchecked Sendable {
         channel: String? = nil,
         note: String? = nil,
         clearChannel: Bool = false,
-        clearNote: Bool = false
+        clearNote: Bool = false,
+        settledCurrency: String? = nil,
+        settledAmount: Double? = nil,
+        lockedFxRate: Double? = nil,
+        clearFxLock: Bool = false
     ) async throws -> Payment {
         var patch: [String: Any] = [:]
         if let amount { patch["amount"] = amount }
@@ -705,6 +709,15 @@ public final class ApiClient: @unchecked Sendable {
             patch["note"] = NSNull()
         } else if let note {
             patch["note"] = note
+        }
+        if clearFxLock {
+            patch["settled_currency"] = NSNull()
+            patch["settled_amount"] = NSNull()
+            patch["locked_fx_rate"] = NSNull()
+        } else if let settledCurrency, let settledAmount, let lockedFxRate {
+            patch["settled_currency"] = settledCurrency
+            patch["settled_amount"] = settledAmount
+            patch["locked_fx_rate"] = lockedFxRate
         }
         return try await rpc(
             module: "payments",

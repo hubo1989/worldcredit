@@ -107,6 +107,30 @@ const SYNCABLE_TABLES = {
     pk: "id",
     owner: (session) => ({ sql: "t.user_id = ?", binds: [session.id] }),
   },
+  // --- Direction 3: bill items, installments & merchant category rules (HUB-169) ---
+  bill_items: {
+    pk: "id",
+    owner: (session) => ({
+      sql: `EXISTS (SELECT 1 FROM bills b
+      JOIN credit_cards cc ON cc.id = b.card_id
+      JOIN card_holders ch ON ch.id = cc.holder_id
+      WHERE b.id = t.bill_id AND ch.managed_by = ?)`,
+      binds: [session.id],
+    }),
+  },
+  installment_plans: {
+    pk: "id",
+    owner: (session) => ({
+      sql: `EXISTS (SELECT 1 FROM credit_cards cc
+      JOIN card_holders ch ON ch.id = cc.holder_id
+      WHERE cc.id = t.card_id AND ch.managed_by = ?)`,
+      binds: [session.id],
+    }),
+  },
+  merchant_category_rules: {
+    pk: "id",
+    owner: (session) => ({ sql: "t.user_id = ?", binds: [session.id] }),
+  },
   // --- Phase 2: opportunity ledger + notification inbox (HUB-163) ---
   opportunity_definitions: {
     pk: "id",
