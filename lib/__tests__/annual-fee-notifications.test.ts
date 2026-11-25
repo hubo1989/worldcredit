@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { handleScheduled } from '../../worker/cron'
 import { describeAnnualFeeWaiverGap, resolveAnnualFeeCycleState } from '../annual-fee-cycle'
@@ -5,7 +7,7 @@ import { buildAnnualFeeDecisionCandidates } from '../annual-fee-notifications.se
 import { setDb } from '../db/client'
 import { formatMoneySingle } from '../notifications.shared'
 import { buildDailyNotificationCandidates, ensureDailyNotificationsForUser } from '../notifications-engine.server'
-import { createOpportunityDb, type SqliteD1 } from './helpers/sqlite-d1'
+import { createOpportunityDb, SQLITE_D1_MIGRATIONS_DIR, type SqliteD1 } from './helpers/sqlite-d1'
 
 const { sendPush, sendApns, fetchRates } = vi.hoisted(() => ({
   sendPush: vi.fn(), sendApns: vi.fn(), fetchRates: vi.fn(),
@@ -34,6 +36,14 @@ describe('年费周年日与免除进度', () => {
     ]) {
       expect(resolveAnnualFeeCycleState(card, product, asOf)).toMatchObject({ nextDueDate: due, cycleStartOn: start })
     }
+  })
+
+  it('exposes the exact ROI window for a card with an issued anniversary and no explicit due date', () => {
+    expect(resolveAnnualFeeCycleState(
+      { issued_on: '2025-12-25', next_annual_fee_date: null },
+      { annual_fee: 3600, annual_fee_cycle_type: 'anniversary_issued' },
+      today,
+    )).toMatchObject({ cycleStartOn: '2025-12-25', nextDueDate: '2026-12-25' })
   })
 
   it('显式日期覆盖周年，过期保留且可按原始锚点结转', () => {
@@ -246,23 +256,32 @@ describe('年费续卡决策通知', () => {
       .toEqual([{ category: 'annual_fee_decision', deleted_at: today }])
   })
 
-  it('同一 Cron 时窗顺序执行两次，仅生成一条通知并各推送一次 Web Push 与 APNs', async () => {
-    db.exec(`
-      INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth)
-      VALUES ('sub', 'member', 'https://push.example.test/1', 'key', 'auth');
-      INSERT INTO device_tokens (id, user_id, platform, token)
-      VALUES ('device', 'member', 'ios', '${'a'.repeat(64)}');
-    `)
-    const event = { scheduledTime: Date.parse(`${today}T01:00:00Z`) } as ScheduledEvent
-    const env = {
-      DB: d1, VAPID_PUBLIC_KEY: 'public', VAPID_PRIVATE_KEY: 'private',
-      APNS_KEY_P8: 'test', APNS_KEY_ID: 'test', APNS_TEAM_ID: 'test',
-    }
-    await handleScheduled(event, env, {} as ExecutionContext)
-    await handleScheduled(event, env, {} as ExecutionContext)
-    expect(sendPush).toHaveBeenCalledOnce()
-    expect(sendApns).toHaveBeenCalledOnce()
-    expect(db.raw.prepare("SELECT push_sent_at FROM notification_history WHERE user_id = 'member' AND notification_key = ?").all(dueKey))
-      .toEqual([{ push_sent_at: `${today}T01:00:00.000Z` }])
-  })
+  // The parallel case becomes mandatory in the combined schema with #67.
+  const hasPushLease = existsSync(join(SQLITE_D1_MIGRATIONS_DIR, '0038_sync_triggers_opportunities_notifications.sql'))
+  for (const concurrent of [false, true]) {
+    it.skipIf(concurrent && !hasPushLease)(`同一 Cron 时窗${concurrent ? '并行' : '顺序'}执行两次，各推送一次`, async () => {
+      db.exec(`
+        INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth)
+        VALUES ('sub', 'member', 'https://push.example.test/1', 'key', 'auth');
+        INSERT INTO device_tokens (id, user_id, platform, token)
+        VALUES ('device', 'member', 'ios', '${'a'.repeat(64)}');
+      `)
+      const event = { cron: '0 * * * *', scheduledTime: Date.parse(`${today}T01:00:00Z`) } as ScheduledEvent
+      const env = {
+        DB: d1, VAPID_PUBLIC_KEY: 'public', VAPID_PRIVATE_KEY: 'private',
+        APNS_KEY_P8: 'test', APNS_KEY_ID: 'test', APNS_TEAM_ID: 'test',
+      }
+      const scan = () => handleScheduled(event, env, {} as ExecutionContext)
+      if (concurrent) {
+        await Promise.all([scan(), scan()])
+      } else {
+        await scan()
+        await scan()
+      }
+      expect(sendPush).toHaveBeenCalledOnce()
+      expect(sendApns).toHaveBeenCalledOnce()
+      expect(db.raw.prepare("SELECT push_sent_at FROM notification_history WHERE user_id = 'member' AND notification_key = ?").all(dueKey))
+        .toEqual([{ push_sent_at: `${today}T01:00:00.000Z` }])
+    })
+  }
 })

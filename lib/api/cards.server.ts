@@ -1,5 +1,7 @@
 import { query, queryOne, execute, batch, uuid, now } from '../db'
 import { hasColumns } from '../db/schema-capabilities'
+import { RpcDomainError } from './errors'
+import { isValidUuid } from '../validation-patterns'
 import type { CardProduct, CreditCard, CardHolder, Bill, Benefit, BenefitUsage, CardDueDateResolution } from '@/lib/types'
 import { normalizeAliases } from '../utils'
 import { legacyBenefitPeriodStart } from './benefits.server'
@@ -22,6 +24,15 @@ export type CreditCardWithProduct = CreditCard & {
   card_product?: CardProduct
   bank_name?: string
   card_name?: string
+}
+
+/**
+  * Offline sync sends the client-generated UUID as the real primary key.
+  * Uppercase UUIDs from iOS are folded to lowercase so a replay compares equal
+  * to the stored row; anything that is not a UUID means "server, pick one".
+  */
+function normalizeClientCardId(value: unknown): string | null {
+  return isValidUuid(value) ? value.toLowerCase() : null
 }
 
 interface CardJoinRow {
@@ -380,6 +391,11 @@ export async function getCardsByHolder(holderId: string): Promise<CreditCardWith
 }
 
 export type CreateCardInput = {
+  /**
+    * Client-generated primary key for offline sync (Phase 2). Normalized to a
+    * lowercase UUID; omitting it keeps the historical server-generated id.
+    */
+  id?: string
   holder_id: string
   billing_day: number
   account_id?: string | null
@@ -431,7 +447,22 @@ export async function ensureDefaultCardProductForBank(bankId: string): Promise<C
 }
 
 export async function createCard(card: CreateCardInput): Promise<CreditCardWithProduct> {
-  const id = uuid()
+  const clientId = normalizeClientCardId(card.id)
+  // Offline retry with the same client UUID replays the already-created card
+  // instead of raising a UNIQUE failure the client cannot act on. A different
+  // holder under the same UUID means another family claimed it first.
+  if (clientId) {
+    const existing = await getCardById(clientId)
+    if (existing) {
+      if (existing.holder_id !== card.holder_id) {
+        throw new RpcDomainError('CONFLICT', '该卡片标识已被其他持卡人使用，请重新创建', {
+          card_id: clientId,
+        })
+      }
+      return existing
+    }
+  }
+  const id = clientId ?? uuid()
   let productId = card.card_product_id
   let product: CardProduct | null = null
 
@@ -448,28 +479,28 @@ export async function createCard(card: CreateCardInput): Promise<CreditCardWithP
   }
 
   if (!productId) {
-    throw new Error('缺少卡产品或所属银行')
+    throw new RpcDomainError('VALIDATION_FAILED', '缺少卡产品或所属银行')
   }
 
   // 自定义还款规则范围校验
   if (card.override_due_type) {
     if (card.override_due_value === undefined || card.override_due_value === null) {
-      throw new Error('启用自定义还款规则时必须提供有效的还款日数值')
+      throw new RpcDomainError('VALIDATION_FAILED', '启用自定义还款规则时必须提供有效的还款日数值')
     }
     const val = Number(card.override_due_value)
     if (!Number.isInteger(val)) {
-      throw new Error('还款日数值必须为整数')
+      throw new RpcDomainError('VALIDATION_FAILED', '还款日数值必须为整数')
     }
     if (card.override_due_type === 'after_billing') {
       if (val < 0) {
-        throw new Error('账单日后还款天数必须大于或等于 0')
+        throw new RpcDomainError('VALIDATION_FAILED', '账单日后还款天数必须大于或等于 0')
       }
     } else if (card.override_due_type === 'fixed') {
       if (val < 1 || val > 31) {
-        throw new Error('固定还款日必须在 1 到 31 之间')
+        throw new RpcDomainError('VALIDATION_FAILED', '固定还款日必须在 1 到 31 之间')
       }
     } else {
-      throw new Error('不支持的还款规则类型')
+      throw new RpcDomainError('VALIDATION_FAILED', '不支持的还款规则类型')
     }
   }
 
@@ -573,7 +604,11 @@ export async function createCard(card: CreateCardInput): Promise<CreditCardWithP
       card.issued_on ?? null, card.activated_on ?? null
     ]
   )
-  if (error) throw new Error(error.message)
+  if (error) {
+    const replayed = await classifyCardInsertFailure(error.message, card, clientId)
+    if (!replayed) throw new Error(error.message)
+    return replayed
+  }
 
   // 0044 年费/免年费进度列：仅在迁移已合入（列存在）时写入，旧库保持原样
   if (await hasColumns('credit_cards', CARD_ANNUAL_FEE_COLUMNS)) {
@@ -610,6 +645,36 @@ export async function createCard(card: CreateCardInput): Promise<CreditCardWithP
   const created = await getCardById(id)
   if (!created) throw new Error('卡片创建失败')
   return created
+}
+
+/**
+  * Turns raw driver failures into structured domain errors so an offline
+  * client gets a `permanent: true` verdict instead of a retryable 500.
+  * Returns the existing card when the failure was a lost race against an
+  * identical retry; returns null when the original error must propagate.
+  */
+async function classifyCardInsertFailure(
+  message: string,
+  card: CreateCardInput,
+  clientId: string | null,
+): Promise<CreditCardWithProduct | null> {
+  if (message.includes('UNIQUE constraint failed') && clientId) {
+    // Lost a race against an identical retry: the row now exists.
+    const existing = await getCardById(clientId)
+    if (existing && existing.holder_id === card.holder_id) return existing
+    if (existing) {
+      throw new RpcDomainError('CONFLICT', '该卡片标识已被其他持卡人使用，请重新创建', {
+        card_id: clientId,
+      })
+    }
+  }
+  if (message.includes('FOREIGN KEY constraint failed')) {
+    throw new RpcDomainError('NOT_FOUND', '关联的持卡人或卡产品不存在')
+  }
+  if (message.includes('CHECK constraint failed')) {
+    throw new RpcDomainError('VALIDATION_FAILED', '卡片字段不满足约束，请检查后重试')
+  }
+  return null
 }
 
 async function getCardById(id: string): Promise<CreditCardWithProduct | null> {
