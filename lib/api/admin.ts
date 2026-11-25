@@ -1,5 +1,6 @@
 // lib/api/admin.ts — client-side RPC wrappers (server: admin.server.ts).
 import type * as Server from './admin.server'
+import type * as AiServer from './ai.server'
 import { callRpc } from './rpc-client'
 
 export function getAdminBanks() {
@@ -68,4 +69,15 @@ export function createCardFromEmailParseLog(...args: Parameters<typeof Server.cr
 }
 export function updateSystemSettings(...args: Parameters<typeof Server.updateSystemSettings>) {
   return callRpc<typeof Server.updateSystemSettings>('admin', 'updateSystemSettings', ...args)
+}
+
+/** 卡产品结构化规则 AI 草稿（只预览，写库由 updateCardProduct 人工确认）。 */
+export function previewCardProductRules(
+  ...args: Parameters<typeof AiServer.aiPreviewCardProductRules>
+) {
+  return callRpc<typeof AiServer.aiPreviewCardProductRules>(
+    'admin',
+    'previewCardProductRules',
+    ...args
+  )
 }

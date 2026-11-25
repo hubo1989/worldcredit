@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import worker from '../src/index'
-import { createFakeD1 } from './fakeD1'
+import { createOpportunityDb, type SqliteD1 } from '../../lib/__tests__/helpers/sqlite-d1'
 import type { BillParseResult, Env } from '../../lib/email-core/types'
 
 const USER_ID = '11111111-1111-1111-1111-111111111111'
@@ -14,6 +14,8 @@ const parsed: BillParseResult = {
   card_last4: '1234',
   bill_amount: 6000,
   due_date: '2026-09-20',
+  due_date_status: 'exact',
+  confidence: 0.95,
   bill_month: '2026-08',
   statement_date: '2026-08-16',
   currency: 'CNY',
@@ -27,23 +29,35 @@ beforeAll(async () => {
   const bytes = await crypto.subtle.exportKey('pkcs8', pair.privateKey) as ArrayBuffer
   keyP8 = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...new Uint8Array(bytes)))}\n-----END PRIVATE KEY-----`
 })
-afterEach(() => vi.restoreAllMocks())
+let sqlite: SqliteD1
+afterEach(() => {
+  vi.restoreAllMocks()
+  sqlite?.close()
+})
 
 function seed(configured = true) {
-  const { db, tables } = createFakeD1({
-    card_holders: [{ id: 'h1', name: '张改菊', aliases: null, created_by: USER_ID, created_at: '2026-01-01' }],
-    card_products: [{ id: 'p1', bank_name: '招商银行', currency: 'CNY', is_active: 1 }],
-    credit_cards: [{ id: 'c1', holder_id: 'h1', card_number_last4: '1234', card_product_id: 'p1', billing_day: 16 }],
-    system_settings: [
-      { key: 'ai_api_key', value: JSON.stringify('test-ai-key') },
-      { key: 'ai_base_url', value: JSON.stringify('https://ai.example.test') },
-    ],
-    device_tokens: [
-      { token: 'device-1', user_id: USER_ID, platform: 'ios' },
-      { token: 'other-user-device', user_id: 'other-user', platform: 'ios' },
-      { token: 'android-device', user_id: USER_ID, platform: 'android' },
-    ],
-  })
+  sqlite = createOpportunityDb()
+  sqlite.exec(`
+    INSERT INTO users(id,email,password_hash) VALUES
+      ('${USER_ID}', 'user@example.test', 'x'),
+      ('other-user', 'other@example.test', 'x'),
+      ('new-owner', 'new-owner@example.test', 'x');
+    INSERT INTO card_holders(id,created_by,managed_by,name) VALUES ('h1','${USER_ID}','${USER_ID}','张改菊');
+    INSERT INTO card_products(id,bank_name,card_name,currency) VALUES ('p1','招商银行','Test card','CNY');
+    INSERT INTO credit_cards(id,holder_id,card_product_id,billing_day,card_number_last4) VALUES ('c1','h1','p1',16,'1234');
+    INSERT INTO system_settings(key,value) VALUES ('ai_api_key','test-ai-key'), ('ai_base_url','https://ai.example.test');
+    INSERT INTO device_tokens(id,token,user_id,platform) VALUES
+      ('token-1','device-1','${USER_ID}','ios'),
+      ('token-2','other-user-device','other-user','ios'),
+      ('token-3','android-device','${USER_ID}','android');
+  `)
+  const db = sqlite as unknown as D1Database
+  const tables = {
+    get bills() { return sqlite.raw.prepare('SELECT * FROM bills').all() },
+    get credit_cards() { return sqlite.raw.prepare('SELECT * FROM credit_cards').all() },
+    get email_parse_logs() { return sqlite.raw.prepare('SELECT * FROM email_parse_logs').all() },
+    get device_tokens() { return sqlite.raw.prepare('SELECT * FROM device_tokens ORDER BY id').all() },
+  }
   const env: Env = configured ? {
     DB: db,
     APNS_KEY_P8: keyP8,
@@ -163,29 +177,33 @@ describe('邮件入库后的 APNs 静默同步', () => {
 
   it('保留原账单且未改写时不通知', async () => {
     const { env, tables, ctx } = seed()
-    tables.bills.push({ id: 'existing', card_id: 'c1', bill_month: parsed.bill_month, bill_amount: 100, status: 'paid' })
+    sqlite.exec(`INSERT INTO bills(id,card_id,bill_month,bill_amount,due_date,status)
+      VALUES ('existing','c1','2026-08',100,'2026-09-20','paid')`)
     mockNetwork()
     await worker.email(message(plain(false)), env, ctx)
     expect(tables.bills[0]).toMatchObject({ bill_amount: 100, status: 'paid' })
     expect(ctx.waitUntil).not.toHaveBeenCalled()
   })
 
-  it('直发保留账单但修正账单日时仍通知设备', async () => {
+  it('直发账单金额冲突时保留原账单与卡档，停泊草稿', async () => {
     const { env, tables, ctx, pending } = seed()
-    tables.credit_cards[0].billing_day = 1
-    tables.bills.push({ id: 'existing', card_id: 'c1', bill_month: parsed.bill_month, bill_amount: 100, status: 'paid' })
+    sqlite.exec("UPDATE credit_cards SET billing_day=1 WHERE id='c1'")
+    sqlite.exec(`INSERT INTO bills(id,card_id,bill_month,bill_amount,due_date,status)
+      VALUES ('existing','c1','2026-08',100,'2026-09-20','paid')`)
     mockNetwork()
     await worker.email(message(plain(false)), env, ctx)
     await Promise.all(pending)
     expect(tables.bills[0]).toMatchObject({ bill_amount: 100, status: 'paid' })
-    expect(tables.credit_cards[0].billing_day).toBe(16)
-    expect(ctx.waitUntil).toHaveBeenCalledTimes(1)
+    expect(tables.credit_cards[0].billing_day).toBe(1)
+    expect(ctx.waitUntil).not.toHaveBeenCalled()
+    expect(sqlite.raw.prepare('SELECT status FROM bill_import_drafts').all()).toEqual([{ status: 'draft' }])
   })
 
   it('转发保留账单时跳过账单日修正且不通知设备', async () => {
     const { env, tables, ctx } = seed()
-    tables.credit_cards[0].billing_day = 1
-    tables.bills.push({ id: 'existing', card_id: 'c1', bill_month: parsed.bill_month, bill_amount: 100, status: 'paid' })
+    sqlite.exec("UPDATE credit_cards SET billing_day=1 WHERE id='c1'")
+    sqlite.exec(`INSERT INTO bills(id,card_id,bill_month,bill_amount,due_date,status)
+      VALUES ('existing','c1','2026-08',100,'2026-09-20','paid')`)
     mockNetwork()
     await worker.email(message(bundle(false)), env, ctx)
     expect(tables.bills[0]).toMatchObject({ bill_amount: 100, status: 'paid' })
@@ -195,7 +213,7 @@ describe('邮件入库后的 APNs 静默同步', () => {
 
   it.each(['plain', 'bundle'])('%s 更新账单日时通知设备', async kind => {
     const { env, tables, ctx, pending } = seed()
-    tables.credit_cards[0].billing_day = 1
+    sqlite.exec("UPDATE credit_cards SET billing_day=1 WHERE id='c1'")
     mockNetwork()
     await worker.email(message(kind === 'plain' ? plain() : bundle()), env, ctx)
     await Promise.all(pending)
@@ -233,7 +251,7 @@ describe('邮件入库后的 APNs 静默同步', () => {
     const { env, tables, ctx, pending } = seed()
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     mockNetwork(parsed, async () => {
-      tables.device_tokens[0].user_id = 'new-owner'
+      sqlite.exec("UPDATE device_tokens SET user_id='new-owner' WHERE id='token-1'")
       return Response.json({ reason: 'Unregistered' }, { status: 410 })
     })
     await worker.email(message(plain()), env, ctx)

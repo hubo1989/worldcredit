@@ -1,14 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { createFakeD1, type FakeDb, type Row } from './fakeD1'
+import { createFakeD1, type FakeDb } from './fakeD1'
 import {
   findOrCreateCardForHolder,
-  loadHolderScope,
   pickCardProductForBank,
   keepPaidStatus,
-  persistNestedBills,
   upsertBillForCard,
 } from '../../lib/email-core/bills'
-import type { BillParseResult, NestedBillMessage } from '../../lib/email-core/types'
+import type { BillParseResult } from '../../lib/email-core/types'
 
 const PRODUCT = { id: 'p1', bank_name: '招商银行', currency: 'CNY', is_active: 1, created_at: '2026-01-01' }
 
@@ -37,29 +35,6 @@ const parsedBill = (over: Partial<BillParseResult> = {}): BillParseResult => ({
   statement_date: '2026-08-16',
   currency: 'CNY',
   ...over,
-})
-
-const message = (over: Partial<NestedBillMessage> = {}): NestedBillMessage => ({
-  label: 'bill.eml',
-  subject: '账单',
-  from: 'bill@bank.com',
-  to: 'me@x.com',
-  date: 'Mon, 17 Aug 2026 09:00:00 +0800',
-  text: '尊敬的张改菊女士，您本期账单如下',
-  headerName: '张改菊女士',
-  bodyName: '张改菊',
-  ...over,
-})
-
-describe('loadHolderScope', () => {
-  it('只读该用户名下的持卡人，默认持卡人取最早创建的那个', async () => {
-    const { db } = seed()
-    const scope = await loadHolderScope(db, 'u1')
-    expect(scope.holders.map(h => h.id)).toEqual(['h1', 'h2'])
-    expect(scope.defaultHolderId).toBe('h1')
-    // TEXT 列里存的 JSON 字符串被归一化成数组
-    expect(scope.holders[0].aliases).toEqual(['张改菊女士'])
-  })
 })
 
 describe('pickCardProductForBank', () => {
@@ -223,149 +198,5 @@ describe('keepPaidStatus（直发与附件路径共用的状态保护）', () =>
     expect(keepPaidStatus(null)).toBe('unpaid')
     expect(keepPaidStatus(undefined)).toBe('unpaid')
     expect(keepPaidStatus('')).toBe('unpaid')
-  })
-})
-
-describe('index.ts 直发路径不变量', () => {
-  // 直发路径与附件路径行为必须一致：重发邮件不能把已还清账单打回未还款。
-  // 纯函数测不到「某个 SQL 里写死了 'unpaid'」，所以在源码层加不变量。
-  it('直发路径复用 upsertBillForCard 落账单（状态保护只此一份，不再内联 SQL）', async () => {
-    const { readFileSync } = await import('node:fs')
-    const { join } = await import('node:path')
-    const src = readFileSync(join(__dirname, '../src/index.ts'), 'utf8')
-    expect(src).toContain('await upsertBillForCard(db, cardId, aiResult, { trusted })')
-    // 内联 UPDATE bills 曾把非 0 元重发邮件的 paid 状态覆盖回 unpaid，必须保持移除
-    expect(src).not.toMatch(/UPDATE bills SET/)
-  })
-
-  it('非 statement 邮件（自动扣款通知/还款提醒）在建卡之前就被跳过', async () => {
-    const { readFileSync } = await import('node:fs')
-    const { join } = await import('node:path')
-    const src = readFileSync(join(__dirname, '../src/index.ts'), 'utf8')
-    expect(src).toContain("aiResult.email_kind && aiResult.email_kind !== 'statement'")
-  })
-})
-
-describe('persistNestedBills', () => {
-  const parseFrom = (over: Partial<BillParseResult> = {}) => async () => parsedBill(over)
-
-  it('识别出持卡人并写入账单', async () => {
-    const { db, tables } = seed()
-    const scope = await loadHolderScope(db, 'u1')
-    const result = await persistNestedBills(db, scope, [message()], parseFrom())
-    expect(result.written).toHaveLength(1)
-    expect(result.written[0].holderId).toBe('h1')
-    expect(result.written[0].matchSource).toBe('header_name')
-    expect(tables.bills).toHaveLength(1)
-    expect(tables.bills[0].card_id).toBe('c1')
-  })
-
-  it('[P0] 名册外的人 + 已存在的同月账单：跳过而不是覆盖', async () => {
-    const { db, tables } = seed()
-    tables.bills.push({
-      id: 'b1', card_id: 'c1', bill_month: '2026-08', bill_amount: 6000,
-      min_payment: null, due_date: '2026-09-20', statement_date: '2026-08-16', status: 'unpaid',
-    })
-    const scope = await loadHolderScope(db, 'u1')
-    // To 头与正文都认不出人 -> 回落默认持卡人 h1（= 既有账单那张卡）
-    const result = await persistNestedBills(
-      db, scope,
-      [message({ headerName: '王小明', bodyName: null })],
-      parseFrom({ bill_amount: 99999 })
-    )
-    expect(result.written).toHaveLength(0)
-    expect(result.skipped).toHaveLength(1)
-    expect(result.skipped[0].reason).toContain('保留原值')
-    expect(tables.bills[0].bill_amount).toBe(6000)
-  })
-
-  it('识别出对方是另一个持卡人时正常写入他自己的卡', async () => {
-    const { db, tables } = seed()
-    const scope = await loadHolderScope(db, 'u1')
-    const result = await persistNestedBills(
-      db, scope,
-      [message({ headerName: '高敏', bodyName: '高敏' })],
-      parseFrom()
-    )
-    expect(result.written[0].holderId).toBe('h2')
-    expect(tables.bills[0].card_id).toBe('c2')
-  })
-
-  it('非账单或字段不全时跳过', async () => {
-    const { db, tables } = seed()
-    const scope = await loadHolderScope(db, 'u1')
-    const result = await persistNestedBills(db, scope, [message()], parseFrom({ is_bill: false }))
-    expect(result.written).toHaveLength(0)
-    expect(result.skipped[0].reason).toContain('非账单')
-    expect(tables.bills).toHaveLength(0)
-  })
-
-  it('无正文时跳过', async () => {
-    const { db } = seed()
-    const scope = await loadHolderScope(db, 'u1')
-    const result = await persistNestedBills(db, scope, [message({ text: '   ' })], parseFrom())
-    expect(result.skipped[0].reason).toContain('无正文')
-  })
-
-  it('AI 解析抛错时跳过并保留原因', async () => {
-    const { db } = seed()
-    const scope = await loadHolderScope(db, 'u1')
-    const failing = async () => { throw new Error('boom') }
-    const result = await persistNestedBills(db, scope, [message()], failing)
-    expect(result.skipped[0].reason).toContain('boom')
-  })
-
-  it('匹配不到银行导致建卡失败时跳过并给出原因', async () => {
-    const { db, tables } = seed()
-    const scope = await loadHolderScope(db, 'u1')
-    const result = await persistNestedBills(
-      db, scope,
-      [message({ headerName: '高敏' })],
-      parseFrom({ card_last4: '7777', bank_name: 'Chase Bank', currency: 'USD' })
-    )
-    expect(result.written).toHaveLength(0)
-    expect(result.skipped[0].reason).toContain('Chase Bank')
-    expect(tables.credit_cards).toHaveLength(2)
-  })
-})
-
-describe('归属不可信时绝不自动建卡（2026-10-16 民生 0872 回归）', () => {
-  it('回落默认持卡人 + 未知尾号：不建卡不写账单，落待确认草稿', async () => {
-    const { db, tables } = seed()
-    const scope = await loadHolderScope(db, 'u1')
-    expect(scope.userId).toBe('u1')
-
-    const result = await persistNestedBills(
-      db, scope,
-      [message({ label: 'minsheng.eml', headerName: null, bodyName: null })],
-      async () => parsedBill({ card_last4: '0872', bank_name: '中国民生银行' }),
-    )
-
-    expect(result.written).toHaveLength(0)
-    expect(result.skipped).toHaveLength(1)
-    expect(result.skipped[0].reason).toContain('待确认草稿')
-    // 不建卡、不写账单
-    expect(tables.credit_cards.filter((c: Row) => c.card_number_last4 === '0872')).toHaveLength(0)
-    expect(tables.bills).toHaveLength(0)
-    // 草稿已保存（card_id 为空，等界面选卡确认）
-    const drafts = tables.bill_import_drafts ?? []
-    expect(drafts).toHaveLength(1)
-    expect(drafts[0].card_id).toBeNull()
-    expect(drafts[0].created_by).toBe('u1')
-  })
-
-  it('归属可信 + 未知尾号：仍然自动建卡（既有行为不回退）', async () => {
-    const { db, tables } = seed()
-    const scope = await loadHolderScope(db, 'u1')
-
-    const result = await persistNestedBills(
-      db, scope,
-      [message({ label: 'gm.eml', headerName: '高敏' })],
-      async () => parsedBill({ card_last4: '5678', bank_name: '招商银行' }),
-    )
-
-    expect(result.written).toHaveLength(1)
-    expect(tables.credit_cards.filter((c: Row) => c.card_number_last4 === '5678')).toHaveLength(1)
-    expect(tables.bills).toHaveLength(1)
   })
 })

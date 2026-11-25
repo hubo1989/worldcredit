@@ -6,6 +6,9 @@ public enum CardEditError: LocalizedError, Equatable {
     case invalidBillingDay(Int)
     case invalidCreditLimit(Double)
     case invalidAnnualFee(Double)
+    case invalidManualRewardValue(Double)
+    case invalidEnumValue(field: String, value: String)
+    case invalidWaiverProgressJson
     case invalidStatus(String)
     case invalidCardType(String)
     case invalidAccountMode(String)
@@ -21,6 +24,12 @@ public enum CardEditError: LocalizedError, Equatable {
             return "信用额度不能为负数: \(limit)"
         case .invalidAnnualFee(let fee):
             return "年费不能为负数: \(fee)"
+        case .invalidManualRewardValue(let value):
+            return "手动返现收益不能为负数: \(value)"
+        case .invalidEnumValue(let field, let value):
+            return "\(field)包含不支持的值: \(value)"
+        case .invalidWaiverProgressJson:
+            return "免年费进度必须是合法的 JSON 对象"
         case .invalidStatus(let status):
             return "不支持的卡片状态: \(status)"
         case .invalidCardType(let cardType):
@@ -57,6 +66,18 @@ public struct CardUpdateInput: Sendable {
     public var clearActivatedOn: Bool = false
     public var accountModeOverride: String?
     public var clearAccountModeOverride: Bool = false
+    public var annualFeeCycleType: String?
+    public var clearAnnualFeeCycleType: Bool = false
+    public var nextAnnualFeeDate: String?
+    public var clearNextAnnualFeeDate: Bool = false
+    public var annualFeeStatus: String?
+    public var clearAnnualFeeStatus: Bool = false
+    public var waiverProgressJson: String?
+    public var clearWaiverProgressJson: Bool = false
+    public var actualFeePaid: Double?
+    public var clearActualFeePaid: Bool = false
+    public var manualRewardValue: Double?
+    public var clearManualRewardValue: Bool = false
 
     public init(
         nameOverride: String? = nil,
@@ -80,7 +101,19 @@ public struct CardUpdateInput: Sendable {
         activatedOn: String? = nil,
         clearActivatedOn: Bool = false,
         accountModeOverride: String? = nil,
-        clearAccountModeOverride: Bool = false
+        clearAccountModeOverride: Bool = false,
+        annualFeeCycleType: String? = nil,
+        clearAnnualFeeCycleType: Bool = false,
+        nextAnnualFeeDate: String? = nil,
+        clearNextAnnualFeeDate: Bool = false,
+        annualFeeStatus: String? = nil,
+        clearAnnualFeeStatus: Bool = false,
+        waiverProgressJson: String? = nil,
+        clearWaiverProgressJson: Bool = false,
+        actualFeePaid: Double? = nil,
+        clearActualFeePaid: Bool = false,
+        manualRewardValue: Double? = nil,
+        clearManualRewardValue: Bool = false
     ) {
         self.nameOverride = nameOverride
         self.creditLimit = creditLimit
@@ -104,6 +137,18 @@ public struct CardUpdateInput: Sendable {
         self.clearActivatedOn = clearActivatedOn
         self.accountModeOverride = accountModeOverride
         self.clearAccountModeOverride = clearAccountModeOverride
+        self.annualFeeCycleType = annualFeeCycleType
+        self.clearAnnualFeeCycleType = clearAnnualFeeCycleType
+        self.nextAnnualFeeDate = nextAnnualFeeDate
+        self.clearNextAnnualFeeDate = clearNextAnnualFeeDate
+        self.annualFeeStatus = annualFeeStatus
+        self.clearAnnualFeeStatus = clearAnnualFeeStatus
+        self.waiverProgressJson = waiverProgressJson
+        self.clearWaiverProgressJson = clearWaiverProgressJson
+        self.actualFeePaid = actualFeePaid
+        self.clearActualFeePaid = clearActualFeePaid
+        self.manualRewardValue = manualRewardValue
+        self.clearManualRewardValue = clearManualRewardValue
     }
 }
 
@@ -166,6 +211,58 @@ public final class CardEditService: Sendable {
             let trimmed = activatedOn.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty && !BillEditService.isValidCalendarDate(trimmed) {
                 throw CardEditError.invalidDate(field: "激活日", value: trimmed)
+            }
+        }
+        if let nextFeeDate = input.nextAnnualFeeDate, !input.clearNextAnnualFeeDate {
+            let trimmed = nextFeeDate.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && !BillEditService.isValidCalendarDate(trimmed) {
+                throw CardEditError.invalidDate(field: "下次年费日", value: trimmed)
+            }
+        }
+        if let paid = input.actualFeePaid, !input.clearActualFeePaid {
+            guard paid.isFinite && paid >= 0 else {
+                throw CardEditError.invalidAnnualFee(paid)
+            }
+        }
+        if let manualReward = input.manualRewardValue, !input.clearManualRewardValue {
+            guard manualReward.isFinite && manualReward >= 0 else {
+                throw CardEditError.invalidManualRewardValue(manualReward)
+            }
+        }
+        if let cycleType = input.annualFeeCycleType, !input.clearAnnualFeeCycleType {
+            let trimmed = cycleType.trimmingCharacters(in: .whitespacesAndNewlines)
+            let allowedCycleTypes: Set<String> = [
+                "none",
+                "anniversary_issued",
+                "anniversary_activated",
+                "calendar_year",
+                "custom_date",
+            ]
+            if !trimmed.isEmpty && !allowedCycleTypes.contains(trimmed) {
+                throw CardEditError.invalidEnumValue(field: "年费周期", value: trimmed)
+            }
+        }
+        if let feeStatus = input.annualFeeStatus, !input.clearAnnualFeeStatus {
+            let trimmed = feeStatus.trimmingCharacters(in: .whitespacesAndNewlines)
+            let allowedStatuses: Set<String> = [
+                "not_applicable",
+                "in_progress",
+                "waived",
+                "paid",
+                "unknown",
+            ]
+            if !trimmed.isEmpty && !allowedStatuses.contains(trimmed) {
+                throw CardEditError.invalidEnumValue(field: "年费状态", value: trimmed)
+            }
+        }
+        if let progressJson = input.waiverProgressJson, !input.clearWaiverProgressJson {
+            let trimmed = progressJson.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                guard let data = trimmed.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: data),
+                      obj is [String: Any] else {
+                    throw CardEditError.invalidWaiverProgressJson
+                }
             }
         }
 
@@ -279,6 +376,52 @@ public final class CardEditService: Sendable {
                     card.overrideDueValue = dueValue
                     patchDict["override_due_value"] = dueValue
                 }
+            }
+            if input.clearAnnualFeeCycleType {
+                card.annualFeeCycleType = nil
+                patchDict["annual_fee_cycle_type"] = NSNull()
+            } else if let cycleType = input.annualFeeCycleType {
+                let trimmed = cycleType.trimmingCharacters(in: .whitespacesAndNewlines)
+                card.annualFeeCycleType = trimmed.isEmpty ? nil : trimmed
+                patchDict["annual_fee_cycle_type"] = trimmed.isEmpty ? NSNull() : trimmed
+            }
+            if input.clearNextAnnualFeeDate {
+                card.nextAnnualFeeDate = nil
+                patchDict["next_annual_fee_date"] = NSNull()
+            } else if let nextDate = input.nextAnnualFeeDate {
+                let trimmed = nextDate.trimmingCharacters(in: .whitespacesAndNewlines)
+                card.nextAnnualFeeDate = trimmed.isEmpty ? nil : trimmed
+                patchDict["next_annual_fee_date"] = trimmed.isEmpty ? NSNull() : trimmed
+            }
+            if input.clearAnnualFeeStatus {
+                card.annualFeeStatus = nil
+                patchDict["annual_fee_status"] = NSNull()
+            } else if let feeStatus = input.annualFeeStatus {
+                let trimmed = feeStatus.trimmingCharacters(in: .whitespacesAndNewlines)
+                card.annualFeeStatus = trimmed.isEmpty ? nil : trimmed
+                patchDict["annual_fee_status"] = trimmed.isEmpty ? NSNull() : trimmed
+            }
+            if input.clearWaiverProgressJson {
+                card.waiverProgressJson = nil
+                patchDict["waiver_progress_json"] = NSNull()
+            } else if let progressJson = input.waiverProgressJson {
+                let trimmed = progressJson.trimmingCharacters(in: .whitespacesAndNewlines)
+                card.waiverProgressJson = trimmed.isEmpty ? nil : trimmed
+                patchDict["waiver_progress_json"] = trimmed.isEmpty ? NSNull() : trimmed
+            }
+            if input.clearActualFeePaid {
+                card.actualFeePaid = nil
+                patchDict["actual_fee_paid"] = NSNull()
+            } else if let paid = input.actualFeePaid {
+                card.actualFeePaid = paid
+                patchDict["actual_fee_paid"] = paid
+            }
+            if input.clearManualRewardValue {
+                card.manualRewardValue = nil
+                patchDict["manual_reward_value"] = NSNull()
+            } else if let manualReward = input.manualRewardValue {
+                card.manualRewardValue = manualReward
+                patchDict["manual_reward_value"] = manualReward
             }
 
             try card.update(db)

@@ -9,3 +9,7 @@ export * from "./bills";
 export * from "./ai";
 export * from "./due-date";
 export * from "./cmb";
+export * from "./pdf";
+export * from "./multimodal";
+export * from "./vault-crypto";
+export * from "./ingest";

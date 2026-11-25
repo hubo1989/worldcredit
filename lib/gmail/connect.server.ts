@@ -80,8 +80,7 @@ export async function exchangeCodeAndSaveConnection(params: {
       `INSERT INTO gmail_connections
          (user_id, google_sub, email, refresh_token_enc, access_token_enc, scopes, status, updated_at)
        VALUES (?,?,?,?,?,?, 'active', datetime('now'))
-       ON CONFLICT(user_id) DO UPDATE SET
-         google_sub = excluded.google_sub,
+       ON CONFLICT(user_id, google_sub) DO UPDATE SET
          email = excluded.email,
          refresh_token_enc = excluded.refresh_token_enc,
          access_token_enc = excluded.access_token_enc,

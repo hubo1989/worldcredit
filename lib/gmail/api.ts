@@ -18,15 +18,26 @@ export interface GmailMessageRef {
   threadId: string | null;
 }
 
+export class GmailApiError extends Error {
+  constructor(readonly status: number, readonly invalidGrant: boolean) {
+    super(`Gmail API error (${status})${invalidGrant ? ": invalid_grant" : ""}`);
+    this.name = "GmailApiError";
+  }
+}
+
 async function callJson(
   url: string,
   init: RequestInit,
   fetchImpl: typeof fetch,
 ): Promise<Record<string, unknown>> {
-  const res = await fetchImpl(url, init);
+  const res = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(30_000) });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Gmail API error (${res.status}): ${text.slice(0, 300)}`);
+    let invalidGrant = false;
+    if (res.status === 400 && url === "https://oauth2.googleapis.com/token") {
+      const body: unknown = await res.json().catch(() => null);
+      invalidGrant = !!body && typeof body === "object" && "error" in body && body.error === "invalid_grant";
+    }
+    throw new GmailApiError(res.status, invalidGrant);
   }
   return res.json() as Promise<Record<string, unknown>>;
 }
@@ -62,7 +73,7 @@ export async function listMessageRefs(
   opts?: GmailClientOptions & { maxResults?: number; pageToken?: string },
 ): Promise<{ refs: GmailMessageRef[]; nextPageToken: string | null }> {
   const fetchImpl = opts?.fetchImpl ?? fetch;
-  const params = new URLSearchParams({ q, maxResults: String(opts?.maxResults ?? 50) });
+  const params = new URLSearchParams({ q, maxResults: String(Math.min(opts?.maxResults ?? 50, 50)) });
   if (opts?.pageToken) params.set("pageToken", opts.pageToken);
   const json = await callJson(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
@@ -92,11 +103,18 @@ export async function getRawMessage(
     { headers: { Authorization: `Bearer ${accessToken}` } },
     fetchImpl,
   );
-  const rawB64 = String(json.raw ?? "")
-    .replace(/-/g, "+")
-    .replace(/_/g, "/");
-  const bin = atob(rawB64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+  if (typeof json.raw !== "string" || !json.raw || json.raw.length > 40 * 1024 * 1024) {
+    throw new Error("Gmail 邮件原件缺失或超过大小上限");
+  }
+  const rawB64 = json.raw;
+  const unpaddedLength = rawB64.length - (rawB64.endsWith("==") ? 2 : rawB64.endsWith("=") ? 1 : 0);
+  const bytes = new Uint8Array(Math.floor(unpaddedLength * 3 / 4));
+  let offset = 0;
+  // Decode aligned chunks to avoid two full-size base64 copies plus a binary string.
+  for (let start = 0; start < rawB64.length; start += 32_768) {
+    const ascii = rawB64.slice(start, start + 32_768).replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(ascii);
+    for (let i = 0; i < binary.length; i++) bytes[offset++] = binary.charCodeAt(i);
+  }
+  return bytes;
 }

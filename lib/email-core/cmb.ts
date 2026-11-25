@@ -78,7 +78,7 @@ export function parseCmbStatement(text: string): BillParseResult {
 
   // 4. 本期应还金额（bill_amount）
   const amountMatch = text.match(/本期应还金额\s*(?:New Balance)?\s*[¥￥\s]*([0-9,-]+(?:\.[0-9]{2})?)/i)
-  const billAmount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : 0
+  const billAmount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : undefined
 
   // 5. 最低还款额（min_payment）
   const minMatch = text.match(/(?:本期)?最低还款额\s*(?:Min\.?\s*Payment)?\s*[¥￥\s]*([0-9,]+(?:\.[0-9]{2})?)/i)
@@ -137,11 +137,9 @@ export function parseCmbStatement(text: string): BillParseResult {
     if (uniqueTails.length === 1) {
       // 单卡样本小计 = 账户总额
       cardLast4 = uniqueTails[0]
-      subtotals.push({
-        card_last4: uniqueTails[0],
-        amount: billAmount,
-        currency: 'CNY',
-      })
+      if (billAmount !== undefined && Number.isFinite(billAmount)) {
+        subtotals.push({ card_last4: uniqueTails[0], amount: billAmount, currency: 'CNY' })
+      }
     } else if (uniqueTails.length > 1) {
       // 多卡时各尾号求和（含还款/分期/消费全部分段），与总额差额按 PRD 归「上期结转/账户级调整」，不反向覆写总额
       cardLast4 = uniqueTails[0]

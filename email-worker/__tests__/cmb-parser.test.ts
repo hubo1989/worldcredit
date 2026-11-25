@@ -9,6 +9,15 @@ import {
 } from './fixtures/cmb-synthetic'
 
 describe('招商银行账单识别与专用解析器 (Phase 3)', () => {
+  it('preserves the difference between a missing balance and an explicit zero', () => {
+    const balance = '本期应还金额 New Balance\n¥ 18,888.88'
+    const missing = parseCmbStatement(CMB_SINGLE_CARD_SYNTHETIC.replaceAll('本期应还金额', '本期余额'))
+    expect(missing).toMatchObject({ is_bill: true, card_last4: '6688', card_subtotals: [] })
+    expect(missing.bill_amount).toBeUndefined()
+    const zero = parseCmbStatement(CMB_SINGLE_CARD_SYNTHETIC.replace(balance, '本期应还金额 New Balance\n¥ 0.00'))
+    expect(zero.bill_amount).toBe(0)
+  })
+
   describe('isCmbStatement (识别规则)', () => {
     it('命中发件域 cmbchina.com + 账单主题关键词', () => {
       expect(

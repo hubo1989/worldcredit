@@ -73,6 +73,9 @@ public final class PaymentService: Sendable {
         paidAt: String? = nil,
         channel: String? = "手动还款",
         note: String? = nil,
+        settledCurrency: String? = nil,
+        settledAmount: Double? = nil,
+        lockedFxRate: Double? = nil,
         paymentId: String = "pay-\(UUID().uuidString.prefix(12).lowercased())",
         idempotencyKey: String = UUID().uuidString
     ) async throws -> Payment {
@@ -107,6 +110,9 @@ public final class PaymentService: Sendable {
                 paidAt: effectivePaidAt,
                 channel: channel,
                 note: note,
+                settledCurrency: settledCurrency,
+                settledAmount: settledAmount,
+                lockedFxRate: lockedFxRate,
                 idempotencyKey: idempotencyKey
             )
             try payment.insert(db)
@@ -132,6 +138,11 @@ public final class PaymentService: Sendable {
             ]
             if let channel { mutationArg["channel"] = channel }
             if let note { mutationArg["note"] = note }
+            if let settledCurrency, let settledAmount, let lockedFxRate {
+                mutationArg["settled_currency"] = settledCurrency
+                mutationArg["settled_amount"] = settledAmount
+                mutationArg["locked_fx_rate"] = lockedFxRate
+            }
 
             let argsData = try JSONSerialization.data(withJSONObject: [mutationArg])
             let argsJson = String(data: argsData, encoding: .utf8) ?? "[]"

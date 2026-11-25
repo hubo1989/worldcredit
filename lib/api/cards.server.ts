@@ -1,4 +1,7 @@
 import { query, queryOne, execute, batch, uuid, now } from '../db'
+import { hasColumns } from '../db/schema-capabilities'
+import { RpcDomainError } from './errors'
+import { isValidUuid } from '../validation-patterns'
 import type { CardProduct, CreditCard, CardHolder, Bill, Benefit, BenefitUsage, CardDueDateResolution } from '@/lib/types'
 import { normalizeAliases } from '../utils'
 import { legacyBenefitPeriodStart } from './benefits.server'
@@ -21,6 +24,15 @@ export type CreditCardWithProduct = CreditCard & {
   card_product?: CardProduct
   bank_name?: string
   card_name?: string
+}
+
+/**
+  * Offline sync sends the client-generated UUID as the real primary key.
+  * Uppercase UUIDs from iOS are folded to lowercase so a replay compares equal
+  * to the stored row; anything that is not a UUID means "server, pick one".
+  */
+function normalizeClientCardId(value: unknown): string | null {
+  return isValidUuid(value) ? value.toLowerCase() : null
 }
 
 interface CardJoinRow {
@@ -56,6 +68,20 @@ interface CardJoinRow {
   p_annual_fee_waiver: string | null
   p_is_active: number | null
   p_created_at: string | null
+  // 0043 结构化规则列（迁移未合入时查询不会带出这些键）
+  p_ftf_rate?: number | null
+  p_fx_free_currencies_json?: string | null
+  p_reward_rules_json?: string | null
+  p_annual_fee_cycle_type?: string | null
+  p_annual_fee_waiver_rules_json?: string | null
+  p_rules_updated_at?: string | null
+  // 0044 持卡年费追踪列
+  annual_fee_cycle_type?: string | null
+  next_annual_fee_date?: string | null
+  annual_fee_status?: string | null
+  waiver_progress_json?: string | null
+  actual_fee_paid?: number | null
+  manual_reward_value?: number | null
 }
 
 function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
@@ -78,6 +104,12 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
     annual_fee_override: row.annual_fee_override != null ? row.annual_fee_override : undefined,
     issued_on: row.issued_on ?? null,
     activated_on: row.activated_on ?? null,
+    annual_fee_cycle_type: (row.annual_fee_cycle_type ?? null) as CreditCard['annual_fee_cycle_type'],
+    next_annual_fee_date: row.next_annual_fee_date ?? null,
+    annual_fee_status: (row.annual_fee_status ?? null) as CreditCard['annual_fee_status'],
+    waiver_progress_json: row.waiver_progress_json ?? null,
+    actual_fee_paid: row.actual_fee_paid ?? null,
+    manual_reward_value: row.manual_reward_value ?? null,
     created_at: row.created_at,
   }
   if (row.p_id) {
@@ -92,6 +124,12 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
       payment_due_value: row.p_payment_due_value || 20,
       annual_fee: row.p_annual_fee || 0,
       annual_fee_waiver: row.p_annual_fee_waiver || undefined,
+      ftf_rate: row.p_ftf_rate ?? null,
+      fx_free_currencies_json: row.p_fx_free_currencies_json ?? null,
+      reward_rules_json: row.p_reward_rules_json ?? null,
+      annual_fee_cycle_type: (row.p_annual_fee_cycle_type ?? null) as CardProduct['annual_fee_cycle_type'],
+      annual_fee_waiver_rules_json: row.p_annual_fee_waiver_rules_json ?? null,
+      rules_updated_at: row.p_rules_updated_at ?? null,
       is_active: row.p_is_active === 1,
       created_at: row.p_created_at || row.created_at,
     }
@@ -101,7 +139,7 @@ function joinRowToCard(row: CardJoinRow): CreditCardWithProduct {
   return card
 }
 
-const CARD_SELECT = `cc.id, cc.holder_id, cc.account_id, cc.card_product_id, cc.card_number_last4, cc.credit_limit, cc.credit_limit_override,
+const CARD_SELECT_BASE = `cc.id, cc.holder_id, cc.account_id, cc.card_product_id, cc.card_number_last4, cc.credit_limit, cc.credit_limit_override,
   cc.billing_day, cc.status, cc.card_type, cc.loan_due_day, cc.override_billing_day,
   cc.override_due_type, cc.override_due_value, cc.name_override, cc.annual_fee_override, cc.created_at,
   cc.issued_on, cc.activated_on,
@@ -110,6 +148,57 @@ const CARD_SELECT = `cc.id, cc.holder_id, cc.account_id, cc.card_product_id, cc.
   cp.payment_due_value AS p_payment_due_value, cp.annual_fee AS p_annual_fee,
   cp.annual_fee_waiver AS p_annual_fee_waiver, cp.is_active AS p_is_active, cp.created_at AS p_created_at
 FROM credit_cards cc LEFT JOIN card_products cp ON cc.card_product_id = cp.id`
+
+/** 0043 卡产品结构化规则列 */
+const PRODUCT_RULE_COLUMNS = [
+  'ftf_rate',
+  'fx_free_currencies_json',
+  'reward_rules_json',
+  'annual_fee_cycle_type',
+  'annual_fee_waiver_rules_json',
+  'rules_updated_at',
+] as const
+
+/** 0044 持卡年费/免年费进度列 */
+const CARD_ANNUAL_FEE_COLUMNS = [
+  'annual_fee_cycle_type',
+  'next_annual_fee_date',
+  'annual_fee_status',
+  'waiver_progress_json',
+  'actual_fee_paid',
+  'manual_reward_value',
+] as const
+
+/**
+ * 组装带结构化规则的 SELECT。
+ *
+ * 0043/0044 由 HUB-176 交付；合入前（或旧库上）新列不存在，此时只查旧列，
+ * 保证 HUB-177 分支可独立自测，也让 `cards.getCardDetail` 在迁移前后都不 500。
+ */
+async function cardSelectSql(): Promise<string> {
+  const [productReady, cardReady] = await Promise.all([
+    hasColumns('card_products', PRODUCT_RULE_COLUMNS),
+    hasColumns('credit_cards', CARD_ANNUAL_FEE_COLUMNS),
+  ])
+  const cardExtra = cardReady
+    ? `, cc.annual_fee_cycle_type, cc.next_annual_fee_date, cc.annual_fee_status,
+  cc.waiver_progress_json, cc.actual_fee_paid, cc.manual_reward_value`
+    : ''
+  const productExtra = productReady
+    ? `, cp.ftf_rate AS p_ftf_rate, cp.fx_free_currencies_json AS p_fx_free_currencies_json,
+  cp.reward_rules_json AS p_reward_rules_json, cp.annual_fee_cycle_type AS p_annual_fee_cycle_type,
+  cp.annual_fee_waiver_rules_json AS p_annual_fee_waiver_rules_json,
+  cp.rules_updated_at AS p_rules_updated_at`
+    : ''
+  const base = CARD_SELECT_BASE.replace(
+    'cc.issued_on, cc.activated_on,',
+    `cc.issued_on, cc.activated_on${cardExtra},`
+  )
+  return base.replace(
+    'cp.annual_fee_waiver AS p_annual_fee_waiver, cp.is_active AS p_is_active, cp.created_at AS p_created_at',
+    `cp.annual_fee_waiver AS p_annual_fee_waiver, cp.is_active AS p_is_active, cp.created_at AS p_created_at${productExtra}`
+  )
+}
 
 export async function getCardProducts(): Promise<CardProduct[]> {
   const { data, error } = await query<Record<string, unknown>>(
@@ -145,7 +234,7 @@ export async function getCardsBasicByHolders(
 /** All cards joined with their product, for bill entry forms. */
 export async function getAllCardsWithProduct(): Promise<CreditCardWithProduct[]> {
   const { data, error } = await query<CardJoinRow>(
-    `SELECT ${CARD_SELECT} ORDER BY cc.created_at DESC`
+    `SELECT ${await cardSelectSql()} ORDER BY cc.created_at DESC`
   )
   if (error) throw new Error(error.message)
   return (data || []).map(joinRowToCard)
@@ -294,7 +383,7 @@ export async function getCardDetail(
 
 export async function getCardsByHolder(holderId: string): Promise<CreditCardWithProduct[]> {
   const { data, error } = await query<CardJoinRow>(
-    `SELECT ${CARD_SELECT} WHERE cc.holder_id = ? ORDER BY cc.created_at DESC`,
+    `SELECT ${await cardSelectSql()} WHERE cc.holder_id = ? ORDER BY cc.created_at DESC`,
     [holderId]
   )
   if (error) throw new Error(error.message)
@@ -302,6 +391,11 @@ export async function getCardsByHolder(holderId: string): Promise<CreditCardWith
 }
 
 export type CreateCardInput = {
+  /**
+    * Client-generated primary key for offline sync (Phase 2). Normalized to a
+    * lowercase UUID; omitting it keeps the historical server-generated id.
+    */
+  id?: string
   holder_id: string
   billing_day: number
   account_id?: string | null
@@ -321,6 +415,12 @@ export type CreateCardInput = {
   account_mode_override?: CreditCard['account_mode_override']
   issued_on?: string | null
   activated_on?: string | null
+  annual_fee_cycle_type?: CreditCard['annual_fee_cycle_type']
+  next_annual_fee_date?: string | null
+  annual_fee_status?: CreditCard['annual_fee_status']
+  waiver_progress_json?: string | null
+  actual_fee_paid?: number | null
+  manual_reward_value?: number | null
 }
 
 export async function ensureDefaultCardProductForBank(bankId: string): Promise<CardProduct | null> {
@@ -347,7 +447,22 @@ export async function ensureDefaultCardProductForBank(bankId: string): Promise<C
 }
 
 export async function createCard(card: CreateCardInput): Promise<CreditCardWithProduct> {
-  const id = uuid()
+  const clientId = normalizeClientCardId(card.id)
+  // Offline retry with the same client UUID replays the already-created card
+  // instead of raising a UNIQUE failure the client cannot act on. A different
+  // holder under the same UUID means another family claimed it first.
+  if (clientId) {
+    const existing = await getCardById(clientId)
+    if (existing) {
+      if (existing.holder_id !== card.holder_id) {
+        throw new RpcDomainError('CONFLICT', '该卡片标识已被其他持卡人使用，请重新创建', {
+          card_id: clientId,
+        })
+      }
+      return existing
+    }
+  }
+  const id = clientId ?? uuid()
   let productId = card.card_product_id
   let product: CardProduct | null = null
 
@@ -364,28 +479,28 @@ export async function createCard(card: CreateCardInput): Promise<CreditCardWithP
   }
 
   if (!productId) {
-    throw new Error('缺少卡产品或所属银行')
+    throw new RpcDomainError('VALIDATION_FAILED', '缺少卡产品或所属银行')
   }
 
   // 自定义还款规则范围校验
   if (card.override_due_type) {
     if (card.override_due_value === undefined || card.override_due_value === null) {
-      throw new Error('启用自定义还款规则时必须提供有效的还款日数值')
+      throw new RpcDomainError('VALIDATION_FAILED', '启用自定义还款规则时必须提供有效的还款日数值')
     }
     const val = Number(card.override_due_value)
     if (!Number.isInteger(val)) {
-      throw new Error('还款日数值必须为整数')
+      throw new RpcDomainError('VALIDATION_FAILED', '还款日数值必须为整数')
     }
     if (card.override_due_type === 'after_billing') {
       if (val < 0) {
-        throw new Error('账单日后还款天数必须大于或等于 0')
+        throw new RpcDomainError('VALIDATION_FAILED', '账单日后还款天数必须大于或等于 0')
       }
     } else if (card.override_due_type === 'fixed') {
       if (val < 1 || val > 31) {
-        throw new Error('固定还款日必须在 1 到 31 之间')
+        throw new RpcDomainError('VALIDATION_FAILED', '固定还款日必须在 1 到 31 之间')
       }
     } else {
-      throw new Error('不支持的还款规则类型')
+      throw new RpcDomainError('VALIDATION_FAILED', '不支持的还款规则类型')
     }
   }
 
@@ -489,7 +604,35 @@ export async function createCard(card: CreateCardInput): Promise<CreditCardWithP
       card.issued_on ?? null, card.activated_on ?? null
     ]
   )
-  if (error) throw new Error(error.message)
+  if (error) {
+    const replayed = await classifyCardInsertFailure(error.message, card, clientId)
+    if (!replayed) throw new Error(error.message)
+    return replayed
+  }
+
+  // 0044 年费/免年费进度列：仅在迁移已合入（列存在）时写入，旧库保持原样
+  if (await hasColumns('credit_cards', CARD_ANNUAL_FEE_COLUMNS)) {
+    const feeFields: string[] = []
+    const feeParams: unknown[] = []
+    const feeMap: Record<string, unknown> = {
+      annual_fee_cycle_type: card.annual_fee_cycle_type,
+      next_annual_fee_date: card.next_annual_fee_date,
+      annual_fee_status: card.annual_fee_status,
+      waiver_progress_json: card.waiver_progress_json,
+      actual_fee_paid: card.actual_fee_paid,
+      manual_reward_value: card.manual_reward_value,
+    }
+    for (const [key, value] of Object.entries(feeMap)) {
+      if (value !== undefined) {
+        feeFields.push(`${key} = ?`)
+        feeParams.push(value)
+      }
+    }
+    if (feeFields.length > 0) {
+      feeParams.push(id)
+      await execute(`UPDATE credit_cards SET ${feeFields.join(', ')} WHERE id = ?`, feeParams)
+    }
+  }
 
   // 确保账户有 primary_card_id 锚点卡
   if (accountId) {
@@ -504,9 +647,39 @@ export async function createCard(card: CreateCardInput): Promise<CreditCardWithP
   return created
 }
 
+/**
+  * Turns raw driver failures into structured domain errors so an offline
+  * client gets a `permanent: true` verdict instead of a retryable 500.
+  * Returns the existing card when the failure was a lost race against an
+  * identical retry; returns null when the original error must propagate.
+  */
+async function classifyCardInsertFailure(
+  message: string,
+  card: CreateCardInput,
+  clientId: string | null,
+): Promise<CreditCardWithProduct | null> {
+  if (message.includes('UNIQUE constraint failed') && clientId) {
+    // Lost a race against an identical retry: the row now exists.
+    const existing = await getCardById(clientId)
+    if (existing && existing.holder_id === card.holder_id) return existing
+    if (existing) {
+      throw new RpcDomainError('CONFLICT', '该卡片标识已被其他持卡人使用，请重新创建', {
+        card_id: clientId,
+      })
+    }
+  }
+  if (message.includes('FOREIGN KEY constraint failed')) {
+    throw new RpcDomainError('NOT_FOUND', '关联的持卡人或卡产品不存在')
+  }
+  if (message.includes('CHECK constraint failed')) {
+    throw new RpcDomainError('VALIDATION_FAILED', '卡片字段不满足约束，请检查后重试')
+  }
+  return null
+}
+
 async function getCardById(id: string): Promise<CreditCardWithProduct | null> {
   const { data, error } = await queryOne<CardJoinRow>(
-    `SELECT ${CARD_SELECT} WHERE cc.id = ?`, [id]
+    `SELECT ${await cardSelectSql()} WHERE cc.id = ?`, [id]
   )
   if (error || !data) return null
   return joinRowToCard(data)
@@ -684,6 +857,15 @@ export async function updateCard(
     account_mode_override: patch.account_mode_override,
     issued_on: patch.issued_on,
     activated_on: patch.activated_on,
+  }
+  // 0044 年费/免年费进度列（迁移未合入时忽略，避免 UPDATE 打到不存在的列）
+  if (await hasColumns('credit_cards', CARD_ANNUAL_FEE_COLUMNS)) {
+    fieldMap.annual_fee_cycle_type = patch.annual_fee_cycle_type
+    fieldMap.next_annual_fee_date = patch.next_annual_fee_date
+    fieldMap.annual_fee_status = patch.annual_fee_status
+    fieldMap.waiver_progress_json = patch.waiver_progress_json
+    fieldMap.actual_fee_paid = patch.actual_fee_paid
+    fieldMap.manual_reward_value = patch.manual_reward_value
   }
   for (const [key, value] of Object.entries(fieldMap)) {
     if (value !== undefined) {

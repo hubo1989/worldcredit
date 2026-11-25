@@ -4,6 +4,7 @@
 //   - 站内读取通知中心/未读数时幂等补齐当日通知（status='skipped', push_sent_at=NULL）；
 //   - 每日 Cron 扫表时补发 Web Push / APNs（跳过已读、已删、已推送、免打扰时段），并写入 push_sent_at。
 
+import { buildAnnualFeeDecisionCandidates } from './annual-fee-notifications.server'
 import { categoryLabel, type PayableCategory, type PayableCycleType } from './api/payables.shared'
 import {
   computeCardGraceWindowOnDate,
@@ -676,6 +677,11 @@ export async function buildDailyNotificationCandidates(
         }),
       })
     }
+  }
+
+  if (switches.annual_fee_decision) {
+    const feeCandidates = await buildAnnualFeeDecisionCandidates(db, userId, effectiveToday)
+    for (const candidate of feeCandidates) candidates.push(candidate)
   }
 
   return { context, candidates }

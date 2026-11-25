@@ -107,6 +107,30 @@ const SYNCABLE_TABLES = {
     pk: "id",
     owner: (session) => ({ sql: "t.user_id = ?", binds: [session.id] }),
   },
+  // --- Direction 3: bill items, installments & merchant category rules (HUB-169) ---
+  bill_items: {
+    pk: "id",
+    owner: (session) => ({
+      sql: `EXISTS (SELECT 1 FROM bills b
+      JOIN credit_cards cc ON cc.id = b.card_id
+      JOIN card_holders ch ON ch.id = cc.holder_id
+      WHERE b.id = t.bill_id AND ch.managed_by = ?)`,
+      binds: [session.id],
+    }),
+  },
+  installment_plans: {
+    pk: "id",
+    owner: (session) => ({
+      sql: `EXISTS (SELECT 1 FROM credit_cards cc
+      JOIN card_holders ch ON ch.id = cc.holder_id
+      WHERE cc.id = t.card_id AND ch.managed_by = ?)`,
+      binds: [session.id],
+    }),
+  },
+  merchant_category_rules: {
+    pk: "id",
+    owner: (session) => ({ sql: "t.user_id = ?", binds: [session.id] }),
+  },
   // --- Phase 2: opportunity ledger + notification inbox (HUB-163) ---
   opportunity_definitions: {
     pk: "id",
@@ -256,6 +280,12 @@ function isValidRowId(tbl: SyncTable, rowId: unknown): rowId is string {
   return composite ? parseCompositeRowId(rowId) !== null : rowId.trim().length > 0;
 }
 
+function normalizeRowId(tbl: SyncTable, rowId: string): string {
+  if (!Array.isArray(SYNCABLE_TABLES[tbl].pk)) return rowId;
+  const parsedTuple = parseCompositeRowId(rowId);
+  return parsedTuple ? JSON.stringify(parsedTuple) : rowId;
+}
+
 function isEntityTarget(value: unknown): value is EntityTarget {
   return isRecord(value) && isSyncTable(value.tbl) && isValidRowId(value.tbl, value.row_id);
 }
@@ -320,10 +350,12 @@ export async function POST(request: Request) {
       console.warn(`[sync/pull] Ignoring change with malformed row_id: ${change.tbl}`);
       continue;
     }
-    entities.set(`${change.tbl}:${change.row_id}`, { tbl: change.tbl, row_id: change.row_id });
+    const rowId = normalizeRowId(change.tbl, change.row_id);
+    entities.set(`${change.tbl}:${rowId}`, { tbl: change.tbl, row_id: rowId });
   }
   for (const target of reconcile) {
-    entities.set(`${target.tbl}:${target.row_id}`, { tbl: target.tbl, row_id: target.row_id });
+    const rowId = normalizeRowId(target.tbl, target.row_id);
+    entities.set(`${target.tbl}:${rowId}`, { tbl: target.tbl, row_id: rowId });
   }
 
   const targetsByTable = new Map<SyncTable, string[]>();

@@ -1,13 +1,22 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Modal } from '@/components/obsidian/overlays'
 import { Button, Toggle } from '@/components/obsidian/controls'
 import { TextField, SelectField } from '@/components/obsidian/fields'
+import { Alert } from '@/components/obsidian/feedback'
 import type { CreditCard, CardProduct } from '@/lib/types'
 import { getCardProducts } from '@/lib/api/cards'
+import { currencySymbol } from '@/lib/fx'
 import { getEffectiveCreditLimit, isCreditLimitManuallySet } from '@/lib/utils'
 import { AiFillBox } from '@/components/mobile/AiFillBox'
+import {
+  ANNUAL_FEE_CYCLE_LABELS,
+  ANNUAL_FEE_STATUS_LABELS,
+  type AnnualFeeCycleType,
+  type AnnualFeeStatus,
+  type CreditCardWithAnnualFee,
+} from '@/lib/recommendations-ui/types'
 import {
   resolveLimitOnEdit,
   validateLimitOnCreate,
@@ -162,6 +171,20 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
   // 发卡/激活日：周年权益锚点，未知保持 null
   const [issuedOn, setIssuedOn] = useState(initial?.issued_on ?? '')
   const [activatedOn, setActivatedOn] = useState(initial?.activated_on ?? '')
+  const extInitial = initial as CreditCardWithAnnualFee | undefined
+  const [annualFeeOverride, setAnnualFeeOverride] = useState(
+    initial?.annual_fee_override != null ? String(initial.annual_fee_override) : ''
+  )
+  const [annualFeeCycleType, setAnnualFeeCycleType] = useState<string>(
+    extInitial?.annual_fee_cycle_type ?? ''
+  )
+  const [nextAnnualFeeDate, setNextAnnualFeeDate] = useState(
+    extInitial?.next_annual_fee_date ?? ''
+  )
+  const [annualFeeStatus, setAnnualFeeStatus] = useState<string>(
+    extInitial?.annual_fee_status ?? ''
+  )
+  const [formError, setFormError] = useState<string | null>(null)
 
   // 还款规则覆盖：只看 override_due_type，避免残留 value 导致关闭后复活
   const [overrideEnabled, setOverrideEnabled] = useState(
@@ -193,14 +216,16 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
     ? products.filter(p => p.bank_name === selectedBank)
     : products
 
+  // 记录已为哪张编辑卡完成过「产品目录 -> 银行」首次回填，避免改卡名或目录更新时把用户手动切换的银行弹回原卡银行
+  const initializedBankKeyRef = useRef<string | null>(null)
+
   useEffect(() => {
-    if (initial && products.length > 0) {
-      const match = products.find(p => p.id === initial.card_product_id)
-      if (match) {
-        setSelectedBank(match.bank_name)
-      }
+    if (!open || !initial) {
+      initializedBankKeyRef.current = null
+    }
+    if (initial) {
       setProductId(initial.card_product_id)
-      setCardName(initial.name_override || match?.card_name || '')
+      setCardName(initial.name_override || '')
       setHasCustomName(!!initial.name_override)
       setLast4(initial.card_number_last4 ?? '')
       const eff = getEffectiveCreditLimit(initial)
@@ -210,11 +235,17 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
       setLoanDueDay(initial.loan_due_day?.toString() ?? '')
       setIssuedOn(initial.issued_on ?? '')
       setActivatedOn(initial.activated_on ?? '')
+      const ext = initial as CreditCardWithAnnualFee
+      setAnnualFeeOverride(initial.annual_fee_override != null ? String(initial.annual_fee_override) : '')
+      setAnnualFeeCycleType(ext.annual_fee_cycle_type ?? '')
+      setNextAnnualFeeDate(ext.next_annual_fee_date ?? '')
+      setAnnualFeeStatus(ext.annual_fee_status ?? '')
+      setFormError(null)
       setOverrideEnabled(!!initial.override_due_type)
       setOverrideDueType(normalizeDueType(initial.override_due_type))
       setOverrideDueValue(initial.override_due_value?.toString() ?? '')
       setAccountModeOverride(initial.account_mode_override ?? 'auto')
-    } else if (!initial) {
+    } else {
       setSelectedBank('')
       setProductId('')
       setCardName('')
@@ -226,10 +257,29 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
       setLoanDueDay('')
       setIssuedOn('')
       setActivatedOn('')
+      setAnnualFeeOverride('')
+      setAnnualFeeCycleType('')
+      setNextAnnualFeeDate('')
+      setAnnualFeeStatus('')
+      setFormError(null)
       setOverrideEnabled(false)
       setOverrideDueType('after_billing')
       setOverrideDueValue('')
       setAccountModeOverride('auto')
+    }
+  }, [initial, open])
+
+  // 仅在弹窗打开/编辑对象变化后产品目录首次就绪时初始化一次银行与默认卡名，保留用户手动切换的银行与已输入的卡名
+  useEffect(() => {
+    if (!open || !initial || products.length === 0) return
+    if (initializedBankKeyRef.current === initial.id) return
+    initializedBankKeyRef.current = initial.id
+    const match = products.find(p => p.id === initial.card_product_id)
+    if (match) {
+      setSelectedBank(match.bank_name)
+      if (!initial.name_override) {
+        setCardName(prev => (prev.trim() ? prev : match.card_name))
+      }
     }
   }, [initial, open, products])
 
@@ -261,17 +311,29 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
 
   const handleSubmit = async () => {
     if (!canSubmit) return
+    setFormError(null)
 
     const limitResolution = resolveCardFormLimit(limit, isCredit, initial)
     if (!limitResolution.valid) {
-      alert(limitResolution.error || '请输入有效的信用额度')
+      setFormError(limitResolution.error || '请输入有效的信用额度')
       return
     }
 
     if (isCredit) {
       const dueCheck = validateDueRule(overrideEnabled, overrideDueType, overrideDueValue)
       if (!dueCheck.valid) {
-        alert(dueCheck.error || '还款规则校验失败')
+        setFormError(dueCheck.error || '还款规则校验失败')
+        return
+      }
+      if (annualFeeOverride.trim()) {
+        const feeNum = Number(annualFeeOverride.trim())
+        if (!Number.isFinite(feeNum) || feeNum < 0) {
+          setFormError('年费覆盖金额必须为非负数')
+          return
+        }
+      }
+      if (nextAnnualFeeDate.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(nextAnnualFeeDate.trim())) {
+        setFormError('下次年费扣费日格式必须为 YYYY-MM-DD')
         return
       }
     }
@@ -281,6 +343,42 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
       const currentProd = products.find(p => p.id === productId)
       const finalNameOverride = resolveNameOverride(cardName, currentProd, hasCustomName)
       const dueRulePayload = buildDueRulePayload(overrideEnabled, overrideDueType, overrideDueValue)
+
+      const annualFeePayload = isCredit
+        ? {
+            issued_on: issuedOn || null,
+            activated_on: activatedOn || null,
+            ...(annualFeeOverride.trim()
+              ? { annual_fee_override: Number(annualFeeOverride.trim()) }
+              : initial
+                ? { annual_fee_override: null }
+                : {}),
+            ...(annualFeeCycleType
+              ? { annual_fee_cycle_type: annualFeeCycleType as AnnualFeeCycleType }
+              : initial
+                ? { annual_fee_cycle_type: null }
+                : {}),
+            ...(nextAnnualFeeDate.trim()
+              ? { next_annual_fee_date: nextAnnualFeeDate.trim() }
+              : initial
+                ? { next_annual_fee_date: null }
+                : {}),
+            ...(annualFeeStatus
+              ? { annual_fee_status: annualFeeStatus as AnnualFeeStatus }
+              : initial
+                ? { annual_fee_status: null }
+                : {}),
+          }
+        : initial
+          ? {
+              issued_on: null,
+              activated_on: null,
+              annual_fee_override: null,
+              annual_fee_cycle_type: null,
+              next_annual_fee_date: null,
+              annual_fee_status: null,
+            }
+          : {}
 
       const base = {
         holder_id: ownerId,
@@ -295,8 +393,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
         name_override: finalNameOverride ?? undefined,
         ...dueRulePayload,
         account_mode_override: accountModeOverride === 'auto' ? null : accountModeOverride,
-        issued_on: issuedOn || null,
-        activated_on: activatedOn || null,
+        ...annualFeePayload,
       }
 
       await onSubmit(base as unknown as Omit<CreditCard, 'id' | 'created_at'>)
@@ -304,7 +401,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
     } catch (err: unknown) {
       console.error(err)
       const message = err instanceof Error ? err.message : JSON.stringify(err)
-      alert('保存卡片失败: ' + message)
+      setFormError('保存卡片失败: ' + message)
     } finally {
       setSubmitting(false)
     }
@@ -325,6 +422,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
       }
     >
       <div className='flex flex-col gap-4'>
+        {formError && <Alert severity='error'>{formError}</Alert>}
         <AiFillBox mode="card" onFill={(data) => {
           if (data.bank_name) setSelectedBank(String(data.bank_name))
           if (data.card_number_last4) setLast4(sanitizeLast4Input(String(data.card_number_last4)))
@@ -418,7 +516,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
               onChange={e => setLimit(e.target.value)}
               required={!initial}
               helperText={getCardFormLimitHelperText(initial)}
-              startAdornment={<span>¥</span>}
+              startAdornment={<span>{currencySymbol(products.find(p => p.id === productId)?.currency || 'CNY')}</span>}
             />
 
             <TextField
@@ -446,6 +544,52 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
                 value={activatedOn}
                 onChange={e => setActivatedOn(e.target.value)}
                 helperText="可选"
+              />
+            </div>
+
+            <div className='grid grid-cols-2 gap-3'>
+              <TextField
+                label="年费覆盖"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                placeholder="留空用产品默认"
+                value={annualFeeOverride}
+                onChange={e => setAnnualFeeOverride(e.target.value)}
+                startAdornment={<span>{currencySymbol(products.find(p => p.id === productId)?.currency || 'CNY')}</span>}
+              />
+              <SelectField
+                label="年费周期"
+                value={annualFeeCycleType}
+                onChange={e => setAnnualFeeCycleType(e.target.value)}
+                options={[
+                  { value: '', label: '沿用卡产品默认' },
+                  ...(Object.keys(ANNUAL_FEE_CYCLE_LABELS) as AnnualFeeCycleType[]).map((k) => ({
+                    value: k,
+                    label: ANNUAL_FEE_CYCLE_LABELS[k],
+                  })),
+                ]}
+              />
+            </div>
+
+            <div className='grid grid-cols-2 gap-3'>
+              <TextField
+                label="下次年费扣费日"
+                type="date"
+                value={nextAnnualFeeDate}
+                onChange={e => setNextAnnualFeeDate(e.target.value)}
+              />
+              <SelectField
+                label="年费状态"
+                value={annualFeeStatus}
+                onChange={e => setAnnualFeeStatus(e.target.value)}
+                options={[
+                  { value: '', label: '自动 / 未指定' },
+                  ...(Object.keys(ANNUAL_FEE_STATUS_LABELS) as AnnualFeeStatus[]).map((k) => ({
+                    value: k,
+                    label: ANNUAL_FEE_STATUS_LABELS[k],
+                  })),
+                ]}
               />
             </div>
 
@@ -517,7 +661,7 @@ export function CardForm({ open, onClose, onSubmit, holderId, holders, initial }
               placeholder="选填"
               value={limit}
               onChange={e => setLimit(e.target.value)}
-              startAdornment={<span>¥</span>}
+              startAdornment={<span>{currencySymbol(products.find(p => p.id === productId)?.currency || 'CNY')}</span>}
               helperText="选填，贷款总金额"
             />
           </>

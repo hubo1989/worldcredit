@@ -304,16 +304,30 @@ export default function AccountsPage() {
             信用卡共享池、贷款概览与持卡人档案
           </p>
         </div>
-        <button
-          type='button'
-          aria-label={privacyOn ? '显示金额' : '隐藏金额'}
-          onClick={() => {
-            void togglePrivacyMode()
-          }}
-          className='flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-d-border bg-d-surface px-3 text-d-muted transition-colors active:bg-d-subtle hover:text-d-text'
-        >
-          {privacyOn ? <EyeOffIcon size={18} /> : <EyeIcon size={18} />}
-        </button>
+        <div className='flex items-center gap-1.5'>
+          <Link
+            href='/recommend'
+            className='flex min-h-[44px] items-center whitespace-nowrap rounded-full border border-d-border bg-d-surface px-3 text-[12px] font-semibold text-d-accent-light'
+          >
+            选卡助手
+          </Link>
+          <Link
+            href='/cards/roi'
+            className='flex min-h-[44px] items-center whitespace-nowrap rounded-full border border-d-border bg-d-surface px-3 text-[12px] font-semibold text-d-gold'
+          >
+            年费 ROI
+          </Link>
+          <button
+            type='button'
+            aria-label={privacyOn ? '显示金额' : '隐藏金额'}
+            onClick={() => {
+              void togglePrivacyMode()
+            }}
+            className='flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-d-border bg-d-surface px-3 text-d-muted transition-colors active:bg-d-subtle hover:text-d-text'
+          >
+            {privacyOn ? <EyeOffIcon size={18} /> : <EyeIcon size={18} />}
+          </button>
+        </div>
       </div>
 
       {/* 顶部 3 分段：[ 信用卡 | 贷款 | 持卡人 ] */}

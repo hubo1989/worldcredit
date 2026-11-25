@@ -37,6 +37,10 @@ public final class SyncEngine: @unchecked Sendable {
     /// 被隔离的坏变更（解码失败/约束冲突等）落在这里，丢弃但留痕，便于排查。
     private static let isolatedChangesMetaKey = "sync_isolated_changes"
     private static let isolatedChangesCap = 50
+    public static let optimisticSnapshotsMetaKey = "sync_optimistic_snapshots"
+    public static let rejectedNoticesMetaKey = "sync_rejected_notices"
+    public static let rejectedNoticesCap = 20
+
     private static let supportedTables: Set<String> = [
         "banks",
         "card_products",
@@ -53,6 +57,18 @@ public final class SyncEngine: @unchecked Sendable {
         "recurring_payables",
         "recurring_payable_payments",
         "payable_custom_categories",
+        "opportunity_definitions",
+        "opportunity_rule_versions",
+        "opportunity_accounts",
+        "opportunity_account_cards",
+        "opportunity_cycles",
+        "opportunity_usages",
+        "opportunity_tasks",
+        "opportunity_task_cycles",
+        "opportunity_fulfillments",
+        "opportunity_user_states",
+        "opportunity_reminder_states",
+        "notification_history",
     ]
 
     private static let tableUpsertOrder: [String: Int] = [
@@ -71,6 +87,18 @@ public final class SyncEngine: @unchecked Sendable {
         "payable_custom_categories": 12,
         "recurring_payables": 13,
         "recurring_payable_payments": 14,
+        "opportunity_definitions": 15,
+        "opportunity_rule_versions": 16,
+        "opportunity_accounts": 17,
+        "opportunity_account_cards": 18,
+        "opportunity_cycles": 19,
+        "opportunity_usages": 20,
+        "opportunity_tasks": 21,
+        "opportunity_task_cycles": 22,
+        "opportunity_fulfillments": 23,
+        "opportunity_user_states": 24,
+        "opportunity_reminder_states": 25,
+        "notification_history": 26,
     ]
 
     private static func pkColumn(for table: String) -> String {
@@ -80,6 +108,37 @@ public final class SyncEngine: @unchecked Sendable {
         default:
             return "id"
         }
+    }
+
+    private static func compositePkColumns(for table: String) -> (String, String)? {
+        switch table {
+        case "opportunity_account_cards":
+            return ("account_id", "card_id")
+        case "opportunity_user_states":
+            return ("user_id", "account_id")
+        case "opportunity_reminder_states":
+            return ("user_id", "event_key")
+        default:
+            return nil
+        }
+    }
+
+    /// 按服务端 D1 `json_array(col1, col2)` 口径拼接复合主键 row_id。
+    public static func compositeRowId(_ col1: String, _ col2: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: [col1, col2], options: []),
+              let str = String(data: data, encoding: .utf8) else {
+            return "[\"\(col1)\",\"\(col2)\"]"
+        }
+        return str
+    }
+
+    private static func decodeCompositeRowId(_ rowId: String) -> (String, String)? {
+        guard let data = rowId.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [String],
+              arr.count == 2 else {
+            return nil
+        }
+        return (arr[0], arr[1])
     }
 
     private static func orderedChangesForApply(_ changes: [PullChangeItem]) -> [PullChangeItem] {
@@ -261,15 +320,17 @@ public final class SyncEngine: @unchecked Sendable {
             for item in mutations {
                 guard let res = resultsByID[item.id] else { continue }
                 if res.ok {
-                    // Success: remove from outbox
+                    // Success: remove from outbox & clean up temporary optimistic artifacts
                     try SyncMeta.deleteOne(db, key: "sync_retry_after_\(item.id)")
                     try item.delete(db)
+                    try self.cleanupOptimisticArtifactsOnSuccess(item, in: db)
+                    try self.removeOptimisticSnapshot(forMutationId: item.id, in: db)
                 } else if res.permanent == true {
                     // Persist recovery before dropping the mutation, even if the server row
                     // has not changed since our last cursor or the app exits before pull.
                     let additions: [SyncReconcileTarget]
                     do {
-                        additions = try self.targetsForRejectedMutation(item, in: db)
+                        additions = try self.targetsForRejectedMutation(item, result: res, in: db)
                     } catch {
                         // 解析失败（mutation 名/args 形状漂移）只标记该条并继续其余条目，
                         // 绝不能抛出导致整个事务回滚：服务端已幂等记录永久拒绝，
@@ -287,8 +348,27 @@ public final class SyncEngine: @unchecked Sendable {
                     for target in additions where !targets.contains(target) { targets.append(target) }
                     try self.saveReconcileTargets(targets, in: db)
                     try SyncMeta.deleteOne(db, key: "sync_retry_after_\(item.id)")
-                    try item.delete(db)
-                    try self.rollbackMutation(item, in: db)
+                    do {
+                        try item.delete(db)
+                        try self.rollbackMutation(item, in: db)
+                        try self.removeOptimisticSnapshot(forMutationId: item.id, in: db)
+                        try self.appendRejectedNotice(
+                            SyncRejectedNotice(
+                                mutationId: item.id,
+                                mutationName: item.name,
+                                message: res.error ?? "服务端拒绝了离线提交的修改，已恢复本地数据",
+                                code: res.code
+                            ),
+                            in: db
+                        )
+                    } catch {
+                        // 回滚时若遇外键缺失等异常，按 transient 记账避免阻塞整个 outbox 死锁
+                        var updated = item
+                        updated.retryCount += 1
+                        updated.lastError = error.localizedDescription
+                        try updated.save(db)
+                        continue
+                    }
                 } else {
                     // Transient error: increment retry count
                     var updated = item
@@ -329,15 +409,55 @@ public final class SyncEngine: @unchecked Sendable {
             case "recurring_payables": try RecurringPayableRecord.deleteOne(db, id: rowId)
             case "recurring_payable_payments": try RecurringPayablePaymentRecord.deleteOne(db, id: rowId)
             case "payable_custom_categories": try PayableCustomCategoryRecord.deleteOne(db, id: rowId)
+            case "opportunity_definitions": try OpportunityDefinitionRecord.deleteOne(db, id: rowId)
+            case "opportunity_rule_versions": try OpportunityRuleVersionRecord.deleteOne(db, id: rowId)
+            case "opportunity_accounts": try OpportunityAccountRecord.deleteOne(db, id: rowId)
+            case "opportunity_account_cards":
+                guard let (col1, col2) = Self.decodeCompositeRowId(rowId) else {
+                    throw SyncError.invalidChange(table: tbl, rowID: rowId)
+                }
+                try OpportunityAccountCardRecord
+                    .filter(Column("account_id") == col1 && Column("card_id") == col2)
+                    .deleteAll(db)
+            case "opportunity_cycles": try OpportunityCycleRecord.deleteOne(db, id: rowId)
+            case "opportunity_usages": try OpportunityUsageRecord.deleteOne(db, id: rowId)
+            case "opportunity_tasks": try OpportunityTaskRecord.deleteOne(db, id: rowId)
+            case "opportunity_task_cycles": try OpportunityTaskCycleRecord.deleteOne(db, id: rowId)
+            case "opportunity_fulfillments": try OpportunityFulfillmentRecord.deleteOne(db, id: rowId)
+            case "opportunity_user_states":
+                guard let (col1, col2) = Self.decodeCompositeRowId(rowId) else {
+                    throw SyncError.invalidChange(table: tbl, rowID: rowId)
+                }
+                try OpportunityUserStateRecord
+                    .filter(Column("user_id") == col1 && Column("account_id") == col2)
+                    .deleteAll(db)
+            case "opportunity_reminder_states":
+                guard let (col1, col2) = Self.decodeCompositeRowId(rowId) else {
+                    throw SyncError.invalidChange(table: tbl, rowID: rowId)
+                }
+                try OpportunityReminderStateRecord
+                    .filter(Column("user_id") == col1 && Column("event_key") == col2)
+                    .deleteAll(db)
+            case "notification_history": try NotificationHistoryRecord.deleteOne(db, id: rowId)
             default: break
             }
             return
         }
 
-        let pkCol = Self.pkColumn(for: tbl)
-        guard change.op == "upsert", let rowDict = change.row,
-              rowDict[pkCol]?.value as? String == rowId else {
+        guard change.op == "upsert", let rowDict = change.row else {
             throw SyncError.invalidChange(table: tbl, rowID: rowId)
+        }
+        if let (c1, c2) = Self.compositePkColumns(for: tbl) {
+            guard let (v1, v2) = Self.decodeCompositeRowId(rowId),
+                  rowDict[c1]?.value as? String == v1,
+                  rowDict[c2]?.value as? String == v2 else {
+                throw SyncError.invalidChange(table: tbl, rowID: rowId)
+            }
+        } else {
+            let pkCol = Self.pkColumn(for: tbl)
+            guard rowDict[pkCol]?.value as? String == rowId else {
+                throw SyncError.invalidChange(table: tbl, rowID: rowId)
+            }
         }
         let jsonData = try JSONEncoder().encode(rowDict)
         let decoder = JSONDecoder()
@@ -373,6 +493,30 @@ public final class SyncEngine: @unchecked Sendable {
             try decoder.decode(RecurringPayablePaymentRecord.self, from: jsonData).save(db)
         case "payable_custom_categories":
             try decoder.decode(PayableCustomCategoryRecord.self, from: jsonData).save(db)
+        case "opportunity_definitions":
+            try decoder.decode(OpportunityDefinitionRecord.self, from: jsonData).save(db)
+        case "opportunity_rule_versions":
+            try decoder.decode(OpportunityRuleVersionRecord.self, from: jsonData).save(db)
+        case "opportunity_accounts":
+            try decoder.decode(OpportunityAccountRecord.self, from: jsonData).save(db)
+        case "opportunity_account_cards":
+            try decoder.decode(OpportunityAccountCardRecord.self, from: jsonData).save(db)
+        case "opportunity_cycles":
+            try decoder.decode(OpportunityCycleRecord.self, from: jsonData).save(db)
+        case "opportunity_usages":
+            try decoder.decode(OpportunityUsageRecord.self, from: jsonData).save(db)
+        case "opportunity_tasks":
+            try decoder.decode(OpportunityTaskRecord.self, from: jsonData).save(db)
+        case "opportunity_task_cycles":
+            try decoder.decode(OpportunityTaskCycleRecord.self, from: jsonData).save(db)
+        case "opportunity_fulfillments":
+            try decoder.decode(OpportunityFulfillmentRecord.self, from: jsonData).save(db)
+        case "opportunity_user_states":
+            try decoder.decode(OpportunityUserStateRecord.self, from: jsonData).save(db)
+        case "opportunity_reminder_states":
+            try decoder.decode(OpportunityReminderStateRecord.self, from: jsonData).save(db)
+        case "notification_history":
+            try decoder.decode(NotificationHistoryRecord.self, from: jsonData).save(db)
         default: break
         }
     }
@@ -407,7 +551,145 @@ public final class SyncEngine: @unchecked Sendable {
                      value: String(decoding: data, as: UTF8.self)).save(db)
     }
 
-    private func targetsForRejectedMutation(_ item: MutationOutbox, in db: Database) throws -> [SyncReconcileTarget] {
+    /// 读取持久化在 `sync_meta` 中的永久拒绝通知列表（按写入顺序，最多保留 20 条）。
+    public func fetchRejectedNotices() async -> [SyncRejectedNotice] {
+        (try? await dbManager.dbWriter.read { db in
+            try self.rejectedNotices(in: db)
+        }) ?? []
+    }
+
+    public func clearRejectedNotices() async throws {
+        _ = try await dbManager.dbWriter.write { db in
+            try SyncMeta.deleteOne(db, key: Self.rejectedNoticesMetaKey)
+        }
+    }
+
+    private func rejectedNotices(in db: Database) throws -> [SyncRejectedNotice] {
+        guard let value = try SyncMeta.fetchOne(db, key: Self.rejectedNoticesMetaKey)?.value,
+              let data = value.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([SyncRejectedNotice].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    private func appendRejectedNotice(_ notice: SyncRejectedNotice, in db: Database) throws {
+        var existing = try rejectedNotices(in: db)
+        existing.append(notice)
+        if existing.count > Self.rejectedNoticesCap {
+            existing.removeFirst(existing.count - Self.rejectedNoticesCap)
+        }
+        let data = try JSONEncoder().encode(existing)
+        try SyncMeta(
+            key: Self.rejectedNoticesMetaKey,
+            value: String(decoding: data, as: UTF8.self)
+        ).save(db)
+    }
+
+    // MARK: - Optimistic Rollback Snapshots
+
+    public struct OptimisticSnapshot: Codable, Sendable {
+        public var usage: OpportunityUsageRecord?
+        public var sourceCycle: OpportunityCycleRecord?
+        public var targetCycle: OpportunityCycleRecord?
+        public var fulfillment: OpportunityFulfillmentRecord?
+        public var taskCycle: OpportunityTaskCycleRecord?
+        public var userState: OpportunityUserStateRecord?
+        public var userStateKey: [String]?
+        public var reminderState: OpportunityReminderStateRecord?
+        public var reminderStateKey: [String]?
+        public var notification: NotificationHistoryRecord?
+
+        public init(
+            usage: OpportunityUsageRecord? = nil,
+            sourceCycle: OpportunityCycleRecord? = nil,
+            targetCycle: OpportunityCycleRecord? = nil,
+            fulfillment: OpportunityFulfillmentRecord? = nil,
+            taskCycle: OpportunityTaskCycleRecord? = nil,
+            userState: OpportunityUserStateRecord? = nil,
+            userStateKey: [String]? = nil,
+            reminderState: OpportunityReminderStateRecord? = nil,
+            reminderStateKey: [String]? = nil,
+            notification: NotificationHistoryRecord? = nil
+        ) {
+            self.usage = usage
+            self.sourceCycle = sourceCycle
+            self.targetCycle = targetCycle
+            self.fulfillment = fulfillment
+            self.taskCycle = taskCycle
+            self.userState = userState
+            self.userStateKey = userStateKey
+            self.reminderState = reminderState
+            self.reminderStateKey = reminderStateKey
+            self.notification = notification
+        }
+    }
+
+    public static func saveOptimisticSnapshot(
+        _ snapshot: OptimisticSnapshot,
+        forMutationId mutationId: String,
+        in db: Database
+    ) throws {
+        var dict = loadAllOptimisticSnapshots(in: db)
+        let encoded = try JSONEncoder().encode(snapshot)
+        dict[mutationId] = String(decoding: encoded, as: UTF8.self)
+        let wrapper = try JSONEncoder().encode(dict)
+        try SyncMeta(key: optimisticSnapshotsMetaKey, value: String(decoding: wrapper, as: UTF8.self)).save(db)
+    }
+
+    private static func loadAllOptimisticSnapshots(in db: Database) -> [String: String] {
+        guard let raw = (try? SyncMeta.fetchOne(db, key: optimisticSnapshotsMetaKey))?.value,
+              let data = raw.data(using: .utf8),
+              let dict = try? JSONDecoder().decode([String: String].self, from: data) else {
+            return [:]
+        }
+        return dict
+    }
+
+    private func loadOptimisticSnapshot(forMutationId mutationId: String, in db: Database) -> OptimisticSnapshot? {
+        guard let jsonStr = Self.loadAllOptimisticSnapshots(in: db)[mutationId],
+              let data = jsonStr.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(OptimisticSnapshot.self, from: data)
+    }
+
+    private func removeOptimisticSnapshot(forMutationId mutationId: String, in db: Database) throws {
+        var dict = Self.loadAllOptimisticSnapshots(in: db)
+        guard dict.removeValue(forKey: mutationId) != nil else { return }
+        if dict.isEmpty {
+            try SyncMeta.deleteOne(db, key: Self.optimisticSnapshotsMetaKey)
+        } else {
+            let wrapper = try JSONEncoder().encode(dict)
+            try SyncMeta(key: Self.optimisticSnapshotsMetaKey, value: String(decoding: wrapper, as: UTF8.self)).save(db)
+        }
+    }
+
+    private func cleanupOptimisticArtifactsOnSuccess(_ mutation: MutationOutbox, in db: Database) throws {
+        let tempId = "opt_\(mutation.id)"
+        switch mutation.name {
+        case "cards.createCard":
+            try CreditCard.deleteOne(db, id: tempId)
+            try CreditAccount.deleteOne(db, id: "opt_acc_\(mutation.id)")
+        case "bills.createBill":
+            try Bill.deleteOne(db, id: tempId)
+        case "opportunities.recordOpportunityUsage",
+             "opportunities.completeOpportunityBooking":
+            try OpportunityUsageRecord.deleteOne(db, id: tempId)
+        case "opportunities.recordOpportunityClaim",
+             "opportunities.recordOpportunityBooking",
+             "opportunities.recordTaskRewardReceived":
+            try OpportunityFulfillmentRecord.deleteOne(db, id: tempId)
+        default:
+            break
+        }
+    }
+
+    private func targetsForRejectedMutation(
+        _ item: MutationOutbox,
+        result: MutationPushResult? = nil,
+        in db: Database
+    ) throws -> [SyncReconcileTarget] {
         let args = try JSONDecoder().decode([AnyCodable].self, from: Data(item.argsJson.utf8))
         switch item.name {
         case "bills.recordPayment":
@@ -426,6 +708,18 @@ public final class SyncEngine: @unchecked Sendable {
                 throw SyncError.invalidMutation(item.id)
             }
             return [.init(tbl: "credit_cards", rowId: id)]
+        case "cards.createCard":
+            if let existingCardId = result?.details?.existingCardId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !existingCardId.isEmpty {
+                return [.init(tbl: "credit_cards", rowId: existingCardId)]
+            }
+            return []
+        case "bills.createBill":
+            if let existingBillId = result?.details?.existingBillId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !existingBillId.isEmpty {
+                return [.init(tbl: "bills", rowId: existingBillId)]
+            }
+            return []
         case "payments.updatePayment":
             guard let paymentId = args.first?.value as? String, !paymentId.trimmingCharacters(in: .whitespaces).isEmpty else {
                 throw SyncError.invalidMutation(item.id)
@@ -445,6 +739,11 @@ public final class SyncEngine: @unchecked Sendable {
              "notifications.markAllNotificationsRead":
             // Either server-generated ID or table outside SYNCABLE_TABLES: drop cleanly without invalid reconcile targets.
             return []
+        case "notifications.deleteNotification":
+            guard let notifId = args.first?.value as? String, !notifId.trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            return [.init(tbl: "notification_history", rowId: notifId)]
         case "preferences.updateUserPreferences":
             if let userId = args.first?.value as? String, !userId.trimmingCharacters(in: .whitespaces).isEmpty {
                 return [.init(tbl: "user_preferences", rowId: userId)]
@@ -453,14 +752,135 @@ public final class SyncEngine: @unchecked Sendable {
                 return [.init(tbl: "user_preferences", rowId: local.userId)]
             }
             return []
+        case "opportunities.recordOpportunityUsage":
+            guard let input = args.first?.value as? [String: Any],
+                  let accountId = input["account_id"] as? String,
+                  let cycleId = input["cycle_id"] as? String else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            return [
+                .init(tbl: "opportunity_accounts", rowId: accountId),
+                .init(tbl: "opportunity_cycles", rowId: cycleId),
+            ]
+        case "opportunities.correctOpportunityUsage":
+            guard let input = args.first?.value as? [String: Any],
+                  let usageId = input["usage_id"] as? String else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            var targets = [SyncReconcileTarget(tbl: "opportunity_usages", rowId: usageId)]
+            if let existing = try OpportunityUsageRecord.fetchOne(db, id: usageId) {
+                targets.append(.init(tbl: "opportunity_cycles", rowId: existing.cycleId))
+            }
+            if let newCycleId = input["cycle_id"] as? String, !newCycleId.isEmpty {
+                targets.append(.init(tbl: "opportunity_cycles", rowId: newCycleId))
+            }
+            return targets
+        case "opportunities.voidOpportunityUsage":
+            guard let input = args.first?.value as? [String: Any],
+                  let usageId = input["usage_id"] as? String else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            var targets = [SyncReconcileTarget(tbl: "opportunity_usages", rowId: usageId)]
+            if let existing = try OpportunityUsageRecord.fetchOne(db, id: usageId) {
+                targets.append(.init(tbl: "opportunity_cycles", rowId: existing.cycleId))
+            }
+            return targets
+        case "opportunities.recordOpportunityClaim",
+             "opportunities.recordOpportunityBooking":
+            guard let input = args.first?.value as? [String: Any],
+                  let accountId = input["account_id"] as? String,
+                  let cycleId = input["cycle_id"] as? String else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            return [
+                .init(tbl: "opportunity_accounts", rowId: accountId),
+                .init(tbl: "opportunity_cycles", rowId: cycleId),
+            ]
+        case "opportunities.voidOpportunityClaim",
+             "opportunities.completeOpportunityBooking",
+             "opportunities.cancelOpportunityBooking":
+            guard let input = args.first?.value as? [String: Any],
+                  let fulfillmentId = input["fulfillment_id"] as? String else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            var targets = [SyncReconcileTarget(tbl: "opportunity_fulfillments", rowId: fulfillmentId)]
+            if let existing = try OpportunityFulfillmentRecord.fetchOne(db, id: fulfillmentId),
+               let cycleId = existing.cycleId {
+                targets.append(.init(tbl: "opportunity_cycles", rowId: cycleId))
+            }
+            return targets
+        case "opportunities.updateManualTaskProgress":
+            guard let input = args.first?.value as? [String: Any],
+                  let taskCycleId = input["task_cycle_id"] as? String else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            return [.init(tbl: "opportunity_task_cycles", rowId: taskCycleId)]
+        case "opportunities.recordTaskRewardReceived":
+            guard let input = args.first?.value as? [String: Any],
+                  let taskCycleId = input["task_cycle_id"] as? String else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            var targets = [SyncReconcileTarget(tbl: "opportunity_task_cycles", rowId: taskCycleId)]
+            if let accountId = input["account_id"] as? String, !accountId.isEmpty {
+                targets.append(.init(tbl: "opportunity_accounts", rowId: accountId))
+            }
+            return targets
+        case "opportunities.setOpportunityFollowed":
+            guard let input = args.first?.value as? [String: Any],
+                  let accountId = input["account_id"] as? String else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            var userId = loadOptimisticSnapshot(forMutationId: item.id, in: db)?.userStateKey?.first
+            if userId == nil || userId?.isEmpty == true {
+                userId = try OpportunityUserStateRecord.filter(Column("account_id") == accountId).fetchOne(db)?.userId
+                    ?? (try UserPreferenceRecord.fetchOne(db)?.userId)
+            }
+            if let userId, !userId.isEmpty {
+                return [.init(tbl: "opportunity_user_states", rowId: Self.compositeRowId(userId, accountId))]
+            }
+            return [.init(tbl: "opportunity_accounts", rowId: accountId)]
+        case "opportunities.updateOpportunityReminderState":
+            guard let input = args.first?.value as? [String: Any],
+                  let eventKey = input["event_key"] as? String else {
+                throw SyncError.invalidMutation(item.id)
+            }
+            var userId = loadOptimisticSnapshot(forMutationId: item.id, in: db)?.reminderStateKey?.first
+            if userId == nil || userId?.isEmpty == true {
+                userId = try OpportunityReminderStateRecord.filter(Column("event_key") == eventKey).fetchOne(db)?.userId
+                    ?? (try UserPreferenceRecord.fetchOne(db)?.userId)
+            }
+            if let userId, !userId.isEmpty {
+                return [.init(tbl: "opportunity_reminder_states", rowId: Self.compositeRowId(userId, eventKey))]
+            }
+            return []
         default:
             throw SyncError.invalidMutation(item.id)
         }
     }
 
     private func rollbackMutation(_ mutation: MutationOutbox, in db: Database) throws {
-        // If this was a recordPayment mutation, roll back optimistic payment and recalculate status
-        if mutation.name == "bills.recordPayment" {
+        let tempId = "opt_\(mutation.id)"
+
+        // 1. Delete optimistic newly-created rows on permanent rejection
+        switch mutation.name {
+        case "cards.createCard":
+            if let data = mutation.argsJson.data(using: .utf8),
+               let args = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]],
+               let cardId = args.first?["id"] as? String, !cardId.isEmpty {
+                try CreditCard.deleteOne(db, id: cardId)
+            }
+            try CreditCard.deleteOne(db, id: tempId)
+            try CreditAccount.deleteOne(db, id: "opt_acc_\(mutation.id)")
+            return
+        case "bills.createBill":
+            if let data = mutation.argsJson.data(using: .utf8),
+               let args = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]],
+               let billId = args.first?["id"] as? String, !billId.isEmpty {
+                try Bill.deleteOne(db, id: billId)
+            }
+            try Bill.deleteOne(db, id: tempId)
+            return
+        case "bills.recordPayment":
             guard let data = mutation.argsJson.data(using: .utf8),
                   let args = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]],
                   let firstArg = args.first,
@@ -468,11 +888,7 @@ public final class SyncEngine: @unchecked Sendable {
                   let billId = firstArg["bill_id"] as? String else {
                 return
             }
-
-            // Delete optimistic payment
             try Payment.deleteOne(db, id: payId)
-
-            // Recalculate bill status from remaining payments
             if var bill = try Bill.fetchOne(db, id: billId) {
                 let payments = try Payment.filter(Column("bill_id") == billId).fetchAll(db)
                 let totalPaid = payments.reduce(0.0) { $0 + $1.amount }
@@ -485,6 +901,71 @@ public final class SyncEngine: @unchecked Sendable {
                 }
                 try bill.update(db)
             }
+            return
+        default:
+            break
         }
+
+        // 2. Restore Phase-2 snapshots (and remove any temp rows created optimistically)
+        switch mutation.name {
+        case "opportunities.recordOpportunityUsage":
+            try OpportunityUsageRecord.deleteOne(db, id: tempId)
+        case "opportunities.completeOpportunityBooking":
+            try OpportunityUsageRecord.deleteOne(db, id: tempId)
+        case "opportunities.recordOpportunityClaim",
+             "opportunities.recordOpportunityBooking",
+             "opportunities.recordTaskRewardReceived":
+            try OpportunityFulfillmentRecord.deleteOne(db, id: tempId)
+        default:
+            break
+        }
+
+        guard let snapshot = loadOptimisticSnapshot(forMutationId: mutation.id, in: db) else {
+            return
+        }
+        // 先恢复父行再恢复子行；父行若已被 pull 级联删除则跳过子行，交由 reconcile 补齐权威状态
+        if let sourceCycle = snapshot.sourceCycle,
+           try OpportunityAccountRecord.exists(db, id: sourceCycle.accountId) {
+            try sourceCycle.save(db)
+        }
+        if let targetCycle = snapshot.targetCycle,
+           try OpportunityAccountRecord.exists(db, id: targetCycle.accountId) {
+            try targetCycle.save(db)
+        }
+        if let taskCycle = snapshot.taskCycle,
+           try OpportunityTaskRecord.exists(db, id: taskCycle.taskId) {
+            try taskCycle.save(db)
+        }
+        if let usage = snapshot.usage,
+           try OpportunityCycleRecord.exists(db, id: usage.cycleId) {
+            try usage.save(db)
+        }
+        if let fulfillment = snapshot.fulfillment {
+            let accOk: Bool = try fulfillment.accountId.map { try OpportunityAccountRecord.exists(db, id: $0) } ?? true
+            let cycOk: Bool = try fulfillment.cycleId.map { try OpportunityCycleRecord.exists(db, id: $0) } ?? true
+            let tcOk: Bool = try fulfillment.taskCycleId.map { try OpportunityTaskCycleRecord.exists(db, id: $0) } ?? true
+            if accOk && cycOk && tcOk {
+                try fulfillment.save(db)
+            }
+        }
+        if let key = snapshot.userStateKey, key.count == 2 {
+            if let userState = snapshot.userState {
+                try userState.save(db)
+            } else {
+                try OpportunityUserStateRecord
+                    .filter(Column("user_id") == key[0] && Column("account_id") == key[1])
+                    .deleteAll(db)
+            }
+        }
+        if let key = snapshot.reminderStateKey, key.count == 2 {
+            if let remState = snapshot.reminderState {
+                try remState.save(db)
+            } else {
+                try OpportunityReminderStateRecord
+                    .filter(Column("user_id") == key[0] && Column("event_key") == key[1])
+                    .deleteAll(db)
+            }
+        }
+        if let notif = snapshot.notification { try notif.save(db) }
     }
 }
