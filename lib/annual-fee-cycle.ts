@@ -25,6 +25,7 @@ export interface AnnualFeeCycleState {
   nominalFee: number
   nextDueDate: string | null
   cycleStartOn: string | null
+  /** Suggested next date after an explicit due date passes. Advancing it requires confirmation. */
   rolloverNextDueDate: string | null
 }
 
@@ -48,9 +49,9 @@ export function resolveAnnualFeeCycleState(
   const status = card.annual_fee_status ?? 'in_progress'
   const cycleType = card.annual_fee_cycle_type ?? product?.annual_fee_cycle_type ??
     (nominalFee <= 0 ? 'none' : null)
-  const anchor = cycleType === 'anniversary_issued' ? card.issued_on
-    : cycleType === 'anniversary_activated' ? card.activated_on
-    : null
+  let anchor: string | null | undefined
+  if (cycleType === 'anniversary_issued') anchor = card.issued_on
+  if (cycleType === 'anniversary_activated') anchor = card.activated_on
   const explicit = card.next_annual_fee_date
 
   if (isValidCivilDate(explicit)) {
@@ -108,7 +109,7 @@ export function describeAnnualFeeWaiverGap(
   const progress = parseRuleObject(progressJson)
   const asOf = progress?.as_of_on
   if (!progress || !isValidCivilDate(asOf) || asOf < cycle.cycleStartOn || asOf > today ||
-      (progress.cycle_due_date != null && progress.cycle_due_date !== cycle.nextDueDate)) {
+      (progress.cycle_due_date !== undefined && progress.cycle_due_date !== null && progress.cycle_due_date !== cycle.nextDueDate)) {
     return '免年费进度待更新'
   }
 
@@ -122,9 +123,10 @@ export function describeAnnualFeeWaiverGap(
   }
   const { waiver_type: type } = rule
   if (type === 'spend_amount' || type === 'spend_amount_or_count') {
-    const targetCurrency = rule.target_currency == null ? currency : normalizeCurrency(rule.target_currency)
-    if (targetCurrency === currency) {
-      addGap(rule.target_amount, progress.amount, n => formatMoneySingle(n, currency))
+    const targetCurrency = rule.target_currency === undefined || rule.target_currency === null
+      ? currency : normalizeCurrency(rule.target_currency)
+    if (targetCurrency) {
+      addGap(rule.target_amount, progress.amount, n => formatMoneySingle(n, targetCurrency))
     }
   }
   if (type === 'spend_count' || type === 'spend_amount_or_count') {

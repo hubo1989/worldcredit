@@ -3,6 +3,7 @@ import { handleScheduled } from '../../worker/cron'
 import { describeAnnualFeeWaiverGap, resolveAnnualFeeCycleState } from '../annual-fee-cycle'
 import { buildAnnualFeeDecisionCandidates } from '../annual-fee-notifications.server'
 import { setDb } from '../db/client'
+import { formatMoneySingle } from '../notifications.shared'
 import { buildDailyNotificationCandidates, ensureDailyNotificationsForUser } from '../notifications-engine.server'
 import { createOpportunityDb, type SqliteD1 } from './helpers/sqlite-d1'
 
@@ -53,7 +54,7 @@ describe('年费周年日与免除进度', () => {
     }, { annual_fee_cycle_type: 'calendar_year' }, today)).toBeNull()
   })
 
-  it('金额或笔数达一即可，忽略旧周期和不匹配币种的消费进度', () => {
+  it('金额或笔数达一即可，使用规则币种并忽略旧周期进度', () => {
     const rule = JSON.stringify({
       schema_version: 1, waiver_type: 'spend_amount_or_count',
       target_amount: 10000, target_currency: 'HKD', target_count: 6,
@@ -61,7 +62,7 @@ describe('年费周年日与免除进度', () => {
     const cycle = { nextDueDate: dueDate, cycleStartOn: '2025-12-25' }
     const progress = { schema_version: 1, amount: 4500, count: 6, as_of_on: today, cycle_due_date: dueDate }
     expect(describeAnnualFeeWaiverGap(rule, JSON.stringify(progress), cycle, 'CNY', today)).toBe('已达到免年费条件，待确认')
-    expect(describeAnnualFeeWaiverGap(rule, JSON.stringify({ ...progress, count: 2 }), cycle, 'CNY', today)).toBe('距免年费还差 4 笔')
+    expect(describeAnnualFeeWaiverGap(rule, JSON.stringify({ ...progress, count: 2 }), cycle, 'CNY', today)).toBe(`距免年费还差 ${formatMoneySingle(5500, 'HKD')} 或 4 笔`)
     expect(describeAnnualFeeWaiverGap(rule, JSON.stringify({ ...progress, cycle_due_date: '2025-12-25' }), cycle, 'CNY', today)).toBe('免年费进度待更新')
   })
 })

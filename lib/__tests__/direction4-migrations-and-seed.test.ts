@@ -63,12 +63,12 @@ describe('0043–0045 D1 migrations', () => {
     `).all()).toHaveLength(4)
   })
 
-  it('backfills exact matches, protects administrator changes and emits no sync changes on replay', () => {
+  it('backfills normalized matches, protects administrator changes and emits no sync changes on replay', () => {
     apply(RULES, ROI)
     db.exec(`
-      INSERT INTO banks (id, name, country) VALUES ('bank-chase', 'Chase', 'US');
+      INSERT INTO banks (id, name, country) VALUES ('bank-chase', ' cHaSe ', 'US');
       INSERT INTO card_products (id, bank_name, card_name, rules_updated_at, ftf_rate, annual_fee_cycle_type)
-      VALUES ('legacy', 'Chase', ' sApPhIrE pReFeRrEd ', NULL, NULL, 'custom_date'),
+      VALUES ('legacy', ' CHASE ', ' sApPhIrE pReFeRrEd ', NULL, NULL, 'custom_date'),
              ('manual-cleared', 'Chase', 'Freedom Unlimited', '2026-11-01', NULL, NULL),
              ('manual-ftf', 'Chase', 'Freedom Flex', NULL, 5, NULL),
              ('unrelated', 'Other Bank', 'Sapphire Preferred', NULL, NULL, NULL),

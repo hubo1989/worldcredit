@@ -56,7 +56,7 @@ INSERT INTO _hub176_card_rule_seed VALUES
   ('cp_seed_citi_double_cash', 'US', 'Citi', 'Double Cash', 'USD', 0, 3, NULL, 'none', '{"schema_version":1,"reward_kind":"cashback","base_rate_pct":2,"base_raw_label":"购买赚 1%，还款再赚 1%","category_rules":[],"notes":"发卡行条款：https://www.citi.com/credit-cards/citi-double-cash-credit-card"}', '{"schema_version":1,"waiver_type":"none","notes":"发卡行条款：https://www.citi.com/credit-cards/citi-double-cash-credit-card"}', 'https://www.citi.com/credit-cards/citi-double-cash-credit-card'),
   ('cp_seed_wells_active_cash', 'US', 'Wells Fargo', 'Active Cash', 'USD', 0, 3, NULL, 'none', '{"schema_version":1,"reward_kind":"cashback","base_rate_pct":2,"base_raw_label":"一般合资格消费 2% 现金回赠","category_rules":[],"notes":"发卡行条款：https://creditcards.wellsfargo.com/active-cash-credit-card/"}', '{"schema_version":1,"waiver_type":"none","notes":"发卡行条款：https://creditcards.wellsfargo.com/active-cash-credit-card/"}', 'https://creditcards.wellsfargo.com/active-cash-credit-card/');
 
--- A. 补建精确同名目录项。银行目录尚未建档时保留空外键，不创建或覆盖银行。
+-- A. 按归一化银行名和卡名匹配历史目录。银行目录尚未建档时保留空外键，不创建或覆盖银行。
 INSERT OR IGNORE INTO card_products (
   id, country, bank_id, bank_name, card_name, currency, annual_fee, apply_url,
   ftf_rate, fx_free_currencies_json, annual_fee_cycle_type, reward_rules_json, annual_fee_waiver_rules_json
@@ -64,10 +64,10 @@ INSERT OR IGNORE INTO card_products (
 SELECT s.id, s.country, b.id, s.bank_name, s.card_name, s.currency, s.annual_fee, s.issuer_url,
        s.ftf_rate, s.fx_free_currencies_json, s.annual_fee_cycle_type, s.reward_rules_json, s.annual_fee_waiver_rules_json
 FROM _hub176_card_rule_seed s
-LEFT JOIN banks b ON b.name = s.bank_name AND b.country = s.country
+LEFT JOIN banks b ON lower(trim(b.name)) = lower(trim(s.bank_name)) AND b.country = s.country
 WHERE NOT EXISTS (
   SELECT 1 FROM card_products cp
-  WHERE cp.bank_name = s.bank_name AND lower(trim(cp.card_name)) = lower(trim(s.card_name))
+  WHERE lower(trim(cp.bank_name)) = lower(trim(s.bank_name)) AND lower(trim(cp.card_name)) = lower(trim(s.card_name))
 );
 
 -- B. 回填旧目录时保留原文本、已填写字段和管理员明确清空过的字段。
@@ -78,7 +78,7 @@ SET ftf_rate = s.ftf_rate,
     annual_fee_cycle_type = COALESCE(cp.annual_fee_cycle_type, s.annual_fee_cycle_type),
     annual_fee_waiver_rules_json = s.annual_fee_waiver_rules_json
 FROM _hub176_card_rule_seed s
-WHERE cp.bank_name = s.bank_name AND lower(trim(cp.card_name)) = lower(trim(s.card_name))
+WHERE lower(trim(cp.bank_name)) = lower(trim(s.bank_name)) AND lower(trim(cp.card_name)) = lower(trim(s.card_name))
   AND cp.reward_rules_json IS NULL
   AND cp.ftf_rate IS NULL
   AND cp.annual_fee_waiver_rules_json IS NULL
