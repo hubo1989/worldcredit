@@ -207,6 +207,38 @@ export async function applyAnalyticsScope(filters: unknown, ctx: MemberContext):
   }
 }
 
+/**
+ * 推荐/ROI 作用域守卫（HUB-175 §5、AC-4.1）。
+ *
+ * 成员只能看自己名下的持卡人：
+ * - 未绑定任何持卡人档案的成员直接拒绝；
+ * - 显式传 'all' 或非本人 holder_id 立即 403（MemberScopeError）；
+ * - 未传 holder_id 时自动锁定到本人的持卡人范围（服务端 SQL 仍会二次过滤）。
+ *
+ * 注意 memberGuard 在 prependActor 之前运行，因此客户端第 1 个入参恒为 args[0]。
+ */
+export async function guardRecommendationScope(args: unknown[], ctx: MemberContext): Promise<void> {
+  const input = args[0]
+  // 无入参（例如 getFamilyAnnualFeeRoi() 不带 filters）：交给服务端按本人范围收敛
+  if (input === undefined || input === null) return
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    throw new MemberScopeError('参数缺少推荐输入对象')
+  }
+  const payload = input as Record<string, unknown>
+  if (ctx.holderIds.length === 0) {
+    throw new MemberScopeError('当前账号未绑定持卡人档案')
+  }
+  const holderId = payload.holder_id
+  if (holderId === undefined || holderId === null || holderId === '') {
+    // 未显式指定：交给服务端 SQL 的 holderScopePredicate 收敛到本人范围
+    return
+  }
+  if (holderId === 'all' || typeof holderId !== 'string') {
+    throw new MemberScopeError('无权查看其他成员的卡片推荐')
+  }
+  assertHolderAccess(holderId, ctx)
+}
+
 /** Response filter for card rows keyed by holder_id. */
 export function filterCardsByHolder<T extends { holder_id?: string }>(rows: T[], ctx: MemberContext): T[] {
   return rows.filter(row => (row.holder_id ? ctx.holderIds.includes(row.holder_id) : false))

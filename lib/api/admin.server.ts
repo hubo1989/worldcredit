@@ -1,5 +1,12 @@
 import { query, queryOne, execute, uuid, now } from '../db'
 import { CardProduct, Promo, Benefit, Bank, EmailParseLog } from '../types'
+import { hasColumns } from '../db/schema-capabilities'
+import {
+  parseAnnualFeeCycleType,
+  serializeFxFreeCurrencies,
+  validateAnnualFeeWaiverRulesInput,
+  validateRewardRulesInput,
+} from '../recommendations/rules'
 import { archiveLegacyDefinition } from '../opportunities/legacy.server'
 import { extractValidCreditLimit, isExactDueDate } from '../email-core/due-date'
 
@@ -388,16 +395,142 @@ export async function getAdminCardProducts() {
   return (data || []).map(p => ({ ...(p as unknown as CardProduct), is_active: p.is_active === 1 }))
 }
 
+const STRUCTURED_RULE_COLUMNS = [
+  'ftf_rate',
+  'fx_free_currencies_json',
+  'reward_rules_json',
+  'annual_fee_cycle_type',
+  'annual_fee_waiver_rules_json',
+  'rules_updated_at',
+] as const
+
+/**
+ * 归一化卡产品结构化规则入参。
+ *
+ * - 未提供任何结构化字段时返回空对象（兼容旧管理端表单与存量测试）；
+ * - 提供了但 0043 尚未迁移时直接报错，绝不静默丢弃；
+ * - 校验通过后返回可直接拼进 INSERT/UPDATE 的列值，并自动带 rules_updated_at。
+ */
+async function buildStructuredRuleFields(
+  payload: Partial<CardProduct>
+): Promise<Record<string, unknown>> {
+  const keys: Array<keyof CardProduct> = [
+    'ftf_rate',
+    'fx_free_currencies_json',
+    'reward_rules_json',
+    'annual_fee_cycle_type',
+    'annual_fee_waiver_rules_json',
+  ]
+  const provided = keys.some(key => payload[key] !== undefined)
+  if (!provided) return {}
+  if (!(await hasColumns('card_products', STRUCTURED_RULE_COLUMNS))) {
+    throw new Error('卡产品结构化规则字段尚未迁移（HUB-176 0043 未合入），暂不支持保存')
+  }
+
+  const fields: Record<string, unknown> = {}
+
+  if (payload.ftf_rate !== undefined) {
+    const rate = payload.ftf_rate
+    if (rate !== null && (typeof rate !== 'number' || !Number.isFinite(rate) || rate < 0 || rate > 10)) {
+      throw new Error('外币手续费率必须是 0–10 之间的百分比数字（如 1.5 表示 1.5%）')
+    }
+    fields.ftf_rate = rate
+  }
+
+  if (payload.fx_free_currencies_json !== undefined) {
+    const raw = payload.fx_free_currencies_json
+    let currencies: string[] | null = null
+    if (typeof raw === 'string') {
+      try {
+        currencies = JSON.parse(raw) as string[]
+      } catch {
+        throw new Error('免外币手续费币种必须是 JSON 数组')
+      }
+    } else if (Array.isArray(raw)) {
+      currencies = raw
+    }
+    if (currencies !== null && !Array.isArray(currencies)) {
+      throw new Error('免外币手续费币种必须是数组')
+    }
+    fields.fx_free_currencies_json = serializeFxFreeCurrencies(currencies)
+  }
+
+  if (payload.reward_rules_json !== undefined) {
+    const raw = payload.reward_rules_json
+    if (raw === null || raw === '') {
+      fields.reward_rules_json = null
+    } else {
+      let parsed: unknown = raw
+      if (typeof raw === 'string') {
+        try {
+          parsed = JSON.parse(raw)
+        } catch {
+          throw new Error('回报规则必须是合法 JSON 对象')
+        }
+      }
+      fields.reward_rules_json = JSON.stringify(validateRewardRulesInput(parsed))
+    }
+  }
+
+  if (payload.annual_fee_cycle_type !== undefined) {
+    const cycle = parseAnnualFeeCycleType(payload.annual_fee_cycle_type)
+    if (payload.annual_fee_cycle_type !== null && cycle === null) {
+      throw new Error('年费周期类型非法')
+    }
+    fields.annual_fee_cycle_type = cycle
+  }
+
+  if (payload.annual_fee_waiver_rules_json !== undefined) {
+    const raw = payload.annual_fee_waiver_rules_json
+    if (raw === null || raw === '') {
+      fields.annual_fee_waiver_rules_json = null
+    } else {
+      let parsed: unknown = raw
+      if (typeof raw === 'string') {
+        try {
+          parsed = JSON.parse(raw)
+        } catch {
+          throw new Error('免年费规则必须是合法 JSON 对象')
+        }
+      }
+      fields.annual_fee_waiver_rules_json = JSON.stringify(validateAnnualFeeWaiverRulesInput(parsed))
+    }
+  }
+
+  // 任何一次人工保存都盖时间戳：0045 种子回填只覆盖 rules_updated_at IS NULL 的行
+  fields.rules_updated_at = now()
+  return fields
+}
+
 export async function createCardProduct(payload: Partial<CardProduct & { is_active: boolean }>) {
   const id = uuid()
+  const ruleFields = await buildStructuredRuleFields(payload)
+  const ruleColumns = Object.keys(ruleFields)
+  const baseColumns = [
+    'id',
+    'country',
+    'bank_id',
+    'bank_name',
+    'card_name',
+    'card_image_id',
+    'description_md',
+    'apply_url',
+    'rewards_summary',
+    'currency',
+    'payment_due_type',
+    'payment_due_value',
+    'annual_fee',
+    'annual_fee_waiver',
+    'is_active',
+  ]
+  const columns = [...baseColumns, ...ruleColumns]
   const { error } = await execute(
-    `INSERT INTO card_products (id, country, bank_id, bank_name, card_name, card_image_id, description_md, apply_url, rewards_summary, currency, payment_due_type, payment_due_value, annual_fee, annual_fee_waiver, is_active)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO card_products (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
     [id, payload.country || 'CN', payload.bank_id || null, payload.bank_name!, payload.card_name!,
      payload.card_image_id || null, payload.description_md || null, payload.apply_url || null,
      payload.rewards_summary || null, payload.currency || 'CNY', payload.payment_due_type || 'after_billing',
      payload.payment_due_value || 20, payload.annual_fee || 0, payload.annual_fee_waiver || null,
-     payload.is_active !== false ? 1 : 0]
+     payload.is_active !== false ? 1 : 0, ...ruleColumns.map(column => ruleFields[column])]
   )
   if (error) throw new Error(error.message)
   const row = await queryOne<Record<string, unknown>>('SELECT * FROM card_products WHERE id = ?', [id])
@@ -416,6 +549,11 @@ export async function updateCardProduct(id: string, payload: Partial<CardProduct
   if (payload.is_active !== undefined) {
     fields.push('is_active = ?')
     params.push(payload.is_active ? 1 : 0)
+  }
+  const ruleFields = await buildStructuredRuleFields(payload)
+  for (const [column, value] of Object.entries(ruleFields)) {
+    fields.push(`${column} = ?`)
+    params.push(value)
   }
   if (fields.length === 0) throw new Error('没有需要更新的字段')
   params.push(id)
