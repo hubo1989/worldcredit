@@ -11,10 +11,15 @@
 
 import { query, queryOne, execute, queryByChunks, now as dbNow, uuid } from '../db'
 import { hasColumns } from '../db/schema-capabilities'
-import { fetchRates, normalizeCurrency } from '../fx'
+import { convert, fetchRates, normalizeCurrency, type FxRates } from '../fx'
 import { resolvePoolLimit } from '../account-pools'
 import type { CardWithBillsSummary } from './bills'
 import type { CreditAccount } from '../types'
+import {
+  resolveAnnualFeeCycleState,
+  type AnnualFeeCard,
+  type AnnualFeeProduct,
+} from '../annual-fee-cycle'
 import { localDateInZone } from '../opportunities/dates'
 import { evaluateTask, type ManualProgress, type TaskConditionsV1 } from '../opportunities/tasks'
 import { assertAccountAccess, assertCardAccess, holderScopePredicate } from '../opportunities/scope.server'
@@ -30,6 +35,7 @@ import {
   computeCardAnnualFeeRoi,
   resolveRoiWindow,
   type CardAnnualFeeRoiDetail,
+  type CrossCurrencyUnconverted,
   type FamilyAnnualFeeRoiBoard,
   type RoiPeriodMode,
   type RoiWindowMode,
@@ -699,6 +705,10 @@ interface RoiAggregateInput {
    * 回到内存后再按卡窗口过滤，避免把别张卡周期的核销算进来。
    */
   cardWindows?: Map<string, { start: string; end: string }>
+  /** 每张卡主币种（折算目标币）；缺失回退 CNY。 */
+  cardCurrencyByCard: Map<string, string>
+  /** 汇率；null 时跨币种金额一律不折算、原样披露，绝不 1:1 混入。 */
+  rates: FxRates | null
 }
 
 interface RoiAggregates {
@@ -709,6 +719,7 @@ interface RoiAggregates {
   promoCountByCard: Map<string, number>
   taskCountByCard: Map<string, number>
   unvaluedByCard: Map<string, UnvaluedBenefitRef[]>
+  unconvertedByCard: Map<string, CrossCurrencyUnconverted[]>
 }
 
 async function loadRoiAggregates(input: RoiAggregateInput): Promise<RoiAggregates> {
@@ -720,6 +731,7 @@ async function loadRoiAggregates(input: RoiAggregateInput): Promise<RoiAggregate
     promoCountByCard: new Map<string, number>(),
     taskCountByCard: new Map<string, number>(),
     unvaluedByCard: new Map<string, UnvaluedBenefitRef[]>(),
+    unconvertedByCard: new Map<string, CrossCurrencyUnconverted[]>(),
   }
   if (input.cardIds.length === 0) return empty
 
@@ -787,11 +799,55 @@ async function loadRoiAggregates(input: RoiAggregateInput): Promise<RoiAggregate
     return dateOn >= window.start && dateOn < window.end
   }
 
+  const cardCurrencyOf = (cardId: string): string =>
+    normalizeCurrency(input.cardCurrencyByCard.get(cardId)) || 'CNY'
+  const pushUnconverted = (
+    cardId: string,
+    currency: string,
+    amount: number,
+    source: CrossCurrencyUnconverted['source']
+  ) => {
+    const list = empty.unconvertedByCard.get(cardId) ?? []
+    list.push({ currency, amount, source })
+    empty.unconvertedByCard.set(cardId, list)
+  }
+  /**
+   * 单条收益按「记录实际币种 → 卡片主币种」折算后再累加：
+   * 同币种恒等；跨币种走 lib/fx.convert；缺汇率时原样登记披露，绝不 1:1 混入合计。
+   * amount_minor 的币种取额度周期币种（无则回退卡主币种）；估值取目录/账户估值币种。
+   */
+  const addConverted = (
+    map: Map<string, number>,
+    cardId: string,
+    amount: number,
+    sourceCurrency: string | null | undefined,
+    source: CrossCurrencyUnconverted['source']
+  ) => {
+    const target = cardCurrencyOf(cardId)
+    const from = normalizeCurrency(sourceCurrency) || target
+    if (from === target) {
+      bump(map, cardId, amount)
+      return
+    }
+    const converted = convert(amount, from, target, input.rates)
+    if (converted === null) {
+      pushUnconverted(cardId, from, amount, source)
+      return
+    }
+    bump(map, cardId, converted)
+  }
+
   for (const row of usageResult.data || []) {
     if (!inCardWindow(row.card_id, row.used_on)) continue
     const isBenefit = row.definition_kind === 'benefit'
     if (row.amount_minor > 0) {
-      bump(isBenefit ? empty.benefitsByCard : empty.promoByCard, row.card_id, row.amount_minor / 100)
+      addConverted(
+        isBenefit ? empty.benefitsByCard : empty.promoByCard,
+        row.card_id,
+        row.amount_minor / 100,
+        row.cycle_currency,
+        isBenefit ? 'benefit' : 'promo'
+      )
       bump(
         isBenefit ? empty.benefitCountByCard : empty.promoCountByCard,
         row.card_id,
@@ -800,8 +856,16 @@ async function loadRoiAggregates(input: RoiAggregateInput): Promise<RoiAggregate
       continue
     }
     const unitMinor = row.account_unit_minor ?? row.definition_unit_minor
+    const unitCurrency =
+      row.account_unit_minor != null ? row.account_value_currency : row.definition_value_currency
     if (unitMinor !== null && unitMinor > 0) {
-      bump(isBenefit ? empty.benefitsByCard : empty.promoByCard, row.card_id, (row.quantity * unitMinor) / 100)
+      addConverted(
+        isBenefit ? empty.benefitsByCard : empty.promoByCard,
+        row.card_id,
+        (row.quantity * unitMinor) / 100,
+        unitCurrency,
+        isBenefit ? 'benefit' : 'promo'
+      )
       bump(isBenefit ? empty.benefitCountByCard : empty.promoCountByCard, row.card_id, 1)
       continue
     }
@@ -820,7 +884,13 @@ async function loadRoiAggregates(input: RoiAggregateInput): Promise<RoiAggregate
 
   for (const row of promoResult.data || []) {
     if (!row.card_id || !inCardWindow(row.card_id, row.used_on)) continue
-    bump(empty.promoByCard, row.card_id, Number(row.cashback_amount) || 0)
+    addConverted(
+      empty.promoByCard,
+      row.card_id,
+      Number(row.cashback_amount) || 0,
+      row.cashback_currency,
+      'promo'
+    )
     bump(empty.promoCountByCard, row.card_id, 1)
   }
 
@@ -837,7 +907,8 @@ async function loadRoiAggregates(input: RoiAggregateInput): Promise<RoiAggregate
       }
     }
     if (!cardId || !inCardWindow(cardId, row.recorded_on)) continue
-    bump(empty.taskByCard, cardId, amountMinor / 100)
+    // 任务奖励无独立币种列，按卡片主币种同币种处理（恒等、无需汇率）。
+    addConverted(empty.taskByCard, cardId, amountMinor / 100, undefined, 'task')
     bump(empty.taskCountByCard, cardId, 1)
   }
 
@@ -851,6 +922,53 @@ async function loadRoiAggregates(input: RoiAggregateInput): Promise<RoiAggregate
 export interface CardAnnualFeeRoiOptions {
   period_mode?: RoiPeriodMode
   year?: number | null
+}
+
+/**
+ * 年费周期窗口（P1-2）：单卡 ROI、家庭 ROI、账单参考消费共用同一套解析。
+ * current_cycle 下优先复用 lib/annual-fee-cycle.ts 的 resolveAnnualFeeCycleState，
+ * 与主动提醒引擎同源——next_annual_fee_date 留空时仍按发卡/激活周年算出精确周期；
+ * 无任何锚点（或周期不适用）时回退 resolveRoiWindow 的近 12 月安全兜底。
+ */
+function annualFeeCycleArgs(row: RecommendationCardRow): [AnnualFeeCard, AnnualFeeProduct] {
+  const card = {
+    annual_fee_cycle_type: row.cc_annual_fee_cycle_type ?? null,
+    annual_fee_override: row.annual_fee_override ?? null,
+    annual_fee_status: row.cc_annual_fee_status ?? null,
+    next_annual_fee_date: row.cc_next_annual_fee_date ?? null,
+    issued_on: row.issued_on ?? null,
+    activated_on: row.activated_on ?? null,
+  } as unknown as AnnualFeeCard
+  const product = {
+    annual_fee: row.product_annual_fee ?? null,
+    annual_fee_cycle_type: row.p_annual_fee_cycle_type ?? null,
+  } as unknown as AnnualFeeProduct
+  return [card, product]
+}
+
+function resolveCardRoiWindow(
+  row: RecommendationCardRow,
+  periodMode: RoiPeriodMode,
+  today: string,
+  year: number | null
+): { period_start: string; period_end_exclusive: string; window_mode_resolved: RoiWindowMode } {
+  if (periodMode === 'current_cycle') {
+    const [card, product] = annualFeeCycleArgs(row)
+    const cycle = resolveAnnualFeeCycleState(card, product, today)
+    if (cycle && cycle.cycleStartOn && cycle.nextDueDate) {
+      return {
+        period_start: cycle.cycleStartOn,
+        period_end_exclusive: cycle.nextDueDate,
+        window_mode_resolved: 'exact_cycle',
+      }
+    }
+  }
+  return resolveRoiWindow({
+    period_mode: periodMode,
+    today_on: today,
+    year,
+    next_due_date: row.cc_next_annual_fee_date ?? null,
+  })
 }
 
 function buildCardRoi(
@@ -888,6 +1006,7 @@ function buildCardRoi(
     task_result_count: aggregate.taskCountByCard.get(row.id) ?? 0,
     unvalued_benefit_count: unvaluedRefs.reduce((sum, ref) => sum + ref.quantity, 0),
     unvalued_benefit_refs: unvaluedRefs,
+    unconverted_values: aggregate.unconvertedByCard.get(row.id) ?? [],
   })
 }
 
@@ -901,17 +1020,15 @@ export async function getCardAnnualFeeRoi(
   const row = rows[0]
   if (!row) throw forbiddenOrNotFound('card')
   const periodMode: RoiPeriodMode = options.period_mode ?? 'current_cycle'
-  const window = resolveRoiWindow({
-    period_mode: periodMode,
-    today_on: todayOn(),
-    year: options.year ?? null,
-    next_due_date: row.cc_next_annual_fee_date ?? null,
-  })
+  const window = resolveCardRoiWindow(row, periodMode, todayOn(), options.year ?? null)
+  const rates = await fetchRates()
   const aggregate = await loadRoiAggregates({
     cardIds: [row.id],
     holderIds: [row.holder_id],
     windowStart: window.period_start,
     windowEndExclusive: window.period_end_exclusive,
+    cardCurrencyByCard: new Map([[row.id, toCardCurrency(row)]]),
+    rates,
   })
   return buildCardRoi(row, aggregate, periodMode, window)
 }
@@ -948,12 +1065,7 @@ export async function getFamilyAnnualFeeRoi(
   let globalStart = ''
   let globalEnd = ''
   for (const row of rows) {
-    const window = resolveRoiWindow({
-      period_mode: periodMode,
-      today_on: today,
-      year: filters.year ?? null,
-      next_due_date: row.cc_next_annual_fee_date ?? null,
-    })
+    const window = resolveCardRoiWindow(row, periodMode, today, filters.year ?? null)
     windows.set(row.id, {
       start: window.period_start,
       end: window.period_end_exclusive,
@@ -963,21 +1075,21 @@ export async function getFamilyAnnualFeeRoi(
     if (!globalEnd || window.period_end_exclusive > globalEnd) globalEnd = window.period_end_exclusive
   }
 
-  const [aggregate, rates] = await Promise.all([
-    loadRoiAggregates({
-      cardIds: rows.map(row => row.id),
-      holderIds: Array.from(new Set(rows.map(row => row.holder_id))),
-      windowStart: globalStart,
-      windowEndExclusive: globalEnd,
-      cardWindows: new Map(
-        Array.from(windows.entries()).map(([cardId, window]) => [
-          cardId,
-          { start: window.start, end: window.end },
-        ])
-      ),
-    }),
-    fetchRates(),
-  ])
+  const rates = await fetchRates()
+  const aggregate = await loadRoiAggregates({
+    cardIds: rows.map(row => row.id),
+    holderIds: Array.from(new Set(rows.map(row => row.holder_id))),
+    windowStart: globalStart,
+    windowEndExclusive: globalEnd,
+    cardWindows: new Map(
+      Array.from(windows.entries()).map(([cardId, window]) => [
+        cardId,
+        { start: window.start, end: window.end },
+      ])
+    ),
+    cardCurrencyByCard: new Map(rows.map(row => [row.id, toCardCurrency(row)])),
+    rates,
+  })
 
   const details: CardAnnualFeeRoiDetail[] = []
   for (const row of rows) {
@@ -1018,11 +1130,7 @@ export async function getCardCycleSpendEstimate(
   const row = rows[0]
   if (!row) throw forbiddenOrNotFound('card')
   const currency = toCardCurrency(row)
-  const window = resolveRoiWindow({
-    period_mode: 'current_cycle',
-    today_on: todayOn(),
-    next_due_date: row.cc_next_annual_fee_date ?? null,
-  })
+  const window = resolveCardRoiWindow(row, 'current_cycle', todayOn(), null)
 
   const { data: itemRows } = await query<{ spend: number; cnt: number }>(
     `SELECT COALESCE(SUM(bi.amount), 0) AS spend, COUNT(bi.id) AS cnt

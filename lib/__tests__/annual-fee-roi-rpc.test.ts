@@ -18,6 +18,7 @@ import { guardRecommendationScope, MemberScopeError } from '../api/member-scope'
 import { RPC_REGISTRY } from '../api/registry'
 import { createCardProduct, updateCardProduct } from '../api/admin.server'
 import type { OpportunityActor } from '../opportunities/types'
+import { resolveAnnualFeeCycleState } from '../annual-fee-cycle'
 import type { FxRates } from '../fx'
 
 // 汇率必须可控：ROI 的缺汇率降级（AC-6.3）只有在 rates = null 时才可断言。
@@ -475,5 +476,182 @@ describe('admin · 卡产品结构化规则编辑（admin-only）', () => {
   it('keeps the AI draft RPC admin-only', () => {
     expect(RPC_REGISTRY.admin.previewCardProductRules.admin).toBe(true)
     expect(RPC_REGISTRY.admin.previewCardProductRules.memberGuard).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P1-1（HUB-179 QA 打回）：卡内异币种收益按记录币种折算到卡片主币种后再汇总。
+// 夹具对齐 QA：CNY 卡 = CNY 1,000 酒店抵扣 + 2×HKD 150 贵宾厅 + USD 100 返现，
+// 固定 USD/CNY=7.2、USD/HKD=7.8 → 权益 CNY 1,276.92、返现 CNY 720。
+// ---------------------------------------------------------------------------
+
+describe('P1-1 · 卡内异币种收益折算到卡片主币种', () => {
+  const fullRates: FxRates = {
+    base: 'USD',
+    rates: { USD: 1, CNY: 7.2, HKD: 7.8 },
+    timestamp: 0,
+    fetched_at: 0,
+  }
+
+  function seedCrossCurrency(): void {
+    db!.exec(`
+      DELETE FROM opportunity_fulfillments;
+      DELETE FROM opportunity_legacy_links;
+      DELETE FROM opportunity_usages;
+      DELETE FROM promo_usages;
+      UPDATE opportunity_definitions
+        SET estimated_unit_value_minor = 15000, estimated_value_currency = 'HKD'
+        WHERE id = 'd-benefit';
+      INSERT INTO opportunity_usages (id, account_id, cycle_id, card_id, used_on, quantity, amount_minor,
+        status, revision, created_by, updated_by, created_at, updated_at) VALUES
+        ('u-hotel', 'acc-benefit', 'cyc-benefit', 'c-main', '2026-06-01', 1, 100000, 'active', 1,
+         'u-admin', 'u-admin', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z'),
+        ('u-lounge', 'acc-benefit', 'cyc-benefit', 'c-main', '2026-06-02', 2, 0, 'active', 1,
+         'u-admin', 'u-admin', '2026-06-02T00:00:00Z', '2026-06-02T00:00:00Z');
+      INSERT INTO promo_usages (id, promo_id, card_id, used_at, cashback_amount, cashback_currency) VALUES
+        ('pu-usd', 'pr-legacy', 'c-main', '2026-06-03', 100, 'USD');
+    `)
+  }
+
+  it('汇率齐备时按记录币种折算：CNY 1000 + HKD 300→276.92 + USD 100→720', async () => {
+    fxState.rates = fullRates
+    seedCrossCurrency()
+    const roi = await getCardAnnualFeeRoi(ADMIN, 'c-main', { period_mode: 'current_cycle' })
+    // 权益：CNY 1000 同币恒等 + 2×HKD 150 折算 (300/7.8×7.2=276.92)
+    expect(roi.redeemed_benefits_value).toBe(1276.92)
+    // 返现：USD 100 折算 (100/1×7.2=720)，而非裸加 100
+    expect(roi.promo_and_reward_value).toBe(720)
+    expect(roi.unconverted_values).toEqual([])
+
+    // 家庭看板中该卡同样是折算后的卡主币种口径
+    const board = await getFamilyAnnualFeeRoi(ADMIN, { period_mode: 'current_cycle' })
+    const main = board.cards.find(entry => entry.card_id === 'c-main')!
+    expect(main.redeemed_benefits_value).toBe(1276.92)
+    expect(main.promo_and_reward_value).toBe(720)
+  })
+
+  it('缺汇率时绝不静默 1:1 混算，原样披露未折算金额与币种', async () => {
+    fxState.rates = null
+    seedCrossCurrency()
+    const roi = await getCardAnnualFeeRoi(ADMIN, 'c-main', { period_mode: 'current_cycle' })
+    // 同币种 CNY 1000 恒等计入；HKD/USD 异币种缺汇率不计入（不是 1300 / 100）
+    expect(roi.redeemed_benefits_value).toBe(1000)
+    expect(roi.promo_and_reward_value).toBe(0)
+    expect(roi.unconverted_values).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ currency: 'HKD', amount: 300, source: 'benefit' }),
+        expect.objectContaining({ currency: 'USD', amount: 100, source: 'promo' }),
+      ])
+    )
+  })
+
+  it('仅缺某币种汇率时，只有该币种被披露，其余照常折算', async () => {
+    // 缺 HKD → HKD 300 不计入；USD 仍可折算为 720
+    fxState.rates = { base: 'USD', rates: { USD: 1, CNY: 7.2 }, timestamp: 0, fetched_at: 0 }
+    seedCrossCurrency()
+    const roi = await getCardAnnualFeeRoi(ADMIN, 'c-main', { period_mode: 'current_cycle' })
+    expect(roi.redeemed_benefits_value).toBe(1000)
+    expect(roi.promo_and_reward_value).toBe(720)
+    expect(roi.unconverted_values).toEqual([
+      expect.objectContaining({ currency: 'HKD', amount: 300, source: 'benefit' }),
+    ])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P1-2（HUB-179 QA 打回）：单卡/家庭 ROI 与账单参考消费窗口统一复用
+// lib/annual-fee-cycle.ts 的发卡周年解析，next_annual_fee_date 留空时与提醒一致。
+// ---------------------------------------------------------------------------
+
+describe('P1-2 · 年费周期窗口与提醒同源（发卡周年）', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-25T01:00:00Z')) // 当地 Asia/Shanghai = 2026-11-25
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('next_annual_fee_date 留空时，单卡/家庭/消费估算统一按发卡周年精确周期', async () => {
+    db!.exec(`
+      UPDATE credit_cards
+        SET issued_on = '2025-12-25', annual_fee_cycle_type = 'anniversary_issued',
+            next_annual_fee_date = NULL
+        WHERE id = 'c-main';
+    `)
+    // 提醒引擎的周期解析（同源函数）
+    const cycle = resolveAnnualFeeCycleState(
+      { issued_on: '2025-12-25' },
+      { annual_fee_cycle_type: 'anniversary_issued' },
+      '2026-11-25'
+    )
+    expect(cycle?.nextDueDate).toBe('2026-12-25')
+    expect(cycle?.cycleStartOn).toBe('2025-12-25')
+
+    const roi = await getCardAnnualFeeRoi(ADMIN, 'c-main', { period_mode: 'current_cycle' })
+    expect(roi.window_mode_resolved).toBe('exact_cycle')
+    expect(roi.period_start).toBe('2025-12-25')
+    expect(roi.period_end_exclusive).toBe('2026-12-25')
+
+    const board = await getFamilyAnnualFeeRoi(ADMIN, { period_mode: 'current_cycle' })
+    const main = board.cards.find(entry => entry.card_id === 'c-main')!
+    expect(main.window_mode_resolved).toBe('exact_cycle')
+    expect(main.period_start).toBe('2025-12-25')
+    expect(main.period_end_exclusive).toBe('2026-12-25')
+
+    const estimate = await getCardCycleSpendEstimate(ADMIN, 'c-main')
+    expect(estimate.period_start).toBe('2025-12-25')
+    expect(estimate.period_end_exclusive).toBe('2026-12-25')
+  })
+
+  it('产品级发卡周年（QA 夹具口径）与显式扣费日给出同一窗口', async () => {
+    // QA：周期类型设在卡产品上，卡自身 annual_fee_cycle_type / next_annual_fee_date 均留空
+    db!.exec(`
+      UPDATE card_products SET annual_fee_cycle_type = 'anniversary_issued' WHERE id = 'p-main';
+      UPDATE credit_cards
+        SET issued_on = '2025-12-25', annual_fee_cycle_type = NULL, next_annual_fee_date = NULL
+        WHERE id = 'c-main';
+    `)
+    const anniversary = await getCardAnnualFeeRoi(ADMIN, 'c-main', { period_mode: 'current_cycle' })
+    expect(anniversary.window_mode_resolved).toBe('exact_cycle')
+    expect(anniversary.period_start).toBe('2025-12-25')
+    expect(anniversary.period_end_exclusive).toBe('2026-12-25')
+
+    // 提醒推算的到期日 2026-12-25 作为显式扣费日时，应得到完全相同的窗口
+    db!.exec(`UPDATE credit_cards SET next_annual_fee_date = '2026-12-25' WHERE id = 'c-main'`)
+    const explicit = await getCardAnnualFeeRoi(ADMIN, 'c-main', { period_mode: 'current_cycle' })
+    expect(explicit.window_mode_resolved).toBe('exact_cycle')
+    expect(explicit.period_start).toBe(anniversary.period_start)
+    expect(explicit.period_end_exclusive).toBe(anniversary.period_end_exclusive)
+  })
+
+  it('单卡窗口右开端点与提醒推算的 nextDueDate 完全一致', async () => {
+    db!.exec(`
+      UPDATE credit_cards
+        SET issued_on = '2025-12-25', annual_fee_cycle_type = 'anniversary_issued',
+            next_annual_fee_date = NULL
+        WHERE id = 'c-main';
+    `)
+    const reminder = resolveAnnualFeeCycleState(
+      { issued_on: '2025-12-25', annual_fee_cycle_type: 'anniversary_issued' },
+      { annual_fee_cycle_type: 'anniversary_issued' },
+      '2026-11-25'
+    )
+    const roi = await getCardAnnualFeeRoi(ADMIN, 'c-main', { period_mode: 'current_cycle' })
+    expect(roi.period_end_exclusive).toBe(reminder?.nextDueDate)
+    expect(roi.period_start).toBe(reminder?.cycleStartOn)
+  })
+
+  it('无任何锚点时保持近 12 个月安全兜底（不编造日期）', async () => {
+    db!.exec(`
+      UPDATE credit_cards
+        SET issued_on = NULL, activated_on = NULL, annual_fee_cycle_type = NULL,
+            next_annual_fee_date = NULL
+        WHERE id = 'c-main';
+    `)
+    const roi = await getCardAnnualFeeRoi(ADMIN, 'c-main', { period_mode: 'current_cycle' })
+    expect(roi.window_mode_resolved).toBe('last_12m_fallback')
+    const estimate = await getCardCycleSpendEstimate(ADMIN, 'c-main')
+    expect(estimate.window_mode_resolved).toBe('last_12m_fallback')
   })
 })

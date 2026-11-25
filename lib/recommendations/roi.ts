@@ -35,6 +35,16 @@ export interface UnvaluedBenefitRef {
   quantity: number
 }
 
+/**
+ * 卡内异币种收益因缺汇率无法折算到卡片主币种时的明细。
+ * 这类金额绝不静默按 1:1 混入合计，而是原样保留金额与币种交由调用方披露。
+ */
+export interface CrossCurrencyUnconverted {
+  currency: string
+  amount: number
+  source: 'benefit' | 'promo' | 'task'
+}
+
 export interface CardAnnualFeeRoiDetail {
   card_id: string
   holder_id: string
@@ -60,6 +70,8 @@ export interface CardAnnualFeeRoiDetail {
   decision_label: string
   unvalued_benefit_count: number
   unvalued_benefit_refs: UnvaluedBenefitRef[]
+  /** 卡内异币种、缺汇率未折算的收益明细（金额与币种原样保留，绝不 1:1 混入合计）。 */
+  unconverted_values: CrossCurrencyUnconverted[]
   item_counts: {
     benefit_usages: number
     promo_usages: number
@@ -192,6 +204,7 @@ export interface CardRoiInput {
   task_result_count: number
   unvalued_benefit_count: number
   unvalued_benefit_refs: UnvaluedBenefitRef[]
+  unconverted_values?: CrossCurrencyUnconverted[]
 }
 
 /** 年费成本：waived → 0；实付优先；其余按名义年费估算。 */
@@ -262,6 +275,7 @@ export function computeCardAnnualFeeRoi(input: CardRoiInput): CardAnnualFeeRoiDe
     decision_label: ROI_DECISION_LABELS[decisionTag],
     unvalued_benefit_count: input.unvalued_benefit_count,
     unvalued_benefit_refs: input.unvalued_benefit_refs,
+    unconverted_values: input.unconverted_values ?? [],
     item_counts: {
       benefit_usages: input.benefit_usage_count,
       promo_usages: input.promo_usage_count,
@@ -296,13 +310,25 @@ export function aggregateFamilyAnnualFeeRoi(
     net_value: sum(card => card.net_value),
   }
 
+  // 卡内异币种收益缺汇率未折算的币种，与「卡币种 → 展示币种」缺汇率一并披露。
+  const cardUnconverted = Array.from(
+    new Set(cards.flatMap(card => (card.unconverted_values ?? []).map(item => item.currency)))
+  ).sort()
   const unconverted = Array.from(
-    new Set(Object.values(totals).flatMap(entry => entry.unconverted_currencies))
+    new Set([
+      ...Object.values(totals).flatMap(entry => entry.unconverted_currencies),
+      ...cardUnconverted,
+    ])
   ).sort()
 
   const warnings: string[] = []
   if (unconverted.length > 0) {
     warnings.push(`未含汇率：${unconverted.join('、')} 未计入合计（单卡仍展示原币金额）`)
+  }
+  if (cardUnconverted.length > 0) {
+    warnings.push(
+      `卡内异币种收益缺汇率未折算：${cardUnconverted.join('、')} 未计入合计（明细见各卡 unconverted_values）`
+    )
   }
   if (cards.length === 0) {
     warnings.push('当前统计窗口内没有可复盘的卡片')
