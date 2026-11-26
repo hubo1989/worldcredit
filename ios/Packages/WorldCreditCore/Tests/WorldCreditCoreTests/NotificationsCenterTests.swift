@@ -79,6 +79,25 @@ struct NotificationsCenterTests {
         #expect(item.parsedMetadata?.totalsByCurrency == ["CNY": 1000])
         #expect(item.parsedMetadata?.bills?.first?.remaining == 600)
         #expect(item.parsedMetadata?.payables?.first?.name == "房租")
+
+        let missingJson = """
+        {
+          "id": "n2",
+          "user_id": "u1",
+          "notification_key": "bill_missing_statement:c1:2026-10:2026-11-15",
+          "category": "bill_missing_statement",
+          "title": "未收到账单",
+          "metadata_json": "{\\"kind\\":\\"bill_missing_statement\\",\\"missing_statements\\":[{\\"card_id\\":\\"c1\\",\\"subject\\":\\"招行\\",\\"bill_month\\":\\"2026-10\\",\\"expected_statement_date\\":\\"2026-11-10\\",\\"days_past\\":5,\\"is_merged\\":false}]}",
+          "sent_at": "2026-11-15T01:00:00Z",
+          "status": "sent"
+        }
+        """
+        let missingItem = try JSONDecoder().decode(UserNotificationItem.self, from: Data(missingJson.utf8))
+        #expect(missingItem.category == .billMissingStatement)
+        #expect(missingItem.category.label == "未收账单")
+        #expect(missingItem.category.tone == .gold)
+        #expect(missingItem.parsedMetadata?.missingStatements?.first?.billMonth == "2026-10")
+        #expect(missingItem.parsedMetadata?.missingStatements?.first?.daysPast == 5)
     }
 
     @Test("NotificationsRemoteService sends exact RPC paths and arguments across all 8 operations")

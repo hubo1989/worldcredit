@@ -6,7 +6,12 @@ struct BillCreateSheetView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
 
-    @State private var selectedCardId: String = ""
+    let initialCardId: String?
+    let initialBillMonth: String?
+    let isSupplementMode: Bool
+    let onSwitchToSmartImport: ((String) -> Void)?
+
+    @State private var selectedCardId: String
     @State private var selectedYear: Int
     @State private var selectedMonth: Int
     @State private var billAmountText: String = ""
@@ -16,6 +21,7 @@ struct BillCreateSheetView: View {
     @State private var dueDate: Date = Date()
     @State private var hasManuallyEditedStatementDate: Bool = false
     @State private var hasManuallyEditedDueDate: Bool = false
+    @State private var markAsPaid: Bool = false
     @State private var suggestedStatementDateValue: Date?
     @State private var suggestedDueDateValue: Date?
 
@@ -40,15 +46,35 @@ struct BillCreateSheetView: View {
         return cal
     }
 
-    init() {
+    init(
+        initialCardId: String? = nil,
+        initialBillMonth: String? = nil,
+        isSupplementMode: Bool = false,
+        onSwitchToSmartImport: ((String) -> Void)? = nil
+    ) {
+        self.initialCardId = initialCardId
+        self.initialBillMonth = initialBillMonth
+        self.isSupplementMode = isSupplementMode
+        self.onSwitchToSmartImport = onSwitchToSmartImport
+
         let cal = Self.shanghaiCalendar
         let now = Date()
-        _selectedYear = State(initialValue: cal.component(.year, from: now))
-        _selectedMonth = State(initialValue: cal.component(.month, from: now))
+        var initYear = cal.component(.year, from: now)
+        var initMonth = cal.component(.month, from: now)
+        if let initialBillMonth {
+            let parts = initialBillMonth.split(separator: "-").compactMap { Int($0) }
+            if parts.count == 2, (1...12).contains(parts[1]) {
+                initYear = parts[0]
+                initMonth = parts[1]
+            }
+        }
+        _selectedCardId = State(initialValue: initialCardId ?? "")
+        _selectedYear = State(initialValue: initYear)
+        _selectedMonth = State(initialValue: initMonth)
     }
 
     private var activeCreditCards: [CardDisplayItem] {
-        appState.cards.filter { $0.card.cardType != "loan" }
+        appState.cards.filter { $0.card.cardType != "loan" && $0.card.status == "active" }
     }
 
     private var selectableCards: [CardDisplayItem] {
@@ -153,6 +179,43 @@ struct BillCreateSheetView: View {
                         }
                     }
 
+                    Section {
+                        Button {
+                            Task { await submitZeroBill() }
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("本期无消费，确认 0 元零账单")
+                                        .font(.subheadline.bold())
+                                        .foregroundStyle(WCColors.warningInk)
+                                    Text("按推算日期记为 \(currencySymbol)0.00 已结清，立即消除缺账提醒")
+                                        .font(.caption2)
+                                        .foregroundStyle(WCColors.textSecondary)
+                                }
+                                Spacer()
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(WCColors.warningInk)
+                            }
+                        }
+                        .disabled(isSubmitting || duplicateBillExists)
+                        .accessibilityIdentifier("bill.create.zeroConfirm")
+
+                        if let onSwitchToSmartImport {
+                            Button {
+                                let cardId = selectedCardId
+                                dismiss()
+                                onSwitchToSmartImport(cardId)
+                            } label: {
+                                Label("我有文本 / 截图 / PDF → 智能导入", systemImage: "doc.viewfinder")
+                                    .font(.subheadline.weight(.medium))
+                            }
+                            .disabled(isSubmitting)
+                            .accessibilityIdentifier("bill.create.switchImport")
+                        }
+                    } header: {
+                        Text("快捷操作")
+                    }
+
                     Section("账单金额（\(currencyCode)）") {
                         HStack {
                             Text("账单金额 (\(currencySymbol))")
@@ -170,6 +233,11 @@ struct BillCreateSheetView: View {
                                 .keyboardType(.decimalPad)
                                 .multilineTextAlignment(.trailing)
                                 .accessibilityIdentifier("bill.create.minPayment")
+                        }
+
+                        if isHistoricalPositiveAmount {
+                            Toggle("我已在银行还清本期（同步标记已还清）", isOn: $markAsPaid)
+                                .accessibilityIdentifier("bill.create.markAsPaid")
                         }
                     }
 
@@ -226,7 +294,7 @@ struct BillCreateSheetView: View {
                     }
                 }
             }
-            .navigationTitle("录入账单")
+            .navigationTitle(isSupplementMode ? "补充账单" : "录入账单")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -251,6 +319,8 @@ struct BillCreateSheetView: View {
                 if selectedCardId.isEmpty, let first = selectableCards.first {
                     selectedCardId = first.id
                     applySuggestedDates(for: first, force: true)
+                } else if let card = selectedCard {
+                    applySuggestedDates(for: card, force: true)
                 }
             }
             .onChange(of: selectedCardId) { _, _ in
@@ -340,6 +410,53 @@ struct BillCreateSheetView: View {
         )
     }
 
+    private var isHistoricalPositiveAmount: Bool {
+        let trimmed = billAmountText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let amt = Double(trimmed), amt > 0 else { return false }
+        let dueStr = Self.yyyymmddFormatter.string(from: dueDate)
+        let todayStr = Self.yyyymmddFormatter.string(from: Date())
+        return dueStr < todayStr
+    }
+
+    private func submitZeroBill() async {
+        errorMessage = nil
+        guard !selectedCardId.isEmpty else {
+            errorMessage = "请选择信用卡"
+            errorFeedbackTrigger += 1
+            return
+        }
+        let dueDateStr = Self.yyyymmddFormatter.string(from: dueDate)
+        let statementDateStr = includeStatementDate ? Self.yyyymmddFormatter.string(from: statementDate) : nil
+        let bounds = statementPeriodBounds()
+
+        isSubmitting = true
+        defer { isSubmitting = false }
+
+        do {
+            _ = try await appState.supplementMissingBill(
+                input: ApiClient.SupplementMissingBillInput(
+                    cardId: selectedCardId,
+                    billMonth: billMonthString,
+                    billAmount: 0,
+                    minPayment: 0,
+                    dueDate: dueDateStr,
+                    statementDate: statementDateStr,
+                    statementStart: bounds.start,
+                    statementEnd: bounds.end,
+                    pinDueDate: hasManuallyEditedDueDate,
+                    pinStatementDate: includeStatementDate && hasManuallyEditedStatementDate,
+                    pinMinPayment: false,
+                    markAsPaid: false
+                )
+            )
+            saveFeedbackTrigger += 1
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+            errorFeedbackTrigger += 1
+        }
+    }
+
     private func submit() async {
         errorMessage = nil
         guard !selectedCardId.isEmpty else {
@@ -372,16 +489,35 @@ struct BillCreateSheetView: View {
         defer { isSubmitting = false }
 
         do {
-            _ = try await appState.createBill(
-                cardId: selectedCardId,
-                billMonth: billMonthString,
-                billAmount: billAmount,
-                minPayment: parsedMinPayment,
-                dueDate: dueDateStr,
-                statementDate: statementDateStr,
-                statementStart: bounds.start,
-                statementEnd: bounds.end
-            )
+            if isSupplementMode || billAmount == 0 || markAsPaid {
+                _ = try await appState.supplementMissingBill(
+                    input: ApiClient.SupplementMissingBillInput(
+                        cardId: selectedCardId,
+                        billMonth: billMonthString,
+                        billAmount: billAmount,
+                        minPayment: parsedMinPayment ?? (billAmount == 0 ? 0 : nil),
+                        dueDate: dueDateStr,
+                        statementDate: statementDateStr,
+                        statementStart: bounds.start,
+                        statementEnd: bounds.end,
+                        pinDueDate: hasManuallyEditedDueDate,
+                        pinStatementDate: includeStatementDate && hasManuallyEditedStatementDate,
+                        pinMinPayment: parsedMinPayment != nil,
+                        markAsPaid: billAmount > 0 && isHistoricalPositiveAmount ? markAsPaid : false
+                    )
+                )
+            } else {
+                _ = try await appState.createBill(
+                    cardId: selectedCardId,
+                    billMonth: billMonthString,
+                    billAmount: billAmount,
+                    minPayment: parsedMinPayment,
+                    dueDate: dueDateStr,
+                    statementDate: statementDateStr,
+                    statementStart: bounds.start,
+                    statementEnd: bounds.end
+                )
+            }
             saveFeedbackTrigger += 1
             dismiss()
         } catch {

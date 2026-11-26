@@ -275,6 +275,25 @@ struct NotificationsCenterView: View {
                             }
                         }
                     }
+
+                    if let missingList = meta.missingStatements, !missingList.isEmpty {
+                        Section("超期未获得账单明细") {
+                            ForEach(missingList) { ms in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Text(ms.subject).font(.subheadline.bold())
+                                        Spacer()
+                                        Text("已过 \(ms.daysPast) 天")
+                                            .font(.caption.bold())
+                                            .foregroundStyle(.orange)
+                                    }
+                                    Text("缺失账期 \(ms.billMonth) · 应出账日 \(ms.expectedStatementDate)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Section {

@@ -66,12 +66,12 @@ struct BillsFilterDrawerView: View {
         return bankOptions.filter { $0.localizedCaseInsensitiveContains(bankSearchText) }
     }
 
-    /// 状态选项随对象类型变化：未出账只属于信用卡，已还款只属于固定支出。
+    /// 状态选项随对象类型变化：未出账/超期未出账只属于信用卡，已还款只属于固定支出。
     private var statusOptions: [BillStatusFilter] {
         switch draftEntity {
-        case .cards: return [.unpaid, .overdue, .unissued]
+        case .cards: return [.unpaid, .overdue, .missingStatement, .unissued]
         case .payables: return [.unpaid, .overdue, .paid]
-        case .all: return [.unpaid, .overdue, .unissued, .paid]
+        case .all: return [.unpaid, .overdue, .missingStatement, .unissued, .paid]
         }
     }
 

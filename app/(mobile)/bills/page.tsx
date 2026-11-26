@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import {
   getCardsWithBillsSummary,
@@ -22,6 +23,16 @@ import { updateBillImportDraft } from '@/lib/api/billDrafts'
 import { BillDraftsPanel } from '@/components/mobile/BillDraftsPanel'
 import { BillImportDialog, type CardOption } from '@/components/mobile/BillImportDialog'
 import { ManualBillAmountDialog } from '@/components/mobile/ManualBillAmountDialog'
+import { SupplementBillDialog } from '@/components/mobile/SupplementBillDialog'
+import {
+  attachMissingStatements,
+  normalizeYearMonth,
+  supplementMissingBill,
+  type CardWithMissingStatement,
+  type MissingStatementSummary,
+} from '@/components/mobile/supplementBillApi'
+import { ConfirmDialog } from '@/components/obsidian/overlays'
+import { Button } from '@/components/obsidian/controls'
 import { PayableForm } from '@/components/mobile/PayableForm'
 import {
   getRecurringPayables, payRecurringPayable, getPayablePayments,
@@ -88,13 +99,14 @@ function omitRecordKey<T>(record: Record<string, T>, key: string): Record<string
 }
 
 export default function BillsPage() {
+  const router = useRouter()
   const { user } = useAuth()
-  const { displayConfig } = useUserPreferences()
+  const { displayConfig, reminderConfig } = useUserPreferences()
   /** 折算目标币种：用户偏好 display_config.default_currency（缺省 CNY）。 */
   const displayCurrency = resolveDisplayCurrency(displayConfig)
   /** 汇率状态：null 表示本次没取到，界面走「未含汇率」的降级展示。 */
   const [fxRates, setFxRates] = useState<FxRates | null>(null)
-  const [cardsSummary, setCardsSummary] = useState<CardWithBillsSummary[]>([])
+  const [rawCardsSummary, setRawCardsSummary] = useState<CardWithMissingStatement[]>([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -103,6 +115,21 @@ export default function BillsPage() {
   const [selectedBill, setSelectedBill] = useState<BillDashboardItem | null>(null)
   const [billFormOpen, setBillFormOpen] = useState(false)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
+  const [importInitialCardId, setImportInitialCardId] = useState<string | null>(null)
+  const [supplementTarget, setSupplementTarget] = useState<{
+    cardId: string
+    billMonth?: string | null
+    missingSummary?: MissingStatementSummary | null
+  } | null>(null)
+  const [zeroConfirmTarget, setZeroConfirmTarget] = useState<{
+    item: CardWithMissingStatement
+    missing: MissingStatementSummary
+  } | null>(null)
+  const [zeroConfirmSubmitting, setZeroConfirmSubmitting] = useState(false)
+  const [pendingSupplementLink, setPendingSupplementLink] = useState<{
+    cardId: string
+    billMonth: string | null
+  } | null>(null)
   const [focusDraftId, setFocusDraftId] = useState<string | null>(null)
   const [draftsRefreshToken, setDraftsRefreshToken] = useState(0)
   const [cardCreateOpen, setCardCreateOpen] = useState(false)
@@ -217,7 +244,7 @@ export default function BillsPage() {
         getCardsWithBillsSummary(user.id),
         getHolders(user.id),
       ])
-      setCardsSummary(summaryData)
+      setRawCardsSummary(summaryData)
       // 全量刷新：递增代次作废在途响应，清空缓存，并对仍展开的行重拉
       payableHistoryGeneration.current += 1
       payableHistoryInFlight.current.clear()
@@ -249,14 +276,81 @@ export default function BillsPage() {
   useEffect(() => {
     if (typeof window === 'undefined') return
     const params = new URLSearchParams(window.location.search)
+    let dirty = false
+
     const draftId = params.get('draftId')
     if (draftId) {
       setFocusDraftId(draftId)
       params.delete('draftId')
+      dirty = true
+    }
+
+    const statusParam = params.get('status')
+    if (statusParam === 'missing_statement') {
+      setStatusKeys(['missing_statement'])
+      params.delete('status')
+      dirty = true
+    }
+
+    const actionParam = params.get('action')
+    if (actionParam === 'supplement') {
+      const cardId = params.get('cardId')?.trim() || ''
+      const billMonth = params.get('billMonth')?.trim() || null
+      if (cardId) {
+        setPendingSupplementLink({ cardId, billMonth })
+      }
+      params.delete('action')
+      params.delete('cardId')
+      params.delete('billMonth')
+      dirty = true
+    }
+
+    if (dirty) {
       const query = params.toString()
       window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`)
     }
   }, [])
+
+  const cardsSummary = useMemo(
+    () =>
+      attachMissingStatements(rawCardsSummary, {
+        graceDays: (reminderConfig as { missing_statement_grace_days?: unknown })
+          ?.missing_statement_grace_days,
+      }),
+    [rawCardsSummary, reminderConfig]
+  )
+
+  useEffect(() => {
+    if (loading || !pendingSupplementLink) return
+    const link = pendingSupplementLink
+    setPendingSupplementLink(null)
+
+    const targetCard = cardsSummary.find(
+      c => c.card.id === link.cardId || c.memberCards?.some(m => m.id === link.cardId)
+    )
+    if (!targetCard) return
+
+    const normalizedTargetMonth = normalizeYearMonth(link.billMonth)
+    if (normalizedTargetMonth) {
+      const existing = targetCard.historyBills.find(
+        b => normalizeYearMonth(b.bill_month) === normalizedTargetMonth
+      )
+      if (existing) {
+        setCelebrationNotice({
+          open: true,
+          message: '该期账单已入账，正在打开账单详情',
+        })
+        router.push(`/bills/${existing.id}`)
+        return
+      }
+    }
+
+    setSupplementTarget({
+      cardId: targetCard.card.id,
+      billMonth: normalizedTargetMonth ?? link.billMonth,
+      missingSummary: targetCard.missingStatement ?? null,
+    })
+  }, [loading, pendingSupplementLink, cardsSummary, router])
 
   // 汇率与业务数据解耦：拿不到也不让整页失败，只是合计缺少外币部分。
   useEffect(() => {
@@ -592,6 +686,52 @@ export default function BillsPage() {
     setSelectedTag('all')
   }, [])
 
+  const visibleMissingStatements = useMemo(() => {
+    if (entityType === 'payables') return []
+    const tagFiltered = filterCardsForView(cardsSummary, {
+      ...filterState,
+      statuses: [],
+    })
+    return tagFiltered
+      .filter(c => !c.suppressMissingStatement && c.missingStatement)
+      .map(c => c.missingStatement!)
+      .sort((a, b) => b.daysPast - a.daysPast)
+  }, [cardsSummary, entityType, filterState])
+
+  const handleConfirmZeroBill = async () => {
+    if (!zeroConfirmTarget || zeroConfirmSubmitting) return
+    const { missing } = zeroConfirmTarget
+    setZeroConfirmSubmitting(true)
+    try {
+      await supplementMissingBill({
+        id:
+          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : undefined,
+        card_id: missing.anchorCardId,
+        bill_month: missing.missingBillMonth,
+        bill_amount: 0,
+        min_payment: 0,
+        due_date: missing.suggestedDueDate,
+        statement_date: missing.expectedStatementDate,
+        pin_due_date: false,
+        pin_statement_date: false,
+        pin_min_payment: false,
+        mark_as_paid: false,
+      })
+      setZeroConfirmTarget(null)
+      await loadData()
+      setCelebrationNotice({
+        open: true,
+        message: `已确认 ${missing.missingBillMonth} 期 0 元零账单，缺账提醒已消除`,
+      })
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : '确认 0 元零账单失败，请重试')
+    } finally {
+      setZeroConfirmSubmitting(false)
+    }
+  }
+
   const importCardOptions: CardOption[] = useMemo(
     () =>
       cardsSummary.map(c => ({
@@ -692,6 +832,25 @@ export default function BillsPage() {
         onAddBill={() => setBillFormOpen(true)}
         onAddCard={() => setCardCreateOpen(true)}
         onMergeCards={() => setMergeWizardOpen(true)}
+        missingStatements={visibleMissingStatements}
+        onSupplementBill={(item, missing) =>
+          setSupplementTarget({
+            cardId: item.card.id,
+            billMonth: missing.missingBillMonth,
+            missingSummary: missing,
+          })
+        }
+        onZeroBillConfirm={(item, missing) => setZeroConfirmTarget({ item, missing })}
+        onFilterMissingStatements={() => {
+          setEntityType(prev => (prev === 'payables' ? 'all' : prev))
+          setStatusKeys(['missing_statement'])
+        }}
+        onOpenDraft={draftId => {
+          setFocusDraftId(draftId)
+          if (typeof window !== 'undefined') {
+            window.scrollTo({ top: 0, behavior: 'smooth' })
+          }
+        }}
       />
 
       <CardCreateModal
@@ -717,15 +876,79 @@ export default function BillsPage() {
       {user && (
         <BillImportDialog
           open={importDialogOpen}
-          onClose={() => setImportDialogOpen(false)}
+          onClose={() => {
+            setImportDialogOpen(false)
+            setImportInitialCardId(null)
+          }}
           onImportSuccess={() => {
             setDraftsRefreshToken(t => t + 1)
             void loadData()
           }}
           cards={importCardOptions}
           userId={user.id}
+          initialCardId={importInitialCardId}
         />
       )}
+
+      <SupplementBillDialog
+        open={supplementTarget !== null}
+        onClose={() => setSupplementTarget(null)}
+        onSuccess={async (res, ctx) => {
+          await loadData()
+          setCelebrationNotice({
+            open: true,
+            message: res.is_zero_bill
+              ? `已确认 ${ctx.billMonth} 期 0 元零账单，缺账提醒已消除`
+              : `已补充 ${ctx.billMonth} 期账单，缺账提醒已消除`,
+          })
+        }}
+        cardsSummary={cardsSummary}
+        holderMap={holderMap}
+        initialCardId={supplementTarget?.cardId ?? null}
+        initialBillMonth={supplementTarget?.billMonth ?? null}
+        initialMissingSummary={supplementTarget?.missingSummary ?? null}
+        onSwitchToImport={cardId => {
+          setImportInitialCardId(cardId || null)
+          setImportDialogOpen(true)
+        }}
+        onOpenDraft={draftId => {
+          setFocusDraftId(draftId)
+          if (typeof window !== 'undefined') {
+            window.scrollTo({ top: 0, behavior: 'smooth' })
+          }
+        }}
+        onOpenExistingBill={billId => router.push(`/bills/${billId}`)}
+      />
+
+      <ConfirmDialog
+        open={zeroConfirmTarget !== null}
+        title='确认 0 元零账单？'
+        onClose={() => !zeroConfirmSubmitting && setZeroConfirmTarget(null)}
+        actions={
+          <>
+            <Button
+              variant='ghost'
+              onClick={() => setZeroConfirmTarget(null)}
+              disabled={zeroConfirmSubmitting}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={() => void handleConfirmZeroBill()}
+              loading={zeroConfirmSubmitting}
+            >
+              确认 0 元账单
+            </Button>
+          </>
+        }
+      >
+        {zeroConfirmTarget ? (
+          <p className='text-[13px] leading-5 text-d-muted'>
+            确认将 <strong className='text-d-text'>{zeroConfirmTarget.missing.subject}</strong>{' '}
+            {zeroConfirmTarget.missing.missingBillMonth} 期记为 0 元零账单并消除提醒？
+          </p>
+        ) : null}
+      </ConfirmDialog>
 
       <AccountMergeWizardModal
         open={mergeWizardOpen}

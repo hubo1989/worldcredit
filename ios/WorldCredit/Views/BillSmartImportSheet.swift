@@ -15,9 +15,16 @@ struct BillSmartImportSheet: View {
         var id: String { rawValue }
     }
 
+    let initialCardId: String?
+
     @State private var mode: ImportMode = .text
-    @State private var selectedCardId = ""
+    @State private var selectedCardId: String
     @State private var rawText = ""
+
+    init(initialCardId: String? = nil) {
+        self.initialCardId = initialCardId
+        _selectedCardId = State(initialValue: initialCardId ?? "")
+    }
 
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var pickedImages: [(name: String, data: Data, mime: String)] = []

@@ -213,6 +213,60 @@ public enum BillsGrouping {
     }
 }
 
+public struct MissingStatementDetectionItem: Identifiable, Equatable, Sendable {
+    public let targetKey: String
+    public let anchorCardId: String
+    public let accountId: String?
+    public let holderId: String
+    public let isMerged: Bool
+    public let missingBillMonth: String
+    public let expectedStatementDate: String
+    public let suggestedDueDate: String
+    public let daysPast: Int
+    public let graceDays: Int
+    public let subject: String
+    public let currency: String
+    public let bankName: String
+    public let holderName: String
+    public let cardTitle: String
+
+    public var id: String { targetKey }
+
+    public init(
+        targetKey: String,
+        anchorCardId: String,
+        accountId: String?,
+        holderId: String,
+        isMerged: Bool,
+        missingBillMonth: String,
+        expectedStatementDate: String,
+        suggestedDueDate: String,
+        daysPast: Int,
+        graceDays: Int,
+        subject: String,
+        currency: String,
+        bankName: String,
+        holderName: String,
+        cardTitle: String
+    ) {
+        self.targetKey = targetKey
+        self.anchorCardId = anchorCardId
+        self.accountId = accountId
+        self.holderId = holderId
+        self.isMerged = isMerged
+        self.missingBillMonth = missingBillMonth
+        self.expectedStatementDate = expectedStatementDate
+        self.suggestedDueDate = suggestedDueDate
+        self.daysPast = daysPast
+        self.graceDays = graceDays
+        self.subject = subject
+        self.currency = currency
+        self.bankName = bankName
+        self.holderName = holderName
+        self.cardTitle = cardTitle
+    }
+}
+
 public struct BillsTotal: Equatable, Sendable {
     public let amount: Double
     public let unconvertedCurrencies: [String]
@@ -220,5 +274,320 @@ public struct BillsTotal: Equatable, Sendable {
     public init(amount: Double, unconvertedCurrencies: [String]) {
         self.amount = amount
         self.unconvertedCurrencies = unconvertedCurrencies
+    }
+}
+
+extension BillsGrouping {
+    public static func normalizeMissingStatementGraceDays(_ raw: Int?) -> Int {
+        guard let raw, (0...15).contains(raw) else { return 3 }
+        return raw
+    }
+
+    /// 统一超期未获得账单检测：
+    /// - 仅纳入 `cardType == "credit"` 且 `status == "active"` 且所属账户非 `"archived"` 的卡；
+    /// - 合并账户（`statementMode == "merged"`）按账户级去重，主卡停用时顺位选活跃代理卡；
+    /// - 有历史账单按 `latestBillMonth + 1`，从未出账按建卡日之后首个预期账单日（最近已过宽限期周期）。
+    public static func detectMissingStatements(
+        cards: [CardDisplayItem],
+        bills: [BillDisplayItem],
+        accounts: [CreditAccount] = [],
+        today: Date = Date(),
+        graceDays rawGraceDays: Int? = 3
+    ) -> [MissingStatementDetectionItem] {
+        let graceDays = normalizeMissingStatementGraceDays(rawGraceDays)
+        let cal = BillingDateCalculator.businessCalendar
+        let accountById = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
+
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        df.dateFormat = "yyyy-MM-dd"
+
+        let ymFormatter = DateFormatter()
+        ymFormatter.locale = Locale(identifier: "en_US_POSIX")
+        ymFormatter.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        ymFormatter.dateFormat = "yyyy-MM"
+
+        let todayStr = df.string(from: today)
+        let todayMonth = String(todayStr.prefix(7))
+
+        func normalizeMonth(_ raw: String?) -> String? {
+            guard let raw else { return nil }
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parts = trimmed.split(separator: "-").compactMap { Int($0) }
+            if parts.count >= 2, (1...12).contains(parts[1]) {
+                return String(format: "%04d-%02d", parts[0], parts[1])
+            }
+            let digits = trimmed.filter(\.isNumber)
+            if digits.count == 6,
+               let y = Int(digits.prefix(4)),
+               let m = Int(digits.suffix(2)),
+               (1...12).contains(m) {
+                return String(format: "%04d-%02d", y, m)
+            }
+            return nil
+        }
+
+        func monthAnchorDate(_ ym: String) -> Date? {
+            let parts = ym.split(separator: "-").compactMap { Int($0) }
+            guard parts.count == 2 else { return nil }
+            var comp = DateComponents()
+            comp.year = parts[0]
+            comp.month = parts[1]
+            comp.day = 1
+            return cal.date(from: comp)
+        }
+
+        func addYearMonth(_ ym: String, _ delta: Int) -> String? {
+            guard let anchor = monthAnchorDate(ym),
+                  let shifted = cal.date(byAdding: .month, value: delta, to: anchor) else {
+                return nil
+            }
+            return ymFormatter.string(from: shifted)
+        }
+
+        func parseCreatedDay(_ raw: String) -> String? {
+            let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !s.isEmpty else { return nil }
+            if s.count == 10, s.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil {
+                return s
+            }
+            if s.count == 19, s.range(of: #"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$"#, options: .regularExpression) != nil {
+                let utcFmt = DateFormatter()
+                utcFmt.locale = Locale(identifier: "en_US_POSIX")
+                utcFmt.timeZone = TimeZone(secondsFromGMT: 0)
+                utcFmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                if let d = utcFmt.date(from: s) {
+                    return df.string(from: d)
+                }
+            }
+            let isoFrac = ISO8601DateFormatter()
+            isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let d = isoFrac.date(from: s) {
+                return df.string(from: d)
+            }
+            let isoPlain = ISO8601DateFormatter()
+            isoPlain.formatOptions = [.withInternetDateTime]
+            if let d = isoPlain.date(from: s) {
+                return df.string(from: d)
+            }
+            return nil
+        }
+
+        struct DetectionUnit {
+            let targetKey: String
+            let accountId: String?
+            let account: CreditAccount?
+            let isMerged: Bool
+            var members: [CardDisplayItem]
+        }
+
+        var mergedUnits: [String: DetectionUnit] = [:]
+        var mergedOrder: [String] = []
+        var independentUnits: [DetectionUnit] = []
+
+        for item in cards {
+            let acc = item.card.accountId.flatMap { accountById[$0] }
+            if let acc, acc.statementMode == "merged", let accountId = item.card.accountId {
+                if mergedUnits[accountId] == nil {
+                    mergedOrder.append(accountId)
+                    mergedUnits[accountId] = DetectionUnit(
+                        targetKey: "account:\(accountId)",
+                        accountId: accountId,
+                        account: acc,
+                        isMerged: true,
+                        members: []
+                    )
+                }
+                mergedUnits[accountId]?.members.append(item)
+            } else {
+                independentUnits.append(DetectionUnit(
+                    targetKey: "card:\(item.id)",
+                    accountId: item.card.accountId,
+                    account: acc,
+                    isMerged: false,
+                    members: [item]
+                ))
+            }
+        }
+
+        let units = mergedOrder.compactMap { mergedUnits[$0] } + independentUnits
+        var results: [MissingStatementDetectionItem] = []
+
+        for unit in units {
+            if unit.account?.status == "archived" { continue }
+            let activeMembers = unit.members.filter {
+                $0.card.status == "active" && $0.card.cardType == "credit"
+            }
+            guard !activeMembers.isEmpty else { continue }
+
+            let carrier: CardDisplayItem
+            if unit.isMerged {
+                if let primaryId = unit.account?.primaryCardId,
+                   let primary = activeMembers.first(where: { $0.id == primaryId }) {
+                    carrier = primary
+                } else {
+                    let billCounts = Dictionary(grouping: bills, by: \.card.id).mapValues(\.count)
+                    carrier = activeMembers.sorted { a, b in
+                        let ca = billCounts[a.id, default: 0]
+                        let cb = billCounts[b.id, default: 0]
+                        if ca != cb { return ca > cb }
+                        if a.card.createdAt != b.card.createdAt {
+                            return a.card.createdAt < b.card.createdAt
+                        }
+                        return a.id < b.id
+                    }.first!
+                }
+            } else {
+                carrier = activeMembers[0]
+            }
+
+            let memberCardIds = Set(unit.members.map(\.id))
+            var latestBillMonth: String?
+            for b in bills {
+                let belongs = (unit.accountId != nil && b.bill.accountId == unit.accountId)
+                    || memberCardIds.contains(b.card.id)
+                guard belongs, let norm = normalizeMonth(b.bill.billMonth) else { continue }
+                if let current = latestBillMonth {
+                    if norm > current { latestBillMonth = norm }
+                } else {
+                    latestBillMonth = norm
+                }
+            }
+
+            let rawBillingDay = carrier.card.overrideBillingDay ?? carrier.card.billingDay
+            let effectiveBillingDay = rawBillingDay >= 1
+                ? min(rawBillingDay, 31)
+                : min(max(unit.account?.billingDay ?? 1, 1), 31)
+
+            var missingMonth: String?
+            var expectedDate: Date?
+            var daysPast = 0
+
+            if let latestBillMonth {
+                if let targetMonth = addYearMonth(latestBillMonth, 1),
+                   let anchor = monthAnchorDate(targetMonth) {
+                    let expected = BillingDateCalculator.getActualBillingDate(
+                        billingDay: effectiveBillingDay,
+                        month: anchor
+                    )
+                    let diff = -BillingDateCalculator.diffInCalendarDays(target: expected, today: today)
+                    if diff > graceDays {
+                        missingMonth = targetMonth
+                        expectedDate = expected
+                        daysPast = diff
+                    }
+                }
+            } else {
+                let createdDays = activeMembers.compactMap { parseCreatedDay($0.card.createdAt) }.sorted()
+                if let earliestCreated = createdDays.first {
+                    let createdMonth = String(earliestCreated.prefix(7))
+                    if let createdAnchor = monthAnchorDate(createdMonth) {
+                        let firstStmt = BillingDateCalculator.getActualBillingDate(
+                            billingDay: effectiveBillingDay,
+                            month: createdAnchor
+                        )
+                        let firstStmtStr = df.string(from: firstStmt)
+                        let firstExpectedMonth = earliestCreated <= firstStmtStr
+                            ? createdMonth
+                            : (addYearMonth(createdMonth, 1) ?? createdMonth)
+
+                        let candidates = [
+                            todayMonth,
+                            addYearMonth(todayMonth, -1),
+                            addYearMonth(todayMonth, -2),
+                        ].compactMap { $0 }
+
+                        for m in candidates where m >= firstExpectedMonth {
+                            guard let anchor = monthAnchorDate(m) else { continue }
+                            let expected = BillingDateCalculator.getActualBillingDate(
+                                billingDay: effectiveBillingDay,
+                                month: anchor
+                            )
+                            let diff = -BillingDateCalculator.diffInCalendarDays(target: expected, today: today)
+                            if diff > graceDays {
+                                missingMonth = m
+                                expectedDate = expected
+                                daysPast = diff
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+
+            guard let resolvedMonth = missingMonth,
+                  let resolvedExpected = expectedDate,
+                  let resolvedAnchor = monthAnchorDate(resolvedMonth) else {
+                continue
+            }
+
+            let suggestedDue: Date
+            if let product = carrier.product {
+                suggestedDue = BillingDateCalculator.getDueDate(
+                    card: carrier.card,
+                    cardProduct: product,
+                    billMonth: resolvedAnchor
+                )
+            } else if let dueType = unit.account?.parsedDueType, let dueValue = unit.account?.dueValue {
+                let synthetic = CardProduct(
+                    id: carrier.card.cardProductId,
+                    bankName: carrier.bankName,
+                    cardName: carrier.displayName,
+                    currency: unit.account?.currency ?? "CNY",
+                    paymentDueType: dueType,
+                    paymentDueValue: dueValue
+                )
+                suggestedDue = BillingDateCalculator.getDueDate(
+                    card: carrier.card,
+                    cardProduct: synthetic,
+                    billMonth: resolvedAnchor
+                )
+            } else {
+                suggestedDue = cal.date(byAdding: .day, value: 20, to: resolvedExpected) ?? resolvedExpected
+            }
+
+            let bankName = carrier.bankName.isEmpty ? (unit.account?.bankName ?? "银行卡") : carrier.bankName
+            let subject: String
+            if unit.isMerged && activeMembers.count >= 2 {
+                let tails = activeMembers
+                    .map { $0.last4.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                if tails.count > 2 {
+                    subject = "\(bankName) 合并账单（含尾号 \(tails.prefix(2).joined(separator: " · ")) 等 \(activeMembers.count) 张卡）"
+                } else if !tails.isEmpty {
+                    subject = "\(bankName) 合并账单（含尾号 \(tails.joined(separator: " · "))）"
+                } else {
+                    subject = "\(bankName) 合并账单（\(activeMembers.count) 张卡）"
+                }
+            } else {
+                let tail = carrier.last4.trimmingCharacters(in: .whitespacesAndNewlines)
+                let base = bankName.isEmpty ? carrier.displayName : "\(bankName) \(carrier.displayName)"
+                subject = tail.isEmpty ? base : "\(base)（尾号 \(tail)）"
+            }
+
+            results.append(MissingStatementDetectionItem(
+                targetKey: unit.targetKey,
+                anchorCardId: carrier.id,
+                accountId: unit.accountId,
+                holderId: carrier.card.holderId,
+                isMerged: unit.isMerged,
+                missingBillMonth: resolvedMonth,
+                expectedStatementDate: df.string(from: resolvedExpected),
+                suggestedDueDate: df.string(from: suggestedDue),
+                daysPast: daysPast,
+                graceDays: graceDays,
+                subject: subject,
+                currency: carrier.product?.currency ?? unit.account?.currency ?? "CNY",
+                bankName: bankName,
+                holderName: carrier.holderName,
+                cardTitle: carrier.displayName
+            ))
+        }
+
+        return results.sorted { a, b in
+            if a.daysPast != b.daysPast { return a.daysPast > b.daysPast }
+            return a.anchorCardId < b.anchorCardId
+        }
     }
 }

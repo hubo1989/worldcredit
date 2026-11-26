@@ -753,6 +753,8 @@ export interface BillsListCard {
   }>;
   /** 固定支出适配标记：true 表示这是房贷/贷款等按月应付，非信用卡。 */
   payableSource?: boolean;
+  /** 超期未获得账单：在未出账单组（tier=2）中排在正常未出账单之前，按 daysPast 降序。 */
+  missingStatement?: { daysPast: number } | null;
 }
 
 /**
@@ -944,6 +946,9 @@ export function billsListSortKey(
 ): { tier: number; distance: number } {
   const tier = cardUrgencyRank(card.status);
   if (tier === 2) {
+    if (card.missingStatement && Number.isFinite(card.missingStatement.daysPast)) {
+      return { tier, distance: -100_000 - card.missingStatement.daysPast };
+    }
     return { tier, distance: daysUntilNextBilling(card.billingDay, today) };
   }
   const unpaid = card.historyBills.filter((b) => b.computed_status !== "paid");

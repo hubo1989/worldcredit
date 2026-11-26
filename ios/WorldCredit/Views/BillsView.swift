@@ -38,7 +38,12 @@ struct BillsView: View {
     @State private var adjustingItem: BillDisplayItem?
     @State private var editingBillItem: BillDisplayItem?
     @State private var creatingBill: Bool = false
+    @State private var supplementTarget: SupplementBillTargetItem?
+    @State private var zeroBillConfirmTarget: MissingStatementDetectionItem?
+    @State private var isSubmittingZeroBill: Bool = false
+    @State private var zeroBillError: String?
     @State private var showingSmartImport: Bool = false
+    @State private var smartImportInitialCardId: String?
     @State private var deepLinkedDraftItem: DeepLinkedDraftItem?
     @State private var editingPayable: PayableItem?
     @State private var creatingPayable = false
@@ -133,7 +138,7 @@ struct BillsView: View {
             parts.append(appState.selectedEntityFilter.rawValue)
         }
         if !appState.selectedStatusFilters.isEmpty {
-            let order: [BillStatusFilter] = [.unpaid, .overdue, .unissued, .paid]
+            let order: [BillStatusFilter] = [.unpaid, .overdue, .missingStatement, .unissued, .paid]
             parts.append(
                 order.filter { appState.selectedStatusFilters.contains($0) }
                     .map(\.rawValue).joined(separator: "+")
@@ -160,8 +165,10 @@ struct BillsView: View {
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                         .padding(.bottom, 6)
-                        .sheet(isPresented: $showingSmartImport) {
-                            BillSmartImportSheet()
+                        .sheet(isPresented: $showingSmartImport, onDismiss: {
+                            smartImportInitialCardId = nil
+                        }) {
+                            BillSmartImportSheet(initialCardId: smartImportInitialCardId)
                         }
                         .sheet(item: $deepLinkedDraftItem) { item in
                             NavigationStack {
@@ -185,6 +192,8 @@ struct BillsView: View {
                         .padding(.bottom, 10)
 
                     overdueBanner
+
+                    missingStatementBanner
 
                     draftsBanner
 
@@ -271,11 +280,58 @@ struct BillsView: View {
                 DraftsInboxView()
             }
             .sheet(isPresented: $creatingBill) {
-                BillCreateSheetView()
+                BillCreateSheetView(onSwitchToSmartImport: { cardId in
+                    smartImportInitialCardId = cardId.isEmpty ? nil : cardId
+                    showingSmartImport = true
+                })
+            }
+            .sheet(item: $supplementTarget) { target in
+                BillCreateSheetView(
+                    initialCardId: target.cardId,
+                    initialBillMonth: target.billMonth,
+                    isSupplementMode: true,
+                    onSwitchToSmartImport: { cardId in
+                        smartImportInitialCardId = cardId.isEmpty ? nil : cardId
+                        showingSmartImport = true
+                    }
+                )
+            }
+            .confirmationDialog(
+                "确认记为 0 元零账单？",
+                isPresented: Binding(
+                    get: { zeroBillConfirmTarget != nil },
+                    set: { if !$0 && !isSubmittingZeroBill { zeroBillConfirmTarget = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("确认 0 元账单") {
+                    if let target = zeroBillConfirmTarget {
+                        Task { await confirmZeroBill(target) }
+                    }
+                }
+                .disabled(isSubmittingZeroBill)
+                Button("取消", role: .cancel) {
+                    zeroBillConfirmTarget = nil
+                }
+            } message: {
+                if let target = zeroBillConfirmTarget {
+                    Text("将 \(target.subject) \(target.missingBillMonth) 期记为 0 元已结清并消除超期提醒。")
+                }
+            }
+            .alert("确认 0 元账单失败", isPresented: Binding(
+                get: { zeroBillError != nil },
+                set: { if !$0 { zeroBillError = nil } }
+            )) {
+                Button("知道了", role: .cancel) { zeroBillError = nil }
+            } message: {
+                if let zeroBillError {
+                    Text(zeroBillError)
+                }
             }
             .onAppear { consumeDraftRoutes() }
             .onChange(of: appState.pendingOpenDraftsInbox) { _, _ in consumeDraftRoutes() }
             .onChange(of: appState.pendingDraftIdToConfirm) { _, _ in consumeDraftRoutes() }
+            .onChange(of: appState.pendingSupplementCardId) { _, _ in consumeDraftRoutes() }
             .sheet(item: $editingBillItem) { item in
                 BillEditSheetView(item: item)
             }
@@ -637,6 +693,125 @@ struct BillsView: View {
         } else if appState.pendingOpenDraftsInbox {
             appState.pendingOpenDraftsInbox = false
             navigationPath.append(DraftsInboxRoute())
+        } else if let cardId = appState.pendingSupplementCardId {
+            let billMonth = appState.pendingSupplementBillMonth
+            appState.pendingSupplementCardId = nil
+            appState.pendingSupplementBillMonth = nil
+
+            let resolvedCardId: String? = {
+                if appState.cards.contains(where: { $0.id == cardId }) { return cardId }
+                if let group = appState.creditAccountGroups.first(where: { group in
+                    group.cards.contains(where: { $0.id == cardId })
+                }) {
+                    return group.account.primaryCardId ?? group.cards.first?.id
+                }
+                return nil
+            }()
+            guard let resolvedCardId else { return }
+
+            if let billMonth,
+               let existing = appState.allBills.first(where: { item in
+                   guard item.bill.billMonth == billMonth else { return false }
+                   if item.card.id == resolvedCardId || item.card.id == cardId { return true }
+                   if let accId = appState.cards.first(where: { $0.id == resolvedCardId })?.card.accountId,
+                      !accId.isEmpty,
+                      item.bill.accountId == accId || item.card.accountId == accId {
+                       return true
+                   }
+                   return false
+               }) {
+                navigationPath.append(BillDetailRoute(item: existing))
+            } else {
+                supplementTarget = SupplementBillTargetItem(cardId: resolvedCardId, billMonth: billMonth)
+            }
+        }
+    }
+
+    // MARK: - Missing Statement Banner
+    @ViewBuilder
+    private var missingStatementBanner: some View {
+        let missingItems = presentation.detectedMissingStatements
+        if !missingItems.isEmpty && appState.billsSortMode == .nearestDue {
+            let maxDays = missingItems.map(\.daysPast).max() ?? 0
+            HStack(spacing: 10) {
+                Image(systemName: "doc.badge.clock")
+                    .foregroundStyle(WCColors.warningInk)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("有 \(missingItems.count) 张卡（账户）已过账单日仍未获得账单")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(WCColors.warningInk)
+                    if missingItems.count == 1, let first = missingItems.first {
+                        Text("\(first.subject) · \(first.missingBillMonth) 期已过 \(first.daysPast) 天")
+                            .font(.caption2)
+                            .foregroundStyle(WCColors.textSecondary)
+                    } else {
+                        Text("最长已过 \(maxDays) 天，建议及时补录或确认 0 元账单")
+                            .font(.caption2)
+                            .foregroundStyle(WCColors.textSecondary)
+                    }
+                }
+                Spacer(minLength: 8)
+                if missingItems.count == 1, let first = missingItems.first {
+                    Button("立即补录") {
+                        supplementTarget = SupplementBillTargetItem(
+                            cardId: first.anchorCardId,
+                            billMonth: first.missingBillMonth
+                        )
+                    }
+                    .font(.caption.bold())
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(WCColors.warningInk, in: RoundedRectangle(cornerRadius: 6))
+                    .accessibilityIdentifier("bills.missingBanner.supplement")
+                } else {
+                    Button("查看全部") {
+                        appState.selectedEntityFilter = .cards
+                        appState.selectedStatusFilters = [.missingStatement]
+                    }
+                    .font(.caption.bold())
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(WCColors.warningInk, in: RoundedRectangle(cornerRadius: 6))
+                    .accessibilityIdentifier("bills.missingBanner.viewAll")
+                }
+            }
+            .padding(12)
+            .background(WCColors.warningSoft, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(WCColors.warningInk.opacity(0.3), lineWidth: 1)
+            )
+            .padding(.horizontal, 16)
+            .padding(.bottom, 6)
+        }
+    }
+
+    private func confirmZeroBill(_ item: MissingStatementDetectionItem) async {
+        isSubmittingZeroBill = true
+        defer {
+            isSubmittingZeroBill = false
+            zeroBillConfirmTarget = nil
+        }
+        do {
+            _ = try await appState.supplementMissingBill(
+                input: ApiClient.SupplementMissingBillInput(
+                    cardId: item.anchorCardId,
+                    billMonth: item.missingBillMonth,
+                    billAmount: 0,
+                    minPayment: 0,
+                    dueDate: item.suggestedDueDate,
+                    statementDate: item.expectedStatementDate,
+                    pinDueDate: false,
+                    pinStatementDate: false,
+                    pinMinPayment: false,
+                    markAsPaid: false
+                )
+            )
+            hapticSuccessTrigger += 1
+        } catch {
+            zeroBillError = error.localizedDescription
         }
     }
 
@@ -717,7 +892,7 @@ struct BillsView: View {
     // MARK: - Cards List View
     @ViewBuilder
     private var cardsListView: some View {
-        if presentation.entries.isEmpty {
+        if presentation.entries.isEmpty && presentation.detectedMissingStatements.isEmpty {
             VStack(spacing: 12) {
                 // 固定支出是在线数据：刷新失败且无缓存时明确降级提示，避免固定支出凭空消失无解释
                 if let payablesError = appState.payablesError {
@@ -751,8 +926,8 @@ struct BillsView: View {
                 }
 
                 // 缺账单提醒放在列表最末：先看账单数据，再看采集异常
-                ForEach(presentation.missingStatements) { missing in
-                    missingStatementCard(group: missing.group, missingDays: missing.days)
+                ForEach(presentation.detectedMissingStatements) { missing in
+                    missingStatementCard(item: missing)
                 }
             }
         }
@@ -1015,19 +1190,19 @@ struct BillsView: View {
     }
 
     // MARK: - Missing Statement Card
-    private func missingStatementCard(group: CardBillsGroup, missingDays: Int) -> some View {
+    private func missingStatementCard(item: MissingStatementDetectionItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Text(group.bankName)
+                        Text(item.bankName)
                             .font(.headline.bold())
                             .foregroundStyle(WCColors.textPrimary)
-                        Text(group.holderName)
+                        Text(item.holderName)
                             .font(.subheadline)
                             .foregroundStyle(WCColors.textSecondary)
                     }
-                    Text("\(group.cardTitle) · 信用卡")
+                    Text(item.isMerged ? item.subject : "\(item.cardTitle) · 信用卡")
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(WCColors.textSecondary)
                 }
@@ -1035,7 +1210,7 @@ struct BillsView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.circle.fill")
                         .font(.caption2)
-                    Text("缺账单")
+                    Text("超期未出账")
                         .font(.caption.bold())
                 }
                 .padding(.horizontal, 8)
@@ -1044,19 +1219,47 @@ struct BillsView: View {
                 .foregroundStyle(WCColors.warningInk)
             }
 
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("账单日已过 \(missingDays) 天，仍未收到新账单")
-                        .font(.subheadline.bold())
-                        .foregroundStyle(WCColors.warningInk)
-                    Text("金额待确认 · 不计入待还合计")
-                        .font(.caption2)
-                        .foregroundStyle(WCColors.textSecondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(item.missingBillMonth) 期账单已过账单日 \(item.daysPast) 天，仍未收到")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(WCColors.warningInk)
+                Text("金额待确认 · 不计入待还合计")
+                    .font(.caption2)
+                    .foregroundStyle(WCColors.textSecondary)
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    hapticImpactTrigger += 1
+                    supplementTarget = SupplementBillTargetItem(
+                        cardId: item.anchorCardId,
+                        billMonth: item.missingBillMonth
+                    )
+                } label: {
+                    Text("补充账单")
+                        .font(.caption.bold())
+                        .foregroundStyle(Color.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(WCColors.primaryAccent, in: RoundedRectangle(cornerRadius: 8))
                 }
-                Spacer()
+                .accessibilityIdentifier("bills.missing.supplement")
+
+                Button {
+                    hapticImpactTrigger += 1
+                    zeroBillConfirmTarget = item
+                } label: {
+                    Text("本期 0 元")
+                        .font(.caption.bold())
+                        .foregroundStyle(WCColors.warningInk)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(WCColors.warningSoft, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .accessibilityIdentifier("bills.missing.zeroBill")
+
                 Button(action: {
-                    // 缺账单的场景需要真正检查邮箱：走 Gmail 拉取流程（含本地账单刷新），
-                    // 而非仅触发原生 SyncEngine 同步。isGmailSyncing 防连点重入。
+                    // 缺账单的场景需要真正检查邮箱：走 Gmail 拉取流程（含本地账单刷新）
                     Task { await appState.syncGmailBills() }
                 }) {
                     HStack(spacing: 4) {
@@ -1064,11 +1267,11 @@ struct BillsView: View {
                             ProgressView().controlSize(.mini)
                         }
                         Text(appState.isGmailSyncing ? "同步中…" : "查看邮箱")
-                        .font(.caption.bold())
-                        .foregroundStyle(Color.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(WCColors.primaryAccent, in: RoundedRectangle(cornerRadius: 8))
+                            .font(.caption.bold())
+                            .foregroundStyle(WCColors.textPrimary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 9)
+                            .background(WCColors.subtle, in: RoundedRectangle(cornerRadius: 8))
                     }
                 }
                 .disabled(appState.isGmailSyncing)
@@ -1804,4 +2007,10 @@ private struct DraftsInboxRoute: Hashable {}
 
 private struct DeepLinkedDraftItem: Identifiable {
     let id: String
+}
+
+private struct SupplementBillTargetItem: Identifiable {
+    let id = UUID()
+    let cardId: String
+    let billMonth: String?
 }

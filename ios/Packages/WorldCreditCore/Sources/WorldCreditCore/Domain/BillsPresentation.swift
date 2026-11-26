@@ -111,6 +111,7 @@ public struct BillsPresentation: Sendable {
     public let interestRows: [BillsInterestRow]
     public let unbilledCards: [CardDisplayItem]
     public let missingStatements: [BillsMissingStatement]
+    public let detectedMissingStatements: [MissingStatementDetectionItem]
     public let overdueBills: [BillDisplayItem]
     public let unpaidBillCount: Int
     public let currencyTotals: [String: Double]
@@ -120,12 +121,34 @@ public struct BillsPresentation: Sendable {
 
     public init(
         bills: [BillDisplayItem], cards: [CardDisplayItem], payables: [PayableItem],
-        rates: FxRates?, filter: BillsPresentationFilter, today: Date = Date()
+        rates: FxRates?, filter: BillsPresentationFilter, today: Date = Date(),
+        accounts: [CreditAccount] = [], graceDays: Int = 3
     ) {
         let holderBills = bills.filter {
             (filter.holderId == nil || $0.holderId == filter.holderId)
                 && (filter.bankName == nil || $0.bankName == filter.bankName)
         }
+        let allDetectedMissing = BillsGrouping.detectMissingStatements(
+            cards: cards,
+            bills: bills,
+            accounts: accounts,
+            today: today,
+            graceDays: graceDays
+        )
+        let filteredMissing = filter.entity == .payables
+            ? []
+            : allDetectedMissing.filter { item in
+                (filter.holderId == nil || item.holderId == filter.holderId)
+                    && (filter.bankName == nil || item.bankName == filter.bankName)
+            }
+        self.detectedMissingStatements = filteredMissing
+        let missingAnchorCardIds = Set(filteredMissing.map(\.anchorCardId))
+        let missingAccountIds = Set(filteredMissing.compactMap(\.accountId))
+        let cardAccountById = Dictionary(
+            cards.compactMap { item in item.card.accountId.map { (item.id, $0) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+
         // 本页按卡聚合：先分组算卡的单一状态，再按状态筛选整组，
         // 避免把同一张卡的多期账单拆成不同状态。
         let allGroups: [CardBillsGroup] = BillsGrouping.groups(from: holderBills)
@@ -133,7 +156,15 @@ public struct BillsPresentation: Sendable {
             allGroups.filter { (group: CardBillsGroup) -> Bool in
                 if filter.entity == .payables { return false }
                 if filter.statuses.isEmpty { return true }
-                return filter.statuses.contains(Self.cardStatus(of: group))
+                if filter.statuses.contains(Self.cardStatus(of: group)) { return true }
+                if filter.statuses.contains(.missingStatement) {
+                    if missingAnchorCardIds.contains(group.cardId) { return true }
+                    if let accId = group.bills.first?.card.accountId ?? cardAccountById[group.cardId],
+                       missingAccountIds.contains(accId) {
+                        return true
+                    }
+                }
+                return false
             },
             by: .nearestDue
         )
@@ -157,9 +188,15 @@ public struct BillsPresentation: Sendable {
             return BillsInterestRow(group: group, item: latest)
         }
         let billedCardIds = Set(bills.map(\.card.id))
+        let billedAccountIds = Set(bills.compactMap { $0.card.accountId ?? cardAccountById[$0.card.id] })
         unbilledCards = cards.filter {
-            filter.entity != .payables
-                && (filter.statuses.isEmpty || filter.statuses.contains(.unissued))
+            let hasAccountBills = $0.card.accountId.map { billedAccountIds.contains($0) } ?? false
+            return filter.entity != .payables
+                && (filter.statuses.isEmpty
+                    || filter.statuses.contains(.unissued)
+                    || (filter.statuses.contains(.missingStatement)
+                        && missingAnchorCardIds.contains($0.id)
+                        && !hasAccountBills))
                 && !billedCardIds.contains($0.id)
                 && (filter.holderId == nil || $0.card.holderId == filter.holderId)
                 && (filter.bankName == nil || $0.bankName == filter.bankName)
@@ -179,7 +216,15 @@ public struct BillsPresentation: Sendable {
         let latestMonths = Dictionary(grouping: bills, by: \.card.id)
             .compactMapValues { BillsGrouping.latestBillMonth(of: $0) }
         missingStatements = groups.compactMap { group in
-            guard let days = group.missingStatementDays(latestBillMonth: latestMonths[group.id], today: today) else {
+            if let first = group.bills.first,
+               (first.card.status != "active" || first.card.cardType != "credit") {
+                return nil
+            }
+            guard let days = group.missingStatementDays(
+                latestBillMonth: latestMonths[group.id],
+                today: today,
+                graceDays: BillsGrouping.normalizeMissingStatementGraceDays(graceDays)
+            ) else {
                 return nil
             }
             return BillsMissingStatement(group: group, days: days)

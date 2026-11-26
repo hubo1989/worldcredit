@@ -11,6 +11,12 @@ import {
 } from '@/lib/notifications.shared'
 import { Toggle } from '@/components/obsidian/controls'
 import { ConfirmDialog, Toast } from '@/components/obsidian/overlays'
+import {
+  DEFAULT_MISSING_STATEMENT_GRACE_DAYS,
+  MAX_MISSING_STATEMENT_GRACE_DAYS,
+  MIN_MISSING_STATEMENT_GRACE_DAYS,
+  normalizeMissingStatementGraceDays,
+} from '@/components/mobile/supplementBillApi'
 import { sendTestPush } from '@/lib/api/push'
 import {
   DEFAULT_QUIET_HOURS_END,
@@ -40,6 +46,11 @@ const BILL_DAY_CHOICES = [
 const OPPORTUNITY_DAY_CHOICES = [0, 1, 3, 7, 15]
 const ACTIVITY_DAY_CHOICES = [1, 3, 7, 15]
 const TASK_DAY_CHOICES = [0, 1, 3, 7]
+const MISSING_GRACE_PRESETS = [0, 1, 3, 5, 7]
+
+type ExtendedReminderConfig = UserReminderConfig & {
+  missing_statement_grace_days?: number
+}
 
 function toggleDayList(list: number[] | undefined, day: number): number[] {
   const current = list ?? []
@@ -139,6 +150,17 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
   const opp = config.opportunities
   const updateOpp = (patch: Partial<NonNullable<UserReminderConfig['opportunities']>>) =>
     onChange({ opportunities: { ...(opp ?? {}), ...patch } })
+
+  const currentMissingGraceDays = normalizeMissingStatementGraceDays(
+    (config as ExtendedReminderConfig).missing_statement_grace_days
+  )
+  const updateMissingGraceDays = (nextDays: number) => {
+    const clamped = Math.min(
+      MAX_MISSING_STATEMENT_GRACE_DAYS,
+      Math.max(MIN_MISSING_STATEMENT_GRACE_DAYS, Math.trunc(nextDays))
+    )
+    onChange({ missing_statement_grace_days: clamped } as Partial<UserReminderConfig>)
+  }
 
   const switches = resolveNotificationSwitches(config)
   const billSwitchItems = NOTIFICATION_SWITCH_ITEMS.filter((item) => item.group === 'bills')
@@ -261,6 +283,62 @@ export function ReminderPreferencesCard({ config, onChange, disabled }: Reminder
                 )
               })}
             </div>
+          </div>
+
+          {/* 账单延迟宽限天数（0-15 天） */}
+          <div className='border-t border-d-border/60 pt-3'>
+            <div className='mb-2 flex items-center justify-between gap-2'>
+              <label className='text-[13px] font-medium text-d-muted'>
+                账单延迟宽限天数：
+              </label>
+              <div className='flex items-center gap-1.5'>
+                <button
+                  type='button'
+                  aria-label='减少宽限天数'
+                  disabled={disabled || currentMissingGraceDays <= MIN_MISSING_STATEMENT_GRACE_DAYS}
+                  onClick={() => updateMissingGraceDays(currentMissingGraceDays - 1)}
+                  className='flex h-11 w-11 items-center justify-center rounded-xl border border-d-border bg-d-bg text-[16px] font-bold text-d-text disabled:opacity-40'
+                >
+                  −
+                </button>
+                <span className='min-w-[48px] text-center text-[14px] font-bold text-d-text'>
+                  {currentMissingGraceDays} 天
+                </span>
+                <button
+                  type='button'
+                  aria-label='增加宽限天数'
+                  disabled={disabled || currentMissingGraceDays >= MAX_MISSING_STATEMENT_GRACE_DAYS}
+                  onClick={() => updateMissingGraceDays(currentMissingGraceDays + 1)}
+                  className='flex h-11 w-11 items-center justify-center rounded-xl border border-d-border bg-d-bg text-[16px] font-bold text-d-text disabled:opacity-40'
+                >
+                  +
+                </button>
+              </div>
+            </div>
+            <div className='flex flex-wrap gap-2'>
+              {MISSING_GRACE_PRESETS.map(day => {
+                const active = currentMissingGraceDays === day
+                return (
+                  <button
+                    key={day}
+                    type='button'
+                    disabled={disabled}
+                    onClick={() => updateMissingGraceDays(day)}
+                    className={
+                      'min-h-[44px] rounded-full px-3.5 text-[13px] font-semibold transition-colors disabled:opacity-50 ' +
+                      (active
+                        ? 'bg-d-accent text-white shadow-sm'
+                        : 'border border-d-border bg-d-bg text-d-muted active:bg-d-subtle')
+                    }
+                  >
+                    {day === DEFAULT_MISSING_STATEMENT_GRACE_DAYS ? `${day} 天（推荐）` : `${day} 天`}
+                  </button>
+                )
+              })}
+            </div>
+            <p className='mt-1.5 text-[12px] leading-4 text-d-muted'>
+              出账日后超过该天数仍未收到账单，系统将触发漏单提醒与补录引导（支持 0–15 天，默认 3 天）。
+            </p>
           </div>
 
           {/* 站外推送总通道 */}

@@ -1,10 +1,13 @@
 import {
+  BILL_STATUS_LABELS,
   NO_BANK_TAG,
   countByTag,
   countEntities,
   countStatuses,
   filterCardsForView,
   filterPayablesForView,
+  statusOptionsFor,
+  type BillStatusKey,
 } from '../bills-view-model'
 import { describe, expect, it } from 'vitest'
 import {
@@ -177,7 +180,7 @@ describe('filterCardsForView / filterPayablesForView', () => {
 
   const base = {
     entityType: 'all' as const,
-    statuses: [] as Array<'unpaid' | 'overdue' | 'unissued' | 'paid'>,
+    statuses: [] as BillStatusKey[],
     dimension: 'holder' as const,
     selectedTag: 'all',
   }
@@ -259,9 +262,62 @@ describe('filterCardsForView / filterPayablesForView', () => {
     expect(countStatuses(cards, rows, base)).toEqual({
       unpaid: 3,
       overdue: 2,
+      missing_statement: 0,
       unissued: 0,
       paid: 1,
     })
     expect(countByTag(cards, rows, base).noBank).toBe(2)
+  })
+
+  it('超期未出账筛选为非互斥：既逾期又缺账的卡同时命中「已逾期」与「超期未出账」', () => {
+    expect(BILL_STATUS_LABELS.missing_statement).toBe('超期未出账')
+    expect(statusOptionsFor('cards')).toContain('missing_statement')
+    expect(statusOptionsFor('payables')).not.toContain('missing_statement')
+
+    const onlyOverdue = {
+      id: 'c-overdue',
+      holder_id: 'h-me',
+      status: 'overdue' as const,
+      card: { card_product: { bank_name: '招商银行' } },
+      missingStatement: null,
+    }
+    const bothOverdueAndMissing = {
+      id: 'c-both',
+      holder_id: 'h-me',
+      status: 'overdue' as const,
+      card: { card_product: { bank_name: '建设银行' } },
+      missingStatement: { missingBillMonth: '2026-10' },
+    }
+    const onlyMissing = {
+      id: 'c-missing',
+      holder_id: 'h-me',
+      status: 'unissued' as const,
+      card: { card_product: { bank_name: '工商银行' } },
+      missingStatement: { missingBillMonth: '2026-10' },
+    }
+
+    const list = [onlyOverdue, bothOverdueAndMissing, onlyMissing]
+    expect(
+      filterCardsForView(list, { ...base, statuses: ['missing_statement'] }).map(c => c.id)
+    ).toEqual(['c-both', 'c-missing'])
+    expect(
+      filterCardsForView(list, { ...base, statuses: ['overdue'] }).map(c => c.id)
+    ).toEqual(['c-overdue', 'c-both'])
+    expect(countStatuses(list, [], base).missing_statement).toBe(2)
+    expect(countStatuses(list, [], base).overdue).toBe(2)
+  })
+
+  it('billBadgeView：unissued 且超期未出账时显示「超期未出账」warn 徽章，overdue 仍保持危险红徽章', () => {
+    const unissuedMissing = {
+      ...item({ bank: 'A', status: 'unissued', unpaidAmount: 0 }),
+      missingStatement: { missingBillMonth: '2026-10' },
+    }
+    expect(billBadgeView(unissuedMissing)).toEqual({ text: '超期未出账', tone: 'warn' })
+
+    const overdueMissing = {
+      ...item({ bank: 'A', status: 'overdue', unpaidAmount: 500 }),
+      missingStatement: { missingBillMonth: '2026-10' },
+    }
+    expect(billBadgeView(overdueMissing)).toEqual({ text: '逾期', tone: 'danger' })
   })
 })
