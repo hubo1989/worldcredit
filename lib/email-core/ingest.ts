@@ -79,10 +79,19 @@ async function prepareAttachments(context: StorageContext): Promise<{
     originalHash ??= hash
     if (!base.bucket) continue
     const id = 'mail_file_' + await identity(groupKey, recordType, recordId, index, hash)
-    ids.push(id)
-    const alreadyStored = await base.db.prepare('SELECT id FROM record_attachments WHERE id = ?').bind(id).first()
-    if (alreadyStored) continue
     const bytes = preparedPdf && hasPdfHeader(file.bytes) ? preparedPdf : file.bytes
+    const finalHash = bytes === file.bytes ? hash : await sha256(bytes)
+    const alreadyStored = await base.db
+      .prepare(
+        'SELECT id FROM record_attachments WHERE id = ? OR (record_type = ? AND record_id = ? AND sha256 = ?) LIMIT 1',
+      )
+      .bind(id, recordType, recordId, finalHash)
+      .first<{ id: string }>()
+    if (alreadyStored) {
+      ids.push(alreadyStored.id)
+      continue
+    }
+    ids.push(id)
     const mime = hasPdfHeader(file.bytes) ? 'application/pdf' : sniffStatementImage(file.bytes) ?? 'application/octet-stream'
     const prefix = recordType === 'draft' ? `draft-files/${base.userId}/${recordId}` : `bill/${recordId}`
     const key = `${prefix}/${id}-${safeName(file.filename)}`
@@ -92,7 +101,7 @@ async function prepareAttachments(context: StorageContext): Promise<{
         file_size, uploaded_by, sha256) VALUES (?, ?, ?, 'record-attachments', ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO NOTHING`,
     ).bind(id, recordType, recordId, key, file.filename || 'statement', mime, bytes.length, base.userId,
-      bytes === file.bytes ? hash : await sha256(bytes)))
+      finalHash))
   }
   return { ids, originalHash, inserts }
 }

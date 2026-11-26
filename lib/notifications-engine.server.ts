@@ -16,8 +16,10 @@ import {
   type NotificationBillMetadataItem,
   type NotificationGraceCardMetadataItem,
   type NotificationMetadata,
+  type NotificationMissingStatementMetadataItem,
   type NotificationPayableMetadataItem,
 } from './notifications.shared'
+import { detectMissingStatements, normalizeMissingStatementGraceDays } from './missing-statement'
 import { isValidIanaTimeZone } from './opportunities/dates'
 import type { CardProduct, NotificationCategory, UserReminderConfig } from './types'
 import { getLocalTodayString, nextPayablePeriodOf, payableDueDate, payablePeriodOf } from './utils'
@@ -197,6 +199,9 @@ export async function loadUserNotificationContext(
         : parsed.items
       const mergedConfig: UserReminderConfig = {
         remind_days_before: remindDaysBefore,
+        missing_statement_grace_days: normalizeMissingStatementGraceDays(
+          parsed.missing_statement_grace_days
+        ),
         quiet_hours_start: parsed.quiet_hours_start ?? '22:00',
         quiet_hours_end: parsed.quiet_hours_end ?? '08:00',
         enabled_channels: Array.isArray(parsed.enabled_channels) ? parsed.enabled_channels : ['web_push'],
@@ -231,6 +236,7 @@ export async function loadUserNotificationContext(
     const overdueOn = legacyRow.overdue_enabled === 1
     const fallbackConfig: UserReminderConfig = {
       remind_days_before: remindDaysBefore,
+      missing_statement_grace_days: normalizeMissingStatementGraceDays(undefined),
       quiet_hours_start: '22:00',
       quiet_hours_end: '08:00',
       enabled_channels: ['web_push'],
@@ -256,6 +262,7 @@ export async function loadUserNotificationContext(
 
   const defaultConfig: UserReminderConfig = {
     remind_days_before: [3, 1, 0],
+    missing_statement_grace_days: normalizeMissingStatementGraceDays(undefined),
     quiet_hours_start: '22:00',
     quiet_hours_end: '08:00',
     enabled_channels: ['web_push'],
@@ -277,6 +284,43 @@ export function isUserInQuietHours(ctx: UserNotificationContext, now: Date = new
   return isInQuietHours(now, ctx.timeZone, ctx.quietHoursStart, ctx.quietHoursEnd)
 }
 
+interface MissingStatementCardQueryRow {
+  id: string
+  holder_id: string
+  account_id: string | null
+  card_number_last4: string | null
+  billing_day: number
+  override_billing_day: number | null
+  override_due_type: CardProduct['payment_due_type'] | null
+  override_due_value: number | null
+  name_override: string | null
+  status: 'active' | 'frozen' | 'cancelled'
+  card_type: 'credit' | 'loan' | null
+  created_at: string
+  bank_name: string | null
+  card_name: string | null
+  currency: string | null
+  payment_due_type: CardProduct['payment_due_type'] | null
+  payment_due_value: number | null
+  ca_id: string | null
+  ca_holder_id: string | null
+  ca_bank_name: string | null
+  ca_currency: string | null
+  ca_statement_mode: 'merged' | 'independent' | null
+  ca_billing_day: number | null
+  ca_due_type: CardProduct['payment_due_type'] | null
+  ca_due_value: number | null
+  ca_primary_card_id: string | null
+  ca_status: 'active' | 'archived' | null
+}
+
+interface MissingStatementBillQueryRow {
+  id: string
+  card_id: string
+  account_id: string | null
+  bill_month: string | null
+}
+
 export async function buildDailyNotificationCandidates(
   db: D1Database,
   userId: string,
@@ -290,8 +334,8 @@ export async function buildDailyNotificationCandidates(
   const advanceDays = new Set(context.remindDaysBefore.filter(d => Number.isInteger(d) && d > 0))
   const candidates: DailyNotificationCandidate[] = []
 
-  // 1-2 & 4. 并发读取未结清账单、活跃固定支出与最长免息期候选卡
-  const [billStmt, payableStmt, cardsStmt] = await Promise.all([
+  // 1-2 & 4-5. 并发读取未结清账单、活跃固定支出、最长免息期候选卡与超期未出账候选集
+  const [billStmt, payableStmt, cardsStmt, missingCardsStmt, missingBillsStmt] = await Promise.all([
     db
       .prepare(
         `SELECT b.id, COALESCE(b.account_id, cc.account_id) AS account_id, b.card_id, b.bill_month,
@@ -342,6 +386,39 @@ export async function buildDailyNotificationCandidates(
           )
           .bind(userId, userId, userId)
           .all<CreditCardGraceRow>()
+      : Promise.resolve(null),
+    switches.bill_missing_statement
+      ? db
+          .prepare(
+            `SELECT cc.id, cc.holder_id, cc.account_id, cc.card_number_last4,
+                    cc.billing_day, cc.override_billing_day, cc.override_due_type, cc.override_due_value,
+                    cc.name_override, cc.status, cc.card_type, cc.created_at,
+                    cp.bank_name, cp.card_name, cp.currency, cp.payment_due_type, cp.payment_due_value,
+                    ca.id AS ca_id, ca.holder_id AS ca_holder_id, ca.bank_name AS ca_bank_name,
+                    ca.currency AS ca_currency, ca.statement_mode AS ca_statement_mode,
+                    ca.billing_day AS ca_billing_day, ca.due_type AS ca_due_type,
+                    ca.due_value AS ca_due_value, ca.primary_card_id AS ca_primary_card_id,
+                    ca.status AS ca_status
+             FROM credit_cards cc
+             JOIN card_holders ch ON cc.holder_id = ch.id
+             LEFT JOIN card_products cp ON cc.card_product_id = cp.id
+             LEFT JOIN credit_accounts ca ON cc.account_id = ca.id
+             WHERE (ch.created_by = ? OR ch.managed_by = ? OR ch.auth_user_id = ?)`
+          )
+          .bind(userId, userId, userId)
+          .all<MissingStatementCardQueryRow>()
+      : Promise.resolve(null),
+    switches.bill_missing_statement
+      ? db
+          .prepare(
+            `SELECT b.id, b.card_id, COALESCE(b.account_id, cc.account_id) AS account_id, b.bill_month
+             FROM bills b
+             JOIN credit_cards cc ON b.card_id = cc.id
+             JOIN card_holders ch ON cc.holder_id = ch.id
+             WHERE (ch.created_by = ? OR ch.managed_by = ? OR ch.auth_user_id = ?)`
+          )
+          .bind(userId, userId, userId)
+          .all<MissingStatementBillQueryRow>()
       : Promise.resolve(null),
   ])
 
@@ -682,6 +759,105 @@ export async function buildDailyNotificationCandidates(
   if (switches.annual_fee_decision) {
     const feeCandidates = await buildAnnualFeeDecisionCandidates(db, userId, effectiveToday)
     for (const candidate of feeCandidates) candidates.push(candidate)
+  }
+
+  // 5. 超期未获得账单每日提醒（单卡直达补录 / 多卡汇总防轰炸）
+  if (switches.bill_missing_statement && missingCardsStmt && missingBillsStmt) {
+    const missingResult = detectMissingStatements({
+      cards: (missingCardsStmt.results || []).map((row) => ({
+        card: {
+          id: row.id,
+          holder_id: row.holder_id,
+          account_id: row.account_id,
+          card_number_last4: row.card_number_last4 ?? undefined,
+          billing_day: row.billing_day,
+          override_billing_day: row.override_billing_day,
+          override_due_type: row.override_due_type,
+          override_due_value: row.override_due_value,
+          name_override: row.name_override,
+          status: row.status,
+          card_type: row.card_type ?? 'credit',
+          created_at: row.created_at,
+          card_product: {
+            bank_name: row.bank_name || '银行卡',
+            card_name: row.card_name || '信用卡',
+            currency: row.currency || 'CNY',
+            payment_due_type: row.payment_due_type ?? 'after_billing',
+            payment_due_value: row.payment_due_value ?? 20,
+          },
+        },
+        account: row.ca_id
+          ? {
+              id: row.ca_id,
+              holder_id: row.ca_holder_id || row.holder_id,
+              bank_name: row.ca_bank_name || row.bank_name || '银行卡',
+              currency: row.ca_currency || row.currency || 'CNY',
+              statement_mode: row.ca_statement_mode || 'independent',
+              billing_day: row.ca_billing_day,
+              due_type: row.ca_due_type,
+              due_value: row.ca_due_value,
+              primary_card_id: row.ca_primary_card_id,
+              status: row.ca_status || 'active',
+            }
+          : null,
+      })),
+      bills: missingBillsStmt.results || [],
+      today: effectiveToday,
+      timeZone: context.timeZone,
+      graceDays: context.reminderConfig.missing_statement_grace_days,
+    })
+
+    const hits = missingResult.items
+    if (hits.length === 1) {
+      const hit = hits[0]
+      const rawTarget = hit.isMerged && hit.accountId ? hit.accountId : hit.anchorCardId
+      const metaItem: NotificationMissingStatementMetadataItem = {
+        card_id: hit.anchorCardId,
+        account_id: hit.accountId,
+        subject: hit.subject,
+        bill_month: hit.missingBillMonth,
+        expected_statement_date: hit.expectedStatementDate,
+        days_past: hit.daysPast,
+        is_merged: hit.isMerged,
+      }
+      candidates.push({
+        notification_key: `bill_missing_statement:${rawTarget}:${hit.missingBillMonth}:${effectiveToday}`,
+        category: 'bill_missing_statement',
+        title: `未收到账单：${hit.subject}`,
+        body: `${hit.subject} ${hit.missingBillMonth} 期账单已过账单日 ${hit.daysPast} 天（应出账日 ${hit.expectedStatementDate}）仍未入账，可点击手动补充或确认 0 元账单。`,
+        target_url: `/bills?action=supplement&cardId=${encodeURIComponent(hit.anchorCardId)}&billMonth=${hit.missingBillMonth}`,
+        metadata_json: encodeMetadata({
+          kind: 'bill_missing_statement',
+          date: effectiveToday,
+          card_id: hit.anchorCardId,
+          missing_statements: [metaItem],
+        }),
+      })
+    } else if (hits.length >= 2) {
+      const metaItems: NotificationMissingStatementMetadataItem[] = hits.map((hit) => ({
+        card_id: hit.anchorCardId,
+        account_id: hit.accountId,
+        subject: hit.subject,
+        bill_month: hit.missingBillMonth,
+        expected_statement_date: hit.expectedStatementDate,
+        days_past: hit.daysPast,
+        is_merged: hit.isMerged,
+      }))
+      candidates.push({
+        notification_key: `bill_missing_statement_summary:${effectiveToday}`,
+        category: 'bill_missing_statement',
+        title: `${hits.length} 张卡超期未获得账单`,
+        body: `以下卡片已过账单日仍未收到新账单，请及时补录或确认为 0 元账单：\n${hits
+          .map((h) => `• ${h.subject}（${h.missingBillMonth} 期，已过 ${h.daysPast} 天）`)
+          .join('\n')}`,
+        target_url: '/bills?status=missing_statement',
+        metadata_json: encodeMetadata({
+          kind: 'bill_missing_statement_summary',
+          date: effectiveToday,
+          missing_statements: metaItems,
+        }),
+      })
+    }
   }
 
   return { context, candidates }

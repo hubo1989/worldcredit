@@ -6,11 +6,14 @@ import { callRpc } from './rpc-client'
 export type {
   BillDashboardItem,
   CardWithBillsSummary,
+  MissingStatementSummary,
   BillDetail,
   UnpaidBillLite,
   BillLiteForForm,
   BillItemInput,
   BillFieldPatch,
+  SupplementMissingBillInput,
+  SupplementMissingBillResult,
 } from './bills.server'
 
 export function getBillDashboardItems(...args: Parameters<typeof Server.getBillDashboardItems>) {
@@ -88,6 +91,10 @@ export function updateBillStatusChecked(billId: string) {
 /** spec §6.1：删除账单（admin；级联 payments，sync_changes 由 0019 触发器记录）。 */
 export function deleteBill(...args: Parameters<typeof Server.deleteBill>) {
   return callRpc<typeof Server.deleteBill>('bills', 'deleteBill', ...args)
+}
+
+export function supplementMissingBill(...args: Parameters<typeof Server.supplementMissingBill>) {
+  return callRpc<typeof Server.supplementMissingBill>('bills', 'supplementMissingBill', ...args)
 }
 
 // ── spec 13 还款记录改删（服务端：lib/api/payments.ts）──

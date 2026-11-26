@@ -767,6 +767,9 @@ describe('主动通知增强 + 通知中心 + 全部通知项开关', () => {
     it('OCR #31/#33 & #27: 畸形到期日不误判今日到期，syncToday=false 不写当日通知，items 优先于 opportunities 冲突值', async () => {
       await db.batch([
         db
+          .prepare(`UPDATE user_preferences SET reminder_config = ? WHERE user_id = 'user-a'`)
+          .bind(JSON.stringify({ items: { bill_missing_statement: false } })),
+        db
           .prepare(
             `INSERT INTO credit_cards (id, holder_id, card_product_id, billing_day, status, card_type)
              VALUES ('card-bad', 'holder-a', 'prod-cny', 10, 'active', 'credit')`

@@ -35,6 +35,7 @@ const OFFLINE_SYNC_MUTATIONS = new Set([
   // Phase 2 (HUB-163): offline create + opportunity/notification replay.
   "cards.createCard",
   "bills.createBill",
+  "bills.supplementMissingBill",
   "payments.updatePayment",
   "payables.createRecurringPayable",
   "payables.updateRecurringPayable",
@@ -110,6 +111,14 @@ function validateOfflineReplaySafety(mut: MutationItem): { error: string; code: 
     if (!isRecord(payload) || !isValidUuid(payload.id)) {
       return {
         error: "离线建账单必须提供合法的客户端 UUID id",
+        code: "VALIDATION_FAILED",
+      };
+    }
+  } else if (mut.name === "bills.supplementMissingBill") {
+    const payload = mut.args[0];
+    if (!isRecord(payload) || !isValidUuid(payload.id)) {
+      return {
+        error: "离线补录账单必须提供合法的客户端 UUID id",
         code: "VALIDATION_FAILED",
       };
     }
